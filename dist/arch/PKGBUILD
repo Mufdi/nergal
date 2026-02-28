@@ -1,0 +1,19 @@
+# Maintainer: Felipe <felipe@cluihud.dev>
+pkgname=cluihud-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Desktop wrapper for Claude Code"
+arch=('x86_64')
+url="https://github.com/cluihud/cluihud"
+license=('MIT')
+depends=('libxkbcommon' 'libxcb' 'vulkan-icd-loader')
+provides=('cluihud')
+conflicts=('cluihud')
+source=("cluihud-${pkgver}::https://github.com/cluihud/cluihud/releases/download/v${pkgver}/cluihud-linux-x86_64"
+        "cluihud.desktop::https://github.com/cluihud/cluihud/releases/download/v${pkgver}/cluihud.desktop")
+sha256sums=('SKIP' 'SKIP')
+
+package() {
+    install -Dm755 "$srcdir/cluihud-${pkgver}" "$pkgdir/usr/bin/cluihud"
+    install -Dm644 "$srcdir/cluihud.desktop" "$pkgdir/usr/share/applications/cluihud.desktop"
+}

@@ -1,5 +1,4 @@
-use std::any::TypeId;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc as std_mpsc;
 use std::thread;
 use std::time::Duration;
@@ -13,6 +12,7 @@ use gpui_component::tab::{Tab, TabBar};
 use gpui_component::{ActiveTheme as _, IconName, Sizable as _};
 
 use crate::claude::cost::parse_cost_from_transcript;
+use crate::claude::plan::{PlanEvent, PlanWatcher};
 use crate::claude::transcript::TranscriptWatcher;
 use crate::config::Config;
 use crate::hooks::events::HookEvent;
@@ -50,6 +50,8 @@ pub struct Workspace {
     transcripts_directory: PathBuf,
     focus_handle: FocusHandle,
     cost_tx: std_mpsc::Sender<crate::claude::cost::CostSummary>,
+    tasks_tx: std_mpsc::Sender<crate::tasks::TaskStore>,
+    _plan_watcher: Option<PlanWatcher>,
 }
 
 impl Workspace {
@@ -86,12 +88,14 @@ impl Workspace {
         let status_bar = cx.new(StatusBar::new);
 
         // First session
-        let session = Session::new("Session 1".into(), plans_directory, window, cx);
+        let session = Session::new("Session 1".into(), plans_directory.clone(), window, cx);
         Self::subscribe_plan_to_terminal(&session.plan, &session.terminal, cx);
 
         let (cost_tx, cost_rx) = std_mpsc::channel::<crate::claude::cost::CostSummary>();
+        let (tasks_tx, tasks_rx) = std_mpsc::channel::<crate::tasks::TaskStore>();
 
         let cost_status_bar = status_bar.clone();
+        let this_weak = cx.entity().downgrade();
         window
             .spawn(cx, async move |cx| {
                 loop {
@@ -99,26 +103,51 @@ impl Workspace {
                         .timer(Duration::from_millis(500))
                         .await;
 
-                    let mut latest = None;
+                    let mut latest_cost = None;
                     while let Ok(cost) = cost_rx.try_recv() {
-                        latest = Some(cost);
+                        latest_cost = Some(cost);
                     }
 
-                    let Some(cost) = latest else { continue };
+                    let mut latest_tasks = None;
+                    while let Ok(store) = tasks_rx.try_recv() {
+                        latest_tasks = Some(store);
+                    }
+
+                    if latest_cost.is_none() && latest_tasks.is_none() {
+                        continue;
+                    }
 
                     cx.update(|_, cx| {
-                        cost_status_bar.update(cx, |bar, cx| {
-                            bar.update_cost(cost, cx);
-                        });
+                        if let Some(cost) = latest_cost {
+                            cost_status_bar.update(cx, |bar, cx| {
+                                bar.update_cost(cost, cx);
+                            });
+                        }
+                        if let Some(store) = latest_tasks
+                            && let Some(ws) = this_weak.upgrade()
+                        {
+                            ws.update(cx, |ws, cx| {
+                                let tasks = ws.active_session().tasks.clone();
+                                tasks.update(cx, |panel, cx| {
+                                    panel.replace_store(store, cx);
+                                });
+                            });
+                        }
                     })
                     .ok();
                 }
             })
             .detach();
 
+        let focus_handle = cx.focus_handle();
+
+        // Plan directory watcher — detects .md changes without depending on hooks
+        let (plan_watcher, plan_rx) = Self::start_plan_watcher(&plans_directory);
+
         let status_bar_handle = status_bar.clone();
         let this = cx.entity().downgrade();
 
+        // Single event loop for hooks + plan watcher (shared window context ensures re-renders)
         window
             .spawn(cx, async move |cx| {
                 loop {
@@ -126,16 +155,22 @@ impl Workspace {
                         .timer(Duration::from_millis(100))
                         .await;
 
-                    let mut events = Vec::new();
+                    let mut hook_events = Vec::new();
                     while let Ok(event) = std_rx.try_recv() {
-                        events.push(event);
+                        hook_events.push(event);
                     }
-                    if events.is_empty() {
+
+                    let mut plan_changed = None;
+                    while let Ok(path) = plan_rx.try_recv() {
+                        plan_changed = Some(path);
+                    }
+
+                    if hook_events.is_empty() && plan_changed.is_none() {
                         continue;
                     }
 
                     cx.update(|window, cx| {
-                        for event in &events {
+                        for event in &hook_events {
                             status_bar_handle.update(cx, |bar, cx| {
                                 bar.handle_hook_event(event, cx);
                             });
@@ -148,96 +183,21 @@ impl Workspace {
 
                             push_event_notification(event, window, cx);
                         }
+
+                        if let Some(path) = plan_changed {
+                            tracing::info!("plan file changed: {}", path.display());
+                            if let Some(workspace) = this.upgrade() {
+                                workspace.update(cx, |ws, cx| {
+                                    let plan = ws.active_session().plan.clone();
+                                    plan.update(cx, |p, cx| p.on_plan_ready(cx));
+                                });
+                            }
+                        }
                     })
                     .ok();
                 }
             })
             .detach();
-
-        cx.on_action(
-            TypeId::of::<NewTab>(),
-            window,
-            |this, _, phase, window, cx| {
-                if phase == DispatchPhase::Bubble {
-                    this.add_session(window, cx);
-                }
-            },
-        );
-        cx.on_action(TypeId::of::<CloseTab>(), window, |this, _, phase, _, cx| {
-            if phase == DispatchPhase::Bubble {
-                let idx = this.active_index;
-                this.close_session(idx, cx);
-            }
-        });
-        cx.on_action(TypeId::of::<NextTab>(), window, |this, _, phase, _, cx| {
-            if phase == DispatchPhase::Bubble {
-                this.next_tab(cx);
-            }
-        });
-        cx.on_action(TypeId::of::<PrevTab>(), window, |this, _, phase, _, cx| {
-            if phase == DispatchPhase::Bubble {
-                this.prev_tab(cx);
-            }
-        });
-        cx.on_action(
-            TypeId::of::<FocusTerminal>(),
-            window,
-            |this, _, phase, window, cx| {
-                if phase == DispatchPhase::Bubble {
-                    this.active_session().focus_terminal(window, cx);
-                }
-            },
-        );
-        cx.on_action(
-            TypeId::of::<FocusPlan>(),
-            window,
-            |this, _, phase, window, cx| {
-                if phase == DispatchPhase::Bubble {
-                    this.active_session().focus_plan(window, cx);
-                }
-            },
-        );
-        cx.on_action(
-            TypeId::of::<FocusTasks>(),
-            window,
-            |this, _, phase, window, cx| {
-                if phase == DispatchPhase::Bubble {
-                    this.active_session().focus_tasks(window, cx);
-                }
-            },
-        );
-        cx.on_action(
-            TypeId::of::<AcceptPlan>(),
-            window,
-            |this, _, phase, _, cx| {
-                if phase == DispatchPhase::Bubble {
-                    let plan = this.active_session().plan.clone();
-                    plan.update(cx, |p, cx| p.accept_plan(cx));
-                }
-            },
-        );
-        cx.on_action(
-            TypeId::of::<RejectPlan>(),
-            window,
-            |this, _, phase, _, cx| {
-                if phase == DispatchPhase::Bubble {
-                    let plan = this.active_session().plan.clone();
-                    plan.update(cx, |p, cx| p.reject_with_edits(cx));
-                }
-            },
-        );
-
-        cx.on_action(
-            TypeId::of::<OpenSettings>(),
-            window,
-            |this, _, phase, window, cx| {
-                if phase == DispatchPhase::Bubble {
-                    this.open_settings(window, cx);
-                }
-            },
-        );
-
-        let focus_handle = cx.focus_handle();
 
         Self {
             sessions: vec![session],
@@ -248,6 +208,49 @@ impl Workspace {
             transcripts_directory,
             focus_handle,
             cost_tx,
+            tasks_tx,
+            _plan_watcher: plan_watcher,
+        }
+    }
+
+    /// Creates a PlanWatcher and bridges events to a std_mpsc channel.
+    fn start_plan_watcher(plans_dir: &Path) -> (Option<PlanWatcher>, std_mpsc::Receiver<PathBuf>) {
+        let (std_tx, std_rx) = std_mpsc::channel::<PathBuf>();
+
+        if !plans_dir.exists()
+            && let Err(e) = std::fs::create_dir_all(plans_dir)
+        {
+            tracing::warn!("failed to create plans directory: {e:#}");
+            return (None, std_rx);
+        }
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<PlanEvent>(64);
+
+        // Bridge tokio → std_mpsc in a background thread
+        thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime for plan watcher");
+
+            rt.block_on(async {
+                while let Some(PlanEvent::Updated(path)) = rx.recv().await {
+                    if std_tx.send(path).is_err() {
+                        break;
+                    }
+                }
+            });
+        });
+
+        match PlanWatcher::new(plans_dir, tx) {
+            Ok(watcher) => {
+                tracing::info!("plan watcher started for {}", plans_dir.display());
+                (Some(watcher), std_rx)
+            }
+            Err(e) => {
+                tracing::warn!("failed to start plan watcher: {e:#}");
+                (None, std_rx)
+            }
         }
     }
 
@@ -257,13 +260,22 @@ impl Workspace {
         cx: &mut App,
     ) {
         let terminal_handle = terminal.clone();
-        cx.subscribe(plan, move |_plan, action: &PlanAction, cx| match action {
-            PlanAction::Accept => {
-                terminal_handle.update(cx, |t, _| t.write_to_pty(b"y\n"));
-            }
-            PlanAction::Reject => {
-                terminal_handle.update(cx, |t, _| t.write_to_pty(b"n\n"));
-            }
+        cx.subscribe(plan, move |_plan, action: &PlanAction, cx| {
+            let bytes: Vec<u8> = match action {
+                PlanAction::AcceptClearContext => {
+                    b"Proceed with the plan. Clear context and auto-accept all edits.\n".to_vec()
+                }
+                PlanAction::AcceptAutoEdits => {
+                    b"Proceed with the plan. Auto-accept all edits.\n".to_vec()
+                }
+                PlanAction::AcceptManualEdits => {
+                    b"Proceed with the plan. I want to manually approve each edit.\n".to_vec()
+                }
+                PlanAction::Feedback(text) => format!("{text}\n").into_bytes(),
+            };
+            terminal_handle.update(cx, |t, _| {
+                t.write_to_pty(&bytes);
+            });
         })
         .detach();
     }
@@ -363,10 +375,29 @@ impl Workspace {
                 session.id = None;
                 session.transcript_watcher = None;
             }
-            HookEvent::Stop { session_id, .. } => {
+            HookEvent::Stop {
+                session_id,
+                transcript_path,
+                ..
+            } => {
                 tracing::info!("session stopped: {session_id}");
-                session.id = None;
-                session.transcript_watcher = None;
+                // Final re-parse to capture any last TaskUpdate writes
+                if let Some(tp) = transcript_path {
+                    let path = PathBuf::from(tp);
+                    if path.exists() {
+                        let store = parse_tasks_from_transcript(&path);
+                        if !store.is_empty() {
+                            tracing::info!(
+                                "final transcript re-parse: {} visible tasks",
+                                store.visible_count()
+                            );
+                            let tasks = session.tasks.clone();
+                            tasks.update(cx, |panel, cx| {
+                                panel.replace_store(store, cx);
+                            });
+                        }
+                    }
+                }
             }
             HookEvent::PreToolUse { tool_name, .. } if tool_name == "ExitPlanMode" => {
                 let plan = session.plan.clone();
@@ -379,9 +410,27 @@ impl Workspace {
                 tool_input,
                 ..
             } if tool_name == "TaskCreate" || tool_name == "TaskUpdate" => {
+                tracing::info!(
+                    "routing PostToolUse {tool_name}: {}",
+                    serde_json::to_string(tool_input).unwrap_or_default()
+                );
                 let tasks = session.tasks.clone();
                 tasks.update(cx, |panel, cx| {
                     panel.handle_tool_event(tool_name, tool_input, cx);
+                });
+            }
+            HookEvent::TaskCompleted {
+                task_id: Some(task_id),
+                ..
+            } => {
+                tracing::info!("TaskCompleted: marking task {task_id} as completed");
+                let tasks = session.tasks.clone();
+                let update = serde_json::json!({
+                    "taskId": task_id,
+                    "status": "completed"
+                });
+                tasks.update(cx, |panel, cx| {
+                    panel.handle_tool_event("TaskUpdate", &update, cx);
                 });
             }
             _ => {}
@@ -396,6 +445,7 @@ impl Workspace {
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
         let cost_tx = self.cost_tx.clone();
+        let tasks_tx = self.tasks_tx.clone();
 
         thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
@@ -409,12 +459,8 @@ impl Workspace {
                         crate::claude::transcript::TranscriptEvent::Updated(path) => {
                             tracing::debug!("transcript updated: {}", path.display());
                             let store = parse_tasks_from_transcript(&path);
-                            let count = store.tasks().len();
-                            if count > 0 {
-                                tracing::info!(
-                                    "transcript re-parse found {count} tasks from {}",
-                                    path.display()
-                                );
+                            if !store.is_empty() {
+                                let _ = tasks_tx.send(store);
                             }
                             let cost = parse_cost_from_transcript(&path);
                             let _ = cost_tx.send(cost);
@@ -502,9 +548,42 @@ impl Render for Workspace {
             .flex_col()
             .size_full()
             .bg(cx.theme().background)
+            .on_action(cx.listener(|this, _: &NewTab, window, cx| {
+                this.add_session(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &CloseTab, _window, cx| {
+                let idx = this.active_index;
+                this.close_session(idx, cx);
+            }))
+            .on_action(cx.listener(|this, _: &NextTab, _window, cx| {
+                this.next_tab(cx);
+            }))
+            .on_action(cx.listener(|this, _: &PrevTab, _window, cx| {
+                this.prev_tab(cx);
+            }))
+            .on_action(cx.listener(|this, _: &FocusTerminal, window, cx| {
+                this.active_session().focus_terminal(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &FocusPlan, window, cx| {
+                this.active_session().focus_plan(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &FocusTasks, window, cx| {
+                this.active_session().focus_tasks(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &AcceptPlan, _window, cx| {
+                let plan = this.active_session().plan.clone();
+                plan.update(cx, |p, cx| p.accept(PlanAction::AcceptClearContext, cx));
+            }))
+            .on_action(cx.listener(|this, _: &RejectPlan, _window, cx| {
+                let plan = this.active_session().plan.clone();
+                plan.update(cx, |p, cx| p.accept(PlanAction::AcceptManualEdits, cx));
+            }))
+            .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
+                this.open_settings(window, cx);
+            }))
             .child(self.render_tab_bar(cx))
             .child(
-                h_resizable("workspace-panels")
+                h_resizable("workspace-outer")
                     .child(
                         resizable_panel()
                             .size(px(480.))
@@ -513,15 +592,23 @@ impl Render for Workspace {
                     )
                     .child(
                         resizable_panel()
-                            .size(px(420.))
-                            .size_range(px(200.)..px(600.))
-                            .child(session.plan.clone()),
-                    )
-                    .child(
-                        resizable_panel()
-                            .size(px(300.))
-                            .size_range(px(150.)..px(500.))
-                            .child(session.tasks.clone()),
+                            .size(px(720.))
+                            .size_range(px(350.)..px(2000.))
+                            .child(
+                                h_resizable("workspace-inner")
+                                    .child(
+                                        resizable_panel()
+                                            .size(px(420.))
+                                            .size_range(px(200.)..px(600.))
+                                            .child(session.plan.clone()),
+                                    )
+                                    .child(
+                                        resizable_panel()
+                                            .size(px(300.))
+                                            .size_range(px(150.)..px(500.))
+                                            .child(session.tasks.clone()),
+                                    ),
+                            ),
                     ),
             )
             .child(self.status_bar.clone())

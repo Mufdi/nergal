@@ -1,4 +1,6 @@
+use std::cell::Cell;
 use std::io::{Read, Write};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
@@ -9,11 +11,15 @@ use gpui_ghostty_terminal::view::{TerminalInput, TerminalView};
 use gpui_ghostty_terminal::{TerminalConfig, TerminalSession};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
+use crate::ui::size_observer::{CellMetrics, TerminalSizeElement};
+
 pub struct TerminalPanel {
     terminal_view: Entity<TerminalView>,
     focus_handle: FocusHandle,
     stdin_tx: mpsc::Sender<Vec<u8>>,
-    _pty_master: Arc<dyn portable_pty::MasterPty + Send>,
+    pty_master: Arc<dyn portable_pty::MasterPty + Send>,
+    last_panel_size: Rc<Cell<Size<Pixels>>>,
+    cell_metrics: Rc<Option<CellMetrics>>,
 }
 
 impl TerminalPanel {
@@ -92,55 +98,9 @@ impl TerminalPanel {
             TerminalView::new_with_input(session, terminal_focus, input)
         });
 
-        let master_for_resize = master.clone();
-        let subscription = terminal_view.update(cx, |_, cx| {
-            cx.observe_window_bounds(window, move |this, window, cx| {
-                let size = window.viewport_size();
-                let width = f32::from(size.width);
-                let height = f32::from(size.height);
+        let cell_metrics = Rc::new(Self::compute_cell_metrics(window));
 
-                let mut style = window.text_style();
-                let font = gpui_ghostty_terminal::default_terminal_font();
-                style.font_family = font.family.clone();
-                style.font_features = gpui_ghostty_terminal::default_terminal_font_features();
-                style.font_fallbacks = font.fallbacks.clone();
-
-                let rem_size = window.rem_size();
-                let font_size = style.font_size.to_pixels(rem_size);
-                let line_height = style.line_height.to_pixels(style.font_size, rem_size);
-
-                let run = style.to_run(1);
-                let Ok(lines) = window.text_system().shape_text(
-                    SharedString::from("M"),
-                    font_size,
-                    &[run],
-                    None,
-                    Some(1),
-                ) else {
-                    return;
-                };
-                let Some(line) = lines.first() else {
-                    return;
-                };
-
-                let cell_width = f32::from(line.width()).max(1.0);
-                let cell_height = f32::from(line_height).max(1.0);
-
-                let cols = (width / cell_width).floor().max(1.0) as u16;
-                let rows = (height / cell_height).floor().max(1.0) as u16;
-
-                let _ = master_for_resize.resize(PtySize {
-                    rows,
-                    cols,
-                    pixel_width: 0,
-                    pixel_height: 0,
-                });
-
-                this.resize_terminal(cols, rows, cx);
-            })
-        });
-        subscription.detach();
-
+        // Stdout polling — only handles output, no resize
         let view_for_task = terminal_view.clone();
         window
             .spawn(cx, async move |cx| {
@@ -148,6 +108,7 @@ impl TerminalPanel {
                     cx.background_executor()
                         .timer(Duration::from_millis(16))
                         .await;
+
                     let mut batch = Vec::new();
                     while let Ok(chunk) = stdout_rx.try_recv() {
                         batch.extend_from_slice(&chunk);
@@ -170,8 +131,35 @@ impl TerminalPanel {
             terminal_view,
             focus_handle,
             stdin_tx,
-            _pty_master: master,
+            pty_master: master,
+            last_panel_size: Rc::new(Cell::new(Size::default())),
+            cell_metrics,
         }
+    }
+
+    /// Computes terminal cell dimensions from font metrics (once at init).
+    fn compute_cell_metrics(window: &mut Window) -> Option<CellMetrics> {
+        let mut style = window.text_style();
+        let font = gpui_ghostty_terminal::default_terminal_font();
+        style.font_family = font.family.clone();
+        style.font_features = gpui_ghostty_terminal::default_terminal_font_features();
+        style.font_fallbacks = font.fallbacks.clone();
+
+        let rem_size = window.rem_size();
+        let font_size = style.font_size.to_pixels(rem_size);
+        let line_height = style.line_height.to_pixels(style.font_size, rem_size);
+
+        let run = style.to_run(1);
+        let lines = window
+            .text_system()
+            .shape_text(SharedString::from("M"), font_size, &[run], None, Some(1))
+            .ok()?;
+        let line = lines.first()?;
+
+        Some(CellMetrics {
+            width: f32::from(line.width()).max(1.0),
+            height: f32::from(line_height).max(1.0),
+        })
     }
 
     /// Focus this panel's terminal.
@@ -191,6 +179,12 @@ impl Render for TerminalPanel {
             .flex()
             .flex_col()
             .size_full()
-            .child(self.terminal_view.clone())
+            .child(TerminalSizeElement::new(
+                self.terminal_view.clone(),
+                self.last_panel_size.clone(),
+                self.pty_master.clone(),
+                self.terminal_view.clone(),
+                self.cell_metrics.clone(),
+            ))
     }
 }

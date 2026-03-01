@@ -28,9 +28,17 @@ pub enum HookEvent {
         session_id: String,
         #[serde(default)]
         stop_reason: Option<String>,
+        #[serde(default)]
+        transcript_path: Option<String>,
     },
     #[serde(rename = "TaskCompleted")]
-    TaskCompleted { session_id: String },
+    TaskCompleted {
+        session_id: String,
+        #[serde(default)]
+        task_id: Option<String>,
+        #[serde(default)]
+        task_subject: Option<String>,
+    },
     #[serde(rename = "UserPromptSubmit")]
     UserPromptSubmit { session_id: String },
 }
@@ -43,7 +51,7 @@ impl HookEvent {
             | Self::PreToolUse { session_id, .. }
             | Self::PostToolUse { session_id, .. }
             | Self::Stop { session_id, .. }
-            | Self::TaskCompleted { session_id }
+            | Self::TaskCompleted { session_id, .. }
             | Self::UserPromptSubmit { session_id } => session_id,
         }
     }

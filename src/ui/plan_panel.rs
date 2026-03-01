@@ -1,5 +1,6 @@
 use gpui::*;
 use gpui_component::ActiveTheme as _;
+use gpui_component::Sizable as _;
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::scroll::ScrollableElement as _;
@@ -16,10 +17,12 @@ enum PlanMode {
     Diff,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum PlanAction {
-    Accept,
-    Reject,
+    AcceptClearContext,
+    AcceptAutoEdits,
+    AcceptManualEdits,
+    Feedback(String),
 }
 
 impl EventEmitter<PlanAction> for PlanPanel {}
@@ -29,6 +32,7 @@ pub struct PlanPanel {
     reviewing: bool,
     manager: PlanManager,
     editor_state: Option<Entity<InputState>>,
+    feedback_state: Option<Entity<InputState>>,
     focus_handle: FocusHandle,
 }
 
@@ -39,6 +43,7 @@ impl PlanPanel {
             reviewing: false,
             manager: PlanManager::new(plans_dir),
             editor_state: None,
+            feedback_state: None,
             focus_handle: cx.focus_handle(),
         }
     }
@@ -48,10 +53,28 @@ impl PlanPanel {
         self.focus_handle.focus(window);
     }
 
-    /// Called when ExitPlanMode is detected — loads the latest plan for review.
+    /// Called when a plan file change is detected — loads the latest plan for review.
     pub fn on_plan_ready(&mut self, cx: &mut Context<Self>) {
         match self.manager.find_latest_plan() {
             Ok(Some(path)) => {
+                // Read file content to check if it actually changed
+                let new_content = match std::fs::read_to_string(&path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::error!("failed to read plan: {e:#}");
+                        return;
+                    }
+                };
+
+                // Skip if this is the same content we already have (e.g. after our own save_edits)
+                if let Some(current) = &self.manager.current_plan
+                    && current.path == path
+                    && current.content == new_content
+                {
+                    tracing::debug!("ignoring plan watcher event: content unchanged");
+                    return;
+                }
+
                 if let Err(e) = self.manager.load_plan(&path) {
                     tracing::error!("failed to load plan: {e:#}");
                     return;
@@ -71,15 +94,60 @@ impl PlanPanel {
         }
     }
 
-    pub fn accept_plan(&mut self, cx: &mut Context<Self>) {
+    pub fn accept(&mut self, action: PlanAction, cx: &mut Context<Self>) {
         self.reviewing = false;
         self.mode = PlanMode::View;
         self.editor_state = None;
-        cx.emit(PlanAction::Accept);
+        self.feedback_state = None;
+        cx.emit(action);
         cx.notify();
     }
 
-    pub fn reject_with_edits(&mut self, cx: &mut Context<Self>) {
+    fn submit_feedback(&mut self, cx: &mut Context<Self>) {
+        let text = self
+            .feedback_state
+            .as_ref()
+            .map(|s| s.read(cx).value().to_string())
+            .unwrap_or_default();
+
+        if text.trim().is_empty() {
+            return;
+        }
+
+        // Save edits if the plan was modified
+        self.sync_editor_to_manager(cx);
+        if self
+            .manager
+            .current_plan
+            .as_ref()
+            .is_some_and(|p| p.has_edits())
+        {
+            let content = self
+                .manager
+                .current_content()
+                .unwrap_or_default()
+                .to_string();
+
+            match self.manager.save_edits(content) {
+                Ok(path) => {
+                    let state = HookState {
+                        pending_plan_edit: Some(path.clone()),
+                    };
+                    if let Err(e) = state.write() {
+                        tracing::error!("failed to write hook state: {e:#}");
+                    }
+                    tracing::info!("plan edits saved, hook state written: {}", path.display());
+                }
+                Err(e) => {
+                    tracing::error!("failed to save plan edits: {e:#}");
+                }
+            }
+        }
+
+        self.accept(PlanAction::Feedback(text), cx);
+    }
+
+    fn submit_reread(&mut self, cx: &mut Context<Self>) {
         self.sync_editor_to_manager(cx);
 
         let content = self
@@ -96,18 +164,17 @@ impl PlanPanel {
                 if let Err(e) = state.write() {
                     tracing::error!("failed to write hook state: {e:#}");
                 }
-                tracing::info!("plan edits saved, hook state written: {}", path.display());
+                tracing::info!("plan edits saved for re-read: {}", path.display());
             }
             Err(e) => {
                 tracing::error!("failed to save plan edits: {e:#}");
             }
         }
 
-        self.reviewing = false;
-        self.mode = PlanMode::View;
-        self.editor_state = None;
-        cx.emit(PlanAction::Reject);
-        cx.notify();
+        self.accept(
+            PlanAction::Feedback("Revise the plan based on my edits".to_string()),
+            cx,
+        );
     }
 
     fn enter_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -275,41 +342,109 @@ impl PlanPanel {
         div().flex_grow().py(px(8.)).child(lines)
     }
 
-    fn render_actions(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn ensure_feedback_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.feedback_state.is_none() {
+            let state =
+                cx.new(|cx| InputState::new(window, cx).placeholder("Type feedback for Claude..."));
+            self.feedback_state = Some(state);
+        }
+    }
+
+    fn render_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.ensure_feedback_state(window, cx);
+
         let theme = cx.theme();
 
-        let accept_style = ButtonCustomVariant::new(cx)
+        let primary_style = ButtonCustomVariant::new(cx)
             .color(theme.success)
             .foreground(theme.background);
 
-        let reject_style = ButtonCustomVariant::new(cx)
-            .color(theme.danger)
+        let secondary_style = ButtonCustomVariant::new(cx)
+            .color(Hsla {
+                a: 0.7,
+                ..theme.success
+            })
             .foreground(theme.background);
+
+        let buttons = div()
+            .flex()
+            .flex_row()
+            .gap(px(6.))
+            .child(
+                Button::new("accept-clear")
+                    .label("Accept (clear ctx)")
+                    .compact()
+                    .custom(primary_style)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.accept(PlanAction::AcceptClearContext, cx);
+                    })),
+            )
+            .child(
+                Button::new("accept-auto")
+                    .label("Accept (auto edits)")
+                    .compact()
+                    .custom(secondary_style)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.accept(PlanAction::AcceptAutoEdits, cx);
+                    })),
+            )
+            .child(
+                Button::new("accept-manual")
+                    .label("Accept (manual)")
+                    .compact()
+                    .custom(secondary_style)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.accept(PlanAction::AcceptManualEdits, cx);
+                    })),
+            );
+
+        let has_edits = self
+            .manager
+            .current_plan
+            .as_ref()
+            .is_some_and(|p| p.has_edits());
+
+        let mut feedback_row = div().flex().flex_row().gap(px(6.)).mt(px(6.));
+
+        if has_edits {
+            let reread_style = ButtonCustomVariant::new(cx)
+                .color(theme.accent)
+                .foreground(theme.background);
+
+            feedback_row = feedback_row.child(
+                Button::new("reread-plan")
+                    .label("Re-read edited plan")
+                    .compact()
+                    .custom(reread_style)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.submit_reread(cx);
+                    })),
+            );
+        }
+
+        if let Some(input_state) = &self.feedback_state {
+            feedback_row = feedback_row
+                .child(div().flex_grow().child(Input::new(input_state).small()))
+                .child(
+                    Button::new("send-feedback")
+                        .label("Send")
+                        .compact()
+                        .ghost()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.submit_feedback(cx);
+                        })),
+                );
+        }
 
         div()
             .flex()
-            .flex_row()
-            .gap(px(8.))
+            .flex_col()
             .px(px(12.))
             .py(px(8.))
             .border_t_1()
             .border_color(theme.border)
-            .child(
-                Button::new("accept-plan")
-                    .label("Accept")
-                    .custom(accept_style)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.accept_plan(cx);
-                    })),
-            )
-            .child(
-                Button::new("reject-plan")
-                    .label("Reject w/ edits")
-                    .custom(reject_style)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.reject_with_edits(cx);
-                    })),
-            )
+            .child(buttons)
+            .child(feedback_row)
     }
 }
 
@@ -360,7 +495,7 @@ impl Render for PlanPanel {
         }
 
         if self.reviewing {
-            container = container.child(self.render_actions(cx));
+            container = container.child(self.render_actions(window, cx));
         }
 
         container

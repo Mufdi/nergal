@@ -6,6 +6,7 @@ pub enum TaskStatus {
     Pending,
     InProgress,
     Completed,
+    Deleted,
 }
 
 /// A single task tracked by Claude Code's TaskCreate/TaskUpdate tools.
@@ -77,6 +78,7 @@ impl TaskStore {
                 "in_progress" => TaskStatus::InProgress,
                 "completed" => TaskStatus::Completed,
                 "pending" => TaskStatus::Pending,
+                "deleted" => TaskStatus::Deleted,
                 _ => task.status.clone(),
             };
         }
@@ -110,8 +112,10 @@ impl TaskStore {
         self.next_id = other.next_id;
     }
 
-    pub fn tasks(&self) -> &[Task] {
-        &self.tasks
+    pub fn visible_tasks(&self) -> impl Iterator<Item = &Task> {
+        self.tasks
+            .iter()
+            .filter(|t| t.status != TaskStatus::Deleted)
     }
 
     pub fn get(&self, id: &str) -> Option<&Task> {
@@ -120,5 +124,12 @@ impl TaskStore {
 
     pub fn is_empty(&self) -> bool {
         self.tasks.is_empty()
+    }
+
+    pub fn visible_count(&self) -> usize {
+        self.tasks
+            .iter()
+            .filter(|t| t.status != TaskStatus::Deleted)
+            .count()
     }
 }

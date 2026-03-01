@@ -1,6 +1,38 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use notify::Watcher;
+use tokio::sync::mpsc;
+
+#[derive(Debug, Clone)]
+pub enum PlanEvent {
+    Updated(PathBuf),
+}
+
+/// Watches `~/.claude/plans/` for `.md` file changes via inotify.
+pub struct PlanWatcher {
+    _watcher: notify::RecommendedWatcher,
+}
+
+impl PlanWatcher {
+    pub fn new(plans_dir: &Path, tx: mpsc::Sender<PlanEvent>) -> Result<Self> {
+        let mut watcher =
+            notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+                let Ok(event) = res else { return };
+                if event.kind.is_modify() || event.kind.is_create() {
+                    for path in event.paths {
+                        if path.extension().is_some_and(|ext| ext == "md") {
+                            let _ = tx.blocking_send(PlanEvent::Updated(path));
+                        }
+                    }
+                }
+            })?;
+
+        watcher.watch(plans_dir, notify::RecursiveMode::NonRecursive)?;
+
+        Ok(Self { _watcher: watcher })
+    }
+}
 
 /// Manages plan files in Claude's plans directory.
 pub struct PlanManager {

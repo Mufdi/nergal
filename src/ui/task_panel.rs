@@ -32,9 +32,22 @@ impl TaskPanel {
     ) {
         match tool_name {
             "TaskCreate" => {
-                self.store.apply_create(tool_input);
+                let id = self.store.apply_create(tool_input);
+                tracing::info!("TaskCreate applied, assigned id={id:?}");
             }
             "TaskUpdate" => {
+                let task_id = tool_input
+                    .get("taskId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
+                let status = tool_input
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
+                let found = self.store.get(task_id).is_some();
+                tracing::info!(
+                    "TaskUpdate taskId={task_id} status={status} found_in_store={found}"
+                );
                 self.store.apply_update(tool_input);
             }
             _ => return,
@@ -44,6 +57,10 @@ impl TaskPanel {
 
     /// Replace the entire store (used by transcript re-parse).
     pub fn replace_store(&mut self, store: TaskStore, cx: &mut Context<Self>) {
+        tracing::info!(
+            "replace_store: {} visible tasks from transcript",
+            store.visible_count()
+        );
         self.store.replace_all(store);
         cx.notify();
     }
@@ -78,7 +95,7 @@ impl Render for TaskPanel {
                 .child("Tasks"),
         );
 
-        if self.store.is_empty() {
+        if self.store.visible_count() == 0 {
             return root.child(
                 div()
                     .text_color(theme.muted_foreground)
@@ -86,7 +103,7 @@ impl Render for TaskPanel {
             );
         }
 
-        for task in self.store.tasks() {
+        for task in self.store.visible_tasks() {
             let id = task.id.clone();
             let is_selected = self.selected.as_deref() == Some(&id);
 
@@ -94,6 +111,7 @@ impl Render for TaskPanel {
                 TaskStatus::Pending => ("○", theme.warning),
                 TaskStatus::InProgress => ("◉", theme.primary),
                 TaskStatus::Completed => ("✓", theme.success),
+                TaskStatus::Deleted => continue,
             };
 
             let mut label_text = format!("{status_icon} {}", task.subject);

@@ -53,9 +53,16 @@ pub fn parse_tasks_from_transcript(path: &Path) -> TaskStore {
 
             match name {
                 "TaskCreate" => {
-                    store.apply_create(input);
+                    let id = store.apply_create(input);
+                    tracing::debug!("transcript: TaskCreate id={id:?}");
                 }
                 "TaskUpdate" => {
+                    let task_id = input.get("taskId").and_then(|v| v.as_str()).unwrap_or("?");
+                    let found = store.get(task_id).is_some();
+                    tracing::debug!(
+                        "transcript: TaskUpdate taskId={task_id} found={found} input={}",
+                        serde_json::to_string(input).unwrap_or_default()
+                    );
                     store.apply_update(input);
                 }
                 _ => {}

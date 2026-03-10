@@ -7,7 +7,7 @@ use gpui::*;
 use gpui_component::WindowExt as _;
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::notification::{Notification, NotificationType};
-use gpui_component::resizable::{h_resizable, resizable_panel};
+use gpui_component::resizable::{h_resizable, resizable_panel, v_resizable};
 use gpui_component::tab::{Tab, TabBar};
 use gpui_component::{ActiveTheme as _, IconName, Sizable as _};
 
@@ -19,7 +19,8 @@ use crate::hooks::events::HookEvent;
 use crate::hooks::server::start_hook_server;
 use crate::session::Session;
 use crate::tasks::transcript_parser::parse_tasks_from_transcript;
-use crate::ui::plan_panel::{PlanAction, PlanPanel};
+use crate::ui::nav_sidebar::{NavSidebar, NavSidebarEvent, SessionEntry};
+use crate::ui::plan_panel::{PlanAction, PlanPanel, PlanVisibilityEvent};
 use crate::ui::settings_panel::SettingsPanel;
 use crate::ui::status_bar::StatusBar;
 use crate::ui::terminal_panel::TerminalPanel;
@@ -35,9 +36,12 @@ actions!(
         FocusTerminal,
         FocusPlan,
         FocusTasks,
+        FocusActivity,
         AcceptPlan,
         RejectPlan,
         OpenSettings,
+        TogglePlan,
+        ToggleSidebar,
     ]
 );
 
@@ -46,6 +50,8 @@ pub struct Workspace {
     active_index: usize,
     next_session_number: usize,
     pub status_bar: Entity<StatusBar>,
+    nav_sidebar: Entity<NavSidebar>,
+    plan_visible: bool,
     config: Config,
     transcripts_directory: PathBuf,
     focus_handle: FocusHandle,
@@ -86,10 +92,28 @@ impl Workspace {
         });
 
         let status_bar = cx.new(StatusBar::new);
+        let nav_sidebar = cx.new(NavSidebar::new);
+
+        // Subscribe to sidebar events
+        cx.subscribe(
+            &nav_sidebar,
+            |ws: &mut Workspace, _sidebar, event, cx| match event {
+                NavSidebarEvent::SwitchSession(idx) => {
+                    ws.active_index = *idx;
+                    ws.sync_sidebar(cx);
+                    cx.notify();
+                }
+                NavSidebarEvent::ToggleCollapse => {
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
 
         // First session
         let session = Session::new("Session 1".into(), plans_directory.clone(), window, cx);
         Self::subscribe_plan_to_terminal(&session.plan, &session.terminal, cx);
+        Self::subscribe_plan_visibility(&session.plan, cx);
 
         let (cost_tx, cost_rx) = std_mpsc::channel::<crate::claude::cost::CostSummary>();
         let (tasks_tx, tasks_rx) = std_mpsc::channel::<crate::tasks::TaskStore>();
@@ -199,11 +223,24 @@ impl Workspace {
             })
             .detach();
 
+        // Initialize sidebar with first session
+        nav_sidebar.update(cx, |sb, cx| {
+            sb.set_sessions(
+                vec![SessionEntry {
+                    label: "Session 1".into(),
+                    active: true,
+                }],
+                cx,
+            );
+        });
+
         Self {
             sessions: vec![session],
             active_index: 0,
             next_session_number: 2,
             status_bar,
+            nav_sidebar,
+            plan_visible: false,
             config,
             transcripts_directory,
             focus_handle,
@@ -280,6 +317,36 @@ impl Workspace {
         .detach();
     }
 
+    /// Subscribe to PlanVisibilityEvent to auto-show/hide the plan panel.
+    fn subscribe_plan_visibility(plan: &Entity<PlanPanel>, cx: &mut Context<Self>) {
+        cx.subscribe(
+            plan,
+            |ws: &mut Workspace, _plan, event: &PlanVisibilityEvent, cx| {
+                match event {
+                    PlanVisibilityEvent::PlanLoaded => ws.plan_visible = true,
+                    PlanVisibilityEvent::PlanDismissed => ws.plan_visible = false,
+                }
+                cx.notify();
+            },
+        )
+        .detach();
+    }
+
+    /// Sync sidebar session list with current state.
+    fn sync_sidebar(&self, cx: &mut Context<Self>) {
+        let entries: Vec<SessionEntry> = self
+            .sessions
+            .iter()
+            .enumerate()
+            .map(|(i, s)| SessionEntry {
+                label: s.label.clone(),
+                active: i == self.active_index,
+            })
+            .collect();
+        let sidebar = self.nav_sidebar.clone();
+        sidebar.update(cx, |sb, cx| sb.set_sessions(entries, cx));
+    }
+
     pub fn add_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let label = format!("Session {}", self.next_session_number);
         self.next_session_number += 1;
@@ -287,9 +354,11 @@ impl Workspace {
         let plans_dir = self.config.plans_directory.clone();
         let session = Session::new(label, plans_dir, window, cx);
         Self::subscribe_plan_to_terminal(&session.plan, &session.terminal, cx);
+        Self::subscribe_plan_visibility(&session.plan, cx);
 
         self.sessions.push(session);
         self.active_index = self.sessions.len() - 1;
+        self.sync_sidebar(cx);
         cx.notify();
     }
 
@@ -303,6 +372,7 @@ impl Workspace {
         } else if self.active_index > index {
             self.active_index -= 1;
         }
+        self.sync_sidebar(cx);
         cx.notify();
     }
 
@@ -313,6 +383,7 @@ impl Workspace {
     pub fn next_tab(&mut self, cx: &mut Context<Self>) {
         if self.sessions.len() > 1 {
             self.active_index = (self.active_index + 1) % self.sessions.len();
+            self.sync_sidebar(cx);
             cx.notify();
         }
     }
@@ -324,6 +395,7 @@ impl Workspace {
             } else {
                 self.active_index - 1
             };
+            self.sync_sidebar(cx);
             cx.notify();
         }
     }
@@ -435,6 +507,12 @@ impl Workspace {
             }
             _ => {}
         }
+
+        // Push all events to the activity log
+        let activity = self.sessions[idx].activity_log.clone();
+        activity.update(cx, |log, cx| {
+            log.push_from_hook(event, cx);
+        });
     }
 
     fn start_transcript_watcher(&mut self, session_idx: usize) {
@@ -537,9 +615,86 @@ impl Workspace {
     }
 }
 
+impl Workspace {
+    fn render_plan_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let icon = if self.plan_visible {
+            IconName::PanelRightClose
+        } else {
+            IconName::PanelRightOpen
+        };
+
+        div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(24.))
+            .h_full()
+            .flex_shrink_0()
+            .cursor_pointer()
+            .border_l_1()
+            .border_color(theme.muted.opacity(0.3))
+            .hover(|s| s.bg(theme.sidebar_accent.opacity(0.5)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.plan_visible = !this.plan_visible;
+                    cx.notify();
+                }),
+            )
+            .child(
+                gpui_component::Icon::new(icon)
+                    .size_4()
+                    .text_color(theme.muted_foreground),
+            )
+    }
+}
+
 impl Render for Workspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let session = self.active_session();
+        let plan_visible = self.plan_visible;
+
+        let terminal = session.terminal.clone();
+        let plan = session.plan.clone();
+        let tasks = session.tasks.clone();
+        let activity = session.activity_log.clone();
+        let bg_color = cx.theme().background;
+
+        // Left panels: Tasks + Activity stacked vertically
+        let left_panels = v_resizable("left-panels")
+            .child(
+                resizable_panel()
+                    .size(px(250.))
+                    .size_range(px(100.)..px(500.))
+                    .child(tasks),
+            )
+            .child(
+                resizable_panel()
+                    .size(px(250.))
+                    .size_range(px(80.)..px(500.))
+                    .child(activity),
+            );
+
+        // Main content: resizable horizontal split [left-panels | terminal]
+        let mut main_area = h_resizable("workspace-main")
+            .child(
+                resizable_panel()
+                    .size(px(240.))
+                    .size_range(px(160.)..px(400.))
+                    .child(left_panels),
+            )
+            .child(resizable_panel().size(px(800.)).child(terminal));
+
+        // Conditionally add plan panel as resizable
+        if plan_visible {
+            main_area = main_area.child(
+                resizable_panel()
+                    .size(px(420.))
+                    .size_range(px(250.)..px(700.))
+                    .child(plan),
+            );
+        }
 
         div()
             .track_focus(&self.focus_handle)
@@ -547,7 +702,7 @@ impl Render for Workspace {
             .flex()
             .flex_col()
             .size_full()
-            .bg(cx.theme().background)
+            .bg(bg_color)
             .on_action(cx.listener(|this, _: &NewTab, window, cx| {
                 this.add_session(window, cx);
             }))
@@ -565,10 +720,15 @@ impl Render for Workspace {
                 this.active_session().focus_terminal(window, cx);
             }))
             .on_action(cx.listener(|this, _: &FocusPlan, window, cx| {
+                this.plan_visible = true;
                 this.active_session().focus_plan(window, cx);
+                cx.notify();
             }))
             .on_action(cx.listener(|this, _: &FocusTasks, window, cx| {
                 this.active_session().focus_tasks(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &FocusActivity, window, cx| {
+                this.active_session().focus_activity(window, cx);
             }))
             .on_action(cx.listener(|this, _: &AcceptPlan, _window, cx| {
                 let plan = this.active_session().plan.clone();
@@ -581,35 +741,30 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.open_settings(window, cx);
             }))
+            .on_action(cx.listener(|this, _: &TogglePlan, _, cx| {
+                this.plan_visible = !this.plan_visible;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
+                let sidebar = this.nav_sidebar.clone();
+                sidebar.update(cx, |sb, cx| sb.toggle_collapse(cx));
+            }))
             .child(self.render_tab_bar(cx))
             .child(
-                h_resizable("workspace-outer")
-                    .child(
-                        resizable_panel()
-                            .size(px(480.))
-                            .size_range(px(200.)..px(800.))
-                            .child(session.terminal.clone()),
-                    )
-                    .child(
-                        resizable_panel()
-                            .size(px(720.))
-                            .size_range(px(350.)..px(2000.))
-                            .child(
-                                h_resizable("workspace-inner")
-                                    .child(
-                                        resizable_panel()
-                                            .size(px(420.))
-                                            .size_range(px(200.)..px(600.))
-                                            .child(session.plan.clone()),
-                                    )
-                                    .child(
-                                        resizable_panel()
-                                            .size(px(300.))
-                                            .size_range(px(150.)..px(500.))
-                                            .child(session.tasks.clone()),
-                                    ),
-                            ),
-                    ),
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_grow()
+                    .min_h_0()
+                    .bg(bg_color)
+                    .p(px(4.))
+                    .gap(px(4.))
+                    // Nav sidebar
+                    .child(self.nav_sidebar.clone())
+                    // Main resizable area
+                    .child(main_area)
+                    // Plan toggle button on right edge
+                    .child(self.render_plan_toggle(cx)),
             )
             .child(self.status_bar.clone())
     }

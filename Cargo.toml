@@ -26,6 +26,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [patch."https://github.com/zed-industries/zed"]
 gpui = { version = "0.2", registry = "crates-io" }
 
+[patch.crates-io]
+zed-xim = { path = "vendor/zed-xim" }
+
 [profile.release]
 lto = true
 codegen-units = 1

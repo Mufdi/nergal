@@ -7,10 +7,12 @@ use std::thread;
 use std::time::Duration;
 
 use gpui::*;
+use gpui_component::ActiveTheme as _;
 use gpui_ghostty_terminal::view::{TerminalInput, TerminalView};
 use gpui_ghostty_terminal::{TerminalConfig, TerminalSession};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
+use crate::ghostty_config::GhosttyConfig;
 use crate::ui::size_observer::{CellMetrics, TerminalSizeElement};
 
 pub struct TerminalPanel {
@@ -24,8 +26,11 @@ pub struct TerminalPanel {
 
 impl TerminalPanel {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let ghostty = GhosttyConfig::load();
         let config = TerminalConfig {
             update_window_title: false,
+            font_family: ghostty.font_family,
+            font_size: ghostty.font_size,
             ..Default::default()
         };
 
@@ -89,16 +94,16 @@ impl TerminalPanel {
 
         let terminal_focus = focus_handle.clone();
         let terminal_view = cx.new(|_cx| {
-            let session = TerminalSession::new(config).expect("vt init");
+            let session = TerminalSession::new(config.clone()).expect("vt init");
             let tx = stdin_tx.clone();
             let input = TerminalInput::new(move |bytes| {
                 let _ = tx.send(bytes.to_vec());
             });
 
-            TerminalView::new_with_input(session, terminal_focus, input)
+            TerminalView::new_with_config(session, terminal_focus, input, &config)
         });
 
-        let cell_metrics = Rc::new(Self::compute_cell_metrics(window));
+        let cell_metrics = Rc::new(Self::compute_cell_metrics(window, &config));
 
         // Stdout polling — only handles output, no resize
         let view_for_task = terminal_view.clone();
@@ -138,12 +143,24 @@ impl TerminalPanel {
     }
 
     /// Computes terminal cell dimensions from font metrics (once at init).
-    fn compute_cell_metrics(window: &mut Window) -> Option<CellMetrics> {
+    fn compute_cell_metrics(window: &mut Window, config: &TerminalConfig) -> Option<CellMetrics> {
         let mut style = window.text_style();
-        let font = gpui_ghostty_terminal::default_terminal_font();
+        let font = match config.font_family.as_deref() {
+            Some(family) => {
+                let default = gpui_ghostty_terminal::default_terminal_font();
+                let family_owned = family.to_string();
+                let mut f = gpui::font(&family_owned);
+                f.fallbacks = default.fallbacks;
+                f
+            }
+            None => gpui_ghostty_terminal::default_terminal_font(),
+        };
         style.font_family = font.family.clone();
         style.font_features = gpui_ghostty_terminal::default_terminal_font_features();
         style.font_fallbacks = font.fallbacks.clone();
+        if let Some(pt) = config.font_size {
+            style.font_size = gpui::px(pt * 4.0 / 3.0).into();
+        }
 
         let rem_size = window.rem_size();
         let font_size = style.font_size.to_pixels(rem_size);
@@ -174,11 +191,17 @@ impl TerminalPanel {
 }
 
 impl Render for TerminalPanel {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
         div()
             .flex()
             .flex_col()
             .size_full()
+            .ml(px(2.))
+            .rounded(theme.radius)
+            .border_1()
+            .border_color(theme.sidebar.opacity(0.5))
+            .overflow_hidden()
             .child(TerminalSizeElement::new(
                 self.terminal_view.clone(),
                 self.last_panel_size.clone(),

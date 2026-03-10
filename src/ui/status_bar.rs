@@ -59,23 +59,52 @@ impl Render for StatusBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 
+        let is_active = self.mode != "idle";
+
+        let mode_color = if is_active {
+            theme.accent
+        } else {
+            theme.muted_foreground
+        };
+
         let mut bar = div()
             .flex()
             .flex_row()
             .items_center()
             .justify_between()
             .w_full()
-            .h(px(28.))
+            .h(px(26.))
             .px(px(12.))
-            .bg(theme.secondary)
+            .bg(theme.sidebar)
+            .border_t_1()
+            .border_color(theme.muted.opacity(0.3))
+            .text_size(px(11.))
             .child(
-                div()
-                    .text_color(theme.success)
-                    .child(format!("mode: {}", self.mode)),
+                div().flex().flex_row().items_center().gap(px(8.)).child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(
+                            // Status dot
+                            div().w(px(6.)).h(px(6.)).rounded_full().bg(mode_color),
+                        )
+                        .child(
+                            div()
+                                .text_color(mode_color)
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(self.mode.clone()),
+                        ),
+                ),
             );
 
         if let Some(cost) = &self.cost {
-            bar = bar.child(div().text_color(theme.warning).child(cost.display()));
+            bar = bar.child(
+                div()
+                    .text_color(theme.muted_foreground)
+                    .child(cost.display()),
+            );
         }
 
         bar.child(

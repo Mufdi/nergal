@@ -5,6 +5,7 @@ use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::scroll::ScrollableElement as _;
 use gpui_component::text::TextView;
+use gpui_component::{Icon, IconName};
 use similar::{ChangeTag, TextDiff};
 
 use crate::claude::plan::PlanManager;
@@ -25,7 +26,15 @@ pub enum PlanAction {
     Feedback(String),
 }
 
+/// Visibility events for Workspace to show/hide the plan panel.
+#[derive(Debug, Clone)]
+pub enum PlanVisibilityEvent {
+    PlanLoaded,
+    PlanDismissed,
+}
+
 impl EventEmitter<PlanAction> for PlanPanel {}
+impl EventEmitter<PlanVisibilityEvent> for PlanPanel {}
 
 pub struct PlanPanel {
     mode: PlanMode,
@@ -83,6 +92,7 @@ impl PlanPanel {
                 self.mode = PlanMode::View;
                 self.editor_state = None;
                 tracing::info!("plan loaded for review: {}", path.display());
+                cx.emit(PlanVisibilityEvent::PlanLoaded);
                 cx.notify();
             }
             Ok(None) => {
@@ -99,6 +109,7 @@ impl PlanPanel {
         self.mode = PlanMode::View;
         self.editor_state = None;
         self.feedback_state = None;
+        cx.emit(PlanVisibilityEvent::PlanDismissed);
         cx.emit(action);
         cx.notify();
     }
@@ -235,14 +246,14 @@ impl PlanPanel {
             .items_center()
             .justify_between()
             .px(px(12.))
-            .py(px(8.))
-            .border_b_1()
-            .border_color(theme.border)
+            .py(px(10.))
+            .child(Icon::new(IconName::File).size_4().text_color(theme.accent))
             .child(
                 div()
-                    .text_color(theme.accent)
-                    .font_weight(FontWeight::BOLD)
-                    .child("Plan"),
+                    .text_color(theme.foreground)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_size(px(12.))
+                    .child("PLAN"),
             );
 
         if has_content {
@@ -442,7 +453,7 @@ impl PlanPanel {
             .px(px(12.))
             .py(px(8.))
             .border_t_1()
-            .border_color(theme.border)
+            .border_color(theme.muted.opacity(0.3))
             .child(buttons)
             .child(feedback_row)
     }
@@ -455,16 +466,44 @@ impl Render for PlanPanel {
             .flex()
             .flex_col()
             .size_full()
-            .bg(cx.theme().background)
+            .ml(px(2.))
+            .bg(cx.theme().sidebar)
+            .rounded(cx.theme().radius)
+            .overflow_hidden()
             .child(self.render_header(cx));
 
         match self.mode {
             PlanMode::View => {
-                let content = self
-                    .manager
-                    .current_content()
-                    .unwrap_or("No plan loaded.")
-                    .to_string();
+                let content_str = self.manager.current_content();
+
+                if content_str.is_none() {
+                    container = container.child(
+                        div()
+                            .flex_grow()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .justify_center()
+                            .gap(px(8.))
+                            .child(
+                                Icon::new(IconName::File)
+                                    .size_8()
+                                    .text_color(cx.theme().muted_foreground.opacity(0.3)),
+                            )
+                            .child(
+                                div()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .text_size(px(12.))
+                                    .child("No plan loaded"),
+                            ),
+                    );
+                    if self.reviewing {
+                        container = container.child(self.render_actions(window, cx));
+                    }
+                    return container;
+                }
+
+                let content = content_str.unwrap().to_string();
 
                 container = container.child(
                     div()

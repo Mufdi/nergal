@@ -1,3 +1,5 @@
+pub mod activity_log;
+pub mod nav_sidebar;
 pub mod plan_panel;
 pub mod settings_panel;
 pub mod size_observer;

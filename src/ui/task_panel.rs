@@ -1,5 +1,8 @@
+use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::ActiveTheme as _;
+use gpui_component::scroll::ScrollableElement as _;
+use gpui_component::{Icon, IconName};
 
 use crate::tasks::{TaskStatus, TaskStore};
 
@@ -79,53 +82,109 @@ impl Render for TaskPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 
-        let mut root = div()
+        let header = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.))
+            .px(px(12.))
+            .py(px(10.))
+            .child(
+                Icon::new(IconName::CircleCheck)
+                    .size_4()
+                    .text_color(theme.accent),
+            )
+            .child(
+                div()
+                    .text_color(theme.foreground)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_size(px(12.))
+                    .child("TASKS"),
+            )
+            .when(self.store.visible_count() > 0, |this| {
+                this.child(
+                    div()
+                        .px(px(6.))
+                        .py(px(1.))
+                        .rounded(px(8.))
+                        .bg(theme.accent.opacity(0.15))
+                        .text_color(theme.accent)
+                        .text_size(px(10.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(format!("{}", self.store.visible_count())),
+                )
+            });
+
+        let root = div()
             .track_focus(&self.focus_handle)
             .flex()
             .flex_col()
             .size_full()
-            .bg(theme.background)
-            .p(px(8.));
-
-        root = root.child(
-            div()
-                .text_color(theme.accent)
-                .font_weight(FontWeight::BOLD)
-                .mb(px(8.))
-                .child("Tasks"),
-        );
+            .mb(px(2.))
+            .bg(theme.sidebar)
+            .rounded(theme.radius)
+            .overflow_hidden()
+            .child(header);
 
         if self.store.visible_count() == 0 {
             return root.child(
                 div()
-                    .text_color(theme.muted_foreground)
-                    .child("No tasks yet."),
+                    .flex_grow()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(8.))
+                    .child(
+                        Icon::new(IconName::CircleCheck)
+                            .size_8()
+                            .text_color(theme.muted_foreground.opacity(0.3)),
+                    )
+                    .child(
+                        div()
+                            .text_color(theme.muted_foreground)
+                            .text_size(px(12.))
+                            .child("No tasks yet"),
+                    ),
             );
         }
+
+        let mut list = div()
+            .flex()
+            .flex_col()
+            .flex_grow()
+            .overflow_y_scrollbar()
+            .px(px(8.))
+            .gap(px(2.));
 
         for task in self.store.visible_tasks() {
             let id = task.id.clone();
             let is_selected = self.selected.as_deref() == Some(&id);
 
             let (status_icon, status_color) = match task.status {
-                TaskStatus::Pending => ("○", theme.warning),
-                TaskStatus::InProgress => ("◉", theme.primary),
+                TaskStatus::Pending => ("○", theme.muted_foreground),
+                TaskStatus::InProgress => ("●", theme.accent),
                 TaskStatus::Completed => ("✓", theme.success),
                 TaskStatus::Deleted => continue,
             };
 
-            let mut label_text = format!("{status_icon} {}", task.subject);
+            let mut label_text = task.subject.clone();
             if task.status == TaskStatus::InProgress
                 && let Some(ref form) = task.active_form
             {
-                label_text = format!("{status_icon} {form}");
+                label_text = form.clone();
             }
 
             let mut row = div()
-                .px(px(6.))
-                .py(px(4.))
-                .rounded(px(4.))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.))
+                .px(px(8.))
+                .py(px(6.))
+                .rounded(px(6.))
                 .cursor_pointer()
+                .hover(|s| s.bg(theme.list_hover))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, _, _, cx| {
@@ -134,12 +193,28 @@ impl Render for TaskPanel {
                 );
 
             if is_selected {
-                row = row.bg(theme.secondary);
+                row = row.bg(theme.list_active);
             }
 
-            let mut label = div().text_color(status_color).child(label_text);
+            // Status dot
+            row = row.child(
+                div()
+                    .text_color(status_color)
+                    .text_size(px(10.))
+                    .flex_shrink_0()
+                    .child(status_icon),
+            );
+
+            let mut label = div()
+                .flex_grow()
+                .min_w_0()
+                .overflow_x_hidden()
+                .text_color(theme.sidebar_foreground)
+                .text_size(px(12.))
+                .child(label_text);
+
             if task.status == TaskStatus::Completed {
-                label = label.line_through();
+                label = label.line_through().text_color(theme.muted_foreground);
             }
 
             row = row.child(label);
@@ -147,33 +222,34 @@ impl Render for TaskPanel {
             if !task.blocked_by.is_empty() {
                 row = row.child(
                     div()
-                        .text_color(theme.muted_foreground)
-                        .text_size(px(11.))
-                        .child(format!("blocked by: {}", task.blocked_by.join(", "))),
+                        .text_color(theme.warning.opacity(0.7))
+                        .text_size(px(9.))
+                        .flex_shrink_0()
+                        .child("blocked"),
                 );
             }
 
-            root = root.child(row);
+            list = list.child(row);
 
             if is_selected && !task.description.is_empty() {
-                root = root.child(
+                list = list.child(
                     div()
-                        .mx(px(12.))
+                        .ml(px(26.))
                         .mb(px(4.))
                         .px(px(8.))
                         .py(px(6.))
-                        .rounded(px(4.))
+                        .rounded(px(6.))
                         .bg(theme.secondary)
                         .child(
                             div()
                                 .text_color(theme.muted_foreground)
-                                .text_size(px(12.))
+                                .text_size(px(11.))
                                 .child(task.description.clone()),
                         ),
                 );
             }
         }
 
-        root
+        root.child(list)
     }
 }

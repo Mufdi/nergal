@@ -4,6 +4,7 @@ mod app;
 mod claude;
 #[allow(dead_code)]
 mod config;
+mod ghostty_config;
 #[allow(dead_code)]
 mod hooks;
 #[allow(dead_code)]
@@ -26,8 +27,8 @@ use gpui_ghostty_terminal::view::{
 use crate::app::AppState;
 use crate::config::Config;
 use crate::workspace::{
-    AcceptPlan, CloseTab, FocusPlan, FocusTasks, FocusTerminal, NewTab, NextTab, OpenSettings,
-    PrevTab, RejectPlan, ToggleTheme,
+    AcceptPlan, CloseTab, FocusActivity, FocusPlan, FocusTasks, FocusTerminal, NewTab, NextTab,
+    OpenSettings, PrevTab, RejectPlan, TogglePlan, ToggleSidebar, ToggleTheme,
 };
 
 use gpui_component::ActiveTheme as _;
@@ -121,6 +122,9 @@ fn main() {
             KeyBinding::new("ctrl-1", FocusTerminal, Some("Workspace")),
             KeyBinding::new("ctrl-2", FocusPlan, Some("Workspace")),
             KeyBinding::new("ctrl-3", FocusTasks, Some("Workspace")),
+            KeyBinding::new("ctrl-4", FocusActivity, Some("Workspace")),
+            KeyBinding::new("ctrl-p", TogglePlan, Some("Workspace")),
+            KeyBinding::new("ctrl-b", ToggleSidebar, Some("Workspace")),
             KeyBinding::new("ctrl-y", AcceptPlan, Some("Workspace")),
             KeyBinding::new("ctrl-n", RejectPlan, Some("Workspace")),
             KeyBinding::new("ctrl-comma", OpenSettings, Some("Workspace")),
@@ -144,6 +148,24 @@ fn main() {
             ThemeMode::Dark
         };
         Theme::change(initial_theme, None, cx);
+
+        let t = Theme::global_mut(cx);
+        let orange = gpui::hsla(25. / 360., 0.95, 0.53, 1.0);
+        t.accent = orange;
+        t.accent_foreground = gpui::hsla(0., 0., 0.98, 1.0);
+        t.primary = orange;
+        t.primary_foreground = gpui::hsla(0., 0., 0.98, 1.0);
+        t.primary_hover = gpui::hsla(25. / 360., 0.95, 0.48, 1.0);
+        t.primary_active = gpui::hsla(25. / 360., 0.90, 0.40, 1.0);
+        t.sidebar_accent = gpui::hsla(25. / 360., 0.40, 0.16, 1.0);
+        t.sidebar_accent_foreground = gpui::hsla(25. / 360., 0.90, 0.70, 1.0);
+        t.sidebar = gpui::hsla(0., 0., 0.07, 1.0);
+        t.sidebar_foreground = gpui::hsla(0., 0., 0.90, 1.0);
+        // Transparent border hides resize-handle dividers — panel separation
+        // comes from the background "sea" visible through gaps (Islands style)
+        t.border = gpui::hsla(0., 0., 0., 0.);
+        t.sidebar_border = gpui::hsla(0., 0., 0., 0.);
+        t.drag_border = gpui::hsla(25. / 360., 0.80, 0.50, 0.6);
 
         cx.open_window(
             WindowOptions {

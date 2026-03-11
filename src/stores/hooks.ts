@@ -3,6 +3,7 @@ import { listen } from "@/lib/tauri";
 import type { HookEvent, SessionInfo, CostSummary, Task, ActivityEntry } from "@/lib/types";
 import { sessionsAtom, activeSessionIndexAtom, sessionModeAtom, costSummaryAtom } from "./session";
 import { taskMapAtom } from "./tasks";
+import { fileMapAtom, type ModifiedFile } from "./files";
 import { planContentAtom, planOriginalAtom, planPathAtom, planDiffAtom, planVisibleAtom, planModeAtom } from "./plan";
 import { activityAtom } from "./activity";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -109,6 +110,24 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
         ...prev,
         [payload.session_id]: payload.tasks,
       }));
+    }),
+  );
+
+  // File modifications (emitted by backend after Write/Edit/MultiEdit)
+  unlisteners.push(
+    await listen<{ session_id: string; path: string; tool: string }>("files:modified", (payload) => {
+      const entry: ModifiedFile = {
+        path: payload.path,
+        tool: payload.tool,
+        timestamp: Date.now(),
+      };
+      set(fileMapAtom, (prev) => {
+        const existing = prev[payload.session_id] ?? [];
+        // Dedupe by path — keep latest
+        const filtered = existing.filter((f) => f.path !== payload.path);
+        return { ...prev, [payload.session_id]: [...filtered, entry] };
+      });
+      set(activityAtom, createActivity("file_modified", `Modified: ${payload.path.split("/").pop() ?? payload.path}`, payload.path));
     }),
   );
 

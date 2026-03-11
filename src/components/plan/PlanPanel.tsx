@@ -1,111 +1,75 @@
-import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { planContentAtom, planModeAtom, planVisibleAtom } from "@/stores/plan";
-import { terminalIdAtom } from "@/stores/session";
-import { toastsAtom } from "@/stores/toast";
-import { invoke } from "@/lib/tauri";
+import { useAtom } from "jotai";
+import { planContentAtom, planModeAtom } from "@/stores/plan";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import type { PlanMode } from "@/lib/types";
 import { MarkdownView } from "./MarkdownView";
 import { PlanEditor } from "./PlanEditor";
-import { DiffView } from "./DiffView";
 
-const MODE_TABS: { mode: PlanMode; label: string }[] = [
-  { mode: "view", label: "View" },
-  { mode: "edit", label: "Edit" },
-  { mode: "diff", label: "Diff" },
-];
+interface PlanPanelProps {
+  onCollapse?: () => void;
+}
 
-export function PlanPanel() {
+export function PlanPanel({ onCollapse }: PlanPanelProps) {
   const [mode, setMode] = useAtom(planModeAtom);
-  const content = useAtom(planContentAtom)[0];
-  const setVisible = useSetAtom(planVisibleAtom);
-  const addToast = useSetAtom(toastsAtom);
-  const terminalId = useAtomValue(terminalIdAtom);
+  const [content] = useAtom(planContentAtom);
 
-  function writeToPty(text: string) {
-    if (!terminalId) return;
-    invoke("pty_write", { id: terminalId, data: text }).catch((err: unknown) => {
-      console.error("pty_write failed:", err);
-    });
-  }
+  const hasPlan = content.length > 0;
 
-  function handleApprove() {
-    invoke("approve_plan", {})
-      .then(() => {
-        writeToPty("y\n");
-        addToast({ message: "Plan approved", type: "success" });
-        setVisible(false);
-      })
-      .catch((err: unknown) => {
-        addToast({ message: `Approve failed: ${String(err)}`, type: "error" });
-      });
-  }
-
-  function handleReject() {
-    const feedback = window.prompt("Feedback for Claude:");
-    if (feedback === null) return;
-    invoke("reject_plan", {})
-      .then(() => {
-        // Write "n" to reject, then the feedback on the next prompt
-        writeToPty("n\n");
-        if (feedback.trim()) {
-          // Small delay to let Claude process the rejection before sending feedback
-          setTimeout(() => writeToPty(feedback + "\n"), 500);
-        }
-        addToast({ message: "Plan rejected — feedback sent", type: "info" });
-        setVisible(false);
-      })
-      .catch((err: unknown) => {
-        addToast({ message: `Reject failed: ${String(err)}`, type: "error" });
-      });
+  if (!hasPlan) {
+    return (
+      <section className="flex h-full w-full flex-col" aria-label="Plan">
+        <header className="flex h-9 shrink-0 items-center justify-between border-b border-border/50 px-3">
+          <span className="text-xs font-medium text-muted-foreground">Plan</span>
+          {onCollapse && <CollapseButton onClick={onCollapse} side="right" />}
+        </header>
+        <div className="flex flex-1 items-center justify-center">
+          <span className="text-xs text-muted-foreground">No plan yet</span>
+        </div>
+      </section>
+    );
   }
 
   return (
-    <section className="flex h-full flex-col border-l border-border bg-surface" aria-label="Plan">
-      <header className="flex h-8 items-center justify-between border-b border-border px-2">
-        <nav className="flex gap-0" aria-label="Plan view modes">
-          {MODE_TABS.map(({ mode: m, label }) => (
-            <button
-              key={m}
-              onClick={() => setMode(m)}
-              className={`px-2 py-1 text-xs ${
-                mode === m ? "text-accent" : "text-text-muted hover:text-text"
-              }`}
-              aria-current={mode === m ? "page" : undefined}
-            >
-              {label}
-            </button>
-          ))}
-        </nav>
+    <section className="flex h-full w-full flex-col" aria-label="Plan">
+      <Tabs
+        value={mode}
+        onValueChange={(value) => setMode(value as PlanMode)}
+        className="flex h-full flex-col gap-0"
+      >
+        <header className="flex h-9 shrink-0 items-center justify-between border-b border-border/50 px-2">
+          <TabsList variant="line" className="h-full">
+            <TabsTrigger value="view" className="text-xs">View</TabsTrigger>
+            <TabsTrigger value="edit" className="text-xs">Edit</TabsTrigger>
+          </TabsList>
+          {onCollapse && <CollapseButton onClick={onCollapse} side="right" />}
+        </header>
 
-        <button
-          onClick={() => setVisible(false)}
-          className="flex h-5 w-5 items-center justify-center text-text-muted hover:text-text"
-          aria-label="Close plan panel"
-        >
-          x
-        </button>
-      </header>
+        <TabsContent value="view" className="flex-1 overflow-y-auto">
+          <MarkdownView content={content} />
+        </TabsContent>
 
-      <div className="flex-1 overflow-y-auto">
-        {mode === "view" && <MarkdownView content={content} />}
-        {mode === "edit" && <PlanEditor />}
-        {mode === "diff" && <DiffView />}
-      </div>
-
-      <footer className="flex items-center gap-1 border-t border-border p-2">
-        <button
-          onClick={handleApprove}
-          className="flex-1 bg-success/20 px-2 py-1 text-xs text-success hover:bg-success/30"
-        >
-          Approve
-        </button>
-        <button
-          onClick={handleReject}
-          className="flex-1 bg-warning/20 px-2 py-1 text-xs text-warning hover:bg-warning/30"
-        >
-          Reject
-        </button>
-      </footer>
+        <TabsContent value="edit" className="flex-1 overflow-hidden">
+          <PlanEditor />
+        </TabsContent>
+      </Tabs>
     </section>
+  );
+}
+
+function CollapseButton({ onClick, side }: { onClick: () => void; side: "left" | "right" }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+      aria-label={side === "right" ? "Collapse panel" : "Collapse sidebar"}
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        {side === "right" ? (
+          <polyline points="9 18 15 12 9 6" />
+        ) : (
+          <polyline points="15 18 9 12 15 6" />
+        )}
+      </svg>
+    </button>
   );
 }

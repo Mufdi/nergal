@@ -23,7 +23,7 @@ export function TerminalPanel({ cwd }: TerminalPanelProps) {
   }, [fit]);
 
   return (
-    <div ref={containerRef} className="flex h-full w-full flex-col overflow-hidden bg-[#1a1a2e]">
+    <div ref={containerRef} className="flex h-full w-full flex-col overflow-hidden bg-card">
       <div ref={terminalRef} className="h-full w-full" />
     </div>
   );

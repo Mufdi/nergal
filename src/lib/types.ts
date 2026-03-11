@@ -44,13 +44,19 @@ export interface SessionInfo {
   cwd?: string;
 }
 
+export interface WorkspaceInfo {
+  path: string;
+  name: string;
+  sessions: SessionInfo[];
+}
+
 export type ApprovalOption =
   | "accept_clear_context"
   | "accept_auto_edits"
   | "accept_manual_edits"
   | { feedback: string };
 
-export type PlanMode = "view" | "edit" | "diff";
+export type PlanMode = "view" | "edit";
 
 export interface ActivityEntry {
   id: string;

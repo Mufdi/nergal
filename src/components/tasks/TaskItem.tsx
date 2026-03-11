@@ -1,54 +1,86 @@
 import { useState } from "react";
 import type { Task } from "@/lib/types";
+import { Badge } from "@/components/ui/badge";
 
 interface TaskItemProps {
   task: Task;
 }
 
-const STATUS_INDICATORS: Record<Task["status"], { icon: string; color: string }> = {
-  pending: { icon: "\u25CB", color: "text-text-muted" },
-  in_progress: { icon: "\u25CF", color: "text-accent" },
-  completed: { icon: "\u2713", color: "text-success" },
+const STATUS_DOT_COLORS: Record<Task["status"], string> = {
+  pending: "bg-muted-foreground",
+  in_progress: "bg-orange-500",
+  completed: "bg-green-500",
+};
+
+const STATUS_BADGE_VARIANT: Record<Task["status"], "outline" | "default" | "secondary"> = {
+  pending: "outline",
+  in_progress: "default",
+  completed: "secondary",
+};
+
+const STATUS_LABELS: Record<Task["status"], string> = {
+  pending: "Pending",
+  in_progress: "In Progress",
+  completed: "Done",
 };
 
 export function TaskItem({ task }: TaskItemProps) {
   const [expanded, setExpanded] = useState(false);
-  const { icon, color } = STATUS_INDICATORS[task.status];
 
   return (
-    <div className="border-b border-border">
+    <div className="group">
       <button
         onClick={() => setExpanded((prev) => !prev)}
-        className="flex w-full items-start gap-2 px-3 py-2 text-left text-sm hover:bg-surface-raised"
+        className="flex w-full items-start gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors hover:bg-muted/50"
         aria-expanded={expanded}
       >
-        <span className={`mt-0.5 flex-shrink-0 font-mono ${color}`} aria-hidden="true">
-          {icon}
-        </span>
-        <span className="flex-1 text-text">{task.subject}</span>
-        {task.blocked_by && task.blocked_by.length > 0 && (
-          <span className="text-xs text-warning" title="Blocked">
-            blocked
-          </span>
-        )}
+        <span
+          className={`mt-1.5 size-2 flex-shrink-0 rounded-full ${STATUS_DOT_COLORS[task.status]}`}
+          aria-hidden="true"
+        />
+
+        <div className="min-w-0 flex-1">
+          <span className="text-sm text-foreground">{task.subject}</span>
+          {task.description && (
+            <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
+              {task.description}
+            </p>
+          )}
+        </div>
+
+        <Badge
+          variant={STATUS_BADGE_VARIANT[task.status]}
+          className="mt-0.5 h-4 flex-shrink-0 px-1.5 text-[10px]"
+        >
+          {STATUS_LABELS[task.status]}
+        </Badge>
       </button>
 
       {expanded && (
-        <div className="border-t border-border bg-surface-raised px-3 py-2">
+        <div className="ml-5 mr-2.5 mb-2 space-y-1.5 rounded-md bg-muted/30 px-3 py-2">
           {task.description ? (
-            <p className="text-xs text-text-muted">{task.description}</p>
+            <p className="text-xs text-muted-foreground">{task.description}</p>
           ) : (
-            <p className="text-xs text-text-muted italic">No description</p>
+            <p className="text-xs italic text-muted-foreground">No description</p>
           )}
           {task.active_form && (
-            <p className="mt-1 text-xs text-text-muted">
-              Form: <span className="text-text">{task.active_form}</span>
+            <p className="text-xs text-muted-foreground">
+              Form: <span className="text-foreground">{task.active_form}</span>
             </p>
           )}
           {task.blocked_by && task.blocked_by.length > 0 && (
-            <p className="mt-1 text-xs text-text-muted">
-              Blocked by: <span className="text-warning">{task.blocked_by.join(", ")}</span>
-            </p>
+            <div className="flex flex-wrap items-center gap-1">
+              <span className="text-xs text-muted-foreground">Blocked by:</span>
+              {task.blocked_by.map((blocker) => (
+                <Badge
+                  key={blocker}
+                  variant="destructive"
+                  className="h-4 px-1.5 text-[10px]"
+                >
+                  {blocker}
+                </Badge>
+              ))}
+            </div>
           )}
         </div>
       )}

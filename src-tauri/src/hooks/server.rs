@@ -176,32 +176,31 @@ fn process_event(
             tracing::debug!("PreToolUse: tool_name={tool_name}");
 
             // ExitPlanMode → load plan and emit plan:ready
-            if tool_name == "ExitPlanMode" {
-                if let Ok(mut mgr) = plan_manager.lock() {
-                    // Try to find the plan path from tool_input or find latest
-                    let plan_path = tool_input
-                        .get("plan_path")
-                        .and_then(|v| v.as_str())
-                        .map(std::path::PathBuf::from)
-                        .or_else(|| mgr.find_latest_plan().ok().flatten());
+            if tool_name == "ExitPlanMode"
+                && let Ok(mut mgr) = plan_manager.lock()
+            {
+                let plan_path = tool_input
+                    .get("plan_path")
+                    .and_then(|v| v.as_str())
+                    .map(std::path::PathBuf::from)
+                    .or_else(|| mgr.find_latest_plan().ok().flatten());
 
-                    if let Some(path) = plan_path {
-                        if let Ok(()) = mgr.load_plan(&path) {
-                            #[derive(Clone, serde::Serialize)]
-                            struct PlanReady {
-                                path: String,
-                                content: String,
-                            }
-                            if let Some(content) = mgr.current_content() {
-                                let _ = app.emit(
-                                    "plan:ready",
-                                    PlanReady {
-                                        path: path.display().to_string(),
-                                        content: content.to_string(),
-                                    },
-                                );
-                            }
-                        }
+                if let Some(path) = plan_path
+                    && let Ok(()) = mgr.load_plan(&path)
+                {
+                    #[derive(Clone, serde::Serialize)]
+                    struct PlanReady {
+                        path: String,
+                        content: String,
+                    }
+                    if let Some(content) = mgr.current_content() {
+                        let _ = app.emit(
+                            "plan:ready",
+                            PlanReady {
+                                path: path.display().to_string(),
+                                content: content.to_string(),
+                            },
+                        );
                     }
                 }
             }
@@ -217,20 +216,64 @@ fn process_event(
         } => {
             tracing::debug!("PostToolUse: tool_name={tool_name}");
             process_task_event(app, tool_name, tool_input, session_id, task_store);
+            process_file_event(app, tool_name, tool_input, session_id);
         }
 
         HookEvent::Stop {
-            transcript_path, ..
+            transcript_path: Some(path),
+            ..
         } => {
-            // Parse cost from transcript and emit
-            if let Some(path) = transcript_path {
-                let cost = crate::claude::cost::parse_cost_from_transcript(&std::path::PathBuf::from(path));
-                let _ = app.emit("cost:update", &cost);
-            }
+            let cost =
+                crate::claude::cost::parse_cost_from_transcript(&std::path::PathBuf::from(path));
+            let _ = app.emit("cost:update", &cost);
         }
 
         _ => {}
     }
+}
+
+/// Extracts file_path from Write/Edit/MultiEdit tools and emits files:modified.
+fn process_file_event(
+    app: &AppHandle,
+    tool_name: &str,
+    tool_input: &serde_json::Value,
+    session_id: &str,
+) {
+    let is_file_tool = matches!(
+        tool_name,
+        "Write" | "Edit" | "MultiEdit" | "NotebookEdit" | "Create"
+    );
+    if !is_file_tool {
+        return;
+    }
+
+    // Claude Code uses "file_path" or "filePath" depending on the tool
+    let file_path = tool_input
+        .get("file_path")
+        .or_else(|| tool_input.get("filePath"))
+        .or_else(|| tool_input.get("path"))
+        .and_then(|v| v.as_str());
+
+    let Some(path) = file_path else {
+        return;
+    };
+
+    #[derive(Clone, serde::Serialize)]
+    struct FileModified {
+        session_id: String,
+        path: String,
+        tool: String,
+    }
+
+    tracing::debug!("file modified: {path} by {tool_name}");
+    let _ = app.emit(
+        "files:modified",
+        FileModified {
+            session_id: session_id.to_string(),
+            path: path.to_string(),
+            tool: tool_name.to_string(),
+        },
+    );
 }
 
 /// Routes task-related tool events to the TaskStore.

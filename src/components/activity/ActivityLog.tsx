@@ -1,61 +1,75 @@
 import { useEffect, useRef } from "react";
 import { useAtomValue } from "jotai";
 import { activityAtom } from "@/stores/activity";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import type { ActivityEntry } from "@/lib/types";
 
-const TYPE_STYLES: Record<ActivityEntry["type"], { icon: string; color: string }> = {
-  tool_use: { icon: "\u2699", color: "text-accent" },
-  file_modified: { icon: "\u25A0", color: "text-warning" },
-  session: { icon: "\u25C6", color: "text-success" },
-  task: { icon: "\u25CB", color: "text-text-muted" },
-  plan: { icon: "\u25B7", color: "text-accent" },
-  error: { icon: "!", color: "text-danger" },
+const TYPE_DOT_COLORS: Record<ActivityEntry["type"], string> = {
+  tool_use: "bg-muted-foreground",
+  session: "bg-orange-500",
+  task: "bg-green-500",
+  plan: "bg-blue-500",
+  error: "bg-destructive",
+  file_modified: "bg-yellow-500",
 };
 
-function formatTime(ts: number): string {
-  const d = new Date(ts);
-  return d.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+function formatRelativeTime(ts: number): string {
+  const delta = Math.floor((Date.now() - ts) / 1000);
+  if (delta < 5) return "now";
+  if (delta < 60) return `${delta}s ago`;
+  if (delta < 3600) return `${Math.floor(delta / 60)}m ago`;
+  return `${Math.floor(delta / 3600)}h ago`;
 }
 
 export function ActivityLog() {
   const entries = useAtomValue(activityAtom);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [entries.length]);
 
   return (
     <section className="flex h-full flex-col" aria-label="Activity log">
-      <header className="flex h-8 items-center border-b border-border px-3">
-        <h2 className="text-xs font-medium text-text-muted">Activity</h2>
+      <header className="flex h-9 items-center border-b border-border px-3">
+        <h2 className="text-xs font-medium text-muted-foreground">Activity</h2>
       </header>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
-        {entries.length === 0 ? (
-          <p className="px-3 py-4 text-center text-xs text-text-muted">No activity</p>
-        ) : (
-          entries.map((entry) => {
-            const { icon, color } = TYPE_STYLES[entry.type];
-            return (
-              <div key={entry.id} className="flex items-start gap-2 border-b border-border/50 px-3 py-1.5">
-                <span className={`mt-px flex-shrink-0 text-xs ${color}`} aria-hidden="true">
-                  {icon}
-                </span>
+      {entries.length === 0 ? (
+        <div className="flex flex-1 items-center justify-center">
+          <p className="text-xs text-muted-foreground">No activity</p>
+        </div>
+      ) : (
+        <ScrollArea className="flex-1">
+          <div className="space-y-0.5 px-2 py-1">
+            {entries.map((entry) => (
+              <div
+                key={entry.id}
+                className="flex items-start gap-2 rounded px-1.5 py-1"
+              >
+                <span
+                  className={`mt-1.5 size-1.5 flex-shrink-0 rounded-full ${TYPE_DOT_COLORS[entry.type]}`}
+                  aria-hidden="true"
+                />
+
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs text-text">{entry.message}</p>
+                  <p className="text-xs text-foreground">{entry.message}</p>
                   {entry.detail && (
-                    <p className="truncate text-[10px] text-text-muted">{entry.detail}</p>
+                    <p className="truncate text-[10px] text-muted-foreground">
+                      {entry.detail}
+                    </p>
                   )}
                 </div>
-                <time className="flex-shrink-0 text-[10px] text-text-muted">{formatTime(entry.timestamp)}</time>
+
+                <time className="mt-px flex-shrink-0 text-[10px] text-muted-foreground">
+                  {formatRelativeTime(entry.timestamp)}
+                </time>
               </div>
-            );
-          })
-        )}
-      </div>
+            ))}
+            <div ref={bottomRef} />
+          </div>
+        </ScrollArea>
+      )}
     </section>
   );
 }

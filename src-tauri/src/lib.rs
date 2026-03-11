@@ -1,9 +1,9 @@
 mod claude;
 mod commands;
-mod config;
-mod hooks;
+pub mod config;
+pub mod hooks;
 mod pty;
-mod setup;
+pub mod setup;
 mod tasks;
 
 use std::sync::{Arc, Mutex};

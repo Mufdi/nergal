@@ -1,11 +1,15 @@
 import { useAtomValue } from "jotai";
-import { activeSessionAtom, sessionModeAtom, costSummaryAtom } from "@/stores/session";
-
-interface StatusBarProps {
-  hasPlan: boolean;
-  planVisible: boolean;
-  onTogglePlan: () => void;
-}
+import {
+  activeSessionAtom,
+  sessionModeAtom,
+  costSummaryAtom,
+} from "@/stores/session";
+import { Badge } from "@/components/ui/badge";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip";
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -13,52 +17,74 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
-export function StatusBar({ hasPlan, planVisible, onTogglePlan }: StatusBarProps) {
+const modeColors: Record<string, string> = {
+  idle: "bg-muted-foreground",
+  thinking: "bg-yellow-500",
+  tool: "bg-blue-500",
+  responding: "bg-green-500",
+};
+
+export function StatusBar() {
   const session = useAtomValue(activeSessionAtom);
   const mode = useAtomValue(sessionModeAtom);
   const cost = useAtomValue(costSummaryAtom);
 
+  const dotColor = modeColors[mode] ?? "bg-muted-foreground";
+
   return (
     <footer
-      className="flex h-6 items-center justify-between border-t border-border bg-surface px-3 text-xs"
+      className="flex h-7 items-center justify-between border-t border-border bg-background px-3 text-xs"
       role="status"
     >
-      <div className="flex items-center gap-3">
-        <span
-          className={`flex items-center gap-1 ${
-            mode === "idle" ? "text-text-muted" : "text-accent"
-          }`}
+      {/* Left: mode indicator */}
+      <div className="flex items-center gap-2">
+        <Badge
+          variant="secondary"
+          className="h-4 gap-1 px-1.5 text-[10px]"
         >
           <span
-            className={`inline-block h-1.5 w-1.5 ${
-              mode === "idle" ? "bg-text-muted" : "bg-success"
-            }`}
+            className={`inline-block size-1.5 rounded-full ${dotColor}`}
             aria-hidden="true"
           />
           {mode}
-        </span>
+        </Badge>
+      </div>
 
+      {/* Center: session ID */}
+      <div className="flex items-center">
         {session && (
-          <span className="text-text-muted" title={session.id}>
-            {session.id.slice(0, 8)}
-          </span>
+          <Tooltip>
+            <TooltipTrigger className="cursor-default text-muted-foreground">
+              {session.id.slice(0, 8)}
+            </TooltipTrigger>
+            <TooltipContent>{session.id}</TooltipContent>
+          </Tooltip>
         )}
       </div>
 
-      <div className="flex items-center gap-3 text-text-muted">
-        {hasPlan && (
-          <button
-            onClick={onTogglePlan}
-            className={`hover:text-text ${planVisible ? "text-accent" : ""}`}
-            title={planVisible ? "Hide plan" : "Show plan"}
-          >
-            Plan
-          </button>
-        )}
-        <span title="Input tokens">in:{formatTokens(cost.input_tokens)}</span>
-        <span title="Output tokens">out:{formatTokens(cost.output_tokens)}</span>
-        {cost.cache_read > 0 && <span title="Cache read">cr:{formatTokens(cost.cache_read)}</span>}
-        <span className="text-accent" title="Total cost">${cost.total_usd.toFixed(4)}</span>
+      {/* Right: tokens, cost */}
+      <div className="flex items-center gap-2 text-muted-foreground">
+        <Tooltip>
+          <TooltipTrigger className="cursor-default">
+            <span className="flex items-center gap-1.5">
+              <span>in:{formatTokens(cost.input_tokens)}</span>
+              <span>out:{formatTokens(cost.output_tokens)}</span>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            <div className="flex flex-col gap-0.5 text-left">
+              <span>Input: {cost.input_tokens.toLocaleString()}</span>
+              <span>Output: {cost.output_tokens.toLocaleString()}</span>
+              {cost.cache_read > 0 && (
+                <span>Cache read: {cost.cache_read.toLocaleString()}</span>
+              )}
+            </div>
+          </TooltipContent>
+        </Tooltip>
+
+        <span className="text-foreground font-medium">
+          ${cost.total_usd.toFixed(4)}
+        </span>
       </div>
     </footer>
   );

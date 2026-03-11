@@ -2,9 +2,22 @@ import { useAtom } from "jotai";
 import { configAtom } from "@/stores/config";
 import { invoke } from "@/lib/tauri";
 import type { Config } from "@/lib/types";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
 
-interface SettingsPanelProps {
-  onClose: () => void;
+interface SettingsProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
 const FIELDS: { key: keyof Config; label: string; placeholder: string }[] = [
@@ -15,7 +28,7 @@ const FIELDS: { key: keyof Config; label: string; placeholder: string }[] = [
   { key: "theme_mode", label: "Theme", placeholder: "dark" },
 ];
 
-export function SettingsPanel({ onClose }: SettingsPanelProps) {
+export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
   const [config, setConfig] = useAtom(configAtom);
 
   function handleChange(key: keyof Config, value: string) {
@@ -24,64 +37,45 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
 
   function handleSave() {
     invoke("save_config", { config }).catch(() => {});
-    onClose();
+    onOpenChange(false);
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Settings"
-    >
-      <div className="w-full max-w-md border border-border bg-surface-raised">
-        <header className="flex items-center justify-between border-b border-border px-4 py-3">
-          <h2 className="text-sm font-medium text-text">Settings</h2>
-          <button
-            onClick={onClose}
-            className="text-text-muted hover:text-text"
-            aria-label="Close settings"
-          >
-            x
-          </button>
-        </header>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Settings</DialogTitle>
+          <DialogDescription>
+            Configure paths and preferences for cluihud.
+          </DialogDescription>
+        </DialogHeader>
 
-        <div className="space-y-3 px-4 py-4">
+        <Separator />
+
+        <div className="space-y-4">
           {FIELDS.map(({ key, label, placeholder }) => (
-            <div key={key}>
-              <label htmlFor={`setting-${key}`} className="mb-1 block text-xs text-text-muted">
-                {label}
-              </label>
-              <input
+            <div key={key} className="grid gap-2">
+              <Label htmlFor={`setting-${key}`}>{label}</Label>
+              <Input
                 id={`setting-${key}`}
                 type="text"
                 value={config[key]}
                 onChange={(e) => handleChange(key, e.target.value)}
                 placeholder={placeholder}
-                className="w-full border border-border bg-surface px-2 py-1.5 text-xs text-text outline-none focus:border-accent"
               />
             </div>
           ))}
         </div>
 
-        <footer className="flex justify-end gap-2 border-t border-border px-4 py-3">
-          <button
-            onClick={onClose}
-            className="px-3 py-1 text-xs text-text-muted hover:text-text"
-          >
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            className="bg-accent/20 px-3 py-1 text-xs text-accent hover:bg-accent/30"
-          >
+          </Button>
+          <Button onClick={handleSave}>
             Save
-          </button>
-        </footer>
-      </div>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

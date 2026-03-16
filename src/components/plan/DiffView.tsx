@@ -1,5 +1,5 @@
 import { useAtomValue } from "jotai";
-import { planDiffAtom } from "@/stores/plan";
+import { activePlanAtom } from "@/stores/plan";
 
 const LINE_STYLES = {
   addition: "bg-success/15 text-success",
@@ -14,7 +14,7 @@ const LINE_PREFIX = {
 } as const;
 
 export function DiffView() {
-  const diff = useAtomValue(planDiffAtom);
+  const { diff } = useAtomValue(activePlanAtom);
 
   if (diff.length === 0) {
     return (

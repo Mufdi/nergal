@@ -80,7 +80,7 @@ impl TaskStore {
         if let Some(status_str) = input.get("status").and_then(|v| v.as_str()) {
             task.status = match status_str {
                 "in_progress" => TaskStatus::InProgress,
-                "completed" => TaskStatus::Completed,
+                "completed" | "done" => TaskStatus::Completed,
                 "pending" => TaskStatus::Pending,
                 "deleted" => TaskStatus::Deleted,
                 _ => task.status.clone(),
@@ -124,6 +124,21 @@ impl TaskStore {
 
     pub fn get(&self, id: &str) -> Option<&Task> {
         self.tasks.iter().find(|t| t.id == id)
+    }
+
+    /// Import an existing task (from DB). Updates next_id if needed.
+    pub fn import_task(&mut self, task: Task) {
+        if let Ok(id_num) = task.id.parse::<u32>()
+            && id_num >= self.next_id
+        {
+            self.next_id = id_num + 1;
+        }
+        self.tasks.push(task);
+    }
+
+    /// All tasks including deleted (for DB persistence).
+    pub fn all_tasks(&self) -> impl Iterator<Item = &Task> {
+        self.tasks.iter()
     }
 
     pub fn is_empty(&self) -> bool {

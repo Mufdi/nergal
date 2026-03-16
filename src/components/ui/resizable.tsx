@@ -12,7 +12,7 @@ function ResizablePanelGroup({
     <ResizablePrimitive.Group
       data-slot="resizable-panel-group"
       className={cn(
-        "flex h-full w-full aria-[orientation=vertical]:flex-col",
+        "flex h-full w-full",
         className
       )}
       {...props}
@@ -32,12 +32,13 @@ function ResizableHandle({
     <ResizablePrimitive.Separator
       data-slot="resizable-handle"
       className={cn(
-        "group relative flex w-1.5 shrink-0 items-center justify-center",
-        "cursor-col-resize select-none",
-        "focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-hidden",
+        "group relative flex shrink-0 items-center justify-center",
+        "aria-[orientation=vertical]:w-1.5 aria-[orientation=vertical]:cursor-col-resize",
+        "aria-[orientation=horizontal]:h-1.5 aria-[orientation=horizontal]:w-full aria-[orientation=horizontal]:cursor-row-resize",
+        "select-none outline-none",
         className
       )}
-      style={{ background: "transparent" }}
+      style={{ background: "transparent", outline: "none" }}
       {...props}
     />
   )

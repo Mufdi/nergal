@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { workspacesAtom, activeSessionIndexAtom, sessionsAtom } from "@/stores/session";
+import { workspacesAtom, activeSessionIdAtom } from "@/stores/workspace";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -15,10 +15,13 @@ interface NavSidebarProps {
 export function NavSidebar({ onOpenSettings }: NavSidebarProps) {
   const [expanded, setExpanded] = useState(false);
   const workspaces = useAtomValue(workspacesAtom);
-  const sessions = useAtomValue(sessionsAtom);
-  const setActiveIndex = useSetAtom(activeSessionIndexAtom);
+  const setActiveSessionId = useSetAtom(activeSessionIdAtom);
 
-  const activeCount = sessions.filter((s) => s.active).length;
+  const totalSessions = workspaces.reduce((acc, ws) => acc + ws.sessions.length, 0);
+  const activeCount = workspaces.reduce(
+    (acc, ws) => acc + ws.sessions.filter((s) => s.status === "running").length,
+    0,
+  );
 
   if (expanded) {
     return (
@@ -48,7 +51,7 @@ export function NavSidebar({ onOpenSettings }: NavSidebarProps) {
             </div>
           ) : (
             workspaces.map((ws) => (
-              <div key={ws.path} className="px-1.5 py-0.5">
+              <div key={ws.id} className="px-1.5 py-0.5">
                 {/* Workspace name */}
                 <div className="flex items-center gap-1.5 rounded-md px-2 py-1">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-muted-foreground">
@@ -58,23 +61,20 @@ export function NavSidebar({ onOpenSettings }: NavSidebarProps) {
                 </div>
 
                 {/* Sessions */}
-                {ws.sessions.map((s) => {
-                  const globalIndex = sessions.findIndex((gs) => gs.id === s.id);
-                  return (
-                    <button
-                      key={s.id}
-                      onClick={() => setActiveIndex(globalIndex)}
-                      className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 pl-6 text-left transition-colors hover:bg-accent"
-                    >
-                      <span
-                        className={`inline-block size-1.5 shrink-0 rounded-full ${s.active ? "bg-green-500" : "bg-muted-foreground/50"}`}
-                      />
-                      <span className="truncate text-xs text-muted-foreground">
-                        {s.id.slice(0, 8)}
-                      </span>
-                    </button>
-                  );
-                })}
+                {ws.sessions.map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => setActiveSessionId(s.id)}
+                    className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 pl-6 text-left transition-colors hover:bg-accent"
+                  >
+                    <span
+                      className={`inline-block size-1.5 shrink-0 rounded-full ${s.status === "running" ? "bg-green-500" : "bg-muted-foreground/50"}`}
+                    />
+                    <span className="truncate text-xs text-muted-foreground">
+                      {s.name || s.id.slice(0, 8)}
+                    </span>
+                  </button>
+                ))}
               </div>
             ))
           )}
@@ -130,7 +130,7 @@ export function NavSidebar({ onOpenSettings }: NavSidebarProps) {
               variant="ghost"
               size="icon-sm"
               onClick={() => setExpanded(true)}
-              aria-label={`${sessions.length} sessions`}
+              aria-label={`${totalSessions} sessions`}
             />
           }
         >
@@ -148,7 +148,7 @@ export function NavSidebar({ onOpenSettings }: NavSidebarProps) {
           </span>
         </TooltipTrigger>
         <TooltipContent side="right">
-          {sessions.length} session{sessions.length !== 1 && "s"} ({activeCount} active)
+          {totalSessions} session{totalSessions !== 1 && "s"} ({activeCount} active)
         </TooltipContent>
       </Tooltip>
 

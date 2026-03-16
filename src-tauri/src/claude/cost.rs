@@ -10,8 +10,11 @@ use serde::Serialize;
 pub struct CostSummary {
     pub input_tokens: u64,
     pub output_tokens: u64,
+    #[serde(rename = "cache_read")]
     pub cache_read_tokens: u64,
+    #[serde(rename = "cache_write")]
     pub cache_write_tokens: u64,
+    pub total_usd: f64,
 }
 
 impl CostSummary {
@@ -25,13 +28,18 @@ impl CostSummary {
         input + output + cache_read + cache_write
     }
 
+    /// Compute total_usd from token counts.
+    pub fn with_cost(mut self) -> Self {
+        self.total_usd = self.estimated_cost_usd();
+        self
+    }
+
     /// Format as a short display string.
     pub fn display(&self) -> String {
-        let cost = self.estimated_cost_usd();
-        if cost < 0.01 {
-            format!("~${cost:.4}")
+        if self.total_usd < 0.01 {
+            format!("~${:.4}", self.total_usd)
         } else {
-            format!("${cost:.2}")
+            format!("${:.2}", self.total_usd)
         }
     }
 }
@@ -77,5 +85,5 @@ pub fn parse_cost_from_transcript(path: &Path) -> CostSummary {
         }
     }
 
-    summary
+    summary.with_cost()
 }

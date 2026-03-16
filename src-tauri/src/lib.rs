@@ -1,20 +1,22 @@
 mod claude;
 mod commands;
 pub mod config;
+mod db;
 pub mod hooks;
+mod models;
+mod plan_state;
 mod pty;
 pub mod setup;
 mod tasks;
+mod worktree;
 
-use std::sync::{Arc, Mutex};
-
-use claude::plan::{PlanManager, PlanWatcher, SharedPlanManager};
+use claude::plan::PlanWatcher;
 use claude::transcript::TranscriptWatcher;
-use commands::SharedTaskStore;
 use config::Config;
+use db::Database;
 use hooks::server::start_hook_server;
+use plan_state::PlanStateManager;
 use pty::PtyManager;
-use tasks::TaskStore;
 
 pub fn run() {
     tracing_subscriber::fmt()
@@ -26,21 +28,33 @@ pub fn run() {
 
     let config = Config::load();
 
-    let plan_manager: SharedPlanManager =
-        Arc::new(Mutex::new(PlanManager::new(config.plans_directory.clone())));
-    let task_store: SharedTaskStore = Arc::new(Mutex::new(TaskStore::new()));
+    let db: db::SharedDb = std::sync::Arc::new(std::sync::Mutex::new(
+        Database::open().expect("failed to open database"),
+    ));
+
+    let plan_state: plan_state::SharedPlanState = std::sync::Arc::new(std::sync::Mutex::new(
+        PlanStateManager::new(config.plans_directory.clone()),
+    ));
+
+    // Startup reconciliation: clean up sessions with missing worktree paths
+    if let Ok(db_guard) = db.lock() {
+        reconcile_worktrees(&db_guard);
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(PtyManager::new())
-        .manage(plan_manager.clone())
-        .manage(task_store.clone())
+        .manage(db.clone())
+        .manage(plan_state.clone())
         .invoke_handler(tauri::generate_handler![
             // PTY commands
             pty::pty_create,
             pty::pty_write,
             pty::pty_resize,
             pty::pty_kill,
+            pty::start_claude_session,
+            pty::kill_session_pty,
             // Config commands
             commands::get_config,
             commands::save_config,
@@ -52,10 +66,21 @@ pub fn run() {
             commands::diff_plan,
             commands::approve_plan,
             commands::reject_plan,
+            commands::list_plans,
+            commands::load_plan,
             // Setup command
+            commands::list_sessions,
             commands::setup_hooks,
             // Cost command
             commands::get_cost,
+            // Workspace commands
+            commands::create_workspace,
+            commands::get_workspaces,
+            commands::delete_workspace,
+            // Session commands
+            commands::create_session,
+            commands::delete_session,
+            commands::rename_session,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
@@ -63,23 +88,20 @@ pub fn run() {
             let plans_dir = config.plans_directory.clone();
             let transcripts_dir = config.transcripts_directory.clone();
 
-            // Start hook server in background with access to plan/task state
             let hook_app = app_handle.clone();
-            let hook_plan = plan_manager.clone();
-            let hook_tasks = task_store.clone();
+            let hook_db = db.clone();
+            let hook_plan = plan_state.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) =
-                    start_hook_server(&socket_path, hook_app, hook_plan, hook_tasks).await
+                    start_hook_server(&socket_path, hook_app, hook_db, hook_plan).await
                 {
                     tracing::error!("hook server error: {e}");
                 }
             });
 
-            // Start plan watcher (needs the directory to exist)
             if plans_dir.exists() {
                 match PlanWatcher::new(&plans_dir, app_handle.clone()) {
                     Ok(watcher) => {
-                        // Leak the watcher so it stays alive for the app lifetime
                         Box::leak(Box::new(watcher));
                         tracing::info!("plan watcher started on {}", plans_dir.display());
                     }
@@ -92,7 +114,6 @@ pub fn run() {
                 );
             }
 
-            // Start transcript watcher
             if transcripts_dir.exists() {
                 match TranscriptWatcher::new(&transcripts_dir, app_handle.clone()) {
                     Ok(watcher) => {
@@ -115,4 +136,24 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn reconcile_worktrees(db: &Database) {
+    let sessions = match db.sessions_with_worktrees() {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("failed to query sessions for reconciliation: {e}");
+            return;
+        }
+    };
+
+    for (session_id, wt_path) in sessions {
+        if !wt_path.exists() {
+            tracing::warn!(
+                "worktree missing for session {session_id}: {}, resetting",
+                wt_path.display()
+            );
+            let _ = db.clear_session_worktree(&session_id);
+        }
+    }
 }

@@ -1,7 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useAtomValue } from "jotai";
-import { activityAtom } from "@/stores/activity";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { activeActivityAtom } from "@/stores/activity";
 import type { ActivityEntry } from "@/lib/types";
 
 const TYPE_DOT_COLORS: Record<ActivityEntry["type"], string> = {
@@ -22,16 +21,17 @@ function formatRelativeTime(ts: number): string {
 }
 
 export function ActivityLog() {
-  const entries = useAtomValue(activityAtom);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const entries = useAtomValue(activeActivityAtom);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [entries.length]);
 
   return (
-    <section className="flex h-full flex-col" aria-label="Activity log">
-      <header className="flex h-9 items-center border-b border-border px-3">
+    <section className="flex h-full w-full flex-col" aria-label="Activity log">
+      <header className="flex h-9 shrink-0 items-center border-b border-border px-3">
         <h2 className="text-xs font-medium text-muted-foreground">Activity</h2>
       </header>
 
@@ -40,7 +40,7 @@ export function ActivityLog() {
           <p className="text-xs text-muted-foreground">No activity</p>
         </div>
       ) : (
-        <ScrollArea className="flex-1">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto">
           <div className="space-y-0.5 px-2 py-1">
             {entries.map((entry) => (
               <div
@@ -66,9 +66,8 @@ export function ActivityLog() {
                 </time>
               </div>
             ))}
-            <div ref={bottomRef} />
           </div>
-        </ScrollArea>
+        </div>
       )}
     </section>
   );

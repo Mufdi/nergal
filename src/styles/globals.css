@@ -25,7 +25,7 @@
   --border: rgba(255, 255, 255, 0.08);
   --input: rgba(255, 255, 255, 0.12);
   --ring: #f97316;
-  --radius: 0.75rem;
+  --radius: 0.5rem;
   --chart-1: #f97316;
   --chart-2: #fb923c;
   --chart-3: #3b82f6;
@@ -146,6 +146,12 @@ body,
   height: 100%;
   margin: 0;
   overflow: hidden;
+}
+
+/* ── xterm.js — fill the gap below integer rows ── */
+.xterm-viewport,
+.xterm-screen {
+  background-color: #141415 !important;
 }
 
 /* ── Scrollbar ── */

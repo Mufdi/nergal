@@ -6,8 +6,8 @@ use tokio::io::AsyncBufReadExt;
 use tokio::net::UnixListener;
 
 use super::events::HookEvent;
-use crate::claude::plan::SharedPlanManager;
-use crate::commands::SharedTaskStore;
+use crate::db::SharedDb;
+use crate::plan_state::SharedPlanState;
 
 /// Flat event structure the frontend expects.
 #[derive(Clone, serde::Serialize)]
@@ -104,8 +104,8 @@ impl From<&HookEvent> for FrontendHookEvent {
 pub async fn start_hook_server(
     socket_path: &Path,
     app: AppHandle,
-    plan_manager: SharedPlanManager,
-    task_store: SharedTaskStore,
+    db: SharedDb,
+    plan_state: SharedPlanState,
 ) -> Result<()> {
     if socket_path.exists() {
         std::fs::remove_file(socket_path)?;
@@ -117,8 +117,8 @@ pub async fn start_hook_server(
     loop {
         let (stream, _addr) = listener.accept().await?;
         let app = app.clone();
-        let plan_mgr = plan_manager.clone();
-        let tasks = task_store.clone();
+        let db = db.clone();
+        let plan_state = plan_state.clone();
 
         tokio::spawn(async move {
             let reader = tokio::io::BufReader::new(stream);
@@ -127,7 +127,7 @@ pub async fn start_hook_server(
             while let Ok(Some(line)) = lines.next_line().await {
                 match serde_json::from_str::<HookEvent>(&line) {
                     Ok(event) => {
-                        process_event(&app, &event, &plan_mgr, &tasks);
+                        process_event(&app, &event, &db, &plan_state);
                     }
                     Err(e) => {
                         tracing::warn!("failed to parse hook event: {e}");
@@ -141,10 +141,9 @@ pub async fn start_hook_server(
 fn process_event(
     app: &AppHandle,
     event: &HookEvent,
-    plan_manager: &SharedPlanManager,
-    task_store: &SharedTaskStore,
+    db: &SharedDb,
+    plan_state: &SharedPlanState,
 ) {
-    // Emit flat event for the frontend activity log / status bar
     let frontend_event = FrontendHookEvent::from(event);
     let _ = app.emit("hook:event", &frontend_event);
 
@@ -154,12 +153,17 @@ fn process_event(
             struct SessionStartPayload {
                 id: String,
                 active: bool,
+                cwd: Option<String>,
             }
+            let cwd = std::env::current_dir()
+                .ok()
+                .map(|p| p.display().to_string());
             let _ = app.emit(
                 "session:start",
                 SessionStartPayload {
                     id: session_id.clone(),
                     active: true,
+                    cwd,
                 },
             );
         }
@@ -175,37 +179,39 @@ fn process_event(
         } => {
             tracing::debug!("PreToolUse: tool_name={tool_name}");
 
-            // ExitPlanMode → load plan and emit plan:ready
             if tool_name == "ExitPlanMode"
-                && let Ok(mut mgr) = plan_manager.lock()
+                && let Ok(mut state) = plan_state.lock()
             {
+                let runtime = state.get_or_create(session_id);
                 let plan_path = tool_input
                     .get("plan_path")
                     .and_then(|v| v.as_str())
                     .map(std::path::PathBuf::from)
-                    .or_else(|| mgr.find_latest_plan().ok().flatten());
+                    .or_else(|| runtime.find_latest_plan().ok().flatten());
 
                 if let Some(path) = plan_path
-                    && let Ok(()) = mgr.load_plan(&path)
+                    && let Ok(()) = runtime.load_plan(&path)
                 {
                     #[derive(Clone, serde::Serialize)]
                     struct PlanReady {
                         path: String,
                         content: String,
+                        session_id: String,
                     }
-                    if let Some(content) = mgr.current_content() {
+                    if let Some(content) = runtime.current_content() {
                         let _ = app.emit(
                             "plan:ready",
                             PlanReady {
                                 path: path.display().to_string(),
                                 content: content.to_string(),
+                                session_id: session_id.clone(),
                             },
                         );
                     }
                 }
             }
 
-            process_task_event(app, tool_name, tool_input, session_id, task_store);
+            process_task_event(app, tool_name, tool_input, session_id, db);
         }
 
         HookEvent::PostToolUse {
@@ -215,20 +221,53 @@ fn process_event(
             ..
         } => {
             tracing::debug!("PostToolUse: tool_name={tool_name}");
-            process_task_event(app, tool_name, tool_input, session_id, task_store);
+            process_task_event(app, tool_name, tool_input, session_id, db);
             process_file_event(app, tool_name, tool_input, session_id);
         }
 
         HookEvent::Stop {
+            session_id,
             transcript_path: Some(path),
             ..
         } => {
             let cost =
                 crate::claude::cost::parse_cost_from_transcript(&std::path::PathBuf::from(path));
-            let _ = app.emit("cost:update", &cost);
+
+            // Store cost in DB
+            if let Ok(db_guard) = db.lock() {
+                let _ = db_guard.upsert_cost(session_id, &cost);
+            }
+
+            #[derive(Clone, serde::Serialize)]
+            struct CostUpdate {
+                session_id: String,
+                input_tokens: u64,
+                output_tokens: u64,
+                cache_read: u64,
+                cache_write: u64,
+                total_usd: f64,
+            }
+            let _ = app.emit(
+                "cost:update",
+                CostUpdate {
+                    session_id: session_id.clone(),
+                    input_tokens: cost.input_tokens,
+                    output_tokens: cost.output_tokens,
+                    cache_read: cost.cache_read_tokens,
+                    cache_write: cost.cache_write_tokens,
+                    total_usd: cost.total_usd,
+                },
+            );
         }
 
-        _ => {}
+        HookEvent::Stop {
+            transcript_path: None,
+            ..
+        } => {}
+
+        HookEvent::TaskCompleted { .. } => {}
+
+        HookEvent::UserPromptSubmit { .. } => {}
     }
 }
 
@@ -247,7 +286,6 @@ fn process_file_event(
         return;
     }
 
-    // Claude Code uses "file_path" or "filePath" depending on the tool
     let file_path = tool_input
         .get("file_path")
         .or_else(|| tool_input.get("filePath"))
@@ -276,20 +314,18 @@ fn process_file_event(
     );
 }
 
-/// Routes task-related tool events to the TaskStore.
-/// Handles both `TaskCreate`/`TaskUpdate` and `TodoWrite` (with `command` field) tool names.
+/// Routes task-related tool events to SQLite.
 fn process_task_event(
     app: &AppHandle,
     tool_name: &str,
     tool_input: &serde_json::Value,
     session_id: &str,
-    task_store: &SharedTaskStore,
+    db: &SharedDb,
 ) {
     let is_task_create;
     let is_task_update;
 
     if tool_name == "TodoWrite" || tool_name == "TodoUpdate" || tool_name == "Task" {
-        // Claude Code uses TodoWrite with a `command` field
         let command = tool_input
             .get("command")
             .and_then(|v| v.as_str())
@@ -307,25 +343,42 @@ fn process_task_event(
 
     tracing::info!("task event: tool={tool_name} create={is_task_create} update={is_task_update}");
 
-    if let Ok(mut store) = task_store.lock() {
-        if is_task_create {
-            store.apply_create(tool_input);
-        } else {
-            store.apply_update(tool_input);
-        }
+    // Use in-memory TaskStore for event processing, then persist to DB
+    let mut store = crate::tasks::TaskStore::new();
 
-        let tasks: Vec<_> = store.visible_tasks().cloned().collect();
-        #[derive(Clone, serde::Serialize)]
-        struct TasksUpdate {
-            session_id: String,
-            tasks: Vec<crate::tasks::Task>,
+    // Load existing tasks from DB into the store
+    if let Ok(db_guard) = db.lock()
+        && let Ok(existing) = db_guard.get_visible_tasks(session_id)
+    {
+        for task in existing {
+            store.import_task(task);
         }
-        let _ = app.emit(
-            "tasks:update",
-            TasksUpdate {
-                session_id: session_id.to_string(),
-                tasks,
-            },
-        );
     }
+
+    if is_task_create {
+        store.apply_create(tool_input);
+    } else {
+        store.apply_update(tool_input);
+    }
+
+    // Persist all tasks back to DB
+    if let Ok(db_guard) = db.lock() {
+        for task in store.all_tasks() {
+            let _ = db_guard.upsert_task(session_id, task);
+        }
+    }
+
+    let tasks: Vec<_> = store.visible_tasks().cloned().collect();
+    #[derive(Clone, serde::Serialize)]
+    struct TasksUpdate {
+        session_id: String,
+        tasks: Vec<crate::tasks::Task>,
+    }
+    let _ = app.emit(
+        "tasks:update",
+        TasksUpdate {
+            session_id: session_id.to_string(),
+            tasks,
+        },
+    );
 }

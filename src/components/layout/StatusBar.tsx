@@ -1,9 +1,5 @@
 import { useAtomValue } from "jotai";
-import {
-  activeSessionAtom,
-  sessionModeAtom,
-  costSummaryAtom,
-} from "@/stores/session";
+import { activeSessionAtom, activeCostAtom, activeModeAtom } from "@/stores/workspace";
 import { Badge } from "@/components/ui/badge";
 import {
   Tooltip,
@@ -26,8 +22,8 @@ const modeColors: Record<string, string> = {
 
 export function StatusBar() {
   const session = useAtomValue(activeSessionAtom);
-  const mode = useAtomValue(sessionModeAtom);
-  const cost = useAtomValue(costSummaryAtom);
+  const mode = useAtomValue(activeModeAtom);
+  const cost = useAtomValue(activeCostAtom);
 
   const dotColor = modeColors[mode] ?? "bg-muted-foreground";
 
@@ -62,13 +58,13 @@ export function StatusBar() {
         )}
       </div>
 
-      {/* Right: tokens, cost */}
+      {/* Right: tokens + cost */}
       <div className="flex items-center gap-2 text-muted-foreground">
         <Tooltip>
           <TooltipTrigger className="cursor-default">
             <span className="flex items-center gap-1.5">
-              <span>in:{formatTokens(cost.input_tokens)}</span>
-              <span>out:{formatTokens(cost.output_tokens)}</span>
+              <span>in:{formatTokens(cost.input_tokens ?? 0)}</span>
+              <span>out:{formatTokens(cost.output_tokens ?? 0)}</span>
             </span>
           </TooltipTrigger>
           <TooltipContent>
@@ -81,9 +77,8 @@ export function StatusBar() {
             </div>
           </TooltipContent>
         </Tooltip>
-
         <span className="text-foreground font-medium">
-          ${cost.total_usd.toFixed(4)}
+          ${(cost.total_usd ?? 0).toFixed(4)}
         </span>
       </div>
     </footer>

@@ -20,7 +20,6 @@ export default defineConfig({
       "react-dom",
       "react/jsx-runtime",
       "@xterm/xterm",
-      "@xterm/addon-webgl",
       "@xterm/addon-fit",
       "react-markdown",
       "remark-gfm",
@@ -34,6 +33,6 @@ export default defineConfig({
     strictPort: true,
     host: host || false,
     hmr: host ? { protocol: "ws", host, port: 1421 } : undefined,
-    watch: { ignored: ["**/src-tauri/**", "**/vendor/**", "**/target/**"] },
+    watch: { ignored: ["**/src-tauri/**", "**/vendor/**", "**/target/**", "**/.worktrees/**"] },
   },
 });

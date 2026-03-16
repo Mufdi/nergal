@@ -39,11 +39,13 @@ impl PlanWatcher {
 }
 
 /// Manages plan files in Claude's plans directory.
+#[derive(Debug)]
 pub struct PlanManager {
     pub plans_dir: PathBuf,
     pub current_plan: Option<PlanFile>,
 }
 
+#[derive(Debug)]
 pub struct PlanFile {
     pub path: PathBuf,
     pub content: String,

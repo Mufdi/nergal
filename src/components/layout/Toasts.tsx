@@ -2,9 +2,9 @@ import { useAtomValue } from "jotai";
 import { toastsAtom } from "@/stores/toast";
 
 const TYPE_COLORS = {
-  success: "bg-success/90 text-white",
-  error: "bg-danger/90 text-white",
-  info: "bg-surface-overlay text-text",
+  success: "bg-[#22c55e] text-white",
+  error: "bg-[#ef4444] text-white",
+  info: "bg-[#1c1c1e] text-[#ededef] border border-white/10",
 } as const;
 
 export function Toasts() {
@@ -17,7 +17,7 @@ export function Toasts() {
       {toasts.map((toast) => (
         <div
           key={toast.id}
-          className={`pointer-events-auto px-4 py-2 text-xs shadow-lg ${TYPE_COLORS[toast.type]}`}
+          className={`pointer-events-auto rounded-md px-4 py-2.5 text-xs shadow-lg ${TYPE_COLORS[toast.type]}`}
         >
           {toast.message}
         </div>

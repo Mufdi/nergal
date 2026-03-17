@@ -65,9 +65,11 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
 
     if !merge.status.success() {
         let stderr = String::from_utf8_lossy(&merge.stderr);
+        let stdout = String::from_utf8_lossy(&merge.stdout);
+        let detail = if stderr.trim().is_empty() { stdout } else { stderr };
         let _ = Command::new("git").args(["merge", "--abort"]).current_dir(&tmp_dir).output();
         let _ = Command::new("git").args(["worktree", "remove", "--force"]).arg(&tmp_dir).current_dir(repo_path).output();
-        anyhow::bail!("squash merge failed: {stderr}");
+        anyhow::bail!("conflict:{detail}");
     }
 
     // Commit in the temp worktree (detached HEAD)

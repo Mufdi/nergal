@@ -18,6 +18,7 @@ interface MergeModalProps {
   session: Session;
   workspaceId: string;
   onMerged: () => void;
+  onConflict: (targetBranch: string) => void;
 }
 
 export function MergeModal({
@@ -26,6 +27,7 @@ export function MergeModal({
   session,
   workspaceId,
   onMerged,
+  onConflict,
 }: MergeModalProps) {
   const addToast = useSetAtom(toastsAtom);
   const [branches, setBranches] = useState<string[]>([]);
@@ -54,10 +56,13 @@ export function MergeModal({
     setMerging(true);
     setError(null);
     try {
-      const result = await invoke<{ success: boolean; message: string }>("merge_session", { sessionId: session.id, targetBranch });
+      const result = await invoke<{ success: boolean; conflict: boolean; message: string }>("merge_session", { sessionId: session.id, targetBranch });
       if (result.success) {
         addToast({ message: result.message, type: "success" });
         onMerged();
+        onOpenChange(false);
+      } else if (result.conflict) {
+        onConflict(targetBranch);
         onOpenChange(false);
       } else {
         setError(result.message);

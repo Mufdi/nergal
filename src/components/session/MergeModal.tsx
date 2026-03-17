@@ -18,7 +18,7 @@ interface MergeModalProps {
   session: Session;
   workspaceId: string;
   onMerged: () => void;
-  onConflict: (targetBranch: string) => void;
+  onConflict: (targetBranch: string, detail: string) => void;
 }
 
 export function MergeModal({
@@ -62,7 +62,7 @@ export function MergeModal({
         onMerged();
         onOpenChange(false);
       } else if (result.conflict) {
-        onConflict(targetBranch);
+        onConflict(targetBranch, result.message);
         onOpenChange(false);
       } else {
         setError(result.message);

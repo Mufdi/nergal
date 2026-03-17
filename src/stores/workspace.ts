@@ -7,6 +7,7 @@ export interface Session {
   workspace_id: string;
   worktree_path: string | null;
   worktree_branch: string | null;
+  merge_target: string | null;
   status: "idle" | "running" | "needs_attention" | "completed";
   created_at: number;
   updated_at: number;
@@ -47,6 +48,9 @@ export const activeWorkspaceAtom = atom<Workspace | null>((get) => {
 // Session-scoped state maps
 export const costMapAtom = atom<Record<string, CostSummary>>({});
 export const modeMapAtom = atom<Record<string, string>>({});
+export const freshSessionsAtom = atom<Set<string>>(new Set<string>());
+export const showCompletedAtom = atom(false);
+export const sessionLaunchModeAtom = atom<Record<string, "new" | "continue" | "resume_pick">>({});
 
 const defaultCost: CostSummary = {
   input_tokens: 0,

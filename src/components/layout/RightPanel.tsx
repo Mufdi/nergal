@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { activeTabAtom, openTabsAtom, activeTabIdAtom } from "@/stores/rightPanel";
+import { activeTabAtom, openTabsAtom, activeTabIdAtom, type RightPanelTab } from "@/stores/rightPanel";
 import { activePlanAtom, planStateMapAtom, sessionPlansAtom } from "@/stores/plan";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { PlanPanel } from "@/components/plan/PlanPanel";
+import { TranscriptViewer } from "@/components/session/TranscriptViewer";
 import { invoke } from "@/lib/tauri";
 import {
   Tooltip,
@@ -168,10 +169,12 @@ function PlanFileSidebar() {
   );
 }
 
-function PanelContent({ tab }: { tab: { type: string } }) {
+function PanelContent({ tab }: { tab: RightPanelTab }) {
   switch (tab.type) {
     case "plan":
       return <PlanPanel />;
+    case "transcript":
+      return tab.sessionId ? <TranscriptViewer sessionId={tab.sessionId} /> : null;
     case "diff":
       return <PlaceholderView label="Diff view" />;
     case "spec":

@@ -2,12 +2,14 @@ import { atom } from "jotai";
 
 export interface RightPanelTab {
   id: string;
-  type: "plan" | "diff" | "spec" | "git";
+  type: "plan" | "diff" | "spec" | "git" | "transcript";
   label: string;
   filePath?: string;
   specPath?: string;
+  sessionId?: string;
 }
 
+export const expandRightPanelAtom = atom(0);
 export const openTabsAtom = atom<RightPanelTab[]>([]);
 export const activeTabIdAtom = atom<string | null>(null);
 

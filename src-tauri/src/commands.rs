@@ -428,6 +428,7 @@ pub fn create_session(
         workspace_id,
         worktree_path,
         worktree_branch,
+        merge_target: None,
         status: SessionStatus::Idle,
         created_at: ts,
         updated_at: ts,
@@ -465,4 +466,201 @@ pub fn rename_session(
     let db = db.lock().map_err(|e| e.to_string())?;
     db.rename_session(&session_id, &name)
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_branches(db: State<'_, SharedDb>, workspace_id: String) -> Result<Vec<String>, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let repo_path = db
+        .workspace_repo_path(&workspace_id)
+        .map_err(|e| e.to_string())?
+        .ok_or("workspace not found")?;
+    crate::worktree::list_branches(&repo_path).map_err(|e| e.to_string())
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct MergeResult {
+    pub success: bool,
+    pub message: String,
+}
+
+#[tauri::command]
+pub fn merge_session(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    target_branch: String,
+) -> Result<MergeResult, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+
+    let Some(session) = db.find_session(&session_id).map_err(|e| e.to_string())? else {
+        return Err("session not found".into());
+    };
+
+    let Some(ref branch) = session.worktree_branch else {
+        return Err("session has no worktree branch".into());
+    };
+
+    let repo_path = db
+        .workspace_repo_path(&session.workspace_id)
+        .map_err(|e| e.to_string())?
+        .ok_or("workspace not found")?;
+
+    // Squash merge (stays on target after success)
+    let commit_message = format!("squash merge {} into {}", branch, target_branch);
+    if let Err(e) = crate::worktree::squash_merge(&repo_path, branch, &target_branch, &commit_message) {
+        return Ok(MergeResult {
+            success: false,
+            message: e.to_string(),
+        });
+    }
+
+    // Remove worktree
+    if let Some(ref wt_path) = session.worktree_path {
+        let _ = crate::worktree::remove_worktree(&repo_path, wt_path);
+    }
+
+    // Delete branch
+    let _ = crate::worktree::delete_branch(&repo_path, branch);
+
+    // Update session status
+    let _ = db.update_session_status(&session_id, "completed");
+    let _ = db.clear_session_worktree(&session_id);
+    let _ = db.clear_merge_target(&session_id);
+
+    Ok(MergeResult {
+        success: true,
+        message: format!("Squash-merged into {target_branch}"),
+    })
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct TranscriptEntry {
+    pub role: String,
+    pub content: String,
+}
+
+fn extract_content(val: &serde_json::Value) -> String {
+    if let Some(s) = val.as_str() {
+        return s.to_string();
+    }
+    if let Some(arr) = val.as_array() {
+        let mut parts = Vec::new();
+        for item in arr {
+            if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                parts.push(text.to_string());
+            }
+        }
+        return parts.join("\n");
+    }
+    String::new()
+}
+
+#[tauri::command]
+pub fn get_transcript(session_id: String) -> Result<Vec<TranscriptEntry>, String> {
+    let projects_dir = dirs::home_dir()
+        .ok_or("no home dir")?
+        .join(".claude")
+        .join("projects");
+
+    if !projects_dir.exists() {
+        return Ok(vec![]);
+    }
+
+    // Find the transcript file matching the session_id
+    for project_entry in std::fs::read_dir(&projects_dir).map_err(|e| e.to_string())? {
+        let project_entry = project_entry.map_err(|e| e.to_string())?;
+        let project_path = project_entry.path();
+        if !project_path.is_dir() {
+            continue;
+        }
+
+        let transcript_path = project_path.join(format!("{session_id}.jsonl"));
+        if !transcript_path.exists() {
+            continue;
+        }
+
+        let file = std::fs::File::open(&transcript_path).map_err(|e| e.to_string())?;
+        let reader = std::io::BufReader::new(file);
+        use std::io::BufRead;
+
+        let mut entries = Vec::new();
+        for line in reader.lines() {
+            let Ok(line) = line else { continue };
+            let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) else {
+                continue;
+            };
+
+            let msg_type = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if msg_type != "assistant" && msg_type != "human" {
+                continue;
+            }
+
+            let role = msg_type.to_string();
+            let content = if let Some(msg) = val.get("message") {
+                if let Some(c) = msg.get("content") {
+                    extract_content(c)
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            };
+
+            if content.is_empty() {
+                continue;
+            }
+
+            entries.push(TranscriptEntry { role, content });
+        }
+
+        return Ok(entries);
+    }
+
+    Ok(vec![])
+}
+
+/// Worktree change status for conditional button display.
+#[derive(Clone, serde::Serialize)]
+pub struct WorktreeStatus {
+    /// Uncommitted changes exist (show commit button)
+    pub dirty: bool,
+    /// Commits ahead of main branch (show merge button)
+    pub commits_ahead: bool,
+}
+
+/// Check a session's worktree for dirty state and commits ahead.
+#[tauri::command]
+pub fn check_session_has_commits(
+    db: State<'_, SharedDb>,
+    session_id: String,
+) -> Result<WorktreeStatus, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+
+    let Some(session) = db.find_session(&session_id).map_err(|e| e.to_string())? else {
+        return Err("session not found".into());
+    };
+
+    let Some(ref wt_path) = session.worktree_path else {
+        return Ok(WorktreeStatus { dirty: false, commits_ahead: false });
+    };
+
+    let dirty = crate::worktree::is_worktree_dirty(wt_path).unwrap_or(false);
+
+    let repo_path = db
+        .workspace_repo_path(&session.workspace_id)
+        .map_err(|e| e.to_string())?
+        .ok_or("workspace not found")?;
+
+    let branches = crate::worktree::list_branches(&repo_path).map_err(|e| e.to_string())?;
+    let main_branch = if branches.iter().any(|b| b == "main") {
+        "main"
+    } else if branches.iter().any(|b| b == "master") {
+        "master"
+    } else {
+        return Ok(WorktreeStatus { dirty, commits_ahead: false });
+    };
+
+    let commits_ahead = crate::worktree::has_commits_ahead(wt_path, main_branch).unwrap_or(false);
+
+    Ok(WorktreeStatus { dirty, commits_ahead })
 }

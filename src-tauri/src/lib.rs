@@ -81,6 +81,11 @@ pub fn run() {
             commands::create_session,
             commands::delete_session,
             commands::rename_session,
+            commands::list_branches,
+            commands::merge_session,
+            commands::get_transcript,
+            commands::check_session_has_commits,
+            pty::write_to_session_pty,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();

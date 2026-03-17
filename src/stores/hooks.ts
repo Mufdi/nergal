@@ -5,7 +5,7 @@ import { costMapAtom, modeMapAtom, workspacesAtom } from "./workspace";
 import { taskMapAtom } from "./tasks";
 import { fileMapAtom, type ModifiedFile } from "./files";
 import { planStateMapAtom, registerPlanAtom } from "./plan";
-import { openTabAtom } from "./rightPanel";
+import { openTabAtom, expandRightPanelAtom } from "./rightPanel";
 import { addActivityAtom } from "./activity";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
@@ -141,6 +141,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
       }));
       set(openTabAtom, { id: "plan", type: "plan", label: "Plan" });
       set(registerPlanAtom, { sessionId: payload.session_id, path: payload.path });
+      set(expandRightPanelAtom, (prev: number) => prev + 1);
       set(addActivityAtom, { sessionId: payload.session_id, entry: createActivity("plan", "Plan ready for review") });
     }),
   );

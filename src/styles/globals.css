@@ -154,6 +154,10 @@ body,
   background-color: #141415 !important;
 }
 
+.xterm {
+  padding: 8px 4px 0 8px;
+}
+
 /* ── Scrollbar ── */
 ::-webkit-scrollbar {
   width: 6px;

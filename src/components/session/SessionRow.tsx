@@ -53,13 +53,18 @@ export function SessionRow({
 
   useEffect(() => {
     if (!isWorktree) return;
-    invoke<{ dirty: boolean; commits_ahead: boolean }>("check_session_has_commits", { sessionId: session.id })
-      .then((status) => {
-        setIsDirty(status.dirty);
-        setCommitsAhead(status.commits_ahead);
-      })
-      .catch(() => { setIsDirty(false); setCommitsAhead(false); });
-  }, [session.id, session.updated_at, isWorktree]);
+    function check() {
+      invoke<{ dirty: boolean; commits_ahead: boolean }>("check_session_has_commits", { sessionId: session.id })
+        .then((status) => {
+          setIsDirty(status.dirty);
+          setCommitsAhead(status.commits_ahead);
+        })
+        .catch(() => { setIsDirty(false); setCommitsAhead(false); });
+    }
+    check();
+    const interval = setInterval(check, 5000);
+    return () => clearInterval(interval);
+  }, [session.id, isWorktree]);
 
   function handleRenameSubmit() {
     const trimmed = editName.trim();

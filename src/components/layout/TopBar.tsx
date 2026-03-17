@@ -1,18 +1,66 @@
-import { useAtomValue } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { activeSessionAtom, activeWorkspaceAtom } from "@/stores/workspace";
-import { openTabsAtom, activeTabIdAtom } from "@/stores/rightPanel";
+import {
+  activeTabsAtom,
+  activeTabAtom,
+  activeTabIdAtom,
+  openTabAction,
+  expandRightPanelAtom,
+  type TabType,
+} from "@/stores/rightPanel";
+import { toggleRightPanelAtom } from "@/stores/shortcuts";
+import {
+  FileText,
+  Files,
+  GitCompareArrows,
+  ClipboardList,
+  CheckSquare,
+  GitBranch,
+} from "lucide-react";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip";
 
 interface TopBarProps {
   onOpenSettings: () => void;
 }
 
+const PANEL_BUTTONS: { type: TabType; label: string; shortcut: string; icon: typeof FileText }[] = [
+  { type: "plan", label: "Plan", shortcut: "Ctrl+Shift+P", icon: FileText },
+  { type: "file", label: "Files", shortcut: "Ctrl+Shift+F", icon: Files },
+  { type: "diff", label: "Diff", shortcut: "Ctrl+Shift+D", icon: GitCompareArrows },
+  { type: "spec", label: "Spec", shortcut: "Ctrl+Shift+S", icon: ClipboardList },
+  { type: "tasks", label: "Tasks", shortcut: "Ctrl+Shift+K", icon: CheckSquare },
+  { type: "git", label: "Git", shortcut: "Ctrl+Shift+G", icon: GitBranch },
+];
+
 export function TopBar({ onOpenSettings }: TopBarProps) {
   const session = useAtomValue(activeSessionAtom);
   const workspace = useAtomValue(activeWorkspaceAtom);
-  const openTabs = useAtomValue(openTabsAtom);
-  const activeTabId = useAtomValue(activeTabIdAtom);
+  const tabs = useAtomValue(activeTabsAtom);
+  const activeTab = useAtomValue(activeTabAtom);
+  const setActiveTabId = useSetAtom(activeTabIdAtom);
+  const openTab = useSetAtom(openTabAction);
+  const setExpand = useSetAtom(expandRightPanelAtom);
+  const setToggleRight = useSetAtom(toggleRightPanelAtom);
 
   const workspaceName = workspace?.name ?? "cluihud";
+
+  function handleOpenPanel(type: TabType, label: string) {
+    const existing = tabs.find((t) => t.type === type);
+    if (existing && activeTab?.id === existing.id) {
+      setToggleRight((n) => n + 1);
+      return;
+    }
+    if (existing) {
+      setActiveTabId(existing.id);
+    } else {
+      openTab({ tab: { id: `${type}-panel`, type, label }, isPinned: true });
+    }
+    setExpand((n) => n + 1);
+  }
 
   return (
     <div className="flex h-10 shrink-0 items-center border-b border-border/30 bg-background px-3">
@@ -38,24 +86,39 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
         )}
       </div>
 
-      {/* Center: dynamic tabs (no close button — use panel collapse) */}
-      <div className="flex flex-1 items-center justify-center gap-0.5 mx-4 overflow-x-auto scrollbar-none">
-        {openTabs.map((tab) => (
-          <div
-            key={tab.id}
-            className={`flex items-center gap-1 h-7 px-2.5 rounded text-xs font-medium cursor-pointer transition-colors ${
-              activeTabId === tab.id
-                ? "bg-secondary text-foreground"
-                : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
-            }`}
-          >
-            <span className="truncate max-w-24">{tab.label}</span>
-          </div>
-        ))}
-      </div>
+      {/* Center spacer */}
+      <div className="flex-1" />
 
-      {/* Right: spacer */}
-      <div className="shrink-0" />
+      {/* Right: panel type icon buttons */}
+      <div className="flex items-center gap-0.5 shrink-0">
+        {PANEL_BUTTONS.map((btn) => {
+          const isActive = activeTab?.type === btn.type;
+          const Icon = btn.icon;
+          return (
+            <Tooltip key={btn.type}>
+              <TooltipTrigger
+                render={
+                  <div
+                    role="button"
+                    onClick={() => handleOpenPanel(btn.type, btn.label)}
+                    className={`flex size-7 items-center justify-center rounded transition-colors cursor-pointer ${
+                      isActive
+                        ? "text-foreground bg-secondary"
+                        : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                    }`}
+                    aria-label={btn.label}
+                  />
+                }
+              >
+                <Icon size={14} />
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {btn.label} ({btn.shortcut})
+              </TooltipContent>
+            </Tooltip>
+          );
+        })}
+      </div>
     </div>
   );
 }

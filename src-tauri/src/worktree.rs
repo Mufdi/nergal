@@ -157,6 +157,41 @@ pub fn has_commits_ahead(worktree_path: &Path, main_branch: &str) -> Result<bool
     Ok(!stdout.trim().is_empty())
 }
 
+/// Count how many commits the current branch is ahead of `main_branch`.
+pub fn commits_ahead_count(worktree_path: &Path, main_branch: &str) -> Result<u32> {
+    let range = format!("{main_branch}..HEAD");
+    let output = Command::new("git")
+        .args(["rev-list", "--count", &range])
+        .current_dir(worktree_path)
+        .output()
+        .context("failed to count commits ahead")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git rev-list --count failed: {stderr}");
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let count: u32 = stdout.trim().parse().unwrap_or(0);
+    Ok(count)
+}
+
+/// Get the current branch name for a path.
+pub fn current_branch(path: &Path) -> Result<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(path)
+        .output()
+        .context("failed to get current branch")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git rev-parse --abbrev-ref HEAD failed: {stderr}");
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 /// Check if a worktree has uncommitted changes.
 #[allow(dead_code)]
 pub fn is_worktree_dirty(path: &Path) -> Result<bool> {

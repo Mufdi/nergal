@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { useSetAtom } from "jotai";
+import { toastsAtom } from "@/stores/toast";
 import { invoke } from "@/lib/tauri";
 import {
   Dialog,
@@ -25,6 +27,7 @@ export function MergeModal({
   workspaceId,
   onMerged,
 }: MergeModalProps) {
+  const addToast = useSetAtom(toastsAtom);
   const [branches, setBranches] = useState<string[]>([]);
   const [targetBranch, setTargetBranch] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +54,12 @@ export function MergeModal({
     setMerging(true);
     setError(null);
     try {
-      await invoke("merge_session", { sessionId: session.id, targetBranch });
+      const result = await invoke<{ success: boolean; message: string }>("merge_session", { sessionId: session.id, targetBranch });
+      if (result.success) {
+        addToast({ message: result.message, type: "success" });
+      } else {
+        addToast({ message: result.message, type: "error" });
+      }
       onMerged();
       onOpenChange(false);
     } catch (err) {

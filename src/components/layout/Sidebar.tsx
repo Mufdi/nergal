@@ -6,11 +6,11 @@ import {
   showCompletedAtom,
   sessionLaunchModeAtom,
   freshSessionsAtom,
-  worktreeRefreshAtom,
   type Workspace,
   type Session,
 } from "@/stores/workspace";
 import { openTabAtom } from "@/stores/rightPanel";
+import { toastsAtom } from "@/stores/toast";
 import { TaskPanel } from "@/components/tasks/TaskPanel";
 import { SessionRow } from "@/components/session/SessionRow";
 import { ResumeModal } from "@/components/session/ResumeModal";
@@ -124,8 +124,8 @@ function WorkspacesView() {
   const setLaunchMode = useSetAtom(sessionLaunchModeAtom);
   const freshSessions = useAtomValue(freshSessionsAtom);
   const setFreshSessions = useSetAtom(freshSessionsAtom);
-  const setRefresh = useSetAtom(worktreeRefreshAtom);
   const setOpenTab = useSetAtom(openTabAtom);
+  const addToast = useSetAtom(toastsAtom);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [addingSessionFor, setAddingSessionFor] = useState<string | null>(null);
   const [newSessionName, setNewSessionName] = useState("");
@@ -192,11 +192,7 @@ function WorkspacesView() {
     setActiveSessionId(sid);
     setCommitModal(null);
     terminalService.writeToSession(sid, `/commit ${lang}\r`)
-      .then(() => {
-        terminalService.focusActive();
-        // Refresh after commit completes (give it time)
-        setTimeout(() => setRefresh((prev: number) => prev + 1), 10000);
-      })
+      .then(() => terminalService.focusActive())
       .catch(() => {});
   }
 
@@ -317,8 +313,30 @@ function WorkspacesView() {
                         })
                         .catch(() => {});
                     }}
-                    onCommit={() => setCommitModal({ session: s })}
-                    onMerge={() => setMergeModal({ session: s, workspaceId: ws.id })}
+                    onCommit={() => {
+                      invoke<{ dirty: boolean; commits_ahead: boolean }>("check_session_has_commits", { sessionId: s.id })
+                        .then((status) => {
+                          if (status.dirty) {
+                            setCommitModal({ session: s });
+                          } else {
+                            addToast({ message: "Nothing to commit", type: "info" });
+                          }
+                        })
+                        .catch(() => addToast({ message: "Failed to check status", type: "error" }));
+                    }}
+                    onMerge={() => {
+                      invoke<{ dirty: boolean; commits_ahead: boolean }>("check_session_has_commits", { sessionId: s.id })
+                        .then((status) => {
+                          if (status.dirty) {
+                            addToast({ message: "Commit your changes first", type: "info" });
+                          } else if (status.commits_ahead) {
+                            setMergeModal({ session: s, workspaceId: ws.id });
+                          } else {
+                            addToast({ message: "Nothing to merge", type: "info" });
+                          }
+                        })
+                        .catch(() => addToast({ message: "Failed to check status", type: "error" }));
+                    }}
                   />
                 ))}
 
@@ -380,7 +398,6 @@ function WorkspacesView() {
             invoke<Workspace[]>("get_workspaces")
               .then(setWorkspaces)
               .catch(() => {});
-            setRefresh((prev: number) => prev + 1);
           }}
           onConflict={(targetBranch, detail) => {
             if (!mergeModal) return;

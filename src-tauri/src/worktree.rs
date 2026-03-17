@@ -81,13 +81,15 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
 
     if !commit.status.success() {
         let stderr = String::from_utf8_lossy(&commit.stderr);
-        if stderr.contains("nothing to commit") {
-            // Changes already integrated — clean up and signal success
+        let stdout = String::from_utf8_lossy(&commit.stdout);
+        // "nothing to commit" can appear in stdout or stderr
+        if stderr.contains("nothing to commit") || stdout.contains("nothing to commit") {
             let _ = Command::new("git").args(["worktree", "remove", "--force"]).arg(&tmp_dir).current_dir(repo_path).output();
             return Ok(());
         }
+        let detail = if stderr.trim().is_empty() { stdout } else { stderr };
         let _ = Command::new("git").args(["worktree", "remove", "--force"]).arg(&tmp_dir).current_dir(repo_path).output();
-        anyhow::bail!("commit failed: {stderr}");
+        anyhow::bail!("commit failed: {detail}");
     }
 
     // Get the new commit hash from the detached HEAD

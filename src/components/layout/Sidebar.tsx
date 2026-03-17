@@ -369,6 +369,17 @@ function WorkspacesView() {
               .then(setWorkspaces)
               .catch(() => {});
           }}
+          onConflict={(targetBranch) => {
+            if (!mergeModal) return;
+            const sid = mergeModal.session.id;
+            setActiveSessionId(sid);
+            setMergeModal(null);
+            setTimeout(() => {
+              terminalService.writeToSession(sid,
+                `There are merge conflicts when trying to merge into ${targetBranch}. Please help me resolve them.\r`
+              ).catch(() => {});
+            }, 500);
+          }}
         />
       )}
       {commitModal && (

@@ -481,6 +481,7 @@ pub fn list_branches(db: State<'_, SharedDb>, workspace_id: String) -> Result<Ve
 #[derive(Clone, serde::Serialize)]
 pub struct MergeResult {
     pub success: bool,
+    pub conflict: bool,
     pub message: String,
 }
 
@@ -508,9 +509,12 @@ pub fn merge_session(
     // Squash merge (stays on target after success)
     let commit_message = format!("squash merge {} into {}", branch, target_branch);
     if let Err(e) = crate::worktree::squash_merge(&repo_path, branch, &target_branch, &commit_message) {
+        let msg = e.to_string();
+        let is_conflict = msg.starts_with("conflict:");
         return Ok(MergeResult {
             success: false,
-            message: e.to_string(),
+            conflict: is_conflict,
+            message: if is_conflict { msg.strip_prefix("conflict:").unwrap_or(&msg).to_string() } else { msg },
         });
     }
 
@@ -529,6 +533,7 @@ pub fn merge_session(
 
     Ok(MergeResult {
         success: true,
+        conflict: false,
         message: format!("Squash-merged into {target_branch}"),
     })
 }

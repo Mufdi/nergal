@@ -209,3 +209,10 @@ export function fitActive(): void {
   entry.fitAddon.fit();
   entry.term.refresh(0, entry.term.rows - 1);
 }
+
+export function focusActive(): void {
+  if (!activeId) return;
+  const entry = terminals.get(activeId);
+  if (!entry) return;
+  entry.term.focus();
+}

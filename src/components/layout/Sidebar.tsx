@@ -369,14 +369,15 @@ function WorkspacesView() {
               .then(setWorkspaces)
               .catch(() => {});
           }}
-          onConflict={(targetBranch) => {
+          onConflict={(targetBranch, detail) => {
             if (!mergeModal) return;
             const sid = mergeModal.session.id;
+            const branch = mergeModal.session.worktree_branch ?? "this branch";
             setActiveSessionId(sid);
             setMergeModal(null);
             setTimeout(() => {
               terminalService.writeToSession(sid,
-                `There are merge conflicts when trying to merge into ${targetBranch}. Please help me resolve them.\r`
+                `I tried to squash-merge ${branch} into ${targetBranch} but got conflicts. Please resolve them in this worktree, then commit. Here's the git output:\n${detail}\r`
               ).catch(() => {});
             }, 500);
           }}

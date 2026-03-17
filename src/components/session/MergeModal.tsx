@@ -79,18 +79,21 @@ export function MergeModal({
           <label className="text-[11px] text-muted-foreground">
             Merge into:
           </label>
-          <select
-            value={targetBranch}
-            onChange={(e) => setTargetBranch(e.target.value)}
-            className="h-8 rounded-md border border-border bg-card px-2 text-[11px] text-foreground outline-none focus:ring-1 focus:ring-orange-500/50"
-            style={{ color: "#ededef", backgroundColor: "#141415" }}
-          >
+          <div className="flex flex-col gap-1 max-h-48 overflow-y-auto">
             {branches.map((b) => (
-              <option key={b} value={b} style={{ color: "#ededef", backgroundColor: "#1c1c1e" }}>
+              <button
+                key={b}
+                onClick={() => setTargetBranch(b)}
+                className={`rounded-md px-3 py-2 text-left text-[11px] transition-colors ${
+                  targetBranch === b
+                    ? "border border-orange-500 bg-orange-500/10 text-foreground"
+                    : "border border-border bg-[#141415] text-foreground/70 hover:bg-[#1c1c1e] hover:text-foreground"
+                }`}
+              >
                 {b}
-              </option>
+              </button>
             ))}
-          </select>
+          </div>
 
           {error && (
             <p className="text-[11px] text-red-400">{error}</p>

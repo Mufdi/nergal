@@ -83,6 +83,28 @@ function wireIMEFix(term: Terminal, container: HTMLElement, ptyId: string) {
 
   term.attachCustomKeyEventHandler((event) => {
     if (event.key === "Dead" || composing || Date.now() < suppressUntil) return false;
+
+    if (event.type !== "keydown") return true;
+
+    // Ctrl+Ñ / Ctrl+K
+    if (event.ctrlKey && !event.shiftKey && !event.altKey && (event.code === "Semicolon" || event.code === "KeyK")) return false;
+
+    // Ctrl+Shift+{letter}
+    if (event.ctrlKey && event.shiftKey && !event.altKey) {
+      if (["KeyB","KeyP","KeyF","KeyD","KeyS","KeyG","KeyK","KeyL","KeyT","KeyE","KeyM","KeyN","KeyC"].includes(event.code)) return false;
+    }
+
+    // Ctrl+{digit}
+    if (event.ctrlKey && !event.shiftKey && !event.altKey && event.code >= "Digit1" && event.code <= "Digit9") return false;
+
+    // Ctrl+Tab, Ctrl+W, Ctrl+N
+    if (event.ctrlKey && event.code === "Tab") return false;
+    if (event.ctrlKey && !event.shiftKey && event.code === "KeyW") return false;
+    if (event.ctrlKey && !event.shiftKey && event.code === "KeyN") return false;
+
+    // Alt+arrows
+    if (event.altKey && (event.code === "ArrowLeft" || event.code === "ArrowRight")) return false;
+
     return true;
   });
 

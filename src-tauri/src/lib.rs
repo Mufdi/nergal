@@ -69,7 +69,6 @@ pub fn run() {
             commands::list_plans,
             commands::load_plan,
             // Setup command
-            commands::list_sessions,
             commands::setup_hooks,
             // Cost command
             commands::get_cost,
@@ -85,6 +84,7 @@ pub fn run() {
             commands::merge_session,
             commands::get_transcript,
             commands::check_session_has_commits,
+            commands::get_session_git_info,
             pty::write_to_session_pty,
         ])
         .setup(move |app| {

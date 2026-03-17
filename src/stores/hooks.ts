@@ -5,7 +5,8 @@ import { costMapAtom, modeMapAtom, workspacesAtom } from "./workspace";
 import { taskMapAtom } from "./tasks";
 import { fileMapAtom, type ModifiedFile } from "./files";
 import { planStateMapAtom, registerPlanAtom } from "./plan";
-import { openTabAtom, expandRightPanelAtom } from "./rightPanel";
+import { openTabAction, expandRightPanelAtom } from "./rightPanel";
+import { refreshGitInfoAtom } from "./git";
 import { addActivityAtom } from "./activity";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
@@ -39,12 +40,13 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
         case "post_tool_use": {
           set(modeMapAtom, (prev) => ({ ...prev, [session_id]: "active" }));
           set(addActivityAtom, { sessionId: session_id, entry: createActivity("tool_use", `Tool done: ${tool_name ?? "unknown"}`, session_id) });
+          set(refreshGitInfoAtom, session_id);
           break;
         }
         case "stop": {
           set(modeMapAtom, (prev) => ({ ...prev, [session_id]: "idle" }));
           set(addActivityAtom, { sessionId: session_id, entry: createActivity("session", `Stopped: ${stop_reason ?? "completed"}`) });
-
+          set(refreshGitInfoAtom, session_id);
           break;
         }
         case "task_completed": {
@@ -140,7 +142,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
           diff: [],
         },
       }));
-      set(openTabAtom, { id: "plan", type: "plan", label: "Plan" });
+      set(openTabAction, { tab: { id: "plan", type: "plan", label: "Plan" }, isPinned: true });
       set(registerPlanAtom, { sessionId: payload.session_id, path: payload.path });
       set(expandRightPanelAtom, (prev: number) => prev + 1);
       set(addActivityAtom, { sessionId: payload.session_id, entry: createActivity("plan", "Plan ready for review") });

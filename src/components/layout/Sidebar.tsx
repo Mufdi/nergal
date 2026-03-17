@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
+import { focusZoneAtom, previousNonTerminalZoneAtom, triggerResumeSessionAtom } from "@/stores/shortcuts";
 import {
   workspacesAtom,
   activeSessionIdAtom,
@@ -9,9 +10,8 @@ import {
   type Workspace,
   type Session,
 } from "@/stores/workspace";
-import { openTabAtom } from "@/stores/rightPanel";
+import { openTabAction } from "@/stores/rightPanel";
 import { toastsAtom } from "@/stores/toast";
-import { TaskPanel } from "@/components/tasks/TaskPanel";
 import { SessionRow } from "@/components/session/SessionRow";
 import { ResumeModal } from "@/components/session/ResumeModal";
 import { MergeModal } from "@/components/session/MergeModal";
@@ -26,19 +26,23 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 
-type SidebarTab = "workspaces" | "tasks" | "git";
-
 interface SidebarProps {
   collapsed: boolean;
   onToggle: () => void;
 }
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
-  const [activeTab, setActiveTab] = useState<SidebarTab>("workspaces");
+  const setFocusZone = useSetAtom(focusZoneAtom);
+  const setPreviousZone = useSetAtom(previousNonTerminalZoneAtom);
+
+  function handleSidebarFocus() {
+    setFocusZone("sidebar");
+    setPreviousZone("sidebar");
+  }
 
   if (collapsed) {
     return (
-      <div className="flex h-full w-full flex-col items-center gap-1 bg-background py-2">
+      <div className="flex h-full w-full flex-col items-center gap-1 bg-background py-2 outline-none" tabIndex={-1} data-focus-zone="sidebar" onMouseDown={handleSidebarFocus}>
         <button
           onClick={onToggle}
           className="flex size-7 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
@@ -48,51 +52,17 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             <polyline points="9 18 15 12 9 6" />
           </svg>
         </button>
-
-        {(["workspaces", "tasks", "git"] as const).map((tab) => (
-          <Tooltip key={tab}>
-            <TooltipTrigger
-              render={
-                <button
-                  className={`flex size-7 items-center justify-center rounded transition-colors ${
-                    activeTab === tab
-                      ? "text-foreground bg-secondary"
-                      : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-                  }`}
-                  aria-label={tab}
-                />
-              }
-            >
-              <TabIcon tab={tab} />
-            </TooltipTrigger>
-            <TooltipContent side="right" className="capitalize">{tab}</TooltipContent>
-          </Tooltip>
-        ))}
       </div>
     );
   }
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-lg bg-card">
-      <div className="flex h-9 shrink-0 items-center border-b border-border/50">
-        <div className="flex flex-1 items-stretch h-full">
-          {(["workspaces", "tasks", "git"] as const).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`flex-1 text-[11px] font-medium capitalize transition-colors ${
-                activeTab === tab
-                  ? "text-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
+    <div className="flex h-full flex-col overflow-hidden rounded-lg bg-card outline-none" tabIndex={-1} data-focus-zone="sidebar" onMouseDown={handleSidebarFocus}>
+      <div className="flex h-9 shrink-0 items-center border-b border-border/50 px-3">
+        <span className="flex-1 text-[11px] font-medium text-foreground/80">Workspaces</span>
         <button
           onClick={onToggle}
-          className="flex size-6 shrink-0 mr-1.5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+          className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
           aria-label="Collapse sidebar"
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -102,13 +72,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {activeTab === "workspaces" && <WorkspacesView />}
-        {activeTab === "tasks" && <TaskPanel />}
-        {activeTab === "git" && (
-          <div className="flex items-center justify-center py-8">
-            <span className="text-[11px] text-muted-foreground">Coming soon</span>
-          </div>
-        )}
+        <WorkspacesView />
       </div>
     </div>
   );
@@ -124,18 +88,31 @@ function WorkspacesView() {
   const setLaunchMode = useSetAtom(sessionLaunchModeAtom);
   const freshSessions = useAtomValue(freshSessionsAtom);
   const setFreshSessions = useSetAtom(freshSessionsAtom);
-  const setOpenTab = useSetAtom(openTabAtom);
+  const openTab = useSetAtom(openTabAction);
   const addToast = useSetAtom(toastsAtom);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [addingSessionFor, setAddingSessionFor] = useState<string | null>(null);
   const [newSessionName, setNewSessionName] = useState("");
 
-  // Modal state
   const [resumeModal, setResumeModal] = useState<{ session: Session } | null>(null);
   const [mergeModal, setMergeModal] = useState<{ session: Session; workspaceId: string } | null>(null);
   const [commitModal, setCommitModal] = useState<{ session: Session } | null>(null);
+  const triggerResumeId = useAtomValue(triggerResumeSessionAtom);
+  const setTriggerResume = useSetAtom(triggerResumeSessionAtom);
 
-  // Load workspaces on mount
+  useEffect(() => {
+    if (!triggerResumeId) return;
+    for (const ws of workspaces) {
+      const session = ws.sessions.find((s) => s.id === triggerResumeId);
+      if (session) {
+        setResumeModal({ session });
+        setTriggerResume(null);
+        return;
+      }
+    }
+    setTriggerResume(null);
+  }, [triggerResumeId]);
+
   useEffect(() => {
     invoke<Workspace[]>("get_workspaces")
       .then((ws) => {
@@ -169,7 +146,7 @@ function WorkspacesView() {
 
   function handleSessionClick(session: Session) {
     if (session.status === "completed") {
-      setOpenTab({ id: `transcript-${session.id}`, type: "transcript", label: `Transcript: ${session.name}`, sessionId: session.id });
+      openTab({ tab: { id: `transcript-${session.id}`, type: "transcript", label: `Transcript: ${session.name}`, data: { sessionId: session.id } }, isPinned: true });
       return;
     }
     if (!freshSessions.has(session.id) && !terminalService.hasTerminal(session.id)) {
@@ -229,14 +206,17 @@ function WorkspacesView() {
         </span>
         <div className="flex items-center gap-1">
           <Tooltip>
-            <TooltipTrigger>
-              <button
-                onClick={() => setShowCompleted(!showCompleted)}
-                className="flex size-5 items-center justify-center rounded text-muted-foreground hover:text-foreground transition-colors"
-                aria-label={showCompleted ? "Hide completed" : "Show completed"}
-              >
-                {showCompleted ? <Eye className="size-3" /> : <EyeOff className="size-3" />}
-              </button>
+            <TooltipTrigger
+              render={
+                <div
+                  role="button"
+                  onClick={() => setShowCompleted(!showCompleted)}
+                  className="flex size-5 items-center justify-center rounded text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  aria-label={showCompleted ? "Hide completed" : "Show completed"}
+                />
+              }
+            >
+              {showCompleted ? <Eye className="size-3" /> : <EyeOff className="size-3" />}
             </TooltipTrigger>
             <TooltipContent side="top">{showCompleted ? "Hide completed" : "Show completed"}</TooltipContent>
           </Tooltip>
@@ -340,7 +320,6 @@ function WorkspacesView() {
                   />
                 ))}
 
-                {/* Add session inline form */}
                 {addingSessionFor === ws.id ? (
                   <div className="flex items-center gap-1 pl-7 pr-3 py-1">
                     <input
@@ -379,11 +358,10 @@ function WorkspacesView() {
         </div>
       )}
 
-      {/* Modals */}
       {resumeModal && (
         <ResumeModal
           open={true}
-          onOpenChange={(open) => { if (!open) setResumeModal(null); }}
+          onOpenChange={(o) => { if (!o) setResumeModal(null); }}
           sessionName={resumeModal.session.name}
           onSelect={handleResume}
         />
@@ -391,7 +369,7 @@ function WorkspacesView() {
       {mergeModal && (
         <MergeModal
           open={true}
-          onOpenChange={(open) => { if (!open) setMergeModal(null); }}
+          onOpenChange={(o) => { if (!o) setMergeModal(null); }}
           session={mergeModal.session}
           workspaceId={mergeModal.workspaceId}
           onMerged={() => {
@@ -416,33 +394,10 @@ function WorkspacesView() {
       {commitModal && (
         <CommitModal
           open={true}
-          onOpenChange={(open) => { if (!open) setCommitModal(null); }}
+          onOpenChange={(o) => { if (!o) setCommitModal(null); }}
           onConfirm={handleCommitConfirm}
         />
       )}
     </div>
   );
-}
-
-function TabIcon({ tab }: { tab: "workspaces" | "tasks" | "git" }) {
-  switch (tab) {
-    case "workspaces":
-      return (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-        </svg>
-      );
-    case "tasks":
-      return (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-        </svg>
-      );
-    case "git":
-      return (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="18" cy="18" r="3" /><circle cx="6" cy="6" r="3" /><path d="M6 21V9a9 9 0 0 0 9 9" />
-        </svg>
-      );
-  }
 }

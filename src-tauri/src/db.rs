@@ -334,7 +334,7 @@ impl Database {
 
     pub fn clear_session_worktree(&self, id: &str) -> Result<()> {
         self.conn.execute(
-            "UPDATE sessions SET worktree_path = NULL, status = 'idle', updated_at = ?1 WHERE id = ?2",
+            "UPDATE sessions SET worktree_path = NULL, worktree_branch = NULL, status = 'idle', updated_at = ?1 WHERE id = ?2",
             params![now_secs(), id],
         )?;
         Ok(())

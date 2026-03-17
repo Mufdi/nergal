@@ -6,6 +6,7 @@ import {
   showCompletedAtom,
   sessionLaunchModeAtom,
   freshSessionsAtom,
+  worktreeRefreshAtom,
   type Workspace,
   type Session,
 } from "@/stores/workspace";
@@ -123,6 +124,7 @@ function WorkspacesView() {
   const setLaunchMode = useSetAtom(sessionLaunchModeAtom);
   const freshSessions = useAtomValue(freshSessionsAtom);
   const setFreshSessions = useSetAtom(freshSessionsAtom);
+  const setRefresh = useSetAtom(worktreeRefreshAtom);
   const setOpenTab = useSetAtom(openTabAtom);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [addingSessionFor, setAddingSessionFor] = useState<string | null>(null);
@@ -190,7 +192,11 @@ function WorkspacesView() {
     setActiveSessionId(sid);
     setCommitModal(null);
     terminalService.writeToSession(sid, `/commit ${lang}\r`)
-      .then(() => terminalService.focusActive())
+      .then(() => {
+        terminalService.focusActive();
+        // Refresh after commit completes (give it time)
+        setTimeout(() => setRefresh((prev: number) => prev + 1), 10000);
+      })
       .catch(() => {});
   }
 
@@ -374,6 +380,7 @@ function WorkspacesView() {
             invoke<Workspace[]>("get_workspaces")
               .then(setWorkspaces)
               .catch(() => {});
+            setRefresh((prev: number) => prev + 1);
           }}
           onConflict={(targetBranch, detail) => {
             if (!mergeModal) return;

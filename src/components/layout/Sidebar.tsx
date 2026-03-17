@@ -3,12 +3,22 @@ import { useAtomValue, useSetAtom } from "jotai";
 import {
   workspacesAtom,
   activeSessionIdAtom,
+  showCompletedAtom,
+  sessionLaunchModeAtom,
+  freshSessionsAtom,
   type Workspace,
   type Session,
 } from "@/stores/workspace";
+import { openTabAtom } from "@/stores/rightPanel";
 import { TaskPanel } from "@/components/tasks/TaskPanel";
+import { SessionRow } from "@/components/session/SessionRow";
+import { ResumeModal } from "@/components/session/ResumeModal";
+import { MergeModal } from "@/components/session/MergeModal";
+import { CommitModal } from "@/components/session/CommitModal";
 import { invoke } from "@/lib/tauri";
 import { open } from "@tauri-apps/plugin-dialog";
+import * as terminalService from "@/components/terminal/terminalService";
+import { Eye, EyeOff } from "lucide-react";
 import {
   Tooltip,
   TooltipTrigger,
@@ -103,34 +113,33 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   );
 }
 
-const STATUS_DOT_COLORS: Record<Session["status"], string> = {
-  idle: "bg-muted-foreground/60",
-  running: "bg-green-500",
-  needs_attention: "bg-orange-500",
-  completed: "bg-muted-foreground/30",
-};
-
 function WorkspacesView() {
   const workspaces = useAtomValue(workspacesAtom);
   const setWorkspaces = useSetAtom(workspacesAtom);
   const activeSessionId = useAtomValue(activeSessionIdAtom);
   const setActiveSessionId = useSetAtom(activeSessionIdAtom);
+  const showCompleted = useAtomValue(showCompletedAtom);
+  const setShowCompleted = useSetAtom(showCompletedAtom);
+  const setLaunchMode = useSetAtom(sessionLaunchModeAtom);
+  const freshSessions = useAtomValue(freshSessionsAtom);
+  const setFreshSessions = useSetAtom(freshSessionsAtom);
+  const setOpenTab = useSetAtom(openTabAtom);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [addingSessionFor, setAddingSessionFor] = useState<string | null>(null);
   const [newSessionName, setNewSessionName] = useState("");
+
+  // Modal state
+  const [resumeModal, setResumeModal] = useState<{ session: Session } | null>(null);
+  const [mergeModal, setMergeModal] = useState<{ session: Session; workspaceId: string } | null>(null);
+  const [commitModal, setCommitModal] = useState<{ session: Session } | null>(null);
 
   // Load workspaces on mount
   useEffect(() => {
     invoke<Workspace[]>("get_workspaces")
       .then((ws) => {
         setWorkspaces(ws);
-        // Auto-expand first workspace
         if (ws.length > 0) {
           setExpandedIds(new Set([ws[0].id]));
-        }
-        // Auto-select first session if none active
-        if (!activeSessionId && ws.length > 0 && ws[0].sessions.length > 0) {
-          setActiveSessionId(ws[0].sessions[0].id);
         }
       })
       .catch(() => {});
@@ -156,8 +165,29 @@ function WorkspacesView() {
       .catch(() => {});
   }
 
-  function handleSelectSession(session: Session) {
+  function handleSessionClick(session: Session) {
+    if (session.status === "completed") {
+      setOpenTab({ id: `transcript-${session.id}`, type: "transcript", label: `Transcript: ${session.name}`, sessionId: session.id });
+      return;
+    }
+    if (!freshSessions.has(session.id) && !terminalService.hasTerminal(session.id)) {
+      setResumeModal({ session });
+      return;
+    }
     setActiveSessionId(session.id);
+  }
+
+  function handleResume(mode: "continue" | "resume_pick") {
+    if (!resumeModal) return;
+    setLaunchMode((prev) => ({ ...prev, [resumeModal.session.id]: mode }));
+    setActiveSessionId(resumeModal.session.id);
+    setResumeModal(null);
+  }
+
+  function handleCommitConfirm(lang: string) {
+    if (!commitModal) return;
+    terminalService.writeToSession(commitModal.session.id, `/commit ${lang}\r`);
+    setCommitModal(null);
   }
 
   async function handleCreateSession(workspaceId: string) {
@@ -175,20 +205,13 @@ function WorkspacesView() {
             : w,
         ),
       );
+      setFreshSessions((prev: Set<string>) => new Set([...prev, session.id]));
       setActiveSessionId(session.id);
       setAddingSessionFor(null);
       setNewSessionName("");
     } catch {
       // handled by toast in future
     }
-  }
-
-  function formatAge(timestamp: number): string {
-    const delta = Math.floor(Date.now() / 1000 - timestamp);
-    if (delta < 60) return "now";
-    if (delta < 3600) return `${Math.floor(delta / 60)}m`;
-    if (delta < 86400) return `${Math.floor(delta / 3600)}h`;
-    return `${Math.floor(delta / 86400)}d`;
   }
 
   return (
@@ -198,19 +221,36 @@ function WorkspacesView() {
         <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
           Workspaces
         </span>
-        <button
-          onClick={handleAddWorkspace}
-          className="flex size-5 items-center justify-center rounded text-muted-foreground hover:text-foreground transition-colors"
-          aria-label="Add workspace"
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 5v14" /><path d="M5 12h14" />
-          </svg>
-        </button>
+        <div className="flex items-center gap-1">
+          <Tooltip>
+            <TooltipTrigger>
+              <button
+                onClick={() => setShowCompleted(!showCompleted)}
+                className="flex size-5 items-center justify-center rounded text-muted-foreground hover:text-foreground transition-colors"
+                aria-label={showCompleted ? "Hide completed" : "Show completed"}
+              >
+                {showCompleted ? <Eye className="size-3" /> : <EyeOff className="size-3" />}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">{showCompleted ? "Hide completed" : "Show completed"}</TooltipContent>
+          </Tooltip>
+          <button
+            onClick={handleAddWorkspace}
+            className="flex size-5 items-center justify-center rounded text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="Add workspace"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 5v14" /><path d="M5 12h14" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       {workspaces.map((ws) => {
         const isExpanded = expandedIds.has(ws.id);
+        const filteredSessions = showCompleted
+          ? ws.sessions
+          : ws.sessions.filter((s) => s.status !== "completed");
         return (
           <div key={ws.id}>
             <button
@@ -231,27 +271,43 @@ function WorkspacesView() {
 
             {isExpanded && (
               <>
-                {ws.sessions.map((s) => (
-                  <button
+                {filteredSessions.map((s) => (
+                  <SessionRow
                     key={s.id}
-                    onClick={() => handleSelectSession(s)}
-                    className={`flex w-full items-center gap-1.5 pl-7 pr-3 py-1 text-left transition-colors ${
-                      activeSessionId === s.id
-                        ? "bg-secondary/60 text-foreground"
-                        : "hover:bg-secondary/40 text-foreground/70"
-                    }`}
-                  >
-                    <span
-                      className={`size-1.5 shrink-0 rounded-full ${STATUS_DOT_COLORS[s.status]}`}
-                      aria-hidden="true"
-                    />
-                    <span className="flex-1 truncate text-[11px]">
-                      {s.name}
-                    </span>
-                    <span className="shrink-0 text-[10px] text-muted-foreground/50 tabular-nums">
-                      {formatAge(s.updated_at)}
-                    </span>
-                  </button>
+                    session={s}
+                    workspace={ws}
+                    isActive={activeSessionId === s.id}
+                    onSelect={() => handleSessionClick(s)}
+                    onRename={(newName) => {
+                      invoke("rename_session", { sessionId: s.id, name: newName })
+                        .then(() => {
+                          setWorkspaces((prev) =>
+                            prev.map((w) => ({
+                              ...w,
+                              sessions: w.sessions.map((sess) =>
+                                sess.id === s.id ? { ...sess, name: newName } : sess,
+                              ),
+                            })),
+                          );
+                        })
+                        .catch(() => {});
+                    }}
+                    onDelete={() => {
+                      invoke("delete_session", { sessionId: s.id })
+                        .then(() => {
+                          setWorkspaces((prev) =>
+                            prev.map((w) => ({
+                              ...w,
+                              sessions: w.sessions.filter((sess) => sess.id !== s.id),
+                            })),
+                          );
+                          if (activeSessionId === s.id) setActiveSessionId(null);
+                        })
+                        .catch(() => {});
+                    }}
+                    onCommit={() => setCommitModal({ session: s })}
+                    onMerge={() => setMergeModal({ session: s, workspaceId: ws.id })}
+                  />
                 ))}
 
                 {/* Add session inline form */}
@@ -292,11 +348,41 @@ function WorkspacesView() {
           <span className="text-[11px] text-muted-foreground">No workspaces</span>
         </div>
       )}
+
+      {/* Modals */}
+      {resumeModal && (
+        <ResumeModal
+          open={true}
+          onOpenChange={(open) => { if (!open) setResumeModal(null); }}
+          sessionName={resumeModal.session.name}
+          onSelect={handleResume}
+        />
+      )}
+      {mergeModal && (
+        <MergeModal
+          open={true}
+          onOpenChange={(open) => { if (!open) setMergeModal(null); }}
+          session={mergeModal.session}
+          workspaceId={mergeModal.workspaceId}
+          onMerged={() => {
+            invoke<Workspace[]>("get_workspaces")
+              .then(setWorkspaces)
+              .catch(() => {});
+          }}
+        />
+      )}
+      {commitModal && (
+        <CommitModal
+          open={true}
+          onOpenChange={(open) => { if (!open) setCommitModal(null); }}
+          onConfirm={handleCommitConfirm}
+        />
+      )}
     </div>
   );
 }
 
-function TabIcon({ tab }: { tab: SidebarTab }) {
+function TabIcon({ tab }: { tab: "workspaces" | "tasks" | "git" }) {
   switch (tab) {
     case "workspaces":
       return (

@@ -96,7 +96,7 @@ export function setHost(el: HTMLDivElement | null): void {
 }
 
 /// Show the given session's terminal. Creates it if it doesn't exist.
-export async function show(sessionId: string, cwd: string): Promise<void> {
+export async function show(sessionId: string, cwd: string, mode: "new" | "continue" | "resume_pick" = "new"): Promise<void> {
   activeId = sessionId;
 
   // Toggle visibility + force redraw on the shown terminal
@@ -114,6 +114,7 @@ export async function show(sessionId: string, cwd: string): Promise<void> {
     requestAnimationFrame(() => {
       entry.fitAddon.fit();
       entry.term.refresh(0, entry.term.rows - 1);
+      entry.term.focus();
     });
     return;
   }
@@ -146,6 +147,7 @@ export async function show(sessionId: string, cwd: string): Promise<void> {
       cwd,
       cols: term.cols,
       rows: term.rows,
+      resume: mode === "new" ? null : mode,
     });
 
     const ime = wireIMEFix(term, container, ptyId);
@@ -164,6 +166,7 @@ export async function show(sessionId: string, cwd: string): Promise<void> {
     });
 
     terminals.set(sessionId, { term, fitAddon, ptyId, container, unlisten, dataDisposable, resizeDisposable });
+    term.focus();
 
     if (activeId !== sessionId) {
       container.style.display = "none";
@@ -187,6 +190,16 @@ export function destroy(sessionId: string): void {
   terminals.delete(sessionId);
 
   invoke("kill_session_pty", { sessionId }).catch(() => {});
+}
+
+export async function writeToSession(sessionId: string, text: string): Promise<void> {
+  const entry = terminals.get(sessionId);
+  if (!entry) return;
+  await invoke("write_to_session_pty", { sessionId, data: text });
+}
+
+export function hasTerminal(sessionId: string): boolean {
+  return terminals.has(sessionId);
 }
 
 export function fitActive(): void {

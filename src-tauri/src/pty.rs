@@ -124,6 +124,7 @@ pub async fn start_claude_session(
     cwd: Option<String>,
     cols: u16,
     rows: u16,
+    resume: Option<String>,
 ) -> Result<StartClaudeResult, String> {
     // Idempotency: check if session already has a PTY
     {
@@ -165,19 +166,50 @@ pub async fn start_claude_session(
     // Small delay to let shell finish initialization prompts
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-    // Write `claude\n` to start the CLI
+    // Write the appropriate claude command to start the CLI
     {
+        let cmd = match resume.as_deref() {
+            Some("continue") => b"claude --continue\n".as_slice(),
+            Some("resume_pick") => b"claude --resume\n".as_slice(),
+            _ => b"claude\n".as_slice(),
+        };
         let mut instances = state.instances.lock().map_err(|e| e.to_string())?;
         if let Some(instance) = instances.get_mut(&pty_id) {
             instance
                 .writer
-                .write_all(b"claude\n")
+                .write_all(cmd)
                 .map_err(|e| e.to_string())?;
             instance.writer.flush().map_err(|e| e.to_string())?;
         }
     }
 
     Ok(StartClaudeResult { pty_id })
+}
+
+/// Write data to a session's PTY
+#[tauri::command]
+pub fn write_to_session_pty(
+    state: State<'_, PtyManager>,
+    session_id: String,
+    data: String,
+) -> Result<(), String> {
+    let session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
+    let Some(pty_id) = session_ptys.get(&session_id) else {
+        return Err("no PTY for session".into());
+    };
+    let pty_id = pty_id.clone();
+    drop(session_ptys);
+
+    let mut instances = state.instances.lock().map_err(|e| e.to_string())?;
+    let Some(instance) = instances.get_mut(&pty_id) else {
+        return Err("PTY instance not found".into());
+    };
+    instance
+        .writer
+        .write_all(data.as_bytes())
+        .map_err(|e| e.to_string())?;
+    instance.writer.flush().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Kill a session's PTY and clean up mappings

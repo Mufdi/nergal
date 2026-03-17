@@ -40,6 +40,7 @@ pub struct Session {
     pub workspace_id: String,
     pub worktree_path: Option<PathBuf>,
     pub worktree_branch: Option<String>,
+    pub merge_target: Option<String>,
     pub status: SessionStatus,
     pub created_at: u64,
     pub updated_at: u64,

@@ -59,7 +59,7 @@ impl Database {
             )
             .unwrap_or(0);
 
-        let migrations: &[&str] = &[include_str!("../migrations/001_initial.sql")];
+        let migrations: &[&str] = &[include_str!("../migrations/001_initial.sql"), include_str!("../migrations/002_merge_target.sql")];
 
         for (i, sql) in migrations.iter().enumerate() {
             let version = (i + 1) as i64;
@@ -162,7 +162,7 @@ impl Database {
             .prepare("SELECT id, name, repo_path, created_at FROM workspaces ORDER BY created_at")?;
         let mut sess_stmt = self
             .conn
-            .prepare("SELECT id, workspace_id, name, worktree_path, worktree_branch, status, created_at, updated_at FROM sessions WHERE workspace_id = ?1 ORDER BY created_at")?;
+            .prepare("SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at FROM sessions WHERE workspace_id = ?1 ORDER BY created_at")?;
 
         let workspaces = ws_stmt.query_map([], |row| {
             Ok((
@@ -185,11 +185,12 @@ impl Database {
                         name: row.get(2)?,
                         worktree_path: row.get::<_, Option<String>>(3)?.map(PathBuf::from),
                         worktree_branch: row.get(4)?,
+                        merge_target: row.get(5)?,
                         status: SessionStatus::from_str(
-                            &row.get::<_, String>(5).unwrap_or_default(),
+                            &row.get::<_, String>(6).unwrap_or_default(),
                         ),
-                        created_at: row.get(6)?,
-                        updated_at: row.get(7)?,
+                        created_at: row.get(7)?,
+                        updated_at: row.get(8)?,
                     })
                 })?
                 .filter_map(|r| r.ok())
@@ -230,13 +231,14 @@ impl Database {
 
     pub fn create_session(&self, session: &Session) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO sessions (id, workspace_id, name, worktree_path, worktree_branch, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO sessions (id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 session.id,
                 session.workspace_id,
                 session.name,
                 session.worktree_path.as_ref().map(|p| p.display().to_string()),
                 session.worktree_branch,
+                session.merge_target,
                 session.status.as_str(),
                 session.created_at,
                 session.updated_at,
@@ -247,7 +249,7 @@ impl Database {
 
     pub fn find_session(&self, id: &str) -> Result<Option<Session>> {
         let result = self.conn.query_row(
-            "SELECT id, workspace_id, name, worktree_path, worktree_branch, status, created_at, updated_at FROM sessions WHERE id = ?1",
+            "SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at FROM sessions WHERE id = ?1",
             [id],
             |row| Ok(Session {
                 id: row.get(0)?,
@@ -255,9 +257,10 @@ impl Database {
                 name: row.get(2)?,
                 worktree_path: row.get::<_, Option<String>>(3)?.map(PathBuf::from),
                 worktree_branch: row.get(4)?,
-                status: SessionStatus::from_str(&row.get::<_, String>(5).unwrap_or_default()),
-                created_at: row.get(6)?,
-                updated_at: row.get(7)?,
+                merge_target: row.get(5)?,
+                status: SessionStatus::from_str(&row.get::<_, String>(6).unwrap_or_default()),
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
             }),
         );
         match result {
@@ -311,6 +314,22 @@ impl Database {
             .map(|(id, path)| (id, PathBuf::from(path)))
             .collect();
         Ok(rows)
+    }
+
+    pub fn set_merge_target(&self, id: &str, target: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE sessions SET merge_target = ?1, updated_at = ?2 WHERE id = ?3",
+            params![target, now_secs(), id],
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_merge_target(&self, id: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE sessions SET merge_target = NULL, updated_at = ?1 WHERE id = ?2",
+            params![now_secs(), id],
+        )?;
+        Ok(())
     }
 
     pub fn clear_session_worktree(&self, id: &str) -> Result<()> {

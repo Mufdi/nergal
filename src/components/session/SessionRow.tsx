@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   CircleDot,
   GitBranch,
@@ -13,6 +13,7 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
+import { invoke } from "@/lib/tauri";
 import type { Session, Workspace } from "@/stores/workspace";
 
 const STATUS_DOT_COLORS: Record<Session["status"], string> = {
@@ -45,8 +46,20 @@ export function SessionRow({
 }: SessionRowProps) {
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(session.name);
+  const [isDirty, setIsDirty] = useState(false);
+  const [commitsAhead, setCommitsAhead] = useState(false);
   const isCompleted = session.status === "completed";
   const isWorktree = session.worktree_path !== null;
+
+  useEffect(() => {
+    if (!isWorktree) return;
+    invoke<{ dirty: boolean; commits_ahead: boolean }>("check_session_has_commits", { sessionId: session.id })
+      .then((status) => {
+        setIsDirty(status.dirty);
+        setCommitsAhead(status.commits_ahead);
+      })
+      .catch(() => { setIsDirty(false); setCommitsAhead(false); });
+  }, [session.id, session.updated_at, isWorktree]);
 
   function handleRenameSubmit() {
     const trimmed = editName.trim();
@@ -102,42 +115,78 @@ export function SessionRow({
 
       {/* Hover actions */}
       <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
-        <ActionIcon
-          icon={Pencil}
-          label="Rename"
-          onClick={(e) => {
-            e.stopPropagation();
-            setEditName(session.name);
-            setEditing(true);
-          }}
-        />
-        <ActionIcon
-          icon={Trash2}
-          label="Delete"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-        />
-        {isWorktree && (
-          <>
-            <ActionIcon
-              icon={Package}
-              label="Commit"
+        <Tooltip>
+          <TooltipTrigger>
+            <span
+              role="button"
+              tabIndex={0}
+              aria-label="Rename"
               onClick={(e) => {
                 e.stopPropagation();
-                onCommit();
+                setEditName(session.name);
+                setEditing(true);
               }}
-            />
-            <ActionIcon
-              icon={GitMerge}
-              label="Merge"
+              className="flex size-4 items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Pencil className="size-2.5" />
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="text-[10px]">Rename</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger>
+            <span
+              role="button"
+              tabIndex={0}
+              aria-label="Delete"
               onClick={(e) => {
                 e.stopPropagation();
-                onMerge();
+                onDelete();
               }}
-            />
-          </>
+              className="flex size-4 items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Trash2 className="size-2.5" />
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="text-[10px]">Delete</TooltipContent>
+        </Tooltip>
+        {isWorktree && isDirty && (
+          <Tooltip>
+            <TooltipTrigger>
+              <span
+                role="button"
+                tabIndex={0}
+                aria-label="Commit"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCommit();
+                }}
+                className="flex size-4 items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <Package className="size-2.5" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-[10px]">Commit</TooltipContent>
+          </Tooltip>
+        )}
+        {isWorktree && commitsAhead && !isDirty && (
+          <Tooltip>
+            <TooltipTrigger>
+              <span
+                role="button"
+                tabIndex={0}
+                aria-label="Merge"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onMerge();
+                }}
+                className="flex size-4 items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <GitMerge className="size-2.5" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-[10px]">Merge</TooltipContent>
+          </Tooltip>
         )}
       </span>
 
@@ -148,35 +197,6 @@ export function SessionRow({
         <CircleDot className="size-3 shrink-0 text-muted-foreground/40" />
       )}
     </button>
-  );
-}
-
-function ActionIcon({
-  icon: Icon,
-  label,
-  onClick,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  onClick: (e: React.MouseEvent) => void;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            role="button"
-            tabIndex={0}
-            aria-label={label}
-            onClick={onClick}
-            className="flex size-4 items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
-          />
-        }
-      >
-        <Icon className="size-2.5" />
-      </TooltipTrigger>
-      <TooltipContent side="bottom" className="text-[10px]">{label}</TooltipContent>
-    </Tooltip>
   );
 }
 

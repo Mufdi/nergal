@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useAtomValue } from "jotai";
 import { TopBar } from "./TopBar";
 import { Sidebar } from "./Sidebar";
 import { RightPanel } from "./RightPanel";
@@ -7,6 +8,7 @@ import { Toasts } from "./Toasts";
 import { TerminalManager } from "@/components/terminal/TerminalManager";
 import { ActivityLog } from "@/components/activity/ActivityLog";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
+import { expandRightPanelAtom } from "@/stores/rightPanel";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -19,10 +21,27 @@ const COLLAPSED_SIZE_PX = 40;
 export function Workspace() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [rightCollapsed, setRightCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(true);
+  const expandSignal = useAtomValue(expandRightPanelAtom);
 
   const sidebarPanelRef = usePanelRef();
   const rightPanelRef = usePanelRef();
+
+  // Collapse right panel on mount
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      const panel = rightPanelRef.current;
+      if (panel) panel.collapse();
+    });
+  }, []);
+
+  // Expand right panel when expandSignal changes
+  useEffect(() => {
+    if (expandSignal > 0) {
+      const panel = rightPanelRef.current;
+      if (panel) panel.expand();
+    }
+  }, [expandSignal]);
 
   function handleToggleSidebar() {
     const panel = sidebarPanelRef.current;

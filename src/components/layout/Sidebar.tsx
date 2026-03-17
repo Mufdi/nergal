@@ -297,6 +297,8 @@ function WorkspacesView() {
                         .catch(() => {});
                     }}
                     onDelete={() => {
+                      if (!window.confirm(`Delete session "${s.name}"?`)) return;
+                      terminalService.destroy(s.id);
                       invoke("delete_session", { sessionId: s.id })
                         .then(() => {
                           setWorkspaces((prev) =>

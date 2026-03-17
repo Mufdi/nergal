@@ -57,11 +57,11 @@ export function MergeModal({
       const result = await invoke<{ success: boolean; message: string }>("merge_session", { sessionId: session.id, targetBranch });
       if (result.success) {
         addToast({ message: result.message, type: "success" });
+        onMerged();
+        onOpenChange(false);
       } else {
-        addToast({ message: result.message, type: "error" });
+        setError(result.message);
       }
-      onMerged();
-      onOpenChange(false);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.toLowerCase().includes("conflict")) {

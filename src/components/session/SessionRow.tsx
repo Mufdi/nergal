@@ -62,9 +62,7 @@ export function SessionRow({
         .catch(() => { setIsDirty(false); setCommitsAhead(false); });
     }
     check();
-    const interval = setInterval(check, 5000);
-    return () => clearInterval(interval);
-  }, [session.id, isWorktree]);
+  }, [session.id, session.updated_at, isWorktree]);
 
   function handleRenameSubmit() {
     const trimmed = editName.trim();

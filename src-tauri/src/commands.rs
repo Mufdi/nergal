@@ -510,13 +510,6 @@ pub fn merge_session(
     let commit_message = format!("squash merge {} into {}", branch, target_branch);
     if let Err(e) = crate::worktree::squash_merge(&repo_path, branch, &target_branch, &commit_message) {
         let msg = e.to_string();
-        if msg == "nothing_to_merge" {
-            return Ok(MergeResult {
-                success: false,
-                conflict: false,
-                message: "Nothing to merge — changes are already in the target branch.".to_string(),
-            });
-        }
         let is_conflict = msg.starts_with("conflict:");
         return Ok(MergeResult {
             success: false,

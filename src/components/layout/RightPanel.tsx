@@ -1,16 +1,46 @@
 import { useState, useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { activeTabAtom, openTabsAtom, activeTabIdAtom, type RightPanelTab } from "@/stores/rightPanel";
+import {
+  activeTabAtom,
+  activeTabsAtom,
+  activeTabIdAtom,
+  setDirtyAction,
+  type Tab,
+  type TabType,
+} from "@/stores/rightPanel";
+import { focusZoneAtom, previousNonTerminalZoneAtom } from "@/stores/shortcuts";
 import { activePlanAtom, planStateMapAtom, sessionPlansAtom } from "@/stores/plan";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { PlanPanel } from "@/components/plan/PlanPanel";
+import { TaskPanel } from "@/components/tasks/TaskPanel";
 import { TranscriptViewer } from "@/components/session/TranscriptViewer";
+import { FileSidebar } from "@/components/panel/FileSidebar";
+import { TabBar } from "@/components/ui/TabBar";
 import { invoke } from "@/lib/tauri";
+import {
+  FileText,
+  FileCode,
+  GitCompareArrows,
+  ClipboardList,
+  CheckSquare,
+  GitBranch,
+  ScrollText,
+} from "lucide-react";
 import {
   Tooltip,
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
+
+const TAB_ICONS: Record<TabType, typeof FileText> = {
+  plan: FileText,
+  file: FileCode,
+  diff: GitCompareArrows,
+  spec: ClipboardList,
+  tasks: CheckSquare,
+  git: GitBranch,
+  transcript: ScrollText,
+};
 
 interface RightPanelProps {
   collapsed: boolean;
@@ -19,8 +49,15 @@ interface RightPanelProps {
 
 export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
   const activeTab = useAtomValue(activeTabAtom);
-  const openTabs = useAtomValue(openTabsAtom);
+  const tabs = useAtomValue(activeTabsAtom);
   const setActiveTabId = useSetAtom(activeTabIdAtom);
+  const setFocusZone = useSetAtom(focusZoneAtom);
+  const setPreviousZone = useSetAtom(previousNonTerminalZoneAtom);
+
+  function handlePanelFocus() {
+    setFocusZone("panel");
+    setPreviousZone("panel");
+  }
 
   if (collapsed) {
     return (
@@ -34,22 +71,25 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
             <polyline points="15 18 9 12 15 6" />
           </svg>
         </button>
-        {openTabs.map((tab) => (
-          <Tooltip key={tab.id}>
-            <TooltipTrigger
-              render={
-                <button
-                  onClick={() => { setActiveTabId(tab.id); onToggle(); }}
-                  className="flex size-7 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-                  aria-label={tab.label}
-                />
-              }
-            >
-              <PanelTabIcon type={tab.type} />
-            </TooltipTrigger>
-            <TooltipContent side="left">{tab.label}</TooltipContent>
-          </Tooltip>
-        ))}
+        {tabs.map((tab) => {
+          const Icon = TAB_ICONS[tab.type];
+          return (
+            <Tooltip key={tab.id}>
+              <TooltipTrigger
+                render={
+                  <button
+                    onClick={() => { setActiveTabId(tab.id); onToggle(); }}
+                    className="flex size-7 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                    aria-label={tab.label}
+                  />
+                }
+              >
+                <Icon size={14} />
+              </TooltipTrigger>
+              <TooltipContent side="left">{tab.label}</TooltipContent>
+            </Tooltip>
+          );
+        })}
       </div>
     );
   }
@@ -65,18 +105,20 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
     );
   }
 
+  const showFileSidebar = activeTab.type === "diff" || activeTab.type === "file";
+
   return (
-    <div className="flex h-full overflow-hidden rounded-lg bg-card">
-      {/* Main content */}
+    <div className="flex h-full overflow-hidden rounded-lg bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
       <div className="flex flex-1 flex-col overflow-hidden">
         <PanelHeader onToggle={onToggle} label={activeTab.label} />
+        <TabBar />
         <div className="flex-1 overflow-y-auto">
           <PanelContent tab={activeTab} />
         </div>
       </div>
 
-      {/* Plan file sidebar on the right */}
       {activeTab.type === "plan" && <PlanFileSidebar />}
+      {showFileSidebar && <FileSidebar />}
     </div>
   );
 }
@@ -105,10 +147,8 @@ function PlanFileSidebar() {
   const plan = useAtomValue(activePlanAtom);
   const setPlanStateMap = useSetAtom(planStateMapAtom);
 
-  // Session-specific plans from registerPlanAtom
   const plans = sessionId ? (sessionPlans[sessionId] ?? []) : [];
 
-  // Also fetch all plans for the workspace (fallback when session has none registered yet)
   useEffect(() => {
     invoke<{ name: string; path: string; modified: number }[]>("list_plans")
       .then((result) => setAllPlans(result.map((p) => ({ name: p.name, path: p.path }))))
@@ -169,21 +209,40 @@ function PlanFileSidebar() {
   );
 }
 
-function PanelContent({ tab }: { tab: RightPanelTab }) {
+function PanelContent({ tab }: { tab: Tab }) {
   switch (tab.type) {
     case "plan":
-      return <PlanPanel />;
-    case "transcript":
-      return tab.sessionId ? <TranscriptViewer sessionId={tab.sessionId} /> : null;
+      return <PlanContentWrapper tabId={tab.id} />;
+    case "tasks":
+      return <TaskPanel />;
+    case "transcript": {
+      const sessionId = tab.data?.sessionId as string | undefined;
+      return sessionId ? <TranscriptViewer sessionId={sessionId} /> : null;
+    }
     case "diff":
       return <PlaceholderView label="Diff view" />;
     case "spec":
       return <PlaceholderView label="Spec view" />;
     case "git":
       return <PlaceholderView label="Git view" />;
+    case "file":
+      return <PlaceholderView label={`File: ${(tab.data?.path as string) ?? "unknown"}`} />;
     default:
       return null;
   }
+}
+
+function PlanContentWrapper({ tabId }: { tabId: string }) {
+  const plan = useAtomValue(activePlanAtom);
+  const setDirty = useSetAtom(setDirtyAction);
+
+  const hasEdits = plan.content !== plan.original && plan.content.length > 0;
+
+  useEffect(() => {
+    setDirty({ tabId, dirty: hasEdits });
+  }, [hasEdits, tabId, setDirty]);
+
+  return <PlanPanel />;
 }
 
 function PlaceholderView({ label }: { label: string }) {
@@ -192,17 +251,4 @@ function PlaceholderView({ label }: { label: string }) {
       <span className="text-[11px] text-muted-foreground">{label} — coming soon</span>
     </div>
   );
-}
-
-function PanelTabIcon({ type }: { type: string }) {
-  switch (type) {
-    case "plan":
-      return (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path d="M14 2v6h6" /><path d="M16 13H8" /><path d="M16 17H8" /><path d="M10 9H8" />
-        </svg>
-      );
-    default:
-      return null;
-  }
 }

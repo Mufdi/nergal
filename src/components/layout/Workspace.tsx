@@ -9,6 +9,9 @@ import { TerminalManager } from "@/components/terminal/TerminalManager";
 import { ActivityLog } from "@/components/activity/ActivityLog";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { expandRightPanelAtom } from "@/stores/rightPanel";
+import { toggleSidebarAtom, toggleRightPanelAtom, toggleActivityLogAtom } from "@/stores/shortcuts";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { CommandPalette } from "@/components/command/CommandPalette";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -19,13 +22,19 @@ import { usePanelRef } from "react-resizable-panels";
 const COLLAPSED_SIZE_PX = 40;
 
 export function Workspace() {
+  useKeyboardShortcuts();
+
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(true);
   const expandSignal = useAtomValue(expandRightPanelAtom);
+  const sidebarToggle = useAtomValue(toggleSidebarAtom);
+  const rightToggle = useAtomValue(toggleRightPanelAtom);
+  const activityToggle = useAtomValue(toggleActivityLogAtom);
 
   const sidebarPanelRef = usePanelRef();
   const rightPanelRef = usePanelRef();
+  const activityPanelRef = usePanelRef();
 
   // Collapse right panel on mount
   useEffect(() => {
@@ -42,6 +51,24 @@ export function Workspace() {
       if (panel) panel.expand();
     }
   }, [expandSignal]);
+
+  useEffect(() => {
+    if (sidebarToggle > 0) handleToggleSidebar();
+  }, [sidebarToggle]);
+
+  useEffect(() => {
+    if (rightToggle > 0) handleToggleRight();
+  }, [rightToggle]);
+
+  useEffect(() => {
+    if (activityToggle > 0) {
+      const panel = activityPanelRef.current;
+      if (panel) {
+        if (panel.isCollapsed()) panel.expand();
+        else panel.collapse();
+      }
+    }
+  }, [activityToggle]);
 
   function handleToggleSidebar() {
     const panel = sidebarPanelRef.current;
@@ -103,6 +130,7 @@ export function Workspace() {
 
               <ResizablePanel
                 id="activity"
+                panelRef={activityPanelRef}
                 defaultSize="25%"
                 collapsible
                 collapsedSize={28}
@@ -141,6 +169,7 @@ export function Workspace() {
 
       <Toasts />
       <SettingsPanel open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <CommandPalette />
     </div>
   );
 }

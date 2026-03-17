@@ -190,115 +190,6 @@ pub fn load_plan(
     })
 }
 
-// -- Session list command (Claude CLI sessions, not workspace sessions) --
-
-#[derive(Clone, serde::Serialize)]
-pub struct SessionSummary {
-    pub id: String,
-    pub name: String,
-    pub cwd: String,
-    pub slug: String,
-    pub modified: u64,
-}
-
-#[tauri::command]
-pub fn list_sessions() -> Result<Vec<SessionSummary>, String> {
-    let projects_dir = dirs::home_dir()
-        .ok_or("no home dir")?
-        .join(".claude")
-        .join("projects");
-
-    if !projects_dir.exists() {
-        return Ok(vec![]);
-    }
-
-    let mut sessions = Vec::new();
-
-    for project_entry in std::fs::read_dir(&projects_dir).map_err(|e| e.to_string())? {
-        let project_entry = project_entry.map_err(|e| e.to_string())?;
-        let project_path = project_entry.path();
-        if !project_path.is_dir() {
-            continue;
-        }
-
-        let project_name = project_path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let cwd = project_name.replacen('-', "/", 1).replace('-', "/");
-
-        for entry in std::fs::read_dir(&project_path).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            let path = entry.path();
-
-            let Some(ext) = path.extension() else {
-                continue;
-            };
-            if ext != "jsonl" {
-                continue;
-            }
-
-            let session_id = path
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_default();
-
-            let modified = entry
-                .metadata()
-                .and_then(|m| m.modified())
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-
-            let mut slug = String::new();
-            let mut custom_title = String::new();
-
-            if let Ok(file) = std::fs::File::open(&path) {
-                let reader = std::io::BufReader::new(file);
-                use std::io::BufRead;
-                for line in reader.lines().take(200) {
-                    let Ok(line) = line else { continue };
-                    let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) else {
-                        continue;
-                    };
-
-                    if slug.is_empty()
-                        && let Some(s) = val.get("slug").and_then(|v| v.as_str())
-                    {
-                        slug = s.to_string();
-                    }
-
-                    if val.get("type").and_then(|v| v.as_str()) == Some("custom-title")
-                        && let Some(title) = val.get("customTitle").and_then(|v| v.as_str())
-                    {
-                        custom_title = title.to_string();
-                    }
-                }
-            }
-
-            let name = if !custom_title.is_empty() {
-                custom_title
-            } else if !slug.is_empty() {
-                slug.clone()
-            } else {
-                session_id[..8.min(session_id.len())].to_string()
-            };
-
-            sessions.push(SessionSummary {
-                id: session_id,
-                name,
-                cwd: cwd.clone(),
-                slug,
-                modified,
-            });
-        }
-    }
-
-    sessions.sort_by(|a, b| b.modified.cmp(&a.modified));
-    Ok(sessions)
-}
-
 // -- Setup command --
 
 #[tauri::command]
@@ -622,6 +513,80 @@ pub fn get_transcript(session_id: String) -> Result<Vec<TranscriptEntry>, String
     }
 
     Ok(vec![])
+}
+
+// -- Git info command --
+
+/// Git status information for a session's working directory.
+#[derive(Clone, serde::Serialize)]
+pub struct GitInfo {
+    pub branch: String,
+    pub dirty: bool,
+    pub ahead: u32,
+}
+
+/// Return branch name, dirty state, and commits-ahead count for a session.
+#[tauri::command]
+pub fn get_session_git_info(
+    db: State<'_, SharedDb>,
+    session_id: String,
+) -> Result<GitInfo, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+
+    let Some(session) = db.find_session(&session_id).map_err(|e| e.to_string())? else {
+        return Err("session not found".into());
+    };
+
+    if let Some(ref wt_path) = session.worktree_path {
+        let branch = session
+            .worktree_branch
+            .clone()
+            .unwrap_or_else(|| "unknown".into());
+        let dirty = crate::worktree::is_worktree_dirty(wt_path).unwrap_or(false);
+
+        let repo_path = db
+            .workspace_repo_path(&session.workspace_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("workspace not found")?;
+
+        let branches =
+            crate::worktree::list_branches(&repo_path).map_err(|e| e.to_string())?;
+        let main_branch = if branches.iter().any(|b| b == "main") {
+            "main"
+        } else if branches.iter().any(|b| b == "master") {
+            "master"
+        } else {
+            return Ok(GitInfo {
+                branch,
+                dirty,
+                ahead: 0,
+            });
+        };
+
+        let ahead =
+            crate::worktree::commits_ahead_count(wt_path, main_branch).unwrap_or(0);
+
+        Ok(GitInfo {
+            branch,
+            dirty,
+            ahead,
+        })
+    } else {
+        let repo_path = db
+            .workspace_repo_path(&session.workspace_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("workspace not found")?;
+
+        let branch =
+            crate::worktree::current_branch(&repo_path).unwrap_or_else(|_| "unknown".into());
+        let dirty = crate::worktree::is_worktree_dirty(&repo_path).unwrap_or(false);
+
+        Ok(GitInfo {
+            branch,
+            dirty,
+            ahead: 0,
+        })
+    }
 }
 
 /// Worktree change status for conditional button display.

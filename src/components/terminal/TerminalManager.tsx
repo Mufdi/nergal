@@ -1,6 +1,7 @@
 import { useRef, useEffect } from "react";
-import { useAtomValue } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { workspacesAtom, activeSessionIdAtom, activeSessionAtom, activeWorkspaceAtom, sessionLaunchModeAtom, freshSessionsAtom } from "@/stores/workspace";
+import { focusZoneAtom } from "@/stores/shortcuts";
 import * as terminalService from "./terminalService";
 
 /// Thin React wrapper. Provides a host div and signals the service "show session X".
@@ -12,6 +13,7 @@ export function TerminalManager() {
   const activeWorkspace = useAtomValue(activeWorkspaceAtom);
   const launchModes = useAtomValue(sessionLaunchModeAtom);
   const freshSessions = useAtomValue(freshSessionsAtom);
+  const setFocusZone = useSetAtom(focusZoneAtom);
   const hostRef = useRef<HTMLDivElement>(null);
 
   // Register host element once
@@ -53,7 +55,7 @@ export function TerminalManager() {
   const hasAnySessions = workspaces.some((ws) => ws.sessions.length > 0);
 
   return (
-    <div ref={hostRef} className="relative h-full w-full">
+    <div ref={hostRef} className="relative h-full w-full" onMouseDown={() => setFocusZone("terminal")}>
       {(!hasAnySessions || !activeSessionId) && (
         <div className="flex h-full items-center justify-center">
           <span className="text-[11px] text-muted-foreground">Select or create a session</span>

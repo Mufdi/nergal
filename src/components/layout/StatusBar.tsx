@@ -1,6 +1,9 @@
-import { useAtomValue } from "jotai";
-import { activeSessionAtom, activeCostAtom, activeModeAtom } from "@/stores/workspace";
+import { useEffect } from "react";
+import { useAtomValue, useSetAtom } from "jotai";
+import { activeSessionAtom, activeSessionIdAtom, activeCostAtom, activeModeAtom } from "@/stores/workspace";
+import { activeGitInfoAtom, refreshGitInfoAtom } from "@/stores/git";
 import { Badge } from "@/components/ui/badge";
+import { GitBranch } from "lucide-react";
 import {
   Tooltip,
   TooltipTrigger,
@@ -22,8 +25,15 @@ const modeColors: Record<string, string> = {
 
 export function StatusBar() {
   const session = useAtomValue(activeSessionAtom);
+  const sessionId = useAtomValue(activeSessionIdAtom);
   const mode = useAtomValue(activeModeAtom);
   const cost = useAtomValue(activeCostAtom);
+  const gitInfo = useAtomValue(activeGitInfoAtom);
+  const refreshGit = useSetAtom(refreshGitInfoAtom);
+
+  useEffect(() => {
+    if (sessionId) refreshGit(sessionId);
+  }, [sessionId]);
 
   const dotColor = modeColors[mode] ?? "bg-muted-foreground";
 
@@ -32,8 +42,25 @@ export function StatusBar() {
       className="flex h-7 items-center justify-between border-t border-border bg-background px-3 text-xs"
       role="status"
     >
-      {/* Left: mode indicator */}
+      {/* Left: git info + mode */}
       <div className="flex items-center gap-2">
+        {gitInfo && (
+          <div className="flex items-center gap-1 text-muted-foreground">
+            <GitBranch className="size-3" />
+            <Tooltip>
+              <TooltipTrigger className="cursor-default max-w-40 truncate">
+                {gitInfo.branch}
+              </TooltipTrigger>
+              <TooltipContent>{gitInfo.branch}</TooltipContent>
+            </Tooltip>
+            {gitInfo.dirty && (
+              <span className="inline-block size-1.5 rounded-full bg-orange-500" aria-label="Uncommitted changes" />
+            )}
+            {gitInfo.ahead > 0 && (
+              <span className="text-[10px] text-muted-foreground/70">+{gitInfo.ahead}</span>
+            )}
+          </div>
+        )}
         <Badge
           variant="secondary"
           className="h-4 gap-1 px-1.5 text-[10px]"

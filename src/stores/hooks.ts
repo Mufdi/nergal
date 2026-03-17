@@ -1,7 +1,7 @@
 import { type getDefaultStore } from "jotai";
 import { listen } from "@/lib/tauri";
 import type { HookEvent, CostSummary, Task, ActivityEntry } from "@/lib/types";
-import { costMapAtom, modeMapAtom, workspacesAtom } from "./workspace";
+import { costMapAtom, modeMapAtom, workspacesAtom, worktreeRefreshAtom } from "./workspace";
 import { taskMapAtom } from "./tasks";
 import { fileMapAtom, type ModifiedFile } from "./files";
 import { planStateMapAtom, registerPlanAtom } from "./plan";
@@ -44,15 +44,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
         case "stop": {
           set(modeMapAtom, (prev) => ({ ...prev, [session_id]: "idle" }));
           set(addActivityAtom, { sessionId: session_id, entry: createActivity("session", `Stopped: ${stop_reason ?? "completed"}`) });
-          // Bump updated_at so buttons refresh
-          set(workspacesAtom, (prev) =>
-            prev.map((ws) => ({
-              ...ws,
-              sessions: ws.sessions.map((s) =>
-                s.id === session_id ? { ...s, updated_at: Math.floor(Date.now() / 1000) } : s,
-              ),
-            })),
-          );
+          set(worktreeRefreshAtom, (prev: number) => prev + 1);
           break;
         }
         case "task_completed": {
@@ -132,15 +124,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
         sessionId: payload.session_id,
         entry: createActivity("file_modified", `Modified: ${payload.path.split("/").pop() ?? payload.path}`, payload.path),
       });
-      // Bump session updated_at so SessionRow re-checks worktree status
-      set(workspacesAtom, (prev) =>
-        prev.map((ws) => ({
-          ...ws,
-          sessions: ws.sessions.map((s) =>
-            s.id === payload.session_id ? { ...s, updated_at: Math.floor(Date.now() / 1000) } : s,
-          ),
-        })),
-      );
+      set(worktreeRefreshAtom, (prev: number) => prev + 1);
     }),
   );
 

@@ -52,6 +52,9 @@ export const freshSessionsAtom = atom<Set<string>>(new Set<string>());
 export const showCompletedAtom = atom(false);
 export const sessionLaunchModeAtom = atom<Record<string, "new" | "continue" | "resume_pick">>({});
 
+/// Increment to force SessionRow to re-check worktree status
+export const worktreeRefreshAtom = atom(0);
+
 const defaultCost: CostSummary = {
   input_tokens: 0,
   output_tokens: 0,

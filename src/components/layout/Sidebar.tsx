@@ -186,8 +186,12 @@ function WorkspacesView() {
 
   function handleCommitConfirm(lang: string) {
     if (!commitModal) return;
-    terminalService.writeToSession(commitModal.session.id, `/commit ${lang}\r`);
+    const sid = commitModal.session.id;
+    setActiveSessionId(sid);
     setCommitModal(null);
+    terminalService.writeToSession(sid, `/commit ${lang}\r`)
+      .then(() => terminalService.focusActive())
+      .catch(() => {});
   }
 
   async function handleCreateSession(workspaceId: string) {
@@ -378,7 +382,7 @@ function WorkspacesView() {
             setTimeout(() => {
               terminalService.writeToSession(sid,
                 `I need to merge ${branch} into ${targetBranch} but there are conflicts. Run these commands in this worktree to reproduce and resolve:\n1. git merge ${targetBranch}\n2. Resolve the conflicts in the affected files\n3. git add the resolved files\n4. git commit\n\nThe conflicting files from a prior attempt:\n${detail}\r`
-              ).catch(() => {});
+              ).then(() => terminalService.focusActive()).catch(() => {});
             }, 500);
           }}
         />

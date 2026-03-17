@@ -377,7 +377,7 @@ function WorkspacesView() {
             setMergeModal(null);
             setTimeout(() => {
               terminalService.writeToSession(sid,
-                `I tried to squash-merge ${branch} into ${targetBranch} but got conflicts. Please resolve them in this worktree, then commit. Here's the git output:\n${detail}\r`
+                `I need to merge ${branch} into ${targetBranch} but there are conflicts. Run these commands in this worktree to reproduce and resolve:\n1. git merge ${targetBranch}\n2. Resolve the conflicts in the affected files\n3. git add the resolved files\n4. git commit\n\nThe conflicting files from a prior attempt:\n${detail}\r`
               ).catch(() => {});
             }, 500);
           }}

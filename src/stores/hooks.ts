@@ -1,7 +1,7 @@
 import { type getDefaultStore } from "jotai";
 import { listen } from "@/lib/tauri";
 import type { HookEvent, CostSummary, Task, ActivityEntry } from "@/lib/types";
-import { costMapAtom, modeMapAtom, workspacesAtom, worktreeRefreshAtom } from "./workspace";
+import { costMapAtom, modeMapAtom, workspacesAtom } from "./workspace";
 import { taskMapAtom } from "./tasks";
 import { fileMapAtom, type ModifiedFile } from "./files";
 import { planStateMapAtom, registerPlanAtom } from "./plan";
@@ -44,7 +44,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
         case "stop": {
           set(modeMapAtom, (prev) => ({ ...prev, [session_id]: "idle" }));
           set(addActivityAtom, { sessionId: session_id, entry: createActivity("session", `Stopped: ${stop_reason ?? "completed"}`) });
-          set(worktreeRefreshAtom, (prev: number) => prev + 1);
+
           break;
         }
         case "task_completed": {
@@ -124,7 +124,6 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
         sessionId: payload.session_id,
         entry: createActivity("file_modified", `Modified: ${payload.path.split("/").pop() ?? payload.path}`, payload.path),
       });
-      set(worktreeRefreshAtom, (prev: number) => prev + 1);
     }),
   );
 

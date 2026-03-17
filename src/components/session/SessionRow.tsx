@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useAtomValue } from "jotai";
 import {
   CircleDot,
   GitBranch,
@@ -14,7 +15,7 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 import { invoke } from "@/lib/tauri";
-import type { Session, Workspace } from "@/stores/workspace";
+import { worktreeRefreshAtom, type Session, type Workspace } from "@/stores/workspace";
 
 const STATUS_DOT_COLORS: Record<Session["status"], string> = {
   idle: "bg-muted-foreground/60",
@@ -48,21 +49,19 @@ export function SessionRow({
   const [editName, setEditName] = useState(session.name);
   const [isDirty, setIsDirty] = useState(false);
   const [commitsAhead, setCommitsAhead] = useState(false);
+  const refreshSignal = useAtomValue(worktreeRefreshAtom);
   const isCompleted = session.status === "completed";
   const isWorktree = session.worktree_path !== null;
 
   useEffect(() => {
     if (!isWorktree) return;
-    function check() {
-      invoke<{ dirty: boolean; commits_ahead: boolean }>("check_session_has_commits", { sessionId: session.id })
-        .then((status) => {
-          setIsDirty(status.dirty);
-          setCommitsAhead(status.commits_ahead);
-        })
-        .catch(() => { setIsDirty(false); setCommitsAhead(false); });
-    }
-    check();
-  }, [session.id, session.updated_at, isWorktree]);
+    invoke<{ dirty: boolean; commits_ahead: boolean }>("check_session_has_commits", { sessionId: session.id })
+      .then((status) => {
+        setIsDirty(status.dirty);
+        setCommitsAhead(status.commits_ahead);
+      })
+      .catch(() => { setIsDirty(false); setCommitsAhead(false); });
+  }, [session.id, isWorktree, refreshSignal]);
 
   function handleRenameSubmit() {
     const trimmed = editName.trim();

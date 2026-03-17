@@ -42,9 +42,9 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
             .output();
     }
 
-    // Create temp worktree on target branch
+    // Create temp worktree detached at target branch tip
     let add = Command::new("git")
-        .args(["worktree", "add"])
+        .args(["worktree", "add", "--detach"])
         .arg(&tmp_dir)
         .arg(target)
         .current_dir(repo_path)
@@ -70,7 +70,7 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
         anyhow::bail!("squash merge failed: {stderr}");
     }
 
-    // Commit in the temp worktree
+    // Commit in the temp worktree (detached HEAD)
     let commit = Command::new("git")
         .args(["commit", "-m", message])
         .current_dir(&tmp_dir)
@@ -82,6 +82,27 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
         let _ = Command::new("git").args(["merge", "--abort"]).current_dir(&tmp_dir).output();
         let _ = Command::new("git").args(["worktree", "remove", "--force"]).arg(&tmp_dir).current_dir(repo_path).output();
         anyhow::bail!("commit failed: {stderr}");
+    }
+
+    // Get the new commit hash from the detached HEAD
+    let rev = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&tmp_dir)
+        .output()
+        .context("failed to get merge commit hash")?;
+    let merge_commit = String::from_utf8_lossy(&rev.stdout).trim().to_string();
+
+    // Fast-forward the target branch ref to include the merge commit
+    let update = Command::new("git")
+        .args(["update-ref", &format!("refs/heads/{target}"), &merge_commit])
+        .current_dir(repo_path)
+        .output()
+        .context("failed to update target branch ref")?;
+
+    if !update.status.success() {
+        let stderr = String::from_utf8_lossy(&update.stderr);
+        let _ = Command::new("git").args(["worktree", "remove", "--force"]).arg(&tmp_dir).current_dir(repo_path).output();
+        anyhow::bail!("failed to update {target} ref: {stderr}");
     }
 
     // Clean up temp worktree

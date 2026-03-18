@@ -129,17 +129,16 @@ pub struct PlanSummary {
     pub modified: u64,
 }
 
-#[tauri::command]
-pub fn list_plans(state: State<'_, SharedPlanState>) -> Result<Vec<PlanSummary>, String> {
-    let mgr = state.lock().map_err(|e| e.to_string())?;
-    let dir = mgr.plans_dir();
+fn scan_plans_dir(dir: &std::path::Path) -> Vec<PlanSummary> {
     if !dir.exists() {
-        return Ok(vec![]);
+        return vec![];
     }
-
     let mut plans = Vec::new();
-    for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return vec![];
+    };
+    for entry in entries {
+        let Ok(entry) = entry else { continue };
         let path = entry.path();
         let Some(ext) = path.extension() else {
             continue;
@@ -164,9 +163,41 @@ pub fn list_plans(state: State<'_, SharedPlanState>) -> Result<Vec<PlanSummary>,
             modified,
         });
     }
-
     plans.sort_by(|a, b| b.modified.cmp(&a.modified));
-    Ok(plans)
+    plans
+}
+
+#[tauri::command]
+pub fn list_plans(state: State<'_, SharedPlanState>) -> Result<Vec<PlanSummary>, String> {
+    let mgr = state.lock().map_err(|e| e.to_string())?;
+    Ok(scan_plans_dir(&mgr.plans_dir()))
+}
+
+#[tauri::command]
+pub fn list_session_plans(
+    db: State<'_, SharedDb>,
+    session_id: String,
+) -> Result<Vec<PlanSummary>, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+
+    let Some(session) = db.find_session(&session_id).map_err(|e| e.to_string())? else {
+        return Ok(vec![]);
+    };
+
+    let repo_path = db
+        .workspace_repo_path(&session.workspace_id)
+        .map_err(|e| e.to_string())?;
+
+    let cwd = if let Some(ref wt) = session.worktree_path {
+        wt.clone()
+    } else if let Some(ref rp) = repo_path {
+        rp.clone()
+    } else {
+        return Ok(vec![]);
+    };
+
+    let project_plans_dir = cwd.join(".claude").join("plans");
+    Ok(scan_plans_dir(&project_plans_dir))
 }
 
 #[tauri::command]

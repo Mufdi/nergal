@@ -1,10 +1,10 @@
 import { useAtomValue, useSetAtom } from "jotai";
 import { activeSessionAtom, activeWorkspaceAtom } from "@/stores/workspace";
 import {
-  activeTabsAtom,
   activeTabAtom,
+  activeTabsAtom,
   activeTabIdAtom,
-  openTabAction,
+  activePanelViewAtom,
   expandRightPanelAtom,
   type TabType,
 } from "@/stores/rightPanel";
@@ -40,26 +40,33 @@ const PANEL_BUTTONS: { type: TabType; label: string; shortcut: string; icon: typ
 export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps) {
   const session = useAtomValue(activeSessionAtom);
   const workspace = useAtomValue(activeWorkspaceAtom);
-  const tabs = useAtomValue(activeTabsAtom);
   const activeTab = useAtomValue(activeTabAtom);
+  const tabs = useAtomValue(activeTabsAtom);
+  const activePanelView = useAtomValue(activePanelViewAtom);
   const setActiveTabId = useSetAtom(activeTabIdAtom);
-  const openTab = useSetAtom(openTabAction);
+  const setActivePanelView = useSetAtom(activePanelViewAtom);
   const setExpand = useSetAtom(expandRightPanelAtom);
   const setToggleRight = useSetAtom(toggleRightPanelAtom);
 
   const workspaceName = workspace?.name ?? "cluihud";
 
-  function handleOpenPanel(type: TabType, label: string) {
-    const existing = tabs.find((t) => t.type === type);
-    if (existing && activeTab?.id === existing.id) {
+  function handleOpenPanel(type: TabType) {
+    if (activeTab?.type === type && rightPanelVisible) {
       setToggleRight((n) => n + 1);
       return;
     }
-    if (existing) {
-      setActiveTabId(existing.id);
-    } else {
-      openTab({ tab: { id: `${type}-panel`, type, label }, isPinned: true });
+    if (activePanelView === type && !activeTab && rightPanelVisible) {
+      setToggleRight((n) => n + 1);
+      return;
     }
+
+    const lastOfType = [...tabs].reverse().find((t) => t.type === type);
+    if (lastOfType) {
+      setActiveTabId(lastOfType.id);
+    } else {
+      setActiveTabId(null);
+    }
+    setActivePanelView(type);
     setExpand((n) => n + 1);
   }
 
@@ -90,10 +97,10 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
       {/* Center spacer */}
       <div className="flex-1" />
 
-      {/* Right: panel type icon buttons */}
+      {/* Right: panel view icon buttons */}
       <div className="flex items-center gap-0.5 shrink-0">
         {PANEL_BUTTONS.map((btn) => {
-          const isActive = rightPanelVisible && activeTab?.type === btn.type;
+          const isActive = rightPanelVisible && (activePanelView === btn.type || activeTab?.type === btn.type);
           const Icon = btn.icon;
           return (
             <Tooltip key={btn.type}>
@@ -101,7 +108,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
                 render={
                   <div
                     role="button"
-                    onClick={() => handleOpenPanel(btn.type, btn.label)}
+                    onClick={() => handleOpenPanel(btn.type)}
                     className={`flex size-7 items-center justify-center rounded transition-colors cursor-pointer ${
                       isActive
                         ? "text-foreground bg-secondary"

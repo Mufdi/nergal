@@ -11,7 +11,7 @@ export interface PlanState {
   claudeSessionId: string;
 }
 
-const defaultPlanState: PlanState = { content: "", original: "", path: "", mode: "view", diff: [], claudeSessionId: "" };
+export const defaultPlanState: PlanState = { content: "", original: "", path: "", mode: "view", diff: [], claudeSessionId: "" };
 
 export const planStateMapAtom = atom<Record<string, PlanState>>({});
 
@@ -38,6 +38,23 @@ export const setPlanModeAtom = atom(null, (get, set, mode: PlanMode) => {
   set(planStateMapAtom, (prev) => ({
     ...prev,
     [id]: { ...(prev[id] ?? defaultPlanState), mode },
+  }));
+});
+
+// Plan documents keyed by file path (supports multiple plans open as document tabs)
+export const planDocumentsAtom = atom<Record<string, PlanState>>({});
+
+export const setPlanDocContentAtom = atom(null, (_get, set, params: { path: string; content: string }) => {
+  set(planDocumentsAtom, (prev) => ({
+    ...prev,
+    [params.path]: { ...(prev[params.path] ?? defaultPlanState), content: params.content },
+  }));
+});
+
+export const setPlanDocModeAtom = atom(null, (_get, set, params: { path: string; mode: PlanMode }) => {
+  set(planDocumentsAtom, (prev) => ({
+    ...prev,
+    [params.path]: { ...(prev[params.path] ?? defaultPlanState), mode: params.mode },
   }));
 });
 

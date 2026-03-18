@@ -165,7 +165,8 @@ fn process_event(
                 }
             }
 
-            process_task_event(app, tool_name, tool_input, session_id, db);
+            let csid = cluihud_session_id.unwrap_or(session_id);
+            process_task_event(app, tool_name, tool_input, csid, db);
         }
 
         HookEvent::PostToolUse {
@@ -175,8 +176,9 @@ fn process_event(
             ..
         } => {
             tracing::debug!("PostToolUse: tool_name={tool_name}");
-            process_task_event(app, tool_name, tool_input, session_id, db);
-            process_file_event(app, tool_name, tool_input, session_id);
+            let csid = cluihud_session_id.unwrap_or(session_id);
+            process_task_event(app, tool_name, tool_input, csid, db);
+            process_file_event(app, tool_name, tool_input, csid);
         }
 
         HookEvent::Stop {

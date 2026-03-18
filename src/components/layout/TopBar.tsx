@@ -25,6 +25,7 @@ import {
 
 interface TopBarProps {
   onOpenSettings: () => void;
+  rightPanelVisible?: boolean;
 }
 
 const PANEL_BUTTONS: { type: TabType; label: string; shortcut: string; icon: typeof FileText }[] = [
@@ -36,7 +37,7 @@ const PANEL_BUTTONS: { type: TabType; label: string; shortcut: string; icon: typ
   { type: "git", label: "Git", shortcut: "Ctrl+Shift+G", icon: GitBranch },
 ];
 
-export function TopBar({ onOpenSettings }: TopBarProps) {
+export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps) {
   const session = useAtomValue(activeSessionAtom);
   const workspace = useAtomValue(activeWorkspaceAtom);
   const tabs = useAtomValue(activeTabsAtom);
@@ -92,7 +93,7 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
       {/* Right: panel type icon buttons */}
       <div className="flex items-center gap-0.5 shrink-0">
         {PANEL_BUTTONS.map((btn) => {
-          const isActive = activeTab?.type === btn.type;
+          const isActive = rightPanelVisible && activeTab?.type === btn.type;
           const Icon = btn.icon;
           return (
             <Tooltip key={btn.type}>

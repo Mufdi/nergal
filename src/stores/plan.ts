@@ -8,9 +8,10 @@ export interface PlanState {
   path: string;
   mode: PlanMode;
   diff: DiffLine[];
+  claudeSessionId: string;
 }
 
-const defaultPlanState: PlanState = { content: "", original: "", path: "", mode: "view", diff: [] };
+const defaultPlanState: PlanState = { content: "", original: "", path: "", mode: "view", diff: [], claudeSessionId: "" };
 
 export const planStateMapAtom = atom<Record<string, PlanState>>({});
 

@@ -1,6 +1,5 @@
 import { useAtomValue, useSetAtom } from "jotai";
 import { activePlanAtom, setPlanModeAtom } from "@/stores/plan";
-import { activeSessionIdAtom } from "@/stores/workspace";
 import { toastsAtom } from "@/stores/toast";
 import { invoke } from "@/lib/tauri";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -11,19 +10,19 @@ import { PlanEditor } from "./PlanEditor";
 export function PlanPanel() {
   const plan = useAtomValue(activePlanAtom);
   const setMode = useSetAtom(setPlanModeAtom);
-  const sessionId = useAtomValue(activeSessionIdAtom);
   const addToast = useSetAtom(toastsAtom);
 
   const hasPlan = plan.content.length > 0;
   const hasEdits = plan.content !== plan.original;
+  const backendSessionId = plan.claudeSessionId;
 
   function handleSave() {
-    if (!plan.path || !sessionId) {
+    if (!plan.path || !backendSessionId) {
       addToast({ message: "No plan path — cannot save", type: "error" });
       return;
     }
-    invoke("save_plan", { sessionId, content: plan.content })
-      .then(() => invoke("reject_plan", { sessionId }))
+    invoke("save_plan", { sessionId: backendSessionId, content: plan.content })
+      .then(() => invoke("reject_plan", { sessionId: backendSessionId }))
       .then(() => {
         addToast({ message: "Plan saved — will re-read on next prompt", type: "success" });
       })

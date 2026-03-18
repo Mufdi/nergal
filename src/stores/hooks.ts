@@ -1,7 +1,7 @@
 import { type getDefaultStore } from "jotai";
 import { listen } from "@/lib/tauri";
 import type { HookEvent, CostSummary, Task, ActivityEntry } from "@/lib/types";
-import { costMapAtom, modeMapAtom, workspacesAtom } from "./workspace";
+import { costMapAtom, modeMapAtom, workspacesAtom, activeSessionIdAtom } from "./workspace";
 import { taskMapAtom } from "./tasks";
 import { fileMapAtom, type ModifiedFile } from "./files";
 import { planStateMapAtom, registerPlanAtom } from "./plan";
@@ -24,6 +24,7 @@ function createActivity(type: ActivityEntry["type"], message: string, detail?: s
 
 export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
   const set = store.set;
+  const get = store.get;
   const unlisteners: UnlistenFn[] = [];
 
   // Hook events from Claude CLI (flat structure from backend)
@@ -132,20 +133,24 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
   // Plan ready (emitted by backend after detecting ExitPlanMode)
   unlisteners.push(
     await listen<{ path: string; content: string; session_id: string }>("plan:ready", (payload) => {
+      const cluihudSessionId = get(activeSessionIdAtom);
+      if (!cluihudSessionId) return;
       set(planStateMapAtom, (prev) => ({
         ...prev,
-        [payload.session_id]: {
+        [cluihudSessionId]: {
           content: payload.content,
           original: payload.content,
           path: payload.path,
           mode: "view" as const,
           diff: [],
+          claudeSessionId: payload.session_id,
         },
       }));
-      set(openTabAction, { tab: { id: "plan", type: "plan", label: "Plan" }, isPinned: true });
-      set(registerPlanAtom, { sessionId: payload.session_id, path: payload.path });
+      const planName = payload.path.split("/").pop()?.replace(".md", "") ?? "Plan";
+      set(openTabAction, { tab: { id: `plan-${cluihudSessionId}`, type: "plan", label: planName, data: { path: payload.path } }, isPinned: true });
+      set(registerPlanAtom, { sessionId: cluihudSessionId, path: payload.path });
       set(expandRightPanelAtom, (prev: number) => prev + 1);
-      set(addActivityAtom, { sessionId: payload.session_id, entry: createActivity("plan", "Plan ready for review") });
+      set(addActivityAtom, { sessionId: cluihudSessionId, entry: createActivity("plan", "Plan ready for review") });
     }),
   );
 

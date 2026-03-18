@@ -162,16 +162,20 @@ function PlanFileSidebar() {
     if (!sessionId) return;
     invoke<{ path: string; content: string }>("load_plan", { sessionId, path })
       .then((result) => {
-        setPlanStateMap((prev) => ({
-          ...prev,
-          [sessionId]: {
-            content: result.content,
-            original: result.content,
-            path: result.path,
-            mode: "view" as const,
-            diff: [],
-          },
-        }));
+        setPlanStateMap((prev) => {
+          const existing = prev[sessionId];
+          return {
+            ...prev,
+            [sessionId]: {
+              content: result.content,
+              original: result.content,
+              path: result.path,
+              mode: "view" as const,
+              diff: [],
+              claudeSessionId: existing?.claudeSessionId ?? "",
+            },
+          };
+        });
       })
       .catch(() => {});
   }

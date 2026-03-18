@@ -1,7 +1,7 @@
 import { type getDefaultStore } from "jotai";
 import { listen } from "@/lib/tauri";
 import type { HookEvent, CostSummary, Task, ActivityEntry } from "@/lib/types";
-import { costMapAtom, modeMapAtom, workspacesAtom, activeSessionIdAtom } from "./workspace";
+import { costMapAtom, modeMapAtom, activeSessionIdAtom } from "./workspace";
 import { taskMapAtom } from "./tasks";
 import { fileMapAtom, type ModifiedFile } from "./files";
 import { planStateMapAtom, planDocumentsAtom, registerPlanAtom } from "./plan";
@@ -27,114 +27,100 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
   const get = store.get;
   const unlisteners: UnlistenFn[] = [];
 
-  // Hook events from Claude CLI (flat structure from backend)
   unlisteners.push(
     await listen<HookEvent>("hook:event", (event) => {
-      const { event_type, tool_name, session_id, stop_reason } = event;
+      const { event_type, tool_name, stop_reason } = event;
+      const sid = event.cluihud_session_id ?? get(activeSessionIdAtom);
+      if (!sid) return;
 
       switch (event_type) {
         case "pre_tool_use": {
-          set(modeMapAtom, (prev) => ({ ...prev, [session_id]: tool_name ?? "tool" }));
-          set(addActivityAtom, { sessionId: session_id, entry: createActivity("tool_use", `Tool: ${tool_name ?? "unknown"}`, session_id) });
+          set(modeMapAtom, (prev) => ({ ...prev, [sid]: tool_name ?? "tool" }));
+          set(addActivityAtom, { sessionId: sid, entry: createActivity("tool_use", `Tool: ${tool_name ?? "unknown"}`) });
           break;
         }
         case "post_tool_use": {
-          set(modeMapAtom, (prev) => ({ ...prev, [session_id]: "active" }));
-          set(addActivityAtom, { sessionId: session_id, entry: createActivity("tool_use", `Tool done: ${tool_name ?? "unknown"}`, session_id) });
-          set(refreshGitInfoAtom, session_id);
+          set(modeMapAtom, (prev) => ({ ...prev, [sid]: "active" }));
+          set(addActivityAtom, { sessionId: sid, entry: createActivity("tool_use", `Tool done: ${tool_name ?? "unknown"}`) });
+          set(refreshGitInfoAtom, sid);
           break;
         }
         case "stop": {
-          set(modeMapAtom, (prev) => ({ ...prev, [session_id]: "idle" }));
-          set(addActivityAtom, { sessionId: session_id, entry: createActivity("session", `Stopped: ${stop_reason ?? "completed"}`) });
-          set(refreshGitInfoAtom, session_id);
+          set(modeMapAtom, (prev) => ({ ...prev, [sid]: "idle" }));
+          set(addActivityAtom, { sessionId: sid, entry: createActivity("session", `Stopped: ${stop_reason ?? "completed"}`) });
+          set(refreshGitInfoAtom, sid);
           break;
         }
         case "task_completed": {
-          set(addActivityAtom, { sessionId: session_id, entry: createActivity("task", `Task completed: ${tool_name ?? "unknown"}`) });
+          set(addActivityAtom, { sessionId: sid, entry: createActivity("task", `Task completed: ${tool_name ?? "unknown"}`) });
           break;
         }
         case "session_start": {
-          set(modeMapAtom, (prev) => ({ ...prev, [session_id]: "active" }));
-          // Update session status in workspaces if it exists
-          set(workspacesAtom, (prev) =>
-            prev.map((ws) => ({
-              ...ws,
-              sessions: ws.sessions.map((s) =>
-                s.id === session_id ? { ...s, status: "running" as const, updated_at: Math.floor(Date.now() / 1000) } : s,
-              ),
-            })),
-          );
-          set(addActivityAtom, { sessionId: session_id, entry: createActivity("session", `Session started: ${session_id.slice(0, 8)}`) });
+          set(modeMapAtom, (prev) => ({ ...prev, [sid]: "active" }));
+          set(addActivityAtom, { sessionId: sid, entry: createActivity("session", "Session started") });
           break;
         }
         case "session_end": {
-          set(modeMapAtom, (prev) => ({ ...prev, [session_id]: "idle" }));
-          set(workspacesAtom, (prev) =>
-            prev.map((ws) => ({
-              ...ws,
-              sessions: ws.sessions.map((s) =>
-                s.id === session_id ? { ...s, status: "idle" as const, updated_at: Math.floor(Date.now() / 1000) } : s,
-              ),
-            })),
-          );
-          set(addActivityAtom, { sessionId: session_id, entry: createActivity("session", `Session ended: ${session_id.slice(0, 8)}`) });
+          set(modeMapAtom, (prev) => ({ ...prev, [sid]: "idle" }));
+          set(addActivityAtom, { sessionId: sid, entry: createActivity("session", "Session ended") });
           break;
         }
         case "user_prompt_submit": {
-          set(addActivityAtom, { sessionId: session_id, entry: createActivity("session", "User prompt submitted") });
+          set(addActivityAtom, { sessionId: sid, entry: createActivity("session", "User prompt submitted") });
           break;
         }
         default: {
-          set(addActivityAtom, { sessionId: session_id, entry: createActivity("session", `Event: ${event_type}`) });
+          set(addActivityAtom, { sessionId: sid, entry: createActivity("session", `Event: ${event_type}`) });
         }
       }
     }),
   );
 
-  // Cost updates (now includes session_id from backend)
   unlisteners.push(
-    await listen<CostSummary & { session_id: string }>("cost:update", (payload) => {
-      const { session_id, ...cost } = payload;
-      set(costMapAtom, (prev) => ({ ...prev, [session_id]: cost }));
+    await listen<CostSummary & { session_id: string }>("cost:update", (_payload) => {
+      const sid = get(activeSessionIdAtom);
+      if (!sid) return;
+      const { session_id: _, ...cost } = _payload;
+      set(costMapAtom, (prev) => ({ ...prev, [sid]: cost }));
     }),
   );
 
-  // Task list updates (already session-scoped)
   unlisteners.push(
     await listen<{ session_id: string; tasks: Task[] }>("tasks:update", (payload) => {
+      const sid = get(activeSessionIdAtom);
+      if (!sid) return;
       set(taskMapAtom, (prev) => ({
         ...prev,
-        [payload.session_id]: payload.tasks,
+        [sid]: payload.tasks,
       }));
     }),
   );
 
-  // File modifications (already session-scoped)
   unlisteners.push(
     await listen<{ session_id: string; path: string; tool: string }>("files:modified", (payload) => {
+      const sid = get(activeSessionIdAtom);
+      if (!sid) return;
       const entry: ModifiedFile = {
         path: payload.path,
         tool: payload.tool,
         timestamp: Date.now(),
       };
       set(fileMapAtom, (prev) => {
-        const existing = prev[payload.session_id] ?? [];
+        const existing = prev[sid] ?? [];
         const filtered = existing.filter((f) => f.path !== payload.path);
-        return { ...prev, [payload.session_id]: [...filtered, entry] };
+        return { ...prev, [sid]: [...filtered, entry] };
       });
       set(addActivityAtom, {
-        sessionId: payload.session_id,
+        sessionId: sid,
         entry: createActivity("file_modified", `Modified: ${payload.path.split("/").pop() ?? payload.path}`, payload.path),
       });
     }),
   );
 
-  // Plan ready (emitted by backend after detecting ExitPlanMode)
   unlisteners.push(
     await listen<{ path: string; content: string; session_id: string }>("plan:ready", (payload) => {
-      const cluihudSessionId = get(activeSessionIdAtom);
-      if (!cluihudSessionId) return;
+      const sid = get(activeSessionIdAtom);
+      if (!sid) return;
       const planData = {
         content: payload.content,
         original: payload.content,
@@ -143,14 +129,14 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
         diff: [] as never[],
         claudeSessionId: payload.session_id,
       };
-      set(planStateMapAtom, (prev) => ({ ...prev, [cluihudSessionId]: planData }));
+      set(planStateMapAtom, (prev) => ({ ...prev, [sid]: planData }));
       set(planDocumentsAtom, (prev) => ({ ...prev, [payload.path]: planData }));
       const planName = payload.path.split("/").pop()?.replace(".md", "") ?? "Plan";
       set(openTabAction, { tab: { id: `plan-${payload.path}`, type: "plan", label: planName, data: { path: payload.path } }, isPinned: true });
-      set(registerPlanAtom, { sessionId: cluihudSessionId, path: payload.path });
+      set(registerPlanAtom, { sessionId: sid, path: payload.path });
       set(activePanelViewAtom, "plan");
       set(expandRightPanelAtom, (prev: number) => prev + 1);
-      set(addActivityAtom, { sessionId: cluihudSessionId, entry: createActivity("plan", "Plan ready for review") });
+      set(addActivityAtom, { sessionId: sid, entry: createActivity("plan", "Plan ready for review") });
     }),
   );
 

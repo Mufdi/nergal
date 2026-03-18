@@ -14,14 +14,25 @@ pub fn send_hook_event(socket_path: &Path) -> Result<()> {
         .read_to_string(&mut input)
         .context("reading stdin")?;
 
-    let _: serde_json::Value =
+    let mut json: serde_json::Value =
         serde_json::from_str(input.trim()).context("stdin is not valid JSON")?;
+
+    if let Some(obj) = json.as_object_mut() {
+        if let Ok(cluihud_id) = std::env::var("CLUIHUD_SESSION_ID") {
+            obj.insert(
+                "cluihud_session_id".to_string(),
+                serde_json::Value::String(cluihud_id),
+            );
+        }
+    }
+
+    let payload = serde_json::to_string(&json).context("serializing JSON")?;
 
     let mut stream = UnixStream::connect(socket_path)
         .with_context(|| format!("connecting to {}", socket_path.display()))?;
 
     stream
-        .write_all(input.trim().as_bytes())
+        .write_all(payload.as_bytes())
         .context("writing to socket")?;
     stream.write_all(b"\n").context("writing newline")?;
     stream.flush().context("flushing socket")?;

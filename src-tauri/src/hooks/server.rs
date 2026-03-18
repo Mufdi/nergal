@@ -13,6 +13,7 @@ use crate::plan_state::SharedPlanState;
 #[derive(Clone, serde::Serialize)]
 struct FrontendHookEvent {
     session_id: String,
+    cluihud_session_id: Option<String>,
     event_type: String,
     tool_name: Option<String>,
     tool_input: Option<serde_json::Value>,
@@ -20,82 +21,25 @@ struct FrontendHookEvent {
     transcript_path: Option<String>,
 }
 
-impl From<&HookEvent> for FrontendHookEvent {
-    fn from(event: &HookEvent) -> Self {
-        match event {
-            HookEvent::SessionStart { session_id } => Self {
-                session_id: session_id.clone(),
-                event_type: "session_start".into(),
-                tool_name: None,
-                tool_input: None,
-                stop_reason: None,
-                transcript_path: None,
-            },
-            HookEvent::SessionEnd { session_id } => Self {
-                session_id: session_id.clone(),
-                event_type: "session_end".into(),
-                tool_name: None,
-                tool_input: None,
-                stop_reason: None,
-                transcript_path: None,
-            },
-            HookEvent::PreToolUse {
-                session_id,
-                tool_name,
-                tool_input,
-            } => Self {
-                session_id: session_id.clone(),
-                event_type: "pre_tool_use".into(),
-                tool_name: Some(tool_name.clone()),
-                tool_input: Some(tool_input.clone()),
-                stop_reason: None,
-                transcript_path: None,
-            },
-            HookEvent::PostToolUse {
-                session_id,
-                tool_name,
-                tool_input,
-                ..
-            } => Self {
-                session_id: session_id.clone(),
-                event_type: "post_tool_use".into(),
-                tool_name: Some(tool_name.clone()),
-                tool_input: Some(tool_input.clone()),
-                stop_reason: None,
-                transcript_path: None,
-            },
-            HookEvent::Stop {
-                session_id,
-                stop_reason,
-                transcript_path,
-            } => Self {
-                session_id: session_id.clone(),
-                event_type: "stop".into(),
-                tool_name: None,
-                tool_input: None,
-                stop_reason: stop_reason.clone(),
-                transcript_path: transcript_path.clone(),
-            },
-            HookEvent::TaskCompleted {
-                session_id,
-                task_subject,
-                ..
-            } => Self {
-                session_id: session_id.clone(),
-                event_type: "task_completed".into(),
-                tool_name: task_subject.clone(),
-                tool_input: None,
-                stop_reason: None,
-                transcript_path: None,
-            },
-            HookEvent::UserPromptSubmit { session_id } => Self {
-                session_id: session_id.clone(),
-                event_type: "user_prompt_submit".into(),
-                tool_name: None,
-                tool_input: None,
-                stop_reason: None,
-                transcript_path: None,
-            },
+impl FrontendHookEvent {
+    fn from_hook(event: &HookEvent) -> Self {
+        let (session_id, event_type, tool_name, tool_input, stop_reason, transcript_path) = match event {
+            HookEvent::SessionStart { session_id } => (session_id.clone(), "session_start", None, None, None, None),
+            HookEvent::SessionEnd { session_id } => (session_id.clone(), "session_end", None, None, None, None),
+            HookEvent::PreToolUse { session_id, tool_name, tool_input } => (session_id.clone(), "pre_tool_use", Some(tool_name.clone()), Some(tool_input.clone()), None, None),
+            HookEvent::PostToolUse { session_id, tool_name, tool_input, .. } => (session_id.clone(), "post_tool_use", Some(tool_name.clone()), Some(tool_input.clone()), None, None),
+            HookEvent::Stop { session_id, stop_reason, transcript_path } => (session_id.clone(), "stop", None, None, stop_reason.clone(), transcript_path.clone()),
+            HookEvent::TaskCompleted { session_id, task_subject, .. } => (session_id.clone(), "task_completed", task_subject.clone(), None, None, None),
+            HookEvent::UserPromptSubmit { session_id } => (session_id.clone(), "user_prompt_submit", None, None, None, None),
+        };
+        Self {
+            session_id,
+            cluihud_session_id: None,
+            event_type: event_type.into(),
+            tool_name,
+            tool_input,
+            stop_reason,
+            transcript_path,
         }
     }
 }
@@ -125,9 +69,13 @@ pub async fn start_hook_server(
             let mut lines = reader.lines();
 
             while let Ok(Some(line)) = lines.next_line().await {
+                let cluihud_sid = serde_json::from_str::<serde_json::Value>(&line)
+                    .ok()
+                    .and_then(|v| v.get("cluihud_session_id").and_then(|s| s.as_str()).map(String::from));
+
                 match serde_json::from_str::<HookEvent>(&line) {
                     Ok(event) => {
-                        process_event(&app, &event, &db, &plan_state);
+                        process_event(&app, &event, &db, &plan_state, cluihud_sid.as_deref());
                     }
                     Err(e) => {
                         tracing::warn!("failed to parse hook event: {e}");
@@ -143,8 +91,10 @@ fn process_event(
     event: &HookEvent,
     db: &SharedDb,
     plan_state: &SharedPlanState,
+    cluihud_session_id: Option<&str>,
 ) {
-    let frontend_event = FrontendHookEvent::from(event);
+    let mut frontend_event = FrontendHookEvent::from_hook(event);
+    frontend_event.cluihud_session_id = cluihud_session_id.map(String::from);
     let _ = app.emit("hook:event", &frontend_event);
 
     match event {

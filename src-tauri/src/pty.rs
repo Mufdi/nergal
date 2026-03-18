@@ -44,6 +44,7 @@ fn spawn_pty(
     cols: u16,
     rows: u16,
     cwd: Option<&str>,
+    session_id: Option<&str>,
     shell_ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
 ) -> Result<(), String> {
     let pty_system = NativePtySystem::default();
@@ -68,6 +69,9 @@ fn spawn_pty(
 
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
+    if let Some(sid) = session_id {
+        cmd.env("CLUIHUD_SESSION_ID", sid);
+    }
 
     let _child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
 
@@ -150,6 +154,7 @@ pub async fn start_claude_session(
         cols,
         rows,
         cwd.as_deref(),
+        Some(session_id.as_str()),
         Some(ready_tx),
     )?;
 
@@ -240,7 +245,7 @@ pub fn pty_create(
     rows: u16,
     cwd: Option<String>,
 ) -> Result<(), String> {
-    spawn_pty(&app, &state, id, cols, rows, cwd.as_deref(), None)
+    spawn_pty(&app, &state, id, cols, rows, cwd.as_deref(), None, None)
 }
 
 #[tauri::command]

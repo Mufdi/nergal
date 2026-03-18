@@ -10,3 +10,12 @@ export const activeSessionTasksAtom = atom<Task[]>((get) => {
   const map = get(taskMapAtom);
   return map[id] ?? [];
 });
+
+export const clearCompletedTasksAtom = atom(null, (get, set) => {
+  const id = get(activeSessionIdAtom);
+  if (!id) return;
+  set(taskMapAtom, (prev) => {
+    const tasks = prev[id] ?? [];
+    return { ...prev, [id]: tasks.filter((t) => t.status !== "completed") };
+  });
+});

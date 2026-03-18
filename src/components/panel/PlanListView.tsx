@@ -1,42 +1,24 @@
 import { useState, useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { sessionPlansAtom, planDocumentsAtom, defaultPlanState } from "@/stores/plan";
+import { planDocumentsAtom, defaultPlanState } from "@/stores/plan";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { openTabAction, activeTabAtom } from "@/stores/rightPanel";
 import { invoke } from "@/lib/tauri";
 import { FileText } from "lucide-react";
 
 export function PlanListView() {
-  const [diskPlans, setDiskPlans] = useState<{ name: string; path: string }[]>([]);
+  const [plans, setPlans] = useState<{ name: string; path: string }[]>([]);
   const sessionId = useAtomValue(activeSessionIdAtom);
-  const sessionPlans = useAtomValue(sessionPlansAtom);
   const activeTab = useAtomValue(activeTabAtom);
   const openTab = useSetAtom(openTabAction);
   const setPlanDocs = useSetAtom(planDocumentsAtom);
 
-  const registeredPlans = sessionId ? (sessionPlans[sessionId] ?? []) : [];
-
   useEffect(() => {
     if (!sessionId) return;
     invoke<{ name: string; path: string; modified: number }[]>("list_session_plans", { sessionId })
-      .then((result) => setDiskPlans(result.map((p) => ({ name: p.name, path: p.path }))))
-      .catch(() => setDiskPlans([]));
+      .then((result) => setPlans(result.map((p) => ({ name: p.name, path: p.path }))))
+      .catch(() => setPlans([]));
   }, [sessionId]);
-
-  const seen = new Set<string>();
-  const allPlans: { name: string; path: string }[] = [];
-  for (const p of registeredPlans) {
-    if (!seen.has(p.path)) {
-      seen.add(p.path);
-      allPlans.push(p);
-    }
-  }
-  for (const p of diskPlans) {
-    if (!seen.has(p.path)) {
-      seen.add(p.path);
-      allPlans.push(p);
-    }
-  }
 
   function loadAndOpenPlan(path: string, name: string, pinned: boolean) {
     invoke<{ path: string; content: string; has_edits: boolean }>("load_plan", { sessionId, path })
@@ -58,7 +40,7 @@ export function PlanListView() {
       .catch(() => {});
   }
 
-  if (allPlans.length === 0) {
+  if (plans.length === 0) {
     return (
       <div className="flex h-full items-center justify-center">
         <span className="text-[11px] text-muted-foreground">No plans found</span>
@@ -75,7 +57,7 @@ export function PlanListView() {
           Plans
         </span>
       </div>
-      {allPlans.map((plan) => {
+      {plans.map((plan) => {
         const isActive = activePath === plan.path;
         return (
           <button

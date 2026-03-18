@@ -93,6 +93,10 @@ fn process_event(
     plan_state: &SharedPlanState,
     cluihud_session_id: Option<&str>,
 ) {
+    if cluihud_session_id.is_none() {
+        tracing::debug!("ignoring hook event without cluihud_session_id");
+        return;
+    }
     let mut frontend_event = FrontendHookEvent::from_hook(event);
     frontend_event.cluihud_session_id = cluihud_session_id.map(String::from);
     let _ = app.emit("hook:event", &frontend_event);

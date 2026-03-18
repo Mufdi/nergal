@@ -92,7 +92,7 @@ export function Workspace() {
 
   return (
     <div className="flex h-full flex-col bg-background">
-      <TopBar onOpenSettings={() => setSettingsOpen(true)} />
+      <TopBar onOpenSettings={() => setSettingsOpen(true)} rightPanelVisible={!rightCollapsed} />
 
       <div className="flex flex-1 overflow-hidden p-1.5">
         <ResizablePanelGroup orientation="horizontal" className="flex-1">
@@ -100,9 +100,9 @@ export function Workspace() {
           <ResizablePanel
             id="sidebar"
             panelRef={sidebarPanelRef}
-            defaultSize="20%"
-            minSize="10%"
-            maxSize="30%"
+            defaultSize="15%"
+            minSize="8%"
+            maxSize="20%"
             collapsible
             collapsedSize={COLLAPSED_SIZE_PX}
             onResize={(size) => {
@@ -118,7 +118,7 @@ export function Workspace() {
           <ResizableHandle />
 
           {/* Center: Terminal + Activity Log (vertical split) */}
-          <ResizablePanel id="center" defaultSize="50%" minSize="25%">
+          <ResizablePanel id="center" defaultSize="42%" minSize="25%">
             <ResizablePanelGroup orientation="vertical">
               <ResizablePanel id="terminal" defaultSize="75%" minSize="30%">
                 <div className="flex h-full overflow-hidden rounded-lg" style={{ background: "#141415" }}>
@@ -148,9 +148,9 @@ export function Workspace() {
           <ResizablePanel
             id="right"
             panelRef={rightPanelRef}
-            defaultSize="30%"
-            minSize="10%"
-            maxSize="50%"
+            defaultSize="43%"
+            minSize="15%"
+            maxSize="55%"
             collapsible
             collapsedSize={COLLAPSED_SIZE_PX}
             onResize={(size) => {

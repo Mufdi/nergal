@@ -5,6 +5,7 @@ export interface PtyOutput {
 
 export interface HookEvent {
   session_id: string;
+  cluihud_session_id?: string;
   event_type: string;
   tool_name?: string;
   tool_input?: unknown;

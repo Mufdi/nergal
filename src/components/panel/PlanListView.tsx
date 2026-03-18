@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { sessionPlansAtom } from "@/stores/plan";
+import { sessionPlansAtom, planDocumentsAtom, defaultPlanState } from "@/stores/plan";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { openTabAction, activeTabAtom } from "@/stores/rightPanel";
 import { invoke } from "@/lib/tauri";
@@ -12,6 +12,7 @@ export function PlanListView() {
   const sessionPlans = useAtomValue(sessionPlansAtom);
   const activeTab = useAtomValue(activeTabAtom);
   const openTab = useSetAtom(openTabAction);
+  const setPlanDocs = useSetAtom(planDocumentsAtom);
 
   const registeredPlans = sessionId ? (sessionPlans[sessionId] ?? []) : [];
 
@@ -37,18 +38,24 @@ export function PlanListView() {
     }
   }
 
-  function handleClick(path: string, name: string) {
-    openTab({
-      tab: { id: `plan-${path}`, type: "plan", label: name, data: { path } },
-      isPinned: false,
-    });
-  }
-
-  function handleDoubleClick(path: string, name: string) {
-    openTab({
-      tab: { id: `plan-${path}`, type: "plan", label: name, data: { path } },
-      isPinned: true,
-    });
+  function loadAndOpenPlan(path: string, name: string, pinned: boolean) {
+    invoke<{ path: string; content: string; has_edits: boolean }>("load_plan", { sessionId, path })
+      .then((result) => {
+        setPlanDocs((prev) => ({
+          ...prev,
+          [result.path]: {
+            ...(prev[result.path] ?? defaultPlanState),
+            content: result.content,
+            original: result.content,
+            path: result.path,
+          },
+        }));
+        openTab({
+          tab: { id: `plan-${result.path}`, type: "plan", label: name, data: { path: result.path } },
+          isPinned: pinned,
+        });
+      })
+      .catch(() => {});
   }
 
   if (allPlans.length === 0) {
@@ -73,8 +80,8 @@ export function PlanListView() {
         return (
           <button
             key={plan.path}
-            onClick={() => handleClick(plan.path, plan.name)}
-            onDoubleClick={() => handleDoubleClick(plan.path, plan.name)}
+            onClick={() => loadAndOpenPlan(plan.path, plan.name, false)}
+            onDoubleClick={() => loadAndOpenPlan(plan.path, plan.name, true)}
             className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] transition-colors ${
               isActive
                 ? "bg-secondary/70 text-foreground"

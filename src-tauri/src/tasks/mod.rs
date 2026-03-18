@@ -76,7 +76,9 @@ impl TaskStore {
             return;
         };
 
-        let Some(task) = self.tasks.iter_mut().find(|t| t.id == task_id) else {
+        let Some(task) = self.tasks.iter_mut().find(|t| {
+            t.id == task_id || t.id.starts_with(&format!("{task_id}-"))
+        }) else {
             return;
         };
 

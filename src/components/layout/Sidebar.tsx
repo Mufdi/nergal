@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { focusZoneAtom, previousNonTerminalZoneAtom, triggerResumeSessionAtom } from "@/stores/shortcuts";
+import { focusZoneAtom, previousNonTerminalZoneAtom, triggerResumeSessionAtom, triggerNewSessionAtom } from "@/stores/shortcuts";
 import {
   workspacesAtom,
   activeSessionIdAtom,
@@ -99,6 +99,7 @@ function WorkspacesView() {
   const [commitModal, setCommitModal] = useState<{ session: Session } | null>(null);
   const triggerResumeId = useAtomValue(triggerResumeSessionAtom);
   const setTriggerResume = useSetAtom(triggerResumeSessionAtom);
+  const triggerNewSession = useAtomValue(triggerNewSessionAtom);
 
   useEffect(() => {
     if (!triggerResumeId) return;
@@ -112,6 +113,12 @@ function WorkspacesView() {
     }
     setTriggerResume(null);
   }, [triggerResumeId]);
+
+  useEffect(() => {
+    if (triggerNewSession > 0 && workspaces.length > 0) {
+      setAddingSessionFor(workspaces[0].id);
+    }
+  }, [triggerNewSession]);
 
   useEffect(() => {
     invoke<Workspace[]>("get_workspaces")

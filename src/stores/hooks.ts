@@ -30,8 +30,8 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
   unlisteners.push(
     await listen<HookEvent>("hook:event", (event) => {
       const { event_type, tool_name, stop_reason } = event;
-      const sid = event.cluihud_session_id ?? get(activeSessionIdAtom);
-      if (!sid) return;
+      if (!event.cluihud_session_id) return;
+      const sid = event.cluihud_session_id;
 
       switch (event_type) {
         case "pre_tool_use": {

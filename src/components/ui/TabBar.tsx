@@ -135,6 +135,7 @@ function TabItem({
     <div
       onClick={onClick}
       onDoubleClick={onDoubleClick}
+      onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); onClose(); } }}
       className={`group flex min-w-20 max-w-40 shrink-0 cursor-pointer items-center gap-1.5 px-2.5 py-1.5 text-xs transition-colors ${
         isActive
           ? "bg-secondary text-foreground"

@@ -1,5 +1,5 @@
 import { useAtomValue, useSetAtom } from "jotai";
-import { activePlanAtom, setPlanModeAtom } from "@/stores/plan";
+import { planDocumentsAtom, defaultPlanState, setPlanDocModeAtom } from "@/stores/plan";
 import { toastsAtom } from "@/stores/toast";
 import { invoke } from "@/lib/tauri";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -7,9 +7,14 @@ import type { PlanMode } from "@/lib/types";
 import { MarkdownView } from "./MarkdownView";
 import { PlanEditor } from "./PlanEditor";
 
-export function PlanPanel() {
-  const plan = useAtomValue(activePlanAtom);
-  const setMode = useSetAtom(setPlanModeAtom);
+interface PlanPanelProps {
+  path: string;
+}
+
+export function PlanPanel({ path }: PlanPanelProps) {
+  const docs = useAtomValue(planDocumentsAtom);
+  const plan = path ? (docs[path] ?? defaultPlanState) : defaultPlanState;
+  const setMode = useSetAtom(setPlanDocModeAtom);
   const addToast = useSetAtom(toastsAtom);
 
   const hasPlan = plan.content.length > 0;
@@ -42,7 +47,7 @@ export function PlanPanel() {
   return (
     <Tabs
       value={plan.mode}
-      onValueChange={(value) => setMode(value as PlanMode)}
+      onValueChange={(value) => setMode({ path, mode: value as PlanMode })}
       className="flex h-full flex-col gap-0"
     >
       <div className="flex h-8 shrink-0 items-center justify-between border-b border-border/50 px-2">
@@ -71,7 +76,7 @@ export function PlanPanel() {
       </TabsContent>
 
       <TabsContent value="edit" className="flex-1 overflow-hidden">
-        <PlanEditor />
+        <PlanEditor path={path} />
       </TabsContent>
     </Tabs>
   );

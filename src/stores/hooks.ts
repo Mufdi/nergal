@@ -4,8 +4,8 @@ import type { HookEvent, CostSummary, Task, ActivityEntry } from "@/lib/types";
 import { costMapAtom, modeMapAtom, workspacesAtom, activeSessionIdAtom } from "./workspace";
 import { taskMapAtom } from "./tasks";
 import { fileMapAtom, type ModifiedFile } from "./files";
-import { planStateMapAtom, registerPlanAtom } from "./plan";
-import { openTabAction, expandRightPanelAtom } from "./rightPanel";
+import { planStateMapAtom, planDocumentsAtom, registerPlanAtom } from "./plan";
+import { openTabAction, expandRightPanelAtom, activePanelViewAtom } from "./rightPanel";
 import { refreshGitInfoAtom } from "./git";
 import { addActivityAtom } from "./activity";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -135,20 +135,20 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
     await listen<{ path: string; content: string; session_id: string }>("plan:ready", (payload) => {
       const cluihudSessionId = get(activeSessionIdAtom);
       if (!cluihudSessionId) return;
-      set(planStateMapAtom, (prev) => ({
-        ...prev,
-        [cluihudSessionId]: {
-          content: payload.content,
-          original: payload.content,
-          path: payload.path,
-          mode: "view" as const,
-          diff: [],
-          claudeSessionId: payload.session_id,
-        },
-      }));
+      const planData = {
+        content: payload.content,
+        original: payload.content,
+        path: payload.path,
+        mode: "view" as const,
+        diff: [] as never[],
+        claudeSessionId: payload.session_id,
+      };
+      set(planStateMapAtom, (prev) => ({ ...prev, [cluihudSessionId]: planData }));
+      set(planDocumentsAtom, (prev) => ({ ...prev, [payload.path]: planData }));
       const planName = payload.path.split("/").pop()?.replace(".md", "") ?? "Plan";
-      set(openTabAction, { tab: { id: `plan-${cluihudSessionId}`, type: "plan", label: planName, data: { path: payload.path } }, isPinned: true });
+      set(openTabAction, { tab: { id: `plan-${payload.path}`, type: "plan", label: planName, data: { path: payload.path } }, isPinned: true });
       set(registerPlanAtom, { sessionId: cluihudSessionId, path: payload.path });
+      set(activePanelViewAtom, "plan");
       set(expandRightPanelAtom, (prev: number) => prev + 1);
       set(addActivityAtom, { sessionId: cluihudSessionId, entry: createActivity("plan", "Plan ready for review") });
     }),

@@ -67,6 +67,7 @@ pub fn run() {
             commands::approve_plan,
             commands::reject_plan,
             commands::list_plans,
+            commands::list_session_plans,
             commands::load_plan,
             // Setup command
             commands::setup_hooks,

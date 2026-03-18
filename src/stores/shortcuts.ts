@@ -4,11 +4,13 @@ import { activeSessionIdAtom, activeWorkspaceAtom, workspacesAtom, freshSessions
 import * as terminalService from "@/components/terminal/terminalService";
 import {
   activeTabsAtom,
+  activeTabAtom,
   activeTabIdAtom,
-  openTabAction,
   closeTabAction,
   reopenTabAction,
   expandRightPanelAtom,
+  activePanelViewAtom,
+  tabStateMapAtom,
   type Tab,
 } from "./rightPanel";
 
@@ -61,20 +63,31 @@ function switchToSession(index: number) {
   s.set(activeSessionIdAtom, session.id);
 }
 
-function togglePanel(type: Tab["type"], label: string) {
+function togglePanel(type: Tab["type"], _label: string) {
   const s = store();
-  const tabs = s.get(activeTabsAtom);
-  const activeId = s.get(activeTabIdAtom);
-  const existing = tabs.find((t) => t.type === type);
-  if (existing && existing.id === activeId) {
+  const currentView = s.get(activePanelViewAtom);
+  const currentActiveTab = s.get(activeTabAtom);
+
+  if (currentActiveTab?.type === type || (currentView === type && !currentActiveTab)) {
     s.set(toggleRightPanelAtom, (p: number) => p + 1);
     return;
   }
-  if (existing) {
-    s.set(activeTabIdAtom, existing.id);
+
+  // Try to restore last open tab of this type
+  const tabs = s.get(activeTabsAtom);
+  const lastOfType = [...tabs].reverse().find((t: Tab) => t.type === type);
+  if (lastOfType) {
+    s.set(activeTabIdAtom, lastOfType.id);
   } else {
-    s.set(openTabAction, { tab: { id: type, type, label }, isPinned: true });
+    const sessionId = s.get(activeSessionIdAtom);
+    if (sessionId) {
+      s.set(tabStateMapAtom, (prev) => {
+        const state = prev[sessionId] ?? { tabs: [], activeTabId: null, previewTabId: null };
+        return { ...prev, [sessionId]: { ...state, activeTabId: null } };
+      });
+    }
   }
+  s.set(activePanelViewAtom, type);
   s.set(expandRightPanelAtom, (prev: number) => prev + 1);
 }
 

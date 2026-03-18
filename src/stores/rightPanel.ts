@@ -24,6 +24,8 @@ const defaultTabState: TabState = { tabs: [], activeTabId: null, previewTabId: n
 
 export const expandRightPanelAtom = atom(0);
 
+export const activePanelViewAtom = atom<TabType | null>(null);
+
 export const tabStateMapAtom = atom<Record<string, TabState>>({});
 
 export const activeTabStateAtom = atom<TabState>((get) => {
@@ -75,7 +77,11 @@ export const openTabAction = atom(
 
       const existingById = state.tabs.find((t) => t.id === partial.id);
       if (existingById) {
-        return { ...prev, [sessionId]: { ...state, activeTabId: existingById.id } };
+        const tabs = isPinned && !existingById.pinned
+          ? state.tabs.map((t) => (t.id === existingById.id ? { ...t, pinned: true } : t))
+          : state.tabs;
+        const previewTabId = isPinned && state.previewTabId === existingById.id ? null : state.previewTabId;
+        return { ...prev, [sessionId]: { tabs, activeTabId: existingById.id, previewTabId } };
       }
 
       const newTab: Tab = {

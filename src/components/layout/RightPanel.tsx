@@ -4,19 +4,19 @@ import {
   activeTabAtom,
   activeTabsAtom,
   activeTabIdAtom,
+  activePanelViewAtom,
   setDirtyAction,
   type Tab,
   type TabType,
 } from "@/stores/rightPanel";
 import { focusZoneAtom, previousNonTerminalZoneAtom } from "@/stores/shortcuts";
-import { activePlanAtom, planStateMapAtom, sessionPlansAtom } from "@/stores/plan";
-import { activeSessionIdAtom } from "@/stores/workspace";
+import { planDocumentsAtom, defaultPlanState } from "@/stores/plan";
 import { PlanPanel } from "@/components/plan/PlanPanel";
 import { TaskPanel } from "@/components/tasks/TaskPanel";
 import { TranscriptViewer } from "@/components/session/TranscriptViewer";
-import { FileSidebar } from "@/components/panel/FileSidebar";
+import { PlanListView } from "@/components/panel/PlanListView";
+import { FileListView } from "@/components/panel/FileListView";
 import { TabBar } from "@/components/ui/TabBar";
-import { invoke } from "@/lib/tauri";
 import {
   FileText,
   FileCode,
@@ -25,6 +25,8 @@ import {
   CheckSquare,
   GitBranch,
   ScrollText,
+  PanelRightClose,
+  PanelRightOpen,
 } from "lucide-react";
 import {
   Tooltip,
@@ -42,6 +44,8 @@ const TAB_ICONS: Record<TabType, typeof FileText> = {
   transcript: ScrollText,
 };
 
+const SIDEBAR_TYPES: TabType[] = ["plan", "file", "diff"];
+
 interface RightPanelProps {
   collapsed: boolean;
   onToggle: () => void;
@@ -50,9 +54,11 @@ interface RightPanelProps {
 export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
   const activeTab = useAtomValue(activeTabAtom);
   const tabs = useAtomValue(activeTabsAtom);
+  const activePanelView = useAtomValue(activePanelViewAtom);
   const setActiveTabId = useSetAtom(activeTabIdAtom);
   const setFocusZone = useSetAtom(focusZoneAtom);
   const setPreviousZone = useSetAtom(previousNonTerminalZoneAtom);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   function handlePanelFocus() {
     setFocusZone("panel");
@@ -94,36 +100,78 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
     );
   }
 
-  if (!activeTab) {
+  const showSidebar = activeTab && SIDEBAR_TYPES.includes(activeTab.type);
+
+  if (activeTab) {
     return (
-      <div className="flex h-full flex-col rounded-lg bg-card">
-        <PanelHeader onToggle={onToggle} />
-        <div className="flex flex-1 items-center justify-center">
-          <span className="text-[11px] text-muted-foreground">No panel open</span>
+      <div className="flex h-full overflow-hidden rounded-lg bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
+        <div className="flex flex-1 flex-col overflow-hidden">
+          <PanelHeader onToggle={onToggle} label={activeTab.label}>
+            {showSidebar && (
+              <button
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                aria-label={sidebarOpen ? "Hide file list" : "Show file list"}
+              >
+                {sidebarOpen ? <PanelRightClose size={12} /> : <PanelRightOpen size={12} />}
+              </button>
+            )}
+          </PanelHeader>
+          <TabBar />
+          <div className="flex flex-1 overflow-hidden">
+            <div className="flex-1 overflow-y-auto">
+              <DocumentContent tab={activeTab} />
+            </div>
+            {showSidebar && sidebarOpen && (
+              <div className="w-44 shrink-0 overflow-y-auto border-l border-border/50">
+                <SidebarContent type={activeTab.type} />
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );
   }
 
-  const showFileSidebar = activeTab.type === "diff" || activeTab.type === "file";
-
-  return (
-    <div className="flex h-full overflow-hidden rounded-lg bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <PanelHeader onToggle={onToggle} label={activeTab.label} />
-        <TabBar />
-        <div className="flex-1 overflow-y-auto">
-          <PanelContent tab={activeTab} />
+  if (activePanelView) {
+    return (
+      <div className="flex h-full overflow-hidden rounded-lg bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
+        <div className="flex flex-1 flex-col overflow-hidden">
+          <PanelHeader onToggle={onToggle} label={viewPanelLabel(activePanelView)} />
+          {tabs.length > 0 && <TabBar />}
+          <div className="flex-1 overflow-y-auto">
+            <ViewPanelContent view={activePanelView} />
+          </div>
         </div>
       </div>
+    );
+  }
 
-      {activeTab.type === "plan" && <PlanFileSidebar />}
-      {showFileSidebar && <FileSidebar />}
+  return (
+    <div className="flex h-full flex-col rounded-lg bg-card">
+      <PanelHeader onToggle={onToggle} />
+      {tabs.length > 0 && <TabBar />}
+      <div className="flex flex-1 items-center justify-center">
+        <span className="text-[11px] text-muted-foreground">No panel open</span>
+      </div>
     </div>
   );
 }
 
-function PanelHeader({ onToggle, label }: { onToggle: () => void; label?: string }) {
+function viewPanelLabel(view: TabType): string {
+  const labels: Record<TabType, string> = {
+    plan: "Plans",
+    file: "Files",
+    diff: "Diff",
+    spec: "Spec",
+    tasks: "Tasks",
+    git: "Git",
+    transcript: "Transcript",
+  };
+  return labels[view];
+}
+
+function PanelHeader({ onToggle, label, children }: { onToggle: () => void; label?: string; children?: React.ReactNode }) {
   return (
     <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border/50 px-2">
       <button
@@ -135,88 +183,49 @@ function PanelHeader({ onToggle, label }: { onToggle: () => void; label?: string
           <polyline points="9 18 15 12 9 6" />
         </svg>
       </button>
-      {label && <span className="text-[11px] font-medium text-foreground/80">{label}</span>}
+      {label && <span className="flex-1 text-[11px] font-medium text-foreground/80">{label}</span>}
+      {!label && <span className="flex-1" />}
+      {children}
     </div>
   );
 }
 
-function PlanFileSidebar() {
-  const [allPlans, setAllPlans] = useState<{ name: string; path: string }[]>([]);
-  const sessionId = useAtomValue(activeSessionIdAtom);
-  const sessionPlans = useAtomValue(sessionPlansAtom);
-  const plan = useAtomValue(activePlanAtom);
-  const setPlanStateMap = useSetAtom(planStateMapAtom);
-
-  const plans = sessionId ? (sessionPlans[sessionId] ?? []) : [];
-
-  useEffect(() => {
-    invoke<{ name: string; path: string; modified: number }[]>("list_plans")
-      .then((result) => setAllPlans(result.map((p) => ({ name: p.name, path: p.path }))))
-      .catch(() => {});
-  }, [plan.path]);
-
-  const displayPlans = plans.length > 0 ? plans : allPlans.slice(0, 20);
-  const activeName = plan.path?.split("/").pop()?.replace(".md", "") ?? "";
-
-  function handleSelect(path: string) {
-    if (!sessionId) return;
-    invoke<{ path: string; content: string }>("load_plan", { sessionId, path })
-      .then((result) => {
-        setPlanStateMap((prev) => {
-          const existing = prev[sessionId];
-          return {
-            ...prev,
-            [sessionId]: {
-              content: result.content,
-              original: result.content,
-              path: result.path,
-              mode: "view" as const,
-              diff: [],
-              claudeSessionId: existing?.claudeSessionId ?? "",
-            },
-          };
-        });
-      })
-      .catch(() => {});
+function SidebarContent({ type }: { type: TabType }) {
+  switch (type) {
+    case "plan":
+      return <PlanListView />;
+    case "file":
+    case "diff":
+      return <FileListView />;
+    default:
+      return null;
   }
-
-  if (displayPlans.length === 0) return null;
-
-  return (
-    <div className="flex w-10 shrink-0 flex-col items-center gap-0.5 border-l border-border/50 py-1.5 overflow-y-auto">
-      {displayPlans.map((p) => {
-        const isActive = p.name === activeName;
-        return (
-          <Tooltip key={p.path}>
-            <TooltipTrigger
-              render={
-                <button
-                  onClick={() => handleSelect(p.path)}
-                  className={`flex size-7 items-center justify-center rounded transition-colors ${
-                    isActive
-                      ? "bg-secondary text-foreground"
-                      : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
-                  }`}
-                  aria-label={p.name}
-                />
-              }
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path d="M14 2v6h6" />
-              </svg>
-            </TooltipTrigger>
-            <TooltipContent side="left" className="max-w-48 truncate">{p.name}</TooltipContent>
-          </Tooltip>
-        );
-      })}
-    </div>
-  );
 }
 
-function PanelContent({ tab }: { tab: Tab }) {
+function ViewPanelContent({ view }: { view: TabType }) {
+  switch (view) {
+    case "plan":
+      return <PlanListView />;
+    case "file":
+    case "diff":
+      return <FileListView />;
+    case "tasks":
+      return <TaskPanel />;
+    case "git":
+      return <PlaceholderView label="Git view" />;
+    case "spec":
+      return <PlaceholderView label="Spec view" />;
+    case "transcript":
+      return <PlaceholderView label="Transcript view" />;
+    default:
+      return null;
+  }
+}
+
+function DocumentContent({ tab }: { tab: Tab }) {
   switch (tab.type) {
     case "plan":
-      return <PlanContentWrapper tabId={tab.id} />;
+      return <PlanContentWrapper tabId={tab.id} path={tab.data?.path as string} />;
     case "tasks":
       return <TaskPanel />;
     case "transcript": {
@@ -236,8 +245,9 @@ function PanelContent({ tab }: { tab: Tab }) {
   }
 }
 
-function PlanContentWrapper({ tabId }: { tabId: string }) {
-  const plan = useAtomValue(activePlanAtom);
+function PlanContentWrapper({ tabId, path }: { tabId: string; path: string }) {
+  const docs = useAtomValue(planDocumentsAtom);
+  const plan = path ? (docs[path] ?? defaultPlanState) : defaultPlanState;
   const setDirty = useSetAtom(setDirtyAction);
 
   const hasEdits = plan.content !== plan.original && plan.content.length > 0;
@@ -246,7 +256,7 @@ function PlanContentWrapper({ tabId }: { tabId: string }) {
     setDirty({ tabId, dirty: hasEdits });
   }, [hasEdits, tabId, setDirty]);
 
-  return <PlanPanel />;
+  return <PlanPanel path={path} />;
 }
 
 function PlaceholderView({ label }: { label: string }) {

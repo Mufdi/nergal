@@ -141,7 +141,25 @@ fn process_event(
                     .get("plan_path")
                     .and_then(|v| v.as_str())
                     .map(std::path::PathBuf::from)
-                    .or_else(|| runtime.find_latest_plan().ok().flatten());
+                    .or_else(|| {
+                        // Fallback: find latest plan in project-local .claude/plans/
+                        if let Some(csid) = cluihud_session_id
+                            && let Ok(db_guard) = db.lock()
+                            && let Ok(Some(session)) = db_guard.find_session(csid)
+                        {
+                            let cwd = session.worktree_path
+                                .or_else(|| db_guard.workspace_repo_path(&session.workspace_id).ok().flatten());
+                            if let Some(cwd) = cwd {
+                                let local_plans = cwd.join(".claude").join("plans");
+                                if local_plans.exists() {
+                                    let local_mgr = crate::claude::plan::PlanManager::new(local_plans);
+                                    return local_mgr.find_latest_plan().ok().flatten();
+                                }
+                            }
+                        }
+                        // Last fallback: global plans dir
+                        runtime.find_latest_plan().ok().flatten()
+                    });
 
                 if let Some(path) = plan_path
                     && let Ok(()) = runtime.load_plan(&path)
@@ -165,8 +183,6 @@ fn process_event(
                 }
             }
 
-            let csid = cluihud_session_id.unwrap_or(session_id);
-            process_task_event(app, tool_name, tool_input, csid, db);
         }
 
         HookEvent::PostToolUse {
@@ -297,12 +313,10 @@ fn process_task_event(
         return;
     }
 
-    tracing::info!("task event: tool={tool_name} create={is_task_create} update={is_task_update}");
 
     // Use in-memory TaskStore for event processing, then persist to DB
     let mut store = crate::tasks::TaskStore::new();
 
-    // Load existing tasks from DB into the store
     if let Ok(db_guard) = db.lock()
         && let Ok(existing) = db_guard.get_visible_tasks(session_id)
     {
@@ -317,7 +331,6 @@ fn process_task_event(
         store.apply_update(tool_input);
     }
 
-    // Persist all tasks back to DB
     if let Ok(db_guard) = db.lock() {
         for task in store.all_tasks() {
             let _ = db_guard.upsert_task(session_id, task);

@@ -52,7 +52,10 @@ impl TaskStore {
             .and_then(|v| v.as_str())
             .map(String::from);
 
-        let id = self.next_id.to_string();
+        let id = format!("{}-{}", self.next_id, std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis());
         self.next_id += 1;
 
         self.tasks.push(Task {
@@ -128,10 +131,11 @@ impl TaskStore {
 
     /// Import an existing task (from DB). Updates next_id if needed.
     pub fn import_task(&mut self, task: Task) {
-        if let Ok(id_num) = task.id.parse::<u32>()
-            && id_num >= self.next_id
-        {
-            self.next_id = id_num + 1;
+        let prefix = task.id.split('-').next().unwrap_or("");
+        if let Ok(id_num) = prefix.parse::<u32>() {
+            if id_num >= self.next_id {
+                self.next_id = id_num + 1;
+            }
         }
         self.tasks.push(task);
     }

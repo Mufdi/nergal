@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { activeSessionAtom, activeSessionIdAtom, activeCostAtom, activeModeAtom } from "@/stores/workspace";
 import { activeGitInfoAtom, refreshGitInfoAtom } from "@/stores/git";
+import { loadSessionFilesAtom } from "@/stores/files";
 import { Badge } from "@/components/ui/badge";
 import { GitBranch } from "lucide-react";
 import {
@@ -30,9 +31,13 @@ export function StatusBar() {
   const cost = useAtomValue(activeCostAtom);
   const gitInfo = useAtomValue(activeGitInfoAtom);
   const refreshGit = useSetAtom(refreshGitInfoAtom);
+  const loadFiles = useSetAtom(loadSessionFilesAtom);
 
   useEffect(() => {
-    if (sessionId) refreshGit(sessionId);
+    if (sessionId) {
+      refreshGit(sessionId);
+      loadFiles(sessionId);
+    }
   }, [sessionId]);
 
   const dotColor = modeColors[mode] ?? "bg-muted-foreground";

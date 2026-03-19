@@ -101,7 +101,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
 
   unlisteners.push(
     await listen<{ session_id: string; path: string; tool: string }>("files:modified", (payload) => {
-      const sid = get(activeSessionIdAtom);
+      const sid = payload.session_id;
       if (!sid) return;
       const entry: ModifiedFile = {
         path: payload.path,

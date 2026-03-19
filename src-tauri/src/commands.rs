@@ -583,6 +583,74 @@ pub fn get_transcript(session_id: String) -> Result<Vec<TranscriptEntry>, String
     Ok(vec![])
 }
 
+// -- Diff command --
+
+/// Response payload for file diff queries.
+#[derive(Clone, serde::Serialize)]
+pub struct DiffResponse {
+    pub file_path: String,
+    pub diff_text: String,
+    pub is_new: bool,
+}
+
+/// Return the unified diff for a single file in a session's working directory.
+#[tauri::command]
+pub fn get_file_diff(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    file_path: String,
+) -> Result<DiffResponse, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+
+    let Some(session) = db.find_session(&session_id).map_err(|e| e.to_string())? else {
+        return Err("session not found".into());
+    };
+
+    let cwd = if let Some(ref wt) = session.worktree_path {
+        wt.clone()
+    } else {
+        db.workspace_repo_path(&session.workspace_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("workspace not found")?
+    };
+
+    let diff_text =
+        crate::worktree::file_diff(&cwd, &file_path).map_err(|e| e.to_string())?;
+
+    let is_new = diff_text.contains("new file mode") || diff_text.contains("/dev/null");
+
+    Ok(DiffResponse {
+        file_path,
+        diff_text,
+        is_new,
+    })
+}
+
+// -- Changed files command --
+
+/// Return the list of files changed in a session's working directory.
+#[tauri::command]
+pub fn get_session_changed_files(
+    db: State<'_, SharedDb>,
+    session_id: String,
+) -> Result<Vec<crate::worktree::ChangedFile>, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+
+    let Some(session) = db.find_session(&session_id).map_err(|e| e.to_string())? else {
+        return Err("session not found".into());
+    };
+
+    let cwd = if let Some(ref wt) = session.worktree_path {
+        wt.clone()
+    } else {
+        db.workspace_repo_path(&session.workspace_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("workspace not found")?
+    };
+
+    crate::worktree::changed_files(&cwd).map_err(|e| e.to_string())
+}
+
 // -- Git info command --
 
 /// Git status information for a session's working directory.

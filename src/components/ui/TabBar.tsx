@@ -20,6 +20,11 @@ import {
   MoreHorizontal,
   X,
 } from "lucide-react";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip";
 
 const TAB_ICONS: Record<TabType, typeof FileText> = {
   plan: FileText,
@@ -131,37 +136,50 @@ function TabItem({
   onClose: () => void;
 }) {
   const Icon = TAB_ICONS[tab.type];
+  const tooltipText = (tab.type === "diff" || tab.type === "file")
+    ? (tab.data?.path as string | undefined) ?? tab.label
+    : tab.label;
+
   return (
-    <div
-      onClick={onClick}
-      onDoubleClick={onDoubleClick}
-      onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); onClose(); } }}
-      className={`group flex min-w-20 max-w-40 shrink-0 cursor-pointer items-center gap-1.5 px-2.5 py-1.5 text-xs transition-colors ${
-        isActive
-          ? "bg-secondary text-foreground"
-          : "text-muted-foreground hover:text-foreground/80"
-      }`}
-    >
-      <Icon size={12} className="shrink-0" />
-      <span className={`truncate ${!tab.pinned ? "italic" : ""}`}>
-        {tab.label}
-      </span>
-      <div className="ml-auto shrink-0">
-        {tab.dirty ? (
-          <span className="block size-1 rounded-full bg-foreground" />
-        ) : (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onClose();
-            }}
-            className="flex size-4 items-center justify-center rounded opacity-0 transition-opacity group-hover:opacity-100 hover:bg-secondary"
-            aria-label={`Close ${tab.label}`}
-          >
-            <X size={10} />
-          </button>
-        )}
-      </div>
-    </div>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <div
+            onClick={onClick}
+            onDoubleClick={onDoubleClick}
+            onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); onClose(); } }}
+            className={`group flex min-w-20 max-w-40 shrink-0 cursor-pointer items-center gap-1.5 px-2.5 py-1.5 text-xs transition-colors ${
+              isActive
+                ? "bg-secondary text-foreground"
+                : "text-muted-foreground hover:text-foreground/80"
+            }`}
+          />
+        }
+      >
+        <Icon size={12} className="shrink-0" />
+        <span className={`truncate ${!tab.pinned ? "italic" : ""}`}>
+          {tab.label}
+        </span>
+        <div className="ml-auto shrink-0">
+          {tab.dirty ? (
+            <span className="block size-1 rounded-full bg-foreground" />
+          ) : (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onClose();
+              }}
+              className="flex size-4 items-center justify-center rounded opacity-0 transition-opacity group-hover:opacity-100 hover:bg-secondary"
+              aria-label={`Close ${tab.label}`}
+            >
+              <X size={10} />
+            </button>
+          )}
+        </div>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="max-w-md">
+        <p className="font-mono text-xs break-all">{tooltipText}</p>
+      </TooltipContent>
+    </Tooltip>
   );
 }

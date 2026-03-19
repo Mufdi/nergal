@@ -37,7 +37,7 @@ export function TerminalManager() {
     }
 
     const cwd = activeSession.worktree_path ?? activeWorkspace.repo_path;
-    terminalService.show(activeSessionId, cwd, mode);
+    terminalService.show(activeSessionId, cwd, mode, activeSession.name);
   }, [activeSessionId, activeSession, activeWorkspace, launchModes, freshSessions]);
 
   // ResizeObserver on host → fit active terminal

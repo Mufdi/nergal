@@ -3,21 +3,26 @@ import { sileo } from "sileo";
 
 export interface Toast {
   message: string;
+  description?: string;
   type: "success" | "error" | "info";
 }
 
 export const toastsAtom = atom(
   () => [],
   (_get, _set, toast: Toast) => {
+    const opts = {
+      title: toast.message,
+      description: toast.description,
+    };
     switch (toast.type) {
       case "success":
-        sileo.success({ title: toast.message });
+        sileo.success(opts);
         break;
       case "error":
-        sileo.error({ title: toast.message });
+        sileo.error(opts);
         break;
       case "info":
-        sileo.info({ title: toast.message });
+        sileo.info(opts);
         break;
     }
   },

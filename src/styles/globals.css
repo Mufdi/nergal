@@ -39,6 +39,12 @@
   --sidebar-accent-foreground: #ededef;
   --sidebar-border: rgba(255, 255, 255, 0.06);
   --sidebar-ring: #f97316;
+
+  --sileo-state-success: oklch(0.65 0.2 145);
+  --sileo-state-error: oklch(0.6 0.24 25);
+  --sileo-state-warning: oklch(0.75 0.18 60);
+  --sileo-state-info: oklch(0.7 0.15 50);
+  --sileo-state-action: oklch(0.7 0.18 50);
 }
 
 .dark {
@@ -170,4 +176,14 @@ body,
 ::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 3px;
+}
+
+/* ── Pulse animation for active sessions ── */
+@keyframes dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.8); }
+}
+
+.animate-dot-pulse {
+  animation: dot-pulse 1.5s ease-in-out infinite;
 }

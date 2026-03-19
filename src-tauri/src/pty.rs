@@ -176,7 +176,7 @@ pub async fn start_claude_session(
         let name_flag = session_name
             .as_deref()
             .filter(|n| !n.is_empty())
-            .map(|n| format!(" -n \"{}\"", n.replace('"', "\\\"")))
+            .map(|n| format!(" -n '{}'", n.replace('\'', "'\\''")))
             .unwrap_or_default();
 
         let cmd = match resume.as_deref() {

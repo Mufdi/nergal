@@ -163,15 +163,20 @@ export async function show(sessionId: string, cwd: string, mode: "new" | "contin
     // No WebGL/Canvas addon — DOM renderer is sufficient and has no context limits
     fitAddon.fit();
 
-    // Backend: createOrAttach — PTY + shell ready + claude
     const { pty_id: ptyId } = await invoke<{ pty_id: string }>("start_claude_session", {
       sessionId,
-      sessionName: sessionName ?? null,
+      sessionName: null,
       cwd,
       cols: term.cols,
       rows: term.rows,
       resume: mode === "new" ? null : mode,
     });
+
+    if (sessionName && mode === "new") {
+      setTimeout(() => {
+        invoke("pty_write", { id: ptyId, data: `/rename ${sessionName}\r` }).catch(() => {});
+      }, 4000);
+    }
 
     const ime = wireIMEFix(term, container, ptyId);
 

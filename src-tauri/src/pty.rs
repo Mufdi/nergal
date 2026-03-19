@@ -125,7 +125,7 @@ pub async fn start_claude_session(
     app: AppHandle,
     state: State<'_, PtyManager>,
     session_id: String,
-    session_name: Option<String>,
+    _session_name: Option<String>,
     cwd: Option<String>,
     cols: u16,
     rows: u16,
@@ -173,16 +173,10 @@ pub async fn start_claude_session(
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     {
-        let name_flag = session_name
-            .as_deref()
-            .filter(|n| !n.is_empty())
-            .map(|n| format!(" -n '{}'", n.replace('\'', "'\\''")))
-            .unwrap_or_default();
-
         let cmd = match resume.as_deref() {
-            Some("continue") => format!("claude --continue{name_flag}\n"),
-            Some("resume_pick") => format!("claude --resume{name_flag}\n"),
-            _ => format!("claude{name_flag}\n"),
+            Some("continue") => "claude --continue\n".to_string(),
+            Some("resume_pick") => "claude --resume\n".to_string(),
+            _ => "claude\n".to_string(),
         };
 
         let mut instances = state.instances.lock().map_err(|e| e.to_string())?;

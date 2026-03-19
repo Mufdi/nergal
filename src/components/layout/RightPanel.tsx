@@ -14,6 +14,7 @@ import { planDocumentsAtom, defaultPlanState } from "@/stores/plan";
 import { PlanPanel } from "@/components/plan/PlanPanel";
 import { TaskPanel } from "@/components/tasks/TaskPanel";
 import { TranscriptViewer } from "@/components/session/TranscriptViewer";
+import { DiffView } from "@/components/plan/DiffView";
 import { PlanListView } from "@/components/panel/PlanListView";
 import { FileListView } from "@/components/panel/FileListView";
 import { TabBar } from "@/components/ui/TabBar";
@@ -134,13 +135,27 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
   }
 
   if (activePanelView) {
+    const isDiffView = activePanelView === "diff";
     return (
       <div className="flex h-full overflow-hidden rounded-lg bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
         <div className="flex flex-1 flex-col overflow-hidden">
           <PanelHeader onToggle={onToggle} label={viewPanelLabel(activePanelView)} />
           {tabs.length > 0 && <TabBar />}
-          <div className="flex-1 overflow-y-auto">
-            <ViewPanelContent view={activePanelView} />
+          <div className="flex flex-1 overflow-hidden">
+            {isDiffView ? (
+              <>
+                <div className="flex flex-1 items-center justify-center">
+                  <span className="text-[11px] text-muted-foreground">Select a file to view diff</span>
+                </div>
+                <div className="w-44 shrink-0 overflow-y-auto border-l border-border/50">
+                  <FileListView />
+                </div>
+              </>
+            ) : (
+              <div className="flex-1 overflow-y-auto">
+                <ViewPanelContent view={activePanelView} />
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -207,8 +222,9 @@ function ViewPanelContent({ view }: { view: TabType }) {
     case "plan":
       return <PlanListView />;
     case "file":
-    case "diff":
       return <FileListView />;
+    case "diff":
+      return null;
     case "tasks":
       return <TaskPanel />;
     case "git":
@@ -232,8 +248,13 @@ function DocumentContent({ tab }: { tab: Tab }) {
       const sessionId = tab.data?.sessionId as string | undefined;
       return sessionId ? <TranscriptViewer sessionId={sessionId} /> : null;
     }
-    case "diff":
-      return <PlaceholderView label="Diff view" />;
+    case "diff": {
+      const diffPath = tab.data?.path as string | undefined;
+      const diffSession = tab.data?.sessionId as string | undefined;
+      return diffPath && diffSession
+        ? <DiffView filePath={diffPath} sessionId={diffSession} />
+        : <PlaceholderView label="Diff view" />;
+    }
     case "spec":
       return <PlaceholderView label="Spec view" />;
     case "git":

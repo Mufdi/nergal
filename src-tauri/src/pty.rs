@@ -125,7 +125,6 @@ pub async fn start_claude_session(
     app: AppHandle,
     state: State<'_, PtyManager>,
     session_id: String,
-    _session_name: Option<String>,
     cwd: Option<String>,
     cols: u16,
     rows: u16,

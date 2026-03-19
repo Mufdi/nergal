@@ -118,7 +118,7 @@ export function setHost(el: HTMLDivElement | null): void {
 }
 
 /// Show the given session's terminal. Creates it if it doesn't exist.
-export async function show(sessionId: string, cwd: string, mode: "new" | "continue" | "resume_pick" = "new", sessionName?: string): Promise<void> {
+export async function show(sessionId: string, cwd: string, mode: "new" | "continue" | "resume_pick" = "new"): Promise<void> {
   activeId = sessionId;
 
   // Toggle visibility + force redraw on the shown terminal
@@ -165,18 +165,11 @@ export async function show(sessionId: string, cwd: string, mode: "new" | "contin
 
     const { pty_id: ptyId } = await invoke<{ pty_id: string }>("start_claude_session", {
       sessionId,
-      sessionName: null,
       cwd,
       cols: term.cols,
       rows: term.rows,
       resume: mode === "new" ? null : mode,
     });
-
-    if (sessionName && mode === "new") {
-      setTimeout(() => {
-        invoke("pty_write", { id: ptyId, data: `/rename ${sessionName}\r` }).catch(() => {});
-      }, 4000);
-    }
 
     const ime = wireIMEFix(term, container, ptyId);
 

@@ -340,7 +340,7 @@ function WorkspacesView() {
                     <input
                       type="text"
                       value={newSessionName}
-                      onChange={(e) => setNewSessionName(e.target.value)}
+                      onChange={(e) => setNewSessionName(e.target.value.replace(/[^a-zA-Z0-9áéíóúñÁÉÍÓÚÑ\s]/g, ""))}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") handleCreateSession(ws.id);
                         if (e.key === "Escape") { setAddingSessionFor(null); setNewSessionName(""); }

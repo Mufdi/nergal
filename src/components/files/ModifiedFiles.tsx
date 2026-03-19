@@ -1,5 +1,7 @@
-import { useAtomValue } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { activeSessionFilesAtom } from "@/stores/files";
+import { openTabAction } from "@/stores/rightPanel";
+import { activeSessionIdAtom } from "@/stores/workspace";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
@@ -31,6 +33,16 @@ function iconColor(tool: string) {
 
 export function ModifiedFiles() {
   const files = useAtomValue(activeSessionFilesAtom);
+  const openTab = useSetAtom(openTabAction);
+  const sessionId = useAtomValue(activeSessionIdAtom);
+
+  function handleFileClick(path: string) {
+    const filename = path.split("/").pop() ?? path;
+    openTab({
+      tab: { id: `diff-${path}`, type: "diff", label: filename, data: { path, sessionId } },
+      isPinned: false,
+    });
+  }
 
   if (files.length === 0) {
     return (
@@ -49,7 +61,10 @@ export function ModifiedFiles() {
 
           return (
             <Tooltip key={file.path}>
-              <TooltipTrigger className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-xs hover:bg-muted/50 cursor-default">
+              <TooltipTrigger
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-xs hover:bg-muted/50 cursor-pointer"
+                onClick={() => handleFileClick(file.path)}
+              >
                 <span className={`font-mono font-bold ${iconColor(file.tool)}`}>
                   {fileIcon(file.tool)}
                 </span>

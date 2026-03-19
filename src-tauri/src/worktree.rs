@@ -269,6 +269,101 @@ pub fn remove_worktree(repo_path: &Path, worktree_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Get the unified diff for a single file against HEAD.
+///
+/// For tracked files, runs `git diff HEAD -- <relative_path>`.
+/// For untracked/new files, runs `git diff --no-index /dev/null <relative_path>`.
+/// Converts absolute paths to cwd-relative so git output stays clean.
+pub fn file_diff(cwd: &Path, file_path: &str) -> Result<String> {
+    let rel_path = Path::new(file_path)
+        .strip_prefix(cwd)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| file_path.to_string());
+
+    let output = Command::new("git")
+        .args(["diff", "HEAD", "--", &rel_path])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git diff")?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    if !stdout.trim().is_empty() {
+        return Ok(stdout.into_owned());
+    }
+
+    // Might be untracked — try --no-index against /dev/null
+    let abs_path = if Path::new(file_path).is_absolute() {
+        PathBuf::from(file_path)
+    } else {
+        cwd.join(file_path)
+    };
+
+    if !abs_path.exists() {
+        return Ok(String::new());
+    }
+
+    let output = Command::new("git")
+        .args(["diff", "--no-index", "/dev/null", &rel_path])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git diff --no-index")?;
+
+    // --no-index returns exit code 1 when there are differences (not an error)
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// A file changed in the working tree, as reported by `git status`.
+#[derive(Clone, serde::Serialize)]
+pub struct ChangedFile {
+    pub path: String,
+    pub status: String,
+}
+
+/// List files changed in the working tree compared to HEAD.
+///
+/// Runs `git status --porcelain` and parses the output.
+pub fn changed_files(cwd: &Path) -> Result<Vec<ChangedFile>> {
+    let output = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git status")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git status failed: {stderr}");
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut files = Vec::new();
+
+    for line in stdout.lines() {
+        if line.len() < 4 {
+            continue;
+        }
+        let xy = &line[..2];
+        let rel_path = &line[3..];
+
+        let status = match xy.trim() {
+            "A" | "??" => "Create",
+            "M" | "MM" => "Edit",
+            "D" => "Delete",
+            _ => "Edit",
+        };
+
+        // Return absolute paths to match hook event paths
+        let abs_path = cwd.join(rel_path).to_string_lossy().into_owned();
+
+        files.push(ChangedFile {
+            path: abs_path,
+            status: status.to_string(),
+        });
+    }
+
+    Ok(files)
+}
+
 /// List all worktree paths for a git repository.
 ///
 /// Parses the porcelain output of `git worktree list --porcelain`.

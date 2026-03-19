@@ -88,6 +88,8 @@ pub fn run() {
             commands::get_transcript,
             commands::check_session_has_commits,
             commands::get_session_git_info,
+            commands::get_file_diff,
+            commands::get_session_changed_files,
             pty::write_to_session_pty,
         ])
         .setup(move |app| {

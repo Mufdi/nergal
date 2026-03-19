@@ -274,6 +274,9 @@ function WorkspacesView() {
                     onRename={(newName) => {
                       invoke("rename_session", { sessionId: s.id, name: newName })
                         .then(() => {
+                          if (terminalService.hasTerminal(s.id)) {
+                            terminalService.writeToSession(s.id, `/rename ${newName}\n`).catch(() => {});
+                          }
                           setWorkspaces((prev) =>
                             prev.map((w) => ({
                               ...w,

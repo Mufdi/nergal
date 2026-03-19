@@ -247,6 +247,8 @@ pub fn load_plan(
 pub fn send_notification(title: String, body: String) -> Result<(), String> {
     std::process::Command::new("notify-send")
         .arg("--app-name=cluihud")
+        .arg("--expire-time=4000")
+        .arg("--urgency=normal")
         .arg(&title)
         .arg(&body)
         .spawn()

@@ -8,6 +8,7 @@ import { planStateMapAtom, planDocumentsAtom, registerPlanAtom } from "./plan";
 import { openTabAction, expandRightPanelAtom, activePanelViewAtom } from "./rightPanel";
 import { refreshGitInfoAtom } from "./git";
 import { addActivityAtom } from "./activity";
+import { notify } from "@/lib/notifications";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
 type Store = ReturnType<typeof getDefaultStore>;
@@ -49,10 +50,12 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
           set(modeMapAtom, (prev) => ({ ...prev, [sid]: "idle" }));
           set(addActivityAtom, { sessionId: sid, entry: createActivity("session", `Stopped: ${stop_reason ?? "completed"}`) });
           set(refreshGitInfoAtom, sid);
+          notify("Claude stopped", stop_reason ?? "completed");
           break;
         }
         case "task_completed": {
           set(addActivityAtom, { sessionId: sid, entry: createActivity("task", `Task completed: ${tool_name ?? "unknown"}`) });
+          notify("Task completed", tool_name ?? "unknown");
           break;
         }
         case "session_start": {

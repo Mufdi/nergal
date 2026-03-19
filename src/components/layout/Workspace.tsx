@@ -167,16 +167,7 @@ export function Workspace() {
 
       <StatusBar />
 
-      <Toaster
-        position="bottom-right"
-        options={{
-          fill: "#1c1c1e",
-          styles: {
-            title: "text-white!",
-            description: "text-white/75!",
-          },
-        }}
-      />
+      <Toaster position="bottom-right" />
       <SettingsPanel open={settingsOpen} onOpenChange={setSettingsOpen} />
       <CommandPalette />
     </div>

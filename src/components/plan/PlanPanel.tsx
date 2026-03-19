@@ -23,16 +23,16 @@ export function PlanPanel({ path }: PlanPanelProps) {
 
   function handleSave() {
     if (!plan.path || !backendSessionId) {
-      addToast({ message: "No plan path — cannot save", type: "error" });
+      addToast({ message: "Error", description: "No plan path — cannot save", type: "error" });
       return;
     }
     invoke("save_plan", { sessionId: backendSessionId, content: plan.content })
       .then(() => invoke("reject_plan", { sessionId: backendSessionId }))
       .then(() => {
-        addToast({ message: "Plan saved — will re-read on next prompt", type: "success" });
+        addToast({ message: "Plan Saved", description: "Will re-read on next prompt", type: "success" });
       })
       .catch((err: unknown) => {
-        addToast({ message: `Save failed: ${String(err)}`, type: "error" });
+        addToast({ message: "Save Failed", description: String(err), type: "error" });
       });
   }
 

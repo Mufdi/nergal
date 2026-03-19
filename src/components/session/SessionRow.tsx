@@ -69,7 +69,7 @@ export function SessionRow({
         <Check className="size-3 shrink-0 text-muted-foreground/50" />
       ) : (
         <span
-          className={`size-1.5 shrink-0 rounded-full ${STATUS_DOT_COLORS[session.status]}`}
+          className={`size-1.5 shrink-0 rounded-full ${STATUS_DOT_COLORS[session.status]} ${session.status === "running" ? "animate-pulse" : ""}`}
           aria-hidden="true"
         />
       )}

@@ -4,7 +4,7 @@ import { TopBar } from "./TopBar";
 import { Sidebar } from "./Sidebar";
 import { RightPanel } from "./RightPanel";
 import { StatusBar } from "./StatusBar";
-import { Toasts } from "./Toasts";
+import { Toaster } from "sileo";
 import { TerminalManager } from "@/components/terminal/TerminalManager";
 import { ActivityLog } from "@/components/activity/ActivityLog";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
@@ -167,7 +167,7 @@ export function Workspace() {
 
       <StatusBar />
 
-      <Toasts />
+      <Toaster position="bottom-right" />
       <SettingsPanel open={settingsOpen} onOpenChange={setSettingsOpen} />
       <CommandPalette />
     </div>

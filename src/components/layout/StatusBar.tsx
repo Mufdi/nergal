@@ -66,7 +66,7 @@ export function StatusBar() {
           className="h-4 gap-1 px-1.5 text-[10px]"
         >
           <span
-            className={`inline-block size-1.5 rounded-full ${dotColor}`}
+            className={`inline-block size-1.5 rounded-full ${dotColor} ${mode !== "idle" ? "animate-pulse" : ""}`}
             aria-hidden="true"
           />
           {mode}

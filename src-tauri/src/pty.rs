@@ -125,6 +125,7 @@ pub async fn start_claude_session(
     app: AppHandle,
     state: State<'_, PtyManager>,
     session_id: String,
+    session_name: Option<String>,
     cwd: Option<String>,
     cols: u16,
     rows: u16,
@@ -171,18 +172,24 @@ pub async fn start_claude_session(
     // Small delay to let shell finish initialization prompts
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-    // Write the appropriate claude command to start the CLI
     {
+        let name_flag = session_name
+            .as_deref()
+            .filter(|n| !n.is_empty())
+            .map(|n| format!(" -n \"{}\"", n.replace('"', "\\\"")))
+            .unwrap_or_default();
+
         let cmd = match resume.as_deref() {
-            Some("continue") => b"claude --continue\n".as_slice(),
-            Some("resume_pick") => b"claude --resume\n".as_slice(),
-            _ => b"claude\n".as_slice(),
+            Some("continue") => format!("claude --continue{name_flag}\n"),
+            Some("resume_pick") => format!("claude --resume{name_flag}\n"),
+            _ => format!("claude{name_flag}\n"),
         };
+
         let mut instances = state.instances.lock().map_err(|e| e.to_string())?;
         if let Some(instance) = instances.get_mut(&pty_id) {
             instance
                 .writer
-                .write_all(cmd)
+                .write_all(cmd.as_bytes())
                 .map_err(|e| e.to_string())?;
             instance.writer.flush().map_err(|e| e.to_string())?;
         }

@@ -118,7 +118,7 @@ export function setHost(el: HTMLDivElement | null): void {
 }
 
 /// Show the given session's terminal. Creates it if it doesn't exist.
-export async function show(sessionId: string, cwd: string, mode: "new" | "continue" | "resume_pick" = "new"): Promise<void> {
+export async function show(sessionId: string, cwd: string, mode: "new" | "continue" | "resume_pick" = "new", sessionName?: string): Promise<void> {
   activeId = sessionId;
 
   // Toggle visibility + force redraw on the shown terminal
@@ -166,6 +166,7 @@ export async function show(sessionId: string, cwd: string, mode: "new" | "contin
     // Backend: createOrAttach — PTY + shell ready + claude
     const { pty_id: ptyId } = await invoke<{ pty_id: string }>("start_claude_session", {
       sessionId,
+      sessionName: sessionName ?? null,
       cwd,
       cols: term.cols,
       rows: term.rows,

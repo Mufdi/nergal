@@ -17,16 +17,16 @@ export function PlanEditor({ path }: PlanEditorProps) {
 
   const handleSave = useCallback(() => {
     if (!plan.path || !plan.claudeSessionId) {
-      addToast({ message: "No plan path — cannot save", type: "error" });
+      addToast({ message: "Error", description: "No plan path — cannot save", type: "error" });
       return;
     }
     invoke("save_plan", { sessionId: plan.claudeSessionId, content: plan.content })
       .then(() => invoke("reject_plan", { sessionId: plan.claudeSessionId }))
       .then(() => {
-        addToast({ message: "Plan saved — will re-read on next prompt", type: "success" });
+        addToast({ message: "Plan Saved", description: "Will re-read on next prompt", type: "success" });
       })
       .catch((err: unknown) => {
-        addToast({ message: `Save failed: ${String(err)}`, type: "error" });
+        addToast({ message: "Save Failed", description: String(err), type: "error" });
       });
   }, [plan.content, plan.path, plan.claudeSessionId, addToast]);
 

@@ -58,7 +58,7 @@ export function MergeModal({
     try {
       const result = await invoke<{ success: boolean; conflict: boolean; message: string }>("merge_session", { sessionId: session.id, targetBranch });
       if (result.success) {
-        addToast({ message: result.message, type: "success" });
+        addToast({ message: "Merge Complete", description: result.message, type: "success" });
         onMerged();
         onOpenChange(false);
       } else if (result.conflict) {

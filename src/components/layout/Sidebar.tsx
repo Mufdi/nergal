@@ -314,23 +314,23 @@ function WorkspacesView() {
                           if (status.dirty) {
                             setCommitModal({ session: s });
                           } else {
-                            addToast({ message: "Nothing to commit", type: "info" });
+                            addToast({ message: "Info", description: "Nothing to commit", type: "info" });
                           }
                         })
-                        .catch(() => addToast({ message: "Failed to check status", type: "error" }));
+                        .catch(() => addToast({ message: "Error", description: "Failed to check status", type: "error" }));
                     }}
                     onMerge={() => {
                       invoke<{ dirty: boolean; commits_ahead: boolean }>("check_session_has_commits", { sessionId: s.id })
                         .then((status) => {
                           if (status.dirty) {
-                            addToast({ message: "Commit your changes first", type: "info" });
+                            addToast({ message: "Info", description: "Commit your changes first", type: "info" });
                           } else if (status.commits_ahead) {
                             setMergeModal({ session: s, workspaceId: ws.id });
                           } else {
-                            addToast({ message: "Nothing to merge", type: "info" });
+                            addToast({ message: "Info", description: "Nothing to merge", type: "info" });
                           }
                         })
-                        .catch(() => addToast({ message: "Failed to check status", type: "error" }));
+                        .catch(() => addToast({ message: "Error", description: "Failed to check status", type: "error" }));
                     }}
                   />
                 ))}

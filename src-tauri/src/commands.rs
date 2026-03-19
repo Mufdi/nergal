@@ -10,6 +10,26 @@ use crate::models::{Session, SessionStatus, Workspace};
 use crate::plan_state::SharedPlanState;
 use crate::tasks::Task;
 
+fn strip_diacritics(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            'á' | 'à' | 'ä' | 'â' | 'ã' => 'a',
+            'é' | 'è' | 'ë' | 'ê' => 'e',
+            'í' | 'ì' | 'ï' | 'î' => 'i',
+            'ó' | 'ò' | 'ö' | 'ô' | 'õ' => 'o',
+            'ú' | 'ù' | 'ü' | 'û' => 'u',
+            'ñ' => 'n',
+            'Á' | 'À' | 'Ä' | 'Â' | 'Ã' => 'A',
+            'É' | 'È' | 'Ë' | 'Ê' => 'E',
+            'Í' | 'Ì' | 'Ï' | 'Î' => 'I',
+            'Ó' | 'Ò' | 'Ö' | 'Ô' | 'Õ' => 'O',
+            'Ú' | 'Ù' | 'Ü' | 'Û' => 'U',
+            'Ñ' => 'N',
+            other => other,
+        })
+        .collect()
+}
+
 // -- Config commands --
 
 #[tauri::command]
@@ -320,10 +340,16 @@ pub fn create_session(
         .map_err(|e| e.to_string())?
         == 0;
 
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
     let (worktree_path, worktree_branch) = if is_first {
         (None, None)
     } else {
-        let slug: String = name
+        let normalized = strip_diacritics(&name);
+        let slug: String = normalized
             .to_lowercase()
             .chars()
             .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
@@ -332,16 +358,12 @@ pub fn create_session(
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
             .join("-");
+        let slug = format!("{slug}-{ts}");
         let wt_path =
             crate::worktree::create_worktree(&repo_path, &slug).map_err(|e| e.to_string())?;
         let branch = format!("cluihud/{slug}");
         (Some(wt_path), Some(branch))
     };
-
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
     let session_id = format!("{}-{ts}", &workspace_id[..6.min(workspace_id.len())]);
 
     let session = Session {

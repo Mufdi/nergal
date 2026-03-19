@@ -7,27 +7,16 @@ export interface Toast {
   type: "success" | "error" | "info";
 }
 
-const DARK_STYLES = {
-  title: "text-white!",
-  description: "text-white/75!",
-};
-
-const STATE_BORDERS: Record<Toast["type"], string> = {
-  success: "border border-green-500/40!",
-  error: "border border-red-500/40!",
-  info: "border border-blue-500/40!",
-};
-
 export const toastsAtom = atom(
   () => [],
   (_get, _set, toast: Toast) => {
     const opts = {
       title: toast.message,
       description: toast.description,
-      fill: "#141415",
+      fill: "#171717",
       styles: {
-        ...DARK_STYLES,
-        badge: STATE_BORDERS[toast.type],
+        title: "text-white!",
+        description: "text-white/75!",
       },
     };
     switch (toast.type) {

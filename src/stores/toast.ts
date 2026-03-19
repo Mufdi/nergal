@@ -13,6 +13,7 @@ export const toastsAtom = atom(
     const opts = {
       title: toast.message,
       description: toast.description,
+      fill: "#171717",
     };
     switch (toast.type) {
       case "success":

@@ -36,6 +36,7 @@ export const toggleSidebarAtom = atom(0);
 export const toggleRightPanelAtom = atom(0);
 export const toggleActivityLogAtom = atom(0);
 export const triggerNewSessionAtom = atom(0);
+export const triggerAddWorkspaceAtom = atom(0);
 export const triggerMergeAtom = atom(0);
 export const triggerCommitAtom = atom(0);
 export const triggerResumeSessionAtom = atom<string | null>(null);
@@ -170,7 +171,7 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   { id: "session-8", label: "Switch to Session 8", keys: "ctrl+8", category: "session", keywords: ["session", "switch"], handler: () => switchToSession(7) },
   { id: "session-9", label: "Switch to Session 9", keys: "ctrl+9", category: "session", keywords: ["session", "switch"], handler: () => switchToSession(8) },
   { id: "new-session", label: "New Session", keys: "ctrl+n", category: "session", keywords: ["create", "session", "new"], handler: () => store().set(triggerNewSessionAtom, (p: number) => p + 1) },
-  { id: "add-workspace", label: "Add Workspace", keys: "ctrl+shift+n", category: "session", keywords: ["workspace", "add", "folder"], handler: () => {} },
+  { id: "add-workspace", label: "Add Workspace", keys: "ctrl+shift+n", category: "session", keywords: ["workspace", "add", "folder"], handler: () => store().set(triggerAddWorkspaceAtom, (p: number) => p + 1) },
 
   // -- Panel (tabs) --
   { id: "next-tab", label: "Next Tab", keys: "ctrl+tab", category: "panel", keywords: ["tab", "next"], handler: nextTab },

@@ -241,6 +241,19 @@ pub fn load_plan(
     })
 }
 
+// -- Notification command --
+
+#[tauri::command]
+pub fn send_notification(title: String, body: String) -> Result<(), String> {
+    std::process::Command::new("notify-send")
+        .arg("--app-name=cluihud")
+        .arg(&title)
+        .arg(&body)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 // -- Setup command --
 
 #[tauri::command]

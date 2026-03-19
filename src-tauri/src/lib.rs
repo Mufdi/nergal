@@ -71,6 +71,7 @@ pub fn run() {
             commands::list_session_plans,
             commands::load_plan,
             // Setup command
+            commands::send_notification,
             commands::setup_hooks,
             // Cost command
             commands::get_cost,

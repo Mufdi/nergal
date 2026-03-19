@@ -15,8 +15,8 @@ export const toastsAtom = atom(
       description: toast.description,
       fill: "#171717",
       styles: {
-        title: "text-white!",
-        description: "text-white/75!",
+        title: "text-white! text-xs!",
+        description: "text-white/75! text-[11px]!",
       },
     };
     switch (toast.type) {

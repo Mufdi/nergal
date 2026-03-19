@@ -13,11 +13,6 @@ export const toastsAtom = atom(
     const opts = {
       title: toast.message,
       description: toast.description,
-      fill: "#171717",
-      styles: {
-        title: "text-white! text-xs!",
-        description: "text-white/75! text-[11px]!",
-      },
     };
     switch (toast.type) {
       case "success":

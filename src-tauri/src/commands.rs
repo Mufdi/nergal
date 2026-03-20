@@ -651,6 +651,221 @@ pub fn get_session_changed_files(
     crate::worktree::changed_files(&cwd).map_err(|e| e.to_string())
 }
 
+// -- OpenSpec commands --
+
+/// A single OpenSpec capability spec entry.
+#[derive(Clone, serde::Serialize)]
+pub struct SpecEntry {
+    pub name: String,
+    pub path: String,
+}
+
+/// An OpenSpec change with its artifacts.
+#[derive(Clone, serde::Serialize)]
+pub struct OpenSpecChange {
+    pub name: String,
+    pub status: String,
+    pub created: String,
+    pub has_proposal: bool,
+    pub has_design: bool,
+    pub has_tasks: bool,
+    pub specs: Vec<SpecEntry>,
+}
+
+/// Resolve session working directory.
+fn resolve_session_cwd(db: &crate::db::Database, session_id: &str) -> Result<PathBuf, String> {
+    let Some(session) = db.find_session(session_id).map_err(|e: anyhow::Error| e.to_string())? else {
+        return Err("session not found".into());
+    };
+    if let Some(ref wt) = session.worktree_path {
+        Ok(wt.clone())
+    } else {
+        let path: Option<PathBuf> = db.workspace_repo_path(&session.workspace_id)
+            .map_err(|e: anyhow::Error| e.to_string())?;
+        path.ok_or_else(|| "workspace not found".into())
+    }
+}
+
+fn scan_change_dir(dir: &std::path::Path, status: &str) -> Option<OpenSpecChange> {
+    if !dir.is_dir() {
+        return None;
+    }
+    let name = dir
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    // Skip hidden dirs
+    if name.starts_with('.') {
+        return None;
+    }
+
+    let created = dir
+        .join(".openspec.yaml")
+        .exists()
+        .then(|| {
+            std::fs::read_to_string(dir.join(".openspec.yaml"))
+                .ok()
+                .and_then(|s| {
+                    s.lines()
+                        .find(|l| l.starts_with("created:"))
+                        .map(|l| l.trim_start_matches("created:").trim().to_string())
+                })
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+
+    let has_proposal = dir.join("proposal.md").exists();
+    let has_design = dir.join("design.md").exists();
+    let has_tasks = dir.join("tasks.md").exists();
+
+    let mut specs = Vec::new();
+    let specs_dir = dir.join("specs");
+    if specs_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&specs_dir) {
+            for entry in entries {
+                let Ok(entry) = entry else { continue };
+                let path = entry.path();
+                if path.is_dir() && path.join("spec.md").exists() {
+                    let spec_name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    let spec_path = format!("specs/{spec_name}/spec.md");
+                    specs.push(SpecEntry {
+                        name: spec_name,
+                        path: spec_path,
+                    });
+                }
+            }
+        }
+    }
+    specs.sort_by(|a, b| a.name.cmp(&b.name));
+
+    Some(OpenSpecChange {
+        name,
+        status: status.to_string(),
+        created,
+        has_proposal,
+        has_design,
+        has_tasks,
+        specs,
+    })
+}
+
+/// List all OpenSpec changes (active + archived) for a session's project.
+#[tauri::command]
+pub fn list_openspec_changes(
+    db: State<'_, SharedDb>,
+    session_id: String,
+) -> Result<Vec<OpenSpecChange>, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let changes_dir = cwd.join("openspec").join("changes");
+
+    if !changes_dir.exists() {
+        return Ok(vec![]);
+    }
+
+    let mut changes = Vec::new();
+
+    // Scan active changes (direct children of changes/)
+    if let Ok(entries) = std::fs::read_dir(&changes_dir) {
+        for entry in entries {
+            let Ok(entry) = entry else { continue };
+            let path = entry.path();
+            if path.file_name().map(|n| n == "archive").unwrap_or(false) {
+                continue;
+            }
+            if let Some(change) = scan_change_dir(&path, "active") {
+                changes.push(change);
+            }
+        }
+    }
+
+    // Scan archived changes
+    let archive_dir = changes_dir.join("archive");
+    if archive_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&archive_dir) {
+            for entry in entries {
+                let Ok(entry) = entry else { continue };
+                if let Some(change) = scan_change_dir(&entry.path(), "archived") {
+                    changes.push(change);
+                }
+            }
+        }
+    }
+
+    // Also scan master specs as a virtual "specs" entry
+    let master_dir = cwd.join("openspec").join("specs");
+    if master_dir.is_dir() {
+        let mut master_specs = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&master_dir) {
+            for entry in entries {
+                let Ok(entry) = entry else { continue };
+                let path = entry.path();
+                if path.is_dir() && path.join("spec.md").exists() {
+                    let spec_name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    master_specs.push(SpecEntry {
+                        name: spec_name.clone(),
+                        path: format!("specs/{spec_name}/spec.md"),
+                    });
+                }
+            }
+        }
+        master_specs.sort_by(|a, b| a.name.cmp(&b.name));
+        if !master_specs.is_empty() {
+            changes.push(OpenSpecChange {
+                name: "_master".to_string(),
+                status: "master".to_string(),
+                created: String::new(),
+                has_proposal: false,
+                has_design: false,
+                has_tasks: false,
+                specs: master_specs,
+            });
+        }
+    }
+
+    // Active first, then archived, then master; within each group, sort by name
+    changes.sort_by(|a, b| a.status.cmp(&b.status).then(a.name.cmp(&b.name)));
+
+    Ok(changes)
+}
+
+/// Read a specific artifact file from an OpenSpec change.
+#[tauri::command]
+pub fn read_openspec_artifact(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    change_name: String,
+    artifact_path: String,
+) -> Result<String, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let openspec_dir = cwd.join("openspec");
+
+    // Master specs live at openspec/specs/
+    let file_path = if change_name == "_master" {
+        openspec_dir.join(&artifact_path)
+    } else {
+        let changes_dir = openspec_dir.join("changes");
+        // Try active first, then archive
+        let change_dir = changes_dir.join(&change_name);
+        if change_dir.exists() {
+            change_dir.join(&artifact_path)
+        } else {
+            changes_dir.join("archive").join(&change_name).join(&artifact_path)
+        }
+    };
+
+    std::fs::read_to_string(&file_path)
+        .map_err(|e| format!("failed to read {}: {e}", file_path.display()))
+}
+
 // -- Git info command --
 
 /// Git status information for a session's working directory.

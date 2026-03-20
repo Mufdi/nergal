@@ -10,6 +10,7 @@ pub mod setup;
 mod tasks;
 mod worktree;
 
+use claude::openspec::OpenSpecWatcher;
 use claude::plan::PlanWatcher;
 use claude::transcript::TranscriptWatcher;
 use config::Config;
@@ -89,6 +90,8 @@ pub fn run() {
             commands::check_session_has_commits,
             commands::get_session_git_info,
             commands::get_file_diff,
+            commands::list_openspec_changes,
+            commands::read_openspec_artifact,
             commands::get_session_changed_files,
             pty::write_to_session_pty,
         ])
@@ -139,6 +142,28 @@ pub fn run() {
                 tracing::info!(
                     "transcripts directory does not exist yet, skipping watcher: {}",
                     transcripts_dir.display()
+                );
+            }
+
+            // OpenSpec watcher — watches the project's openspec/ dir
+            let openspec_dir = std::env::current_dir()
+                .unwrap_or_default()
+                .join("openspec");
+            if openspec_dir.exists() {
+                match OpenSpecWatcher::new(&openspec_dir, app_handle.clone()) {
+                    Ok(watcher) => {
+                        Box::leak(Box::new(watcher));
+                        tracing::info!(
+                            "openspec watcher started on {}",
+                            openspec_dir.display()
+                        );
+                    }
+                    Err(e) => tracing::warn!("failed to start openspec watcher: {e}"),
+                }
+            } else {
+                tracing::info!(
+                    "openspec directory does not exist yet, skipping watcher: {}",
+                    openspec_dir.display()
                 );
             }
 

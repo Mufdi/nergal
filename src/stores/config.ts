@@ -8,4 +8,5 @@ export const configAtom = atom<Config>({
   hook_socket_path: "",
   default_shell: "/bin/bash",
   theme_mode: "dark",
+  preferred_editor: "",
 });

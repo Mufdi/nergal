@@ -900,6 +900,135 @@ pub fn write_openspec_artifact(
         .map_err(|e| format!("failed to write {}: {e}", file_path.display()))
 }
 
+// -- Editor commands --
+
+/// (id, display_name, &[command_candidates])
+/// First candidate found in PATH wins.
+const KNOWN_EDITORS: &[(&str, &str, &[&str])] = &[
+    ("zed", "Zed", &["zed"]),
+    ("code", "VS Code", &["code"]),
+    ("cursor", "Cursor", &["cursor"]),
+    ("windsurf", "Windsurf", &["windsurf"]),
+    ("antigravity", "Antigravity", &["antigravity"]),
+    ("webstorm", "WebStorm", &["webstorm"]),
+    ("phpstorm", "PhpStorm", &["phpstorm"]),
+    ("pycharm", "PyCharm", &["pycharm", "pycharm-professional", "pycharm-community"]),
+    ("idea", "IntelliJ IDEA", &["idea", "intellij-idea-ultimate", "intellij-idea-community"]),
+    ("clion", "CLion", &["clion"]),
+    ("goland", "GoLand", &["goland"]),
+    ("rustrover", "RustRover", &["rustrover", "rust-rover"]),
+    ("rider", "Rider", &["rider"]),
+    ("subl", "Sublime Text", &["subl"]),
+    ("nvim", "Neovim", &["nvim"]),
+    ("vim", "Vim", &["vim"]),
+];
+
+/// Info about an editor detected on the system.
+#[derive(Clone, serde::Serialize)]
+pub struct EditorInfo {
+    pub id: String,
+    pub name: String,
+    pub command: String,
+    pub available: bool,
+}
+
+/// Find the first available command candidate via `which`.
+fn find_available_command(candidates: &[&str]) -> Option<String> {
+    for cmd in candidates {
+        let ok = std::process::Command::new("which")
+            .arg(cmd)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if ok {
+            return Some(cmd.to_string());
+        }
+    }
+    None
+}
+
+/// Detect which editors are available on the system via `which`.
+#[tauri::command]
+pub fn detect_editors() -> Vec<EditorInfo> {
+    KNOWN_EDITORS
+        .iter()
+        .map(|(id, name, candidates)| {
+            let resolved = find_available_command(candidates);
+            EditorInfo {
+                id: id.to_string(),
+                name: name.to_string(),
+                command: resolved.clone().unwrap_or_default(),
+                available: resolved.is_some(),
+            }
+        })
+        .collect()
+}
+
+/// Open a session's working directory (or a specific file) in an editor.
+///
+/// If `file_path` is given (absolute), opens that file.
+/// If `spec_change_name` + `spec_artifact_path` are given, resolves via openspec dir.
+/// Otherwise opens just the project directory.
+#[tauri::command]
+pub fn open_in_editor(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    editor_id: String,
+    file_path: Option<String>,
+    spec_change_name: Option<String>,
+    spec_artifact_path: Option<String>,
+) -> Result<(), String> {
+    let candidates = KNOWN_EDITORS
+        .iter()
+        .find(|(id, _, _)| *id == editor_id)
+        .map(|(_, _, c)| *c)
+        .ok_or_else(|| format!("unknown editor: {editor_id}"))?;
+
+    let cmd = find_available_command(candidates)
+        .ok_or_else(|| format!("editor {editor_id} not found in PATH"))?;
+
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+
+    // Resolve the file to open
+    let resolved_file = if let Some(ref fp) = file_path {
+        Some(fp.clone())
+    } else if let (Some(change), Some(artifact)) = (&spec_change_name, &spec_artifact_path) {
+        // Resolve openspec artifact to absolute path
+        let changes_dir = cwd.join("openspec").join("changes");
+        let change_dir = changes_dir.join(change);
+        let path = if change_dir.exists() {
+            change_dir.join(artifact)
+        } else {
+            changes_dir.join("archive").join(change).join(artifact)
+        };
+        if path.exists() {
+            Some(path.to_string_lossy().into_owned())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let cwd_str = cwd.to_string_lossy();
+
+    tracing::info!("open_in_editor: cmd={cmd} cwd={cwd_str} file={resolved_file:?}");
+
+    let mut command = std::process::Command::new(&cmd);
+    command.arg(cwd_str.as_ref());
+
+    if let Some(ref fp) = resolved_file {
+        command.arg(fp);
+    }
+
+    command
+        .spawn()
+        .map_err(|e| format!("failed to open {cmd}: {e}"))?;
+
+    Ok(())
+}
+
 // -- Git info command --
 
 /// Git status information for a session's working directory.

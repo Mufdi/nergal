@@ -179,3 +179,7 @@ export const reopenTabAction = atom(null, (get, set) => {
     return { ...prev, [sessionId]: { tabs, activeTabId: tab.id, previewTabId: state.previewTabId } };
   });
 });
+
+/// Tracks the current spec artifact being viewed (changeName + artifactPath).
+/// Updated by SpecPanel, read by TopBar for "Open in IDE".
+export const currentSpecArtifactAtom = atom<{ changeName: string; artifactPath: string } | null>(null);

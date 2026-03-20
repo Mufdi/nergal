@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { useAtom } from "jotai";
 import { configAtom } from "@/stores/config";
 import { invoke } from "@/lib/tauri";
@@ -20,6 +21,13 @@ interface SettingsProps {
   onOpenChange: (open: boolean) => void;
 }
 
+interface EditorInfo {
+  id: string;
+  name: string;
+  command: string;
+  available: boolean;
+}
+
 const FIELDS: { key: keyof Config; label: string; placeholder: string }[] = [
   { key: "claude_binary", label: "Claude Binary", placeholder: "/usr/bin/claude" },
   { key: "plans_directory", label: "Plans Directory", placeholder: "~/.claude/plans" },
@@ -30,15 +38,24 @@ const FIELDS: { key: keyof Config; label: string; placeholder: string }[] = [
 
 export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
   const [config, setConfig] = useAtom(configAtom);
+  const [editors, setEditors] = useState<EditorInfo[]>([]);
+
+  useEffect(() => {
+    if (open) {
+      invoke<EditorInfo[]>("detect_editors").then(setEditors).catch(() => {});
+    }
+  }, [open]);
 
   function handleChange(key: keyof Config, value: string) {
-    setConfig((prev) => ({ ...prev, [key]: value }));
+    setConfig((prev: Config) => ({ ...prev, [key]: value }));
   }
 
   function handleSave() {
     invoke("save_config", { config }).catch(() => {});
     onOpenChange(false);
   }
+
+  const available = editors.filter((e) => e.available);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -65,6 +82,23 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
               />
             </div>
           ))}
+
+          <div className="grid gap-2">
+            <Label htmlFor="setting-preferred_editor">Preferred Editor</Label>
+            <select
+              id="setting-preferred_editor"
+              value={config.preferred_editor}
+              onChange={(e) => handleChange("preferred_editor", e.target.value)}
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              <option value="">Auto-detect</option>
+              {available.map((editor) => (
+                <option key={editor.id} value={editor.id}>
+                  {editor.name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <DialogFooter>

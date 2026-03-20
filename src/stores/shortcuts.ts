@@ -1,5 +1,7 @@
 import { atom } from "jotai";
+import { invoke } from "@/lib/tauri";
 import { appStore } from "./jotaiStore";
+import { configAtom } from "./config";
 import { activeSessionIdAtom, activeWorkspaceAtom, workspacesAtom, freshSessionsAtom } from "./workspace";
 import * as terminalService from "@/components/terminal/terminalService";
 import {
@@ -11,6 +13,7 @@ import {
   expandRightPanelAtom,
   activePanelViewAtom,
   tabStateMapAtom,
+  currentSpecArtifactAtom,
   type Tab,
 } from "./rightPanel";
 
@@ -187,7 +190,28 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   { id: "toggle-activity", label: "Toggle Activity Log", keys: "ctrl+shift+l", category: "panel", keywords: ["activity", "log", "panel"], handler: () => store().set(toggleActivityLogAtom, (p: number) => p + 1) },
 
   // -- Action --
-  { id: "open-ide", label: "Open in IDE", keys: "ctrl+shift+e", category: "action", keywords: ["ide", "editor", "vscode", "zed"], handler: () => {} },
+  { id: "open-ide", label: "Open in IDE", keys: "ctrl+shift+e", category: "action", keywords: ["ide", "editor", "vscode", "zed"], handler: () => {
+    const sid = store().get(activeSessionIdAtom);
+    if (!sid) return;
+    const config = store().get(configAtom);
+    const editorId = config.preferred_editor || "zed";
+    const tab = store().get(activeTabAtom);
+    let filePath: string | null = null;
+    let specChangeName: string | null = null;
+    let specArtifactPath: string | null = null;
+
+    if (tab?.type === "diff" || tab?.type === "file" || tab?.type === "plan") {
+      filePath = (tab.data?.path as string) ?? null;
+    } else if (tab?.type === "spec") {
+      const specCtx = store().get(currentSpecArtifactAtom);
+      if (specCtx) {
+        specChangeName = specCtx.changeName;
+        specArtifactPath = specCtx.artifactPath;
+      }
+    }
+
+    invoke("open_in_editor", { sessionId: sid, editorId, filePath, specChangeName, specArtifactPath }).catch(() => {});
+  }},
   { id: "merge-session", label: "Merge Session", keys: "ctrl+shift+m", category: "action", keywords: ["merge", "git", "branch"], handler: () => store().set(triggerMergeAtom, (p: number) => p + 1) },
   { id: "commit-session", label: "Commit Session", keys: "ctrl+shift+c", category: "action", keywords: ["commit", "git"], handler: () => store().set(triggerCommitAtom, (p: number) => p + 1) },
   { id: "command-palette", label: "Command Palette", keys: "ctrl+k", category: "navigation", keywords: ["command", "palette", "search", "find"], handler: () => {} },

@@ -93,6 +93,8 @@ pub fn run() {
             commands::list_openspec_changes,
             commands::read_openspec_artifact,
             commands::write_openspec_artifact,
+            commands::detect_editors,
+            commands::open_in_editor,
             commands::get_session_changed_files,
             pty::write_to_session_pty,
         ])
@@ -147,9 +149,15 @@ pub fn run() {
             }
 
             // OpenSpec watcher — watches the project's openspec/ dir
-            let openspec_dir = std::env::current_dir()
-                .unwrap_or_default()
-                .join("openspec");
+            // During dev, cwd may be src-tauri/, so also check parent
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let openspec_dir = if cwd.join("openspec").exists() {
+                cwd.join("openspec")
+            } else if let Some(parent) = cwd.parent() {
+                parent.join("openspec")
+            } else {
+                cwd.join("openspec")
+            };
             if openspec_dir.exists() {
                 match OpenSpecWatcher::new(&openspec_dir, app_handle.clone()) {
                     Ok(watcher) => {

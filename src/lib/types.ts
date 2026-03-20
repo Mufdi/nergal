@@ -37,6 +37,7 @@ export interface Config {
   hook_socket_path: string;
   default_shell: string;
   theme_mode: string;
+  preferred_editor: string;
 }
 
 export interface SessionInfo {

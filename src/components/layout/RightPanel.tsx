@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import {
   activeTabAtom,
@@ -266,7 +266,7 @@ function DocumentContent({ tab }: { tab: Tab }) {
       const specSession = tab.data?.sessionId as string | undefined;
       const specPath = tab.data?.specPath as string | undefined;
       return specChange && specSession
-        ? <SpecPanel key={tab.id} changeName={specChange} sessionId={specSession} initialSpecPath={specPath} />
+        ? <SpecContentWrapper key={tab.id} tabId={tab.id} changeName={specChange} sessionId={specSession} initialSpecPath={specPath} />
         : <PlaceholderView label="Select a change" />;
     }
     case "git":
@@ -290,6 +290,16 @@ function PlanContentWrapper({ tabId, path }: { tabId: string; path: string }) {
   }, [hasEdits, tabId, setDirty]);
 
   return <PlanPanel path={path} />;
+}
+
+function SpecContentWrapper({ tabId, changeName, sessionId, initialSpecPath }: { tabId: string; changeName: string; sessionId: string; initialSpecPath?: string }) {
+  const setDirty = useSetAtom(setDirtyAction);
+
+  const handleDirtyChange = useCallback((dirty: boolean) => {
+    setDirty({ tabId, dirty });
+  }, [tabId, setDirty]);
+
+  return <SpecPanel changeName={changeName} sessionId={sessionId} initialSpecPath={initialSpecPath} onDirtyChange={handleDirtyChange} />;
 }
 
 function PlaceholderView({ label }: { label: string }) {

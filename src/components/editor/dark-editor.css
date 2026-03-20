@@ -1,0 +1,143 @@
+.dark-theme {
+  --accentBase: #1a1a2e;
+  --accentBgSubtle: #1e1e2e;
+  --accentBg: #2a2a3e;
+  --accentBgHover: #333350;
+  --accentBgActive: #3d3d5c;
+  --accentLine: #444466;
+  --accentBorder: #555577;
+  --accentBorderHover: #6666aa;
+  --accentSolid: #7c7cff;
+  --accentSolidHover: #8a8aff;
+  --accentText: #a0a0ff;
+  --accentTextContrast: #ffffff;
+
+  --baseBase: #0a0a0f;
+  --baseBgSubtle: #111118;
+  --baseBg: #18181b;
+  --baseBgHover: #222228;
+  --baseBgActive: #2a2a32;
+  --baseLine: #333340;
+  --baseBorder: #3f3f4a;
+  --baseBorderHover: #555566;
+  --baseSolid: #71717a;
+  --baseSolidHover: #a1a1aa;
+  --baseText: #d4d4d8;
+  --baseTextContrast: #fafafa;
+
+  --admonitionTipBg: #1a2e1a;
+  --admonitionTipBorder: #2d5a2d;
+  --admonitionNoteBg: #1a1a2e;
+  --admonitionNoteBorder: #2d2d5a;
+  --admonitionCautionBg: #2e2a1a;
+  --admonitionCautionBorder: #5a4d2d;
+  --admonitionDangerBg: #2e1a1a;
+  --admonitionDangerBorder: #5a2d2d;
+}
+
+.dark-editor {
+  background: transparent;
+  color: #d4d4d8;
+  font-family: inherit;
+}
+
+.dark-editor [role="toolbar"] {
+  background: #18181b;
+  border-bottom: 1px solid #27272a;
+  border-radius: 0;
+  padding: 2px 4px;
+}
+
+.dark-editor [role="toolbar"] button {
+  color: #a1a1aa;
+  border-radius: 4px;
+}
+
+.dark-editor [role="toolbar"] button:hover {
+  color: #fafafa;
+  background: #27272a;
+}
+
+.dark-editor [role="toolbar"] button[data-state="on"] {
+  color: #fafafa;
+  background: #3f3f46;
+}
+
+.dark-editor [role="toolbar"] select {
+  color: #a1a1aa;
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+/* Content area */
+.dark-editor .mdxeditor-root-contenteditable {
+  caret-color: #fafafa;
+}
+
+.dark-editor .mdxeditor-root-contenteditable h1,
+.dark-editor .mdxeditor-root-contenteditable h2,
+.dark-editor .mdxeditor-root-contenteditable h3,
+.dark-editor .mdxeditor-root-contenteditable h4 {
+  color: #fafafa;
+}
+
+.dark-editor .mdxeditor-root-contenteditable code {
+  background: #27272a;
+  color: #a78bfa;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.dark-editor .mdxeditor-root-contenteditable pre {
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.dark-editor .mdxeditor-root-contenteditable blockquote {
+  border-left: 3px solid #3f3f46;
+  color: #a1a1aa;
+  padding-left: 12px;
+}
+
+.dark-editor .mdxeditor-root-contenteditable a {
+  color: #60a5fa;
+}
+
+.dark-editor .mdxeditor-root-contenteditable table {
+  border-collapse: collapse;
+}
+
+.dark-editor .mdxeditor-root-contenteditable th,
+.dark-editor .mdxeditor-root-contenteditable td {
+  border: 1px solid #27272a;
+  padding: 4px 8px;
+}
+
+.dark-editor .mdxeditor-root-contenteditable th {
+  background: #1e1e24;
+  font-weight: 600;
+}
+
+.dark-editor .mdxeditor-root-contenteditable hr {
+  border-color: #27272a;
+}
+
+/* Source/diff mode */
+.dark-editor .cm-editor {
+  background: transparent;
+}
+
+.dark-editor .cm-gutters {
+  background: #18181b;
+  border-right: 1px solid #27272a;
+}
+
+/* Diff source toggle */
+.dark-editor [class*="diffSourceToggle"] button {
+  font-size: 10px;
+}

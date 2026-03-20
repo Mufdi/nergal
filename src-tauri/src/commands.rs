@@ -1148,3 +1148,169 @@ pub fn check_session_has_commits(
 
     Ok(WorktreeStatus { dirty, commits_ahead })
 }
+
+// -- Git panel commands --
+
+/// Full git status with staged, unstaged, and untracked files.
+#[derive(Clone, serde::Serialize)]
+pub struct GitFullStatus {
+    pub staged: Vec<crate::worktree::ChangedFile>,
+    pub unstaged: Vec<crate::worktree::ChangedFile>,
+    pub untracked: Vec<String>,
+}
+
+#[tauri::command]
+pub fn get_git_status(
+    db: State<'_, SharedDb>,
+    session_id: String,
+) -> Result<GitFullStatus, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+
+    let staged = crate::worktree::staged_files(&cwd).map_err(|e| e.to_string())?;
+    let unstaged = crate::worktree::unstaged_files(&cwd).map_err(|e| e.to_string())?;
+    let untracked = crate::worktree::untracked_files(&cwd).map_err(|e| e.to_string())?;
+
+    Ok(GitFullStatus { staged, unstaged, untracked })
+}
+
+#[tauri::command]
+pub fn git_stage_file(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    path: String,
+) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    crate::worktree::stage_file(&cwd, &path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn git_unstage_file(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    path: String,
+) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    crate::worktree::unstage_file(&cwd, &path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn git_stage_all(
+    db: State<'_, SharedDb>,
+    session_id: String,
+) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    crate::worktree::stage_all(&cwd).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn git_unstage_all(
+    db: State<'_, SharedDb>,
+    session_id: String,
+) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    crate::worktree::unstage_all(&cwd).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn git_commit(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    message: String,
+) -> Result<String, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    crate::worktree::commit(&cwd, &message).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_recent_commits(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    count: u32,
+) -> Result<Vec<crate::worktree::CommitEntry>, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+
+    let Some(session) = db.find_session(&session_id).map_err(|e: anyhow::Error| e.to_string())? else {
+        return Err("session not found".into());
+    };
+
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+
+    // For worktree sessions, show only session commits (main..HEAD)
+    let range = if session.worktree_path.is_some() {
+        let repo_path = db
+            .workspace_repo_path(&session.workspace_id)
+            .map_err(|e: anyhow::Error| e.to_string())?
+            .ok_or("workspace not found")?;
+        let branches = crate::worktree::list_branches(&repo_path).map_err(|e| e.to_string())?;
+        if branches.iter().any(|b| b == "main") {
+            Some("main..HEAD".to_string())
+        } else if branches.iter().any(|b| b == "master") {
+            Some("master..HEAD".to_string())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    crate::worktree::recent_commits(&cwd, count, range.as_deref()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_pr_status(
+    db: State<'_, SharedDb>,
+    session_id: String,
+) -> Result<Option<crate::worktree::PrInfo>, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+
+    let Some(session) = db.find_session(&session_id).map_err(|e: anyhow::Error| e.to_string())? else {
+        return Err("session not found".into());
+    };
+
+    let Some(ref branch) = session.worktree_branch else {
+        return Ok(None);
+    };
+
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    crate::worktree::pr_status(&cwd, branch).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_pr(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    title: String,
+    body: String,
+) -> Result<crate::worktree::PrInfo, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+
+    let Some(session) = db.find_session(&session_id).map_err(|e: anyhow::Error| e.to_string())? else {
+        return Err("session not found".into());
+    };
+
+    let Some(ref branch) = session.worktree_branch else {
+        return Err("session has no worktree branch".into());
+    };
+
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+
+    let repo_path = db
+        .workspace_repo_path(&session.workspace_id)
+        .map_err(|e: anyhow::Error| e.to_string())?
+        .ok_or("workspace not found")?;
+
+    let branches = crate::worktree::list_branches(&repo_path).map_err(|e| e.to_string())?;
+    let base = if branches.iter().any(|b| b == "main") {
+        "main"
+    } else {
+        "master"
+    };
+
+    crate::worktree::create_pr(&cwd, branch, base, &title, &body).map_err(|e| e.to_string())
+}

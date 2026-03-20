@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback, type KeyboardEvent } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useSetAtom } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
 import { currentSpecArtifactAtom } from "@/stores/rightPanel";
 import { MarkdownView } from "@/components/plan/MarkdownView";
-import { Textarea } from "@/components/ui/textarea";
+import { RichMarkdownEditor } from "@/components/editor/RichMarkdownEditor";
 import { FileText, Pencil, CheckSquare, ClipboardList, ArrowLeft } from "lucide-react";
 
 type ArtifactTab = "proposal" | "design" | "tasks" | "specs";
@@ -135,12 +135,9 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
       .finally(() => setSaving(false));
   }
 
-  function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "s" && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      handleSave();
-    }
-  }
+  const handleSaveCallback = useCallback(() => {
+    handleSave();
+  }, [currentArtifactPath, editContent, changeName, sessionId]);
 
   function handleSpecClick(specPath: string) {
     setActiveSpec(specPath);
@@ -273,14 +270,11 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
             <span className="text-[10px] text-muted-foreground">This change may have been moved or archived.</span>
           </div>
         ) : mode === "edit" && isEditable ? (
-          <Textarea
-            value={editContent}
-            onChange={(e) => setEditContent(e.target.value)}
-            onKeyDown={handleKeyDown}
-            className="h-full flex-1 resize-none rounded-none border-none font-mono text-[11px] leading-relaxed focus-visible:ring-0"
-            placeholder="Edit artifact... (Ctrl+S to save)"
-            spellCheck={false}
-            aria-label="Spec editor"
+          <RichMarkdownEditor
+            markdown={editContent}
+            onChange={setEditContent}
+            onSave={handleSaveCallback}
+            placeholder="Edit artifact..."
           />
         ) : (
           <div className="h-full overflow-y-auto">

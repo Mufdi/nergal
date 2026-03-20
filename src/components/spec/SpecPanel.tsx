@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, type KeyboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { MarkdownView } from "@/components/plan/MarkdownView";
+import { Textarea } from "@/components/ui/textarea";
 import { FileText, Pencil, CheckSquare, ClipboardList, ArrowLeft } from "lucide-react";
 
 type ArtifactTab = "proposal" | "design" | "tasks" | "specs";
@@ -38,18 +39,30 @@ interface SpecPanelProps {
   changeName: string;
   sessionId: string;
   initialSpecPath?: string;
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
-export function SpecPanel({ changeName, sessionId, initialSpecPath }: SpecPanelProps) {
+export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChange }: SpecPanelProps) {
   const isMaster = changeName === "_master";
   const [activeTab, setActiveTab] = useState<ArtifactTab>(
     isMaster || initialSpecPath ? "specs" : "proposal"
   );
   const [content, setContent] = useState("");
+  const [editContent, setEditContent] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [change, setChange] = useState<OpenSpecChange | null>(null);
   const [activeSpec, setActiveSpec] = useState<string | null>(initialSpecPath ?? null);
+  const [mode, setMode] = useState<"view" | "edit">("view");
+  const [saving, setSaving] = useState(false);
+
+  const isEditable = change?.status === "active";
+  const dirty = mode === "edit" && editContent !== content;
+
+  // Notify parent of dirty state
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   useEffect(() => {
     invoke<OpenSpecChange[]>("list_openspec_changes", { sessionId })
@@ -60,6 +73,10 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath }: SpecPanelP
       .catch(() => {});
   }, [changeName, sessionId]);
 
+  const currentArtifactPath = activeTab === "specs"
+    ? activeSpec
+    : `${activeTab}.md`;
+
   const loadArtifact = useCallback((path: string) => {
     setLoading(true);
     setError(null);
@@ -68,7 +85,10 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath }: SpecPanelP
       changeName,
       artifactPath: path,
     })
-      .then((text) => setContent(text))
+      .then((text) => {
+        setContent(text);
+        setEditContent(text);
+      })
       .catch((err: unknown) => setError(String(err)))
       .finally(() => setLoading(false));
   }, [sessionId, changeName]);
@@ -79,12 +99,37 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath }: SpecPanelP
         loadArtifact(activeSpec);
       } else {
         setContent("");
+        setEditContent("");
         setLoading(false);
       }
     } else {
       loadArtifact(`${activeTab}.md`);
     }
+    setMode("view");
   }, [activeTab, activeSpec, loadArtifact]);
+
+  function handleSave() {
+    if (!currentArtifactPath || !dirty) return;
+    setSaving(true);
+    invoke("write_openspec_artifact", {
+      sessionId,
+      changeName,
+      artifactPath: currentArtifactPath,
+      content: editContent,
+    })
+      .then(() => {
+        setContent(editContent);
+      })
+      .catch((err: unknown) => setError(String(err)))
+      .finally(() => setSaving(false));
+  }
+
+  function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "s" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      handleSave();
+    }
+  }
 
   function handleSpecClick(specPath: string) {
     setActiveSpec(specPath);
@@ -94,7 +139,14 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath }: SpecPanelP
   function handleBackToSpecs() {
     setActiveSpec(null);
     setContent("");
+    setEditContent("");
     setLoading(false);
+    setMode("view");
+  }
+
+  function handleTabSwitch(key: ArtifactTab) {
+    setActiveTab(key);
+    if (key !== "specs") setActiveSpec(null);
   }
 
   const availableTabs = isMaster
@@ -106,6 +158,7 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath }: SpecPanelP
       });
 
   const displayName = isMaster ? "Consolidated Specs" : changeName;
+  const showingContent = activeTab !== "specs" || activeSpec !== null;
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -126,37 +179,79 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath }: SpecPanelP
         )}
       </div>
 
-      {/* Artifact tab bar */}
-      {availableTabs.length > 1 && (
-        <div className="flex shrink-0 border-b border-border/50">
-          {availableTabs.map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.key;
-            return (
+      {/* Artifact tab bar + View/Edit toggle */}
+      {(availableTabs.length > 1 || isEditable) && (
+        <div className="flex shrink-0 items-center border-b border-border/50">
+          {availableTabs.length > 1 && (
+            <div className="flex flex-1">
+              {availableTabs.map((tab) => {
+                const Icon = tab.icon;
+                const isActive = activeTab === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    onClick={() => handleTabSwitch(tab.key)}
+                    className={`flex items-center gap-1.5 px-3 py-1 text-[11px] transition-colors ${
+                      isActive
+                        ? "border-b-2 border-blue-500 text-foreground"
+                        : "text-muted-foreground hover:text-foreground/80"
+                    }`}
+                  >
+                    <Icon size={11} />
+                    {tab.label}
+                    {tab.key === "specs" && change && (
+                      <span className="text-[10px] text-muted-foreground/60">{change.specs.length}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {availableTabs.length <= 1 && <div className="flex-1" />}
+
+          {/* View/Edit toggle — only for active changes when showing content */}
+          {isEditable && showingContent && (
+            <div className="flex shrink-0 items-center gap-1 pr-2">
+              {mode === "edit" && (
+                <button
+                  onClick={handleSave}
+                  disabled={!dirty || saving}
+                  className={`h-5 rounded px-2 text-[10px] font-medium transition-colors ${
+                    dirty && !saving
+                      ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                      : "bg-secondary text-muted-foreground cursor-not-allowed"
+                  }`}
+                >
+                  {saving ? "Saving..." : "Save"}
+                </button>
+              )}
               <button
-                key={tab.key}
-                onClick={() => { setActiveTab(tab.key); if (tab.key !== "specs") setActiveSpec(null); }}
-                className={`flex items-center gap-1.5 px-3 py-1 text-[11px] transition-colors ${
-                  isActive
-                    ? "border-b-2 border-blue-500 text-foreground"
-                    : "text-muted-foreground hover:text-foreground/80"
+                onClick={() => setMode("view")}
+                className={`h-5 rounded px-1.5 text-[10px] transition-colors ${
+                  mode === "view" ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                <Icon size={11} />
-                {tab.label}
-                {tab.key === "specs" && change && (
-                  <span className="text-[10px] text-muted-foreground/60">{change.specs.length}</span>
-                )}
+                View
               </button>
-            );
-          })}
+              <button
+                onClick={() => setMode("edit")}
+                className={`h-5 rounded px-1.5 text-[10px] transition-colors ${
+                  mode === "edit" ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Edit
+              </button>
+            </div>
+          )}
         </div>
       )}
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-hidden">
         {activeTab === "specs" && !activeSpec ? (
-          <SpecsList specs={change?.specs ?? []} onSelect={handleSpecClick} />
+          <div className="h-full overflow-y-auto">
+            <SpecsList specs={change?.specs ?? []} onSelect={handleSpecClick} />
+          </div>
         ) : loading ? (
           <div className="flex h-32 items-center justify-center">
             <span className="text-[11px] text-muted-foreground">Loading...</span>
@@ -166,8 +261,18 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath }: SpecPanelP
             <span className="text-[11px] text-red-400">File not found</span>
             <span className="text-[10px] text-muted-foreground">This change may have been moved or archived.</span>
           </div>
+        ) : mode === "edit" && isEditable ? (
+          <Textarea
+            value={editContent}
+            onChange={(e) => setEditContent(e.target.value)}
+            onKeyDown={handleKeyDown}
+            className="h-full flex-1 resize-none rounded-none border-none font-mono text-[11px] leading-relaxed focus-visible:ring-0"
+            placeholder="Edit artifact... (Ctrl+S to save)"
+            spellCheck={false}
+            aria-label="Spec editor"
+          />
         ) : (
-          <>
+          <div className="h-full overflow-y-auto">
             {activeTab === "specs" && activeSpec && (
               <button
                 onClick={handleBackToSpecs}
@@ -178,7 +283,7 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath }: SpecPanelP
               </button>
             )}
             <MarkdownView content={content} />
-          </>
+          </div>
         )}
       </div>
     </div>

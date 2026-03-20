@@ -866,6 +866,40 @@ pub fn read_openspec_artifact(
         .map_err(|e| format!("failed to read {}: {e}", file_path.display()))
 }
 
+/// Write content to an artifact file in an active OpenSpec change.
+/// Rejects writes to archived changes and master specs.
+#[tauri::command]
+pub fn write_openspec_artifact(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    change_name: String,
+    artifact_path: String,
+    content: String,
+) -> Result<(), String> {
+    if change_name == "_master" {
+        return Err("master specs are read-only".into());
+    }
+
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let change_dir = cwd.join("openspec").join("changes").join(&change_name);
+
+    if !change_dir.exists() {
+        return Err("change not found or is archived".into());
+    }
+
+    let file_path = change_dir.join(&artifact_path);
+
+    // Ensure parent directory exists (for new spec files)
+    if let Some(parent) = file_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create directory: {e}"))?;
+    }
+
+    std::fs::write(&file_path, &content)
+        .map_err(|e| format!("failed to write {}: {e}", file_path.display()))
+}
+
 // -- Git info command --
 
 /// Git status information for a session's working directory.

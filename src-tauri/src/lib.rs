@@ -92,6 +92,7 @@ pub fn run() {
             commands::get_file_diff,
             commands::list_openspec_changes,
             commands::read_openspec_artifact,
+            commands::write_openspec_artifact,
             commands::get_session_changed_files,
             pty::write_to_session_pty,
         ])

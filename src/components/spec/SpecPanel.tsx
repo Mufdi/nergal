@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, type KeyboardEvent } from "react";
+import { useSetAtom } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
+import { currentSpecArtifactAtom } from "@/stores/rightPanel";
 import { MarkdownView } from "@/components/plan/MarkdownView";
 import { Textarea } from "@/components/ui/textarea";
 import { FileText, Pencil, CheckSquare, ClipboardList, ArrowLeft } from "lucide-react";
@@ -56,6 +58,7 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
   const [mode, setMode] = useState<"view" | "edit">("view");
   const [saving, setSaving] = useState(false);
 
+  const setCurrentSpecArtifact = useSetAtom(currentSpecArtifactAtom);
   const isEditable = change?.status === "active";
   const dirty = mode === "edit" && editContent !== content;
 
@@ -76,6 +79,14 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
   const currentArtifactPath = activeTab === "specs"
     ? activeSpec
     : `${activeTab}.md`;
+
+  // Keep global atom in sync for "Open in IDE" to read
+  useEffect(() => {
+    if (currentArtifactPath) {
+      setCurrentSpecArtifact({ changeName, artifactPath: currentArtifactPath });
+    }
+    return () => setCurrentSpecArtifact(null);
+  }, [changeName, currentArtifactPath, setCurrentSpecArtifact]);
 
   const loadArtifact = useCallback((path: string) => {
     setLoading(true);

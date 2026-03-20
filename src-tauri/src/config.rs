@@ -11,6 +11,7 @@ pub struct Config {
     pub hook_socket_path: PathBuf,
     pub default_shell: String,
     pub theme_mode: String,
+    pub preferred_editor: String,
 }
 
 impl Default for Config {
@@ -26,6 +27,7 @@ impl Default for Config {
             hook_socket_path: std::env::temp_dir().join("cluihud.sock"),
             default_shell: shell,
             theme_mode: "dark".into(),
+            preferred_editor: String::new(),
         }
     }
 }

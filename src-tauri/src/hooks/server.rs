@@ -284,6 +284,11 @@ fn process_file_event(
             tool: tool_name.to_string(),
         },
     );
+
+    // Notify OpenSpec panel when specs are modified
+    if path.contains("/openspec/") {
+        let _ = app.emit("openspec:changed", ());
+    }
 }
 
 /// Routes task-related tool events to SQLite.

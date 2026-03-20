@@ -364,6 +364,249 @@ pub fn changed_files(cwd: &Path) -> Result<Vec<ChangedFile>> {
     Ok(files)
 }
 
+/// List staged files via `git diff --cached --name-status`.
+pub fn staged_files(cwd: &Path) -> Result<Vec<ChangedFile>> {
+    let output = Command::new("git")
+        .args(["diff", "--cached", "--name-status"])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git diff --cached")?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut files = Vec::new();
+    for line in stdout.lines() {
+        let mut parts = line.splitn(2, '\t');
+        let Some(status_char) = parts.next() else { continue };
+        let Some(path) = parts.next() else { continue };
+        let status = match status_char.trim() {
+            "A" => "Create",
+            "M" => "Edit",
+            "D" => "Delete",
+            "R" => "Rename",
+            _ => "Edit",
+        };
+        files.push(ChangedFile { path: path.to_string(), status: status.to_string() });
+    }
+    Ok(files)
+}
+
+/// List unstaged (modified tracked) files via `git diff --name-status`.
+pub fn unstaged_files(cwd: &Path) -> Result<Vec<ChangedFile>> {
+    let output = Command::new("git")
+        .args(["diff", "--name-status"])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git diff")?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut files = Vec::new();
+    for line in stdout.lines() {
+        let mut parts = line.splitn(2, '\t');
+        let Some(status_char) = parts.next() else { continue };
+        let Some(path) = parts.next() else { continue };
+        let status = match status_char.trim() {
+            "M" => "Edit",
+            "D" => "Delete",
+            _ => "Edit",
+        };
+        files.push(ChangedFile { path: path.to_string(), status: status.to_string() });
+    }
+    Ok(files)
+}
+
+/// List untracked files via `git ls-files --others --exclude-standard`.
+pub fn untracked_files(cwd: &Path) -> Result<Vec<String>> {
+    let output = Command::new("git")
+        .args(["ls-files", "--others", "--exclude-standard"])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git ls-files")?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout.lines().filter(|l| !l.is_empty()).map(String::from).collect())
+}
+
+/// Stage a single file.
+pub fn stage_file(cwd: &Path, path: &str) -> Result<()> {
+    let output = Command::new("git")
+        .args(["add", "--", path])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git add")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git add failed: {stderr}");
+    }
+    Ok(())
+}
+
+/// Unstage a single file.
+pub fn unstage_file(cwd: &Path, path: &str) -> Result<()> {
+    let output = Command::new("git")
+        .args(["restore", "--staged", "--", path])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git restore --staged")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git restore --staged failed: {stderr}");
+    }
+    Ok(())
+}
+
+/// Stage all changes.
+pub fn stage_all(cwd: &Path) -> Result<()> {
+    let output = Command::new("git")
+        .args(["add", "-A"])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git add -A")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git add -A failed: {stderr}");
+    }
+    Ok(())
+}
+
+/// Unstage all staged changes.
+pub fn unstage_all(cwd: &Path) -> Result<()> {
+    let output = Command::new("git")
+        .args(["reset", "HEAD"])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git reset HEAD")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git reset HEAD failed: {stderr}");
+    }
+    Ok(())
+}
+
+/// Commit staged changes with a message. Returns the short commit hash.
+pub fn commit(cwd: &Path, message: &str) -> Result<String> {
+    let output = Command::new("git")
+        .args(["commit", "-m", message])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git commit")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout_str = String::from_utf8_lossy(&output.stdout);
+        let detail = if stderr.trim().is_empty() { stdout_str } else { stderr };
+        anyhow::bail!("{detail}");
+    }
+    // Extract short hash from output
+    let rev = Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(cwd)
+        .output()
+        .context("failed to get commit hash")?;
+    Ok(String::from_utf8_lossy(&rev.stdout).trim().to_string())
+}
+
+/// A single commit entry from the log.
+#[derive(Clone, serde::Serialize)]
+pub struct CommitEntry {
+    pub hash: String,
+    pub message: String,
+}
+
+/// Get recent commits via `git log --oneline`.
+/// If `range` is provided (e.g. "main..HEAD"), only shows commits in that range.
+pub fn recent_commits(cwd: &Path, count: u32, range: Option<&str>) -> Result<Vec<CommitEntry>> {
+    let mut args = vec!["log", "--oneline"];
+    let count_str = format!("-{count}");
+    args.push(&count_str);
+    let range_owned;
+    if let Some(r) = range {
+        range_owned = r.to_string();
+        args.push(&range_owned);
+    }
+
+    let output = Command::new("git")
+        .args(&args)
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git log")?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut entries = Vec::new();
+    for line in stdout.lines() {
+        if let Some((hash, message)) = line.split_once(' ') {
+            entries.push(CommitEntry { hash: hash.to_string(), message: message.to_string() });
+        }
+    }
+    Ok(entries)
+}
+
+/// PR info from GitHub CLI.
+#[derive(Clone, serde::Serialize)]
+pub struct PrInfo {
+    pub number: u32,
+    pub title: String,
+    pub state: String,
+    pub url: String,
+}
+
+/// Check if a PR exists for a branch via `gh pr view`.
+pub fn pr_status(cwd: &Path, branch: &str) -> Result<Option<PrInfo>> {
+    let output = Command::new("gh")
+        .args(["pr", "view", branch, "--json", "number,title,state,url"])
+        .current_dir(cwd)
+        .output();
+
+    let Ok(output) = output else { return Ok(None) };
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let val: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_default();
+
+    let number = val.get("number").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let title = val.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let state = val.get("state").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let url = val.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+    if number == 0 {
+        return Ok(None);
+    }
+
+    Ok(Some(PrInfo { number, title, state, url }))
+}
+
+/// Create a PR via `gh pr create`.
+pub fn create_pr(cwd: &Path, branch: &str, base: &str, title: &str, body: &str) -> Result<PrInfo> {
+    let output = Command::new("gh")
+        .args([
+            "pr", "create",
+            "--head", branch,
+            "--base", base,
+            "--title", title,
+            "--body", body,
+            "--json", "number,title,state,url",
+        ])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute gh pr create")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("gh pr create failed: {stderr}");
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let val: serde_json::Value = serde_json::from_str(&stdout)
+        .context("failed to parse gh pr create output")?;
+
+    Ok(PrInfo {
+        number: val.get("number").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+        title: val.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        state: val.get("state").and_then(|v| v.as_str()).unwrap_or("OPEN").to_string(),
+        url: val.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+    })
+}
+
 /// List all worktree paths for a git repository.
 ///
 /// Parses the porcelain output of `git worktree list --porcelain`.

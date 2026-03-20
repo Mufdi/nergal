@@ -10,6 +10,7 @@ import {
   type TabType,
 } from "@/stores/rightPanel";
 import { focusZoneAtom, previousNonTerminalZoneAtom } from "@/stores/shortcuts";
+import { activeSessionIdAtom } from "@/stores/workspace";
 import { planDocumentsAtom, defaultPlanState } from "@/stores/plan";
 import { PlanPanel } from "@/components/plan/PlanPanel";
 import { TaskPanel } from "@/components/tasks/TaskPanel";
@@ -19,6 +20,7 @@ import { PlanListView } from "@/components/panel/PlanListView";
 import { FileListView } from "@/components/panel/FileListView";
 import { SpecListView } from "@/components/panel/SpecListView";
 import { SpecPanel } from "@/components/spec/SpecPanel";
+import { GitPanel } from "@/components/git/GitPanel";
 import { TabBar } from "@/components/ui/TabBar";
 import {
   FileText,
@@ -234,7 +236,7 @@ function ViewPanelContent({ view }: { view: TabType }) {
     case "tasks":
       return <TaskPanel />;
     case "git":
-      return <PlaceholderView label="Git view" />;
+      return <GitPanelWrapper />;
     case "spec":
       return null;
     case "transcript":
@@ -270,7 +272,7 @@ function DocumentContent({ tab }: { tab: Tab }) {
         : <PlaceholderView label="Select a change" />;
     }
     case "git":
-      return <PlaceholderView label="Git view" />;
+      return <GitPanelWrapper />;
     case "file":
       return <PlaceholderView label={`File: ${(tab.data?.path as string) ?? "unknown"}`} />;
     default:
@@ -300,6 +302,12 @@ function SpecContentWrapper({ tabId, changeName, sessionId, initialSpecPath }: {
   }, [tabId, setDirty]);
 
   return <SpecPanel changeName={changeName} sessionId={sessionId} initialSpecPath={initialSpecPath} onDirtyChange={handleDirtyChange} />;
+}
+
+function GitPanelWrapper() {
+  const sessionId = useAtomValue(activeSessionIdAtom);
+  if (!sessionId) return <PlaceholderView label="No session active" />;
+  return <GitPanel sessionId={sessionId} />;
 }
 
 function PlaceholderView({ label }: { label: string }) {

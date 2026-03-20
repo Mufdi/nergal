@@ -17,6 +17,8 @@ import { TranscriptViewer } from "@/components/session/TranscriptViewer";
 import { DiffView } from "@/components/plan/DiffView";
 import { PlanListView } from "@/components/panel/PlanListView";
 import { FileListView } from "@/components/panel/FileListView";
+import { SpecListView } from "@/components/panel/SpecListView";
+import { SpecPanel } from "@/components/spec/SpecPanel";
 import { TabBar } from "@/components/ui/TabBar";
 import {
   FileText,
@@ -45,7 +47,7 @@ const TAB_ICONS: Record<TabType, typeof FileText> = {
   transcript: ScrollText,
 };
 
-const SIDEBAR_TYPES: TabType[] = ["plan", "file", "diff"];
+const SIDEBAR_TYPES: TabType[] = ["plan", "file", "diff", "spec"];
 
 interface RightPanelProps {
   collapsed: boolean;
@@ -120,7 +122,7 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
           </PanelHeader>
           <TabBar />
           <div className="flex flex-1 overflow-hidden">
-            <div className="flex-1 overflow-y-auto">
+            <div className="min-w-0 flex-1 overflow-hidden">
               <DocumentContent tab={activeTab} />
             </div>
             {showSidebar && sidebarOpen && (
@@ -135,20 +137,22 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
   }
 
   if (activePanelView) {
-    const isDiffView = activePanelView === "diff";
+    const hasSidebar = activePanelView === "diff" || activePanelView === "spec";
+    const sidebarHint = activePanelView === "diff" ? "Select a file to view diff" : "Select a change to view";
+    const SidebarComponent = activePanelView === "diff" ? FileListView : SpecListView;
     return (
       <div className="flex h-full overflow-hidden rounded-lg bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
         <div className="flex flex-1 flex-col overflow-hidden">
           <PanelHeader onToggle={onToggle} label={viewPanelLabel(activePanelView)} />
           {tabs.length > 0 && <TabBar />}
           <div className="flex flex-1 overflow-hidden">
-            {isDiffView ? (
+            {hasSidebar ? (
               <>
                 <div className="flex flex-1 items-center justify-center">
-                  <span className="text-[11px] text-muted-foreground">Select a file to view diff</span>
+                  <span className="text-[11px] text-muted-foreground">{sidebarHint}</span>
                 </div>
                 <div className="w-44 shrink-0 overflow-y-auto border-l border-border/50">
-                  <FileListView />
+                  <SidebarComponent />
                 </div>
               </>
             ) : (
@@ -212,6 +216,8 @@ function SidebarContent({ type }: { type: TabType }) {
     case "file":
     case "diff":
       return <FileListView />;
+    case "spec":
+      return <SpecListView />;
     default:
       return null;
   }
@@ -230,7 +236,7 @@ function ViewPanelContent({ view }: { view: TabType }) {
     case "git":
       return <PlaceholderView label="Git view" />;
     case "spec":
-      return <PlaceholderView label="Spec view" />;
+      return null;
     case "transcript":
       return <PlaceholderView label="Transcript view" />;
     default:
@@ -255,8 +261,14 @@ function DocumentContent({ tab }: { tab: Tab }) {
         ? <DiffView filePath={diffPath} sessionId={diffSession} />
         : <PlaceholderView label="Diff view" />;
     }
-    case "spec":
-      return <PlaceholderView label="Spec view" />;
+    case "spec": {
+      const specChange = tab.data?.changeName as string | undefined;
+      const specSession = tab.data?.sessionId as string | undefined;
+      const specPath = tab.data?.specPath as string | undefined;
+      return specChange && specSession
+        ? <SpecPanel key={tab.id} changeName={specChange} sessionId={specSession} initialSpecPath={specPath} />
+        : <PlaceholderView label="Select a change" />;
+    }
     case "git":
       return <PlaceholderView label="Git view" />;
     case "file":

@@ -57,6 +57,13 @@ export function TabBar() {
     return () => observer.disconnect();
   }, [tabs.length]);
 
+  // Scroll active tab into view when it changes
+  useEffect(() => {
+    if (!activeTab || !containerRef.current) return;
+    const el = containerRef.current.querySelector("[data-tab-active='true']") as HTMLElement | null;
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+  }, [activeTab?.id]);
+
   if (tabs.length === 0) return null;
 
   return (
@@ -145,6 +152,7 @@ function TabItem({
       <TooltipTrigger
         render={
           <div
+            data-tab-active={isActive}
             onClick={onClick}
             onDoubleClick={onDoubleClick}
             onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); onClose(); } }}

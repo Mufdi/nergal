@@ -23,7 +23,7 @@ export function TaskPanel() {
   }
 
   return (
-    <div className="flex flex-col">
+    <div className="flex h-full flex-col overflow-y-auto">
       <div className="flex items-center justify-between px-3 py-1.5">
         <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
           Tasks ({tasks.length})

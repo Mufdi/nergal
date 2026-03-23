@@ -4,8 +4,9 @@ import { toastsAtom } from "@/stores/toast";
 import { invoke } from "@/lib/tauri";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import type { PlanMode } from "@/lib/types";
-import { MarkdownView } from "./MarkdownView";
+import { AnnotatableMarkdownView } from "./AnnotatableMarkdownView";
 import { PlanEditor } from "./PlanEditor";
+import { PlanAnnotationFooter } from "./PlanAnnotationToolbar";
 
 interface PlanPanelProps {
   path: string;
@@ -33,6 +34,19 @@ export function PlanPanel({ path }: PlanPanelProps) {
       })
       .catch((err: unknown) => {
         addToast({ message: "Save Failed", description: String(err), type: "error" });
+      });
+  }
+
+  function handleRevise(feedback: string) {
+    if (!backendSessionId || !plan.path) return;
+    const annotatedContent = `<!-- ANNOTATIONS FROM REVIEW -->\n<!-- ${feedback.replace(/--/g, "—")} -->\n\n${plan.content}`;
+    invoke("save_plan", { sessionId: backendSessionId, content: annotatedContent })
+      .then(() => invoke("reject_plan", { sessionId: backendSessionId }))
+      .then(() => {
+        addToast({ message: "Annotations sent", description: "Claude will re-read plan with your feedback", type: "success" });
+      })
+      .catch((err: unknown) => {
+        addToast({ message: "Revise Failed", description: String(err), type: "error" });
       });
   }
 
@@ -72,12 +86,16 @@ export function PlanPanel({ path }: PlanPanelProps) {
       </div>
 
       <TabsContent value="view" className="flex-1 overflow-y-auto">
-        <MarkdownView content={plan.content} />
+        <AnnotatableMarkdownView content={plan.content} />
       </TabsContent>
 
       <TabsContent value="edit" className="flex-1 overflow-hidden">
         <PlanEditor path={path} />
       </TabsContent>
+
+      {plan.mode === "view" && (
+        <PlanAnnotationFooter planPath={plan.path ?? path} onRevise={handleRevise} />
+      )}
     </Tabs>
   );
 }

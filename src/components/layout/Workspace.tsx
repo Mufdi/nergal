@@ -203,7 +203,7 @@ export function Workspace() {
             defaultSize="42%"
             minSize="25%"
           >
-            <div className="flex h-full flex-col overflow-hidden">
+            <div className="flex h-full flex-col gap-1.5 overflow-hidden">
               <div className="flex-1 overflow-hidden rounded-lg" style={{ background: "#141415" }}>
                 <TerminalManager />
               </div>

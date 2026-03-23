@@ -105,6 +105,9 @@ pub fn run() {
             commands::get_pr_status,
             commands::create_pr,
             commands::get_session_changed_files,
+            commands::list_directory,
+            commands::read_file_content,
+            commands::write_file_content,
             pty::write_to_session_pty,
         ])
         .setup(move |app| {

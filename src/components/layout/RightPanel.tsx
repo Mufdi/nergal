@@ -13,7 +13,6 @@ import { focusZoneAtom, previousNonTerminalZoneAtom } from "@/stores/shortcuts";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { planDocumentsAtom, defaultPlanState } from "@/stores/plan";
 import { PlanPanel } from "@/components/plan/PlanPanel";
-import { TaskPanel } from "@/components/tasks/TaskPanel";
 import { TranscriptViewer } from "@/components/session/TranscriptViewer";
 import { DiffView } from "@/components/plan/DiffView";
 import { PlanListView } from "@/components/panel/PlanListView";
@@ -21,6 +20,9 @@ import { FileListView } from "@/components/panel/FileListView";
 import { SpecListView } from "@/components/panel/SpecListView";
 import { SpecPanel } from "@/components/spec/SpecPanel";
 import { GitPanel } from "@/components/git/GitPanel";
+import { FileBrowser } from "@/components/files/FileBrowser";
+import { CodeEditor } from "@/components/editor/CodeEditor";
+import { DagGraph } from "@/components/activity/DagGraph";
 import { TabBar } from "@/components/ui/TabBar";
 import {
   FileText,
@@ -230,17 +232,17 @@ function ViewPanelContent({ view }: { view: TabType }) {
     case "plan":
       return <PlanListView />;
     case "file":
-      return <FileListView />;
+      return <FileBrowser />;
     case "diff":
       return null;
     case "tasks":
-      return <TaskPanel />;
+      return null;
     case "git":
       return <GitPanelWrapper />;
     case "spec":
       return null;
     case "transcript":
-      return <PlaceholderView label="Transcript view" />;
+      return <DagGraph />;
     default:
       return null;
   }
@@ -251,7 +253,7 @@ function DocumentContent({ tab }: { tab: Tab }) {
     case "plan":
       return <PlanContentWrapper tabId={tab.id} path={tab.data?.path as string} />;
     case "tasks":
-      return <TaskPanel />;
+      return null;
     case "transcript": {
       const sessionId = tab.data?.sessionId as string | undefined;
       return sessionId ? <TranscriptViewer sessionId={sessionId} /> : null;
@@ -273,8 +275,13 @@ function DocumentContent({ tab }: { tab: Tab }) {
     }
     case "git":
       return <GitPanelWrapper />;
-    case "file":
-      return <PlaceholderView label={`File: ${(tab.data?.path as string) ?? "unknown"}`} />;
+    case "file": {
+      const filePath = tab.data?.path as string | undefined;
+      const fileSession = tab.data?.sessionId as string | undefined;
+      return filePath && fileSession
+        ? <CodeEditor filePath={filePath} sessionId={fileSession} />
+        : <PlaceholderView label={`File: ${filePath ?? "unknown"}`} />;
+    }
     default:
       return null;
   }

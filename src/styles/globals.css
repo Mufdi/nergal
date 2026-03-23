@@ -195,3 +195,8 @@ body,
 .animate-dot-pulse {
   animation: dot-pulse 1.5s ease-in-out infinite;
 }
+
+/* ── Panel transition for layout presets ── */
+.panel-transition [data-panel] {
+  transition: flex-basis 250ms ease, flex-grow 250ms ease;
+}

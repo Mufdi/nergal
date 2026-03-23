@@ -16,6 +16,7 @@ import { PlanPanel } from "@/components/plan/PlanPanel";
 import { TranscriptViewer } from "@/components/session/TranscriptViewer";
 import { DiffView } from "@/components/plan/DiffView";
 import { PlanListView } from "@/components/panel/PlanListView";
+import { PlanSidebar } from "@/components/plan/PlanSidebar";
 import { FileListView } from "@/components/panel/FileListView";
 import { SpecListView } from "@/components/panel/SpecListView";
 import { SpecPanel } from "@/components/spec/SpecPanel";
@@ -76,33 +77,48 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
   }
 
   if (collapsed) {
+    // Show tabs if any, otherwise show the active panel view icon
+    const items: { id: string; type: TabType; label: string; onClick: () => void }[] = tabs.length > 0
+      ? tabs.map((tab) => ({
+          id: tab.id,
+          type: tab.type,
+          label: tab.label,
+          onClick: () => { setActiveTabId(tab.id); onToggle(); },
+        }))
+      : activePanelView
+        ? [{ id: `view-${activePanelView}`, type: activePanelView, label: viewPanelLabel(activePanelView), onClick: onToggle }]
+        : [];
+
     return (
-      <div className="flex h-full w-full flex-col items-center gap-1 bg-background py-2">
+      <div className="flex h-full w-full flex-col items-center gap-0.5 bg-background py-1">
         <button
           onClick={onToggle}
-          className="flex size-7 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+          className="flex size-4 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors mb-0.5"
           aria-label="Expand panel"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="15 18 9 12 15 6" />
           </svg>
         </button>
-        {tabs.map((tab) => {
-          const Icon = TAB_ICONS[tab.type];
+        {items.map((item) => {
+          const Icon = TAB_ICONS[item.type];
+          const isActive = item.id === (activeTab?.id ?? `view-${activePanelView}`);
           return (
-            <Tooltip key={tab.id}>
+            <Tooltip key={item.id}>
               <TooltipTrigger
                 render={
                   <button
-                    onClick={() => { setActiveTabId(tab.id); onToggle(); }}
-                    className="flex size-7 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-                    aria-label={tab.label}
+                    onClick={item.onClick}
+                    className={`flex size-4 items-center justify-center rounded transition-colors ${
+                      isActive ? "text-foreground bg-secondary" : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                    }`}
+                    aria-label={item.label}
                   />
                 }
               >
-                <Icon size={14} />
+                <Icon size={12} />
               </TooltipTrigger>
-              <TooltipContent side="left">{tab.label}</TooltipContent>
+              <TooltipContent side="left">{item.label}</TooltipContent>
             </Tooltip>
           );
         })}
@@ -133,7 +149,7 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
               <DocumentContent tab={activeTab} />
             </div>
             {showSidebar && sidebarOpen && (
-              <div className={`shrink-0 overflow-y-auto border-l border-border/50 ${activeTab.type === "file" ? "w-52" : "w-44"}`}>
+              <div className={`shrink-0 overflow-hidden border-l border-border/50 ${activeTab.type === "file" || activeTab.type === "plan" ? "w-52" : "w-44"}`}>
                 <SidebarContent type={activeTab.type} />
               </div>
             )}
@@ -145,6 +161,7 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
 
   if (activePanelView) {
     const sidebarViews: Record<string, { hint: string; Component: React.ComponentType }> = {
+      plan: { hint: "Select a plan file", Component: PlanSidebar },
       diff: { hint: "Select a file to view diff", Component: FileListView },
       spec: { hint: "Select a change to view", Component: SpecListView },
       file: { hint: "Select a file to open", Component: FileBrowser },
@@ -222,7 +239,7 @@ function PanelHeader({ onToggle, label, children }: { onToggle: () => void; labe
 function SidebarContent({ type }: { type: TabType }) {
   switch (type) {
     case "plan":
-      return <PlanListView />;
+      return <PlanSidebar />;
     case "file":
       return <FileBrowser />;
     case "diff":

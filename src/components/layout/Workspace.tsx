@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/resizable";
 import { usePanelRef } from "react-resizable-panels";
 
-const COLLAPSED_SIZE_PX = 40;
+const COLLAPSED_SIZE_PX = 28;
 
 export function Workspace() {
   useKeyboardShortcuts();
@@ -49,6 +49,28 @@ export function Workspace() {
 
   const setActivePanelView = useSetAtom(activePanelViewAtom);
   const activeTab = useAtomValue(activeTabAtom);
+
+  // Redistribute space when sidebar collapses/expands manually
+  const prevSidebarCollapsed = useRef(sidebarCollapsed);
+  useEffect(() => {
+    if (prevSidebarCollapsed.current === sidebarCollapsed) return;
+    prevSidebarCollapsed.current = sidebarCollapsed;
+
+    const center = centerPanelRef.current;
+    const right = rightPanelRef.current;
+    if (!center || !right || right.isCollapsed()) return;
+
+    requestAnimationFrame(() => {
+      if (sidebarCollapsed) {
+        center.resize("50%");
+        right.resize("50%");
+      } else {
+        const sizes = PRESET_SIZES[layoutPreset];
+        center.resize(`${sizes.center}%`);
+        right.resize(`${sizes.right}%`);
+      }
+    });
+  }, [sidebarCollapsed, layoutPreset]);
 
   // Clear global panel view on session switch if new session has no tabs
   useEffect(() => {
@@ -157,13 +179,13 @@ export function Workspace() {
           <ResizablePanel
             id="sidebar"
             panelRef={sidebarPanelRef}
-            defaultSize="15%"
-            minSize="8%"
-            maxSize="20%"
+            defaultSize="12%"
+            minSize="6%"
+            maxSize="18%"
             collapsible
-            collapsedSize={COLLAPSED_SIZE_PX}
+            collapsedSize={20}
             onResize={(size) => {
-              setSidebarCollapsed(size.inPixels <= COLLAPSED_SIZE_PX);
+              setSidebarCollapsed(size.inPixels <= 20);
             }}
           >
             <Sidebar
@@ -181,8 +203,11 @@ export function Workspace() {
             defaultSize="42%"
             minSize="25%"
           >
-            <div className="flex h-full overflow-hidden rounded-lg" style={{ background: "#141415" }}>
-              <TerminalManager />
+            <div className="flex h-full flex-col overflow-hidden">
+              <div className="flex-1 overflow-hidden rounded-lg" style={{ background: "#141415" }}>
+                <TerminalManager />
+              </div>
+              <ActivityDrawer />
             </div>
           </ResizablePanel>
 
@@ -209,7 +234,6 @@ export function Workspace() {
         </ResizablePanelGroup>
       </div>
 
-      <ActivityDrawer />
       <StatusBar layoutPreset={layoutPreset} />
 
       <ZenMode />

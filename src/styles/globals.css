@@ -196,7 +196,11 @@ body,
   animation: dot-pulse 1.5s ease-in-out infinite;
 }
 
-/* ── Plan annotation hover ── */
+/* ── Plan annotation ── */
+.annotatable-plan {
+  cursor: crosshair;
+}
+
 .annotatable-plan ::selection {
   background: rgba(234, 179, 8, 0.3);
   color: inherit;
@@ -205,9 +209,9 @@ body,
 .annotatable-plan .annotatable-el {
   position: relative;
   border-radius: 3px;
-  transition: outline-color 0.1s;
 }
 
+/* Hover: orange dashed outline + type label */
 .annotatable-plan .annotatable-el:hover {
   outline: 1px dashed var(--primary);
   outline-offset: 2px;
@@ -228,9 +232,29 @@ body,
   z-index: 10;
 }
 
+/* Nested: list-item hover doesn't propagate to parent list */
+.annotatable-plan .annotatable-el .annotatable-el:hover {
+  outline: 1px dashed var(--primary);
+  outline-offset: 1px;
+}
+
+.annotatable-plan .annotatable-el:has(.annotatable-el:hover) {
+  outline: none !important;
+}
+
+.annotatable-plan .annotatable-el:has(.annotatable-el:hover)::after {
+  display: none;
+}
+
+/* Active (clicked): yellow dashed */
 .annotatable-plan .annotatable-el.annotatable-active {
   outline: 2px dashed #eab308 !important;
   outline-offset: 2px;
   background: rgba(234, 179, 8, 0.05);
+}
+
+.annotatable-plan .annotatable-el.annotatable-active::after {
+  background: #eab308;
+  color: #0a0a0b;
 }
 

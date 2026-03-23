@@ -3,8 +3,9 @@ import { useAtomValue, useSetAtom } from "jotai";
 import { activeSessionAtom, activeSessionIdAtom, activeCostAtom, activeModeAtom } from "@/stores/workspace";
 import { activeGitInfoAtom, refreshGitInfoAtom } from "@/stores/git";
 import { loadSessionFilesAtom } from "@/stores/files";
+import { activitySummaryAtom, activityDrawerOpenAtom } from "@/stores/activity";
 import { Badge } from "@/components/ui/badge";
-import { GitBranch } from "lucide-react";
+import { GitBranch, Zap, ChevronUp } from "lucide-react";
 import {
   Tooltip,
   TooltipTrigger,
@@ -17,6 +18,13 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
+function formatElapsed(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}m ${secs}s`;
+}
+
 const modeColors: Record<string, string> = {
   idle: "bg-muted-foreground",
   thinking: "bg-yellow-500",
@@ -24,7 +32,11 @@ const modeColors: Record<string, string> = {
   responding: "bg-green-500",
 };
 
-export function StatusBar() {
+interface StatusBarProps {
+  layoutPreset?: string;
+}
+
+export function StatusBar({ layoutPreset }: StatusBarProps) {
   const session = useAtomValue(activeSessionAtom);
   const sessionId = useAtomValue(activeSessionIdAtom);
   const mode = useAtomValue(activeModeAtom);
@@ -32,6 +44,8 @@ export function StatusBar() {
   const gitInfo = useAtomValue(activeGitInfoAtom);
   const refreshGit = useSetAtom(refreshGitInfoAtom);
   const loadFiles = useSetAtom(loadSessionFilesAtom);
+  const summary = useAtomValue(activitySummaryAtom);
+  const setDrawerOpen = useSetAtom(activityDrawerOpenAtom);
 
   useEffect(() => {
     if (sessionId) {
@@ -78,20 +92,45 @@ export function StatusBar() {
         </Badge>
       </div>
 
-      {/* Center: session ID */}
-      <div className="flex items-center">
+      {/* Center: activity summary (clickable to open drawer) + layout preset */}
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => setDrawerOpen((prev) => !prev)}
+          className="flex items-center gap-1.5 rounded px-2 py-0.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+        >
+          {summary.lastAction ? (
+            <>
+              <Zap className="size-3 text-primary" />
+              <span className="max-w-48 truncate">{summary.lastAction}</span>
+              <span className="text-muted-foreground/60">│</span>
+              <span>{summary.actionCount} actions</span>
+              <span className="text-muted-foreground/60">│</span>
+              <span>{formatElapsed(summary.elapsedSeconds)}</span>
+            </>
+          ) : (
+            <span>No activity</span>
+          )}
+          <ChevronUp className="ml-1 size-3" />
+        </button>
+
+        {layoutPreset && (
+          <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">
+            {layoutPreset}
+          </span>
+        )}
+      </div>
+
+      {/* Right: session ID + tokens + cost */}
+      <div className="flex items-center gap-2 text-muted-foreground">
         {session && (
           <Tooltip>
-            <TooltipTrigger className="cursor-default text-muted-foreground">
+            <TooltipTrigger className="cursor-default">
               {session.id.slice(0, 8)}
             </TooltipTrigger>
             <TooltipContent>{session.id}</TooltipContent>
           </Tooltip>
         )}
-      </div>
-
-      {/* Right: tokens + cost */}
-      <div className="flex items-center gap-2 text-muted-foreground">
         <Tooltip>
           <TooltipTrigger className="cursor-default">
             <span className="flex items-center gap-1.5">

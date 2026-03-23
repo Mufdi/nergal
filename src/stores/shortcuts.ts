@@ -16,6 +16,8 @@ import {
   currentSpecArtifactAtom,
   type Tab,
 } from "./rightPanel";
+import { layoutPresetAtom, sessionLayoutPresetAtom, applyPresetSignalAtom, type LayoutPreset } from "./layout";
+import { activityDrawerOpenAtom } from "./activity";
 
 export type FocusZone = "sidebar" | "terminal" | "panel";
 
@@ -187,7 +189,16 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   { id: "open-spec", label: "Open Spec Panel", keys: "ctrl+shift+s", category: "panel", keywords: ["spec", "openspec", "panel"], handler: () => togglePanel("spec", "Spec") },
   { id: "open-git", label: "Open Git Panel", keys: "ctrl+shift+g", category: "panel", keywords: ["git", "branch", "panel"], handler: () => togglePanel("git", "Git") },
   { id: "open-tasks", label: "Open Tasks Panel", keys: "ctrl+shift+k", category: "panel", keywords: ["tasks", "todo", "panel"], handler: () => togglePanel("tasks", "Tasks") },
-  { id: "toggle-activity", label: "Toggle Activity Log", keys: "ctrl+shift+l", category: "panel", keywords: ["activity", "log", "panel"], handler: () => store().set(toggleActivityLogAtom, (p: number) => p + 1) },
+  { id: "toggle-activity", label: "Toggle Activity Drawer", keys: "ctrl+shift+l", category: "panel", keywords: ["activity", "log", "timeline", "drawer"], handler: () => store().set(activityDrawerOpenAtom, (prev: boolean) => !prev) },
+  { id: "cycle-layout", label: "Cycle Layout Preset", keys: "ctrl+shift+i", category: "navigation", keywords: ["layout", "preset", "cycle", "resize"], handler: () => {
+    const s = store();
+    const presets: LayoutPreset[] = ["terminal-focus", "doc-review", "tool-workspace"];
+    const current = s.get(layoutPresetAtom);
+    const idx = presets.indexOf(current);
+    const next = presets[(idx + 1) % presets.length];
+    s.set(sessionLayoutPresetAtom, next);
+    s.set(applyPresetSignalAtom, (p: number) => p + 1);
+  }},
 
   // -- Action --
   { id: "open-ide", label: "Open in IDE", keys: "ctrl+shift+e", category: "action", keywords: ["ide", "editor", "vscode", "zed"], handler: () => {

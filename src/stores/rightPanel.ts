@@ -4,12 +4,25 @@ import { closedTabsStackAtom } from "./shortcuts";
 
 export type TabType = "plan" | "diff" | "spec" | "tasks" | "git" | "transcript" | "file";
 
+export type PanelCategory = "document" | "tool";
+
+export const PANEL_CATEGORY_MAP: Record<TabType, PanelCategory> = {
+  plan: "document",
+  spec: "document",
+  transcript: "document",
+  file: "document",
+  git: "tool",
+  diff: "tool",
+  tasks: "document",
+};
+
 export interface Tab {
   id: string;
   type: TabType;
   label: string;
   pinned: boolean;
   dirty: boolean;
+  category: PanelCategory;
   data?: Record<string, unknown>;
 }
 
@@ -41,7 +54,11 @@ export const activeTabsAtom = atom<Tab[]>((get) => {
 export const activeTabAtom = atom<Tab | null>((get) => {
   const state = get(activeTabStateAtom);
   if (!state.activeTabId) return null;
-  return state.tabs.find((t) => t.id === state.activeTabId) ?? null;
+  const tab = state.tabs.find((t) => t.id === state.activeTabId) ?? null;
+  if (tab && !tab.category) {
+    return { ...tab, category: PANEL_CATEGORY_MAP[tab.type] };
+  }
+  return tab;
 });
 
 export const activeTabIdAtom = atom(
@@ -58,7 +75,7 @@ export const activeTabIdAtom = atom(
 
 export const openTabAction = atom(
   null,
-  (get, set, params: { tab: Omit<Tab, "pinned" | "dirty"> & { pinned?: boolean; dirty?: boolean }; isPinned?: boolean }) => {
+  (get, set, params: { tab: Omit<Tab, "pinned" | "dirty" | "category"> & { pinned?: boolean; dirty?: boolean }; isPinned?: boolean }) => {
     const sessionId = get(activeSessionIdAtom);
     if (!sessionId) return;
 
@@ -90,6 +107,7 @@ export const openTabAction = atom(
         label: partial.label,
         pinned: isPinned,
         dirty: partial.dirty ?? false,
+        category: PANEL_CATEGORY_MAP[partial.type],
         data: partial.data,
       };
 
@@ -183,3 +201,13 @@ export const reopenTabAction = atom(null, (get, set) => {
 /// Tracks the current spec artifact being viewed (changeName + artifactPath).
 /// Updated by SpecPanel, read by TopBar for "Open in IDE".
 export const currentSpecArtifactAtom = atom<{ changeName: string; artifactPath: string } | null>(null);
+
+/// Returns the category of the currently active panel/tab, or null if no panel is open.
+/// Used by the layout preset engine to determine target proportions.
+export const activePanelCategoryAtom = atom<PanelCategory | null>((get) => {
+  const activeTab = get(activeTabAtom);
+  if (activeTab) return activeTab.category;
+  const panelView = get(activePanelViewAtom);
+  if (panelView) return PANEL_CATEGORY_MAP[panelView];
+  return null;
+});

@@ -127,12 +127,273 @@ function relativePath(filePath: string): string {
   return parts.slice(-3).join("/");
 }
 
+interface SideBySideRow {
+  left: DiffLine | null;
+  right: DiffLine | null;
+}
+
+function buildSideBySideRows(lines: DiffLine[]): (DiffLine | SideBySideRow)[] {
+  const result: (DiffLine | SideBySideRow)[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (line.type === "header" || line.type === "collapsed") {
+      result.push(line);
+      i++;
+      continue;
+    }
+
+    if (line.type === "context") {
+      result.push({ left: line, right: line });
+      i++;
+      continue;
+    }
+
+    // Collect adjacent remove+add groups and pair them
+    const removes: DiffLine[] = [];
+    const adds: DiffLine[] = [];
+
+    while (i < lines.length && lines[i].type === "remove") {
+      removes.push(lines[i]);
+      i++;
+    }
+    while (i < lines.length && lines[i].type === "add") {
+      adds.push(lines[i]);
+      i++;
+    }
+
+    const maxLen = Math.max(removes.length, adds.length);
+    for (let j = 0; j < maxLen; j++) {
+      result.push({
+        left: j < removes.length ? removes[j] : null,
+        right: j < adds.length ? adds[j] : null,
+      });
+    }
+  }
+
+  return result;
+}
+
+interface SharedContentProps {
+  lines: DiffLine[];
+  activeHunk: number;
+  collapsedHunks: Set<number>;
+  hunkRefs: React.RefObject<Map<number, HTMLDivElement>>;
+  setActiveHunk: (idx: number) => void;
+}
+
+function renderHeaderRow(
+  line: DiffLine,
+  i: number,
+  activeHunk: number,
+  collapsedHunks: Set<number>,
+  hunkRefs: React.RefObject<Map<number, HTMLDivElement>>,
+  setActiveHunk: (idx: number) => void,
+  lines: DiffLine[],
+  colSpan?: number,
+) {
+  const isActive = line.hunkIndex === activeHunk;
+  const isCollapsed = collapsedHunks.has(line.hunkIndex);
+  const inner = (
+    <div
+      key={i}
+      ref={(el) => { if (el) hunkRefs.current.set(line.hunkIndex, el); }}
+      onClick={() => { setActiveHunk(line.hunkIndex); }}
+      style={{ scrollMarginTop: "8px" }}
+      className={`flex cursor-pointer items-center gap-1 border-t px-2 py-0.5 transition-colors ${
+        isActive
+          ? "border-t-blue-500/40 border-l-2 border-l-blue-500 bg-blue-500/15"
+          : "border-t-border/30 bg-secondary/30 hover:bg-secondary/50"
+      }`}
+    >
+      {isCollapsed
+        ? <ChevronRight size={10} className="shrink-0 text-muted-foreground/60" />
+        : <ChevronLeft size={10} className="shrink-0 text-muted-foreground/40" />
+      }
+      <span className={`text-[10px] truncate ${isActive ? "text-blue-400" : "text-muted-foreground"}`}>
+        {line.content}
+      </span>
+      {isCollapsed && (
+        <span className="ml-auto shrink-0 text-[10px] text-muted-foreground/50">
+          {lines.filter((l) => l.hunkIndex === line.hunkIndex && l.type !== "header" && l.type !== "collapsed").length} lines
+        </span>
+      )}
+    </div>
+  );
+
+  if (colSpan != null) {
+    return <tr key={i}><td colSpan={colSpan}>{inner}</td></tr>;
+  }
+  return inner;
+}
+
+function renderCollapsedRow(
+  line: DiffLine,
+  i: number,
+  activeHunk: number,
+  colSpan?: number,
+) {
+  const isBottom = line.hunkIndex === activeHunk;
+  const inner = (
+    <div
+      key={colSpan != null ? undefined : i}
+      className={`flex items-center justify-center border-y py-0.5 transition-colors ${
+        isBottom
+          ? "border-blue-500/40 bg-blue-500/5"
+          : "border-border/30 bg-secondary/20"
+      }`}
+    >
+      <span className={`text-[10px] ${isBottom ? "text-blue-400/60" : "text-muted-foreground/50"}`}>
+        {line.content}
+      </span>
+    </div>
+  );
+
+  if (colSpan != null) {
+    return <tr key={i}><td colSpan={colSpan}>{inner}</td></tr>;
+  }
+  return inner;
+}
+
+function UnifiedContent({ lines, activeHunk, collapsedHunks, hunkRefs, setActiveHunk }: SharedContentProps) {
+  return (
+    <>
+      {lines.map((line, i) => {
+        if (line.type === "collapsed") {
+          return renderCollapsedRow(line, i, activeHunk);
+        }
+
+        if (line.type === "header") {
+          return renderHeaderRow(line, i, activeHunk, collapsedHunks, hunkRefs, setActiveHunk, lines);
+        }
+
+        if (collapsedHunks.has(line.hunkIndex)) {
+          return null;
+        }
+
+        const numColor = line.type === "add"
+          ? "text-green-400/50"
+          : line.type === "remove"
+            ? "text-red-400/50"
+            : "text-muted-foreground/30";
+
+        return (
+          <div key={i} className={`flex ${LINE_BG[line.type]}`}>
+            <span className={`inline-block w-10 shrink-0 select-none pr-1 text-right ${numColor}`}>
+              {line.oldNum ?? ""}
+            </span>
+            <span className={`inline-block w-10 shrink-0 select-none pr-1 text-right ${numColor}`}>
+              {line.newNum ?? ""}
+            </span>
+            <span className={`inline-block w-4 shrink-0 select-none text-center ${LINE_TEXT[line.type]}`}>
+              {line.type === "add" ? "+" : line.type === "remove" ? "-" : " "}
+            </span>
+            <span className={`flex-1 whitespace-pre ${LINE_TEXT[line.type]}`}>
+              {line.content}
+            </span>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+function SideBySideCellContent({ line }: { line: DiffLine | null }) {
+  if (!line) {
+    return <div className="h-[18px] bg-secondary/10" />;
+  }
+
+  const type = line.type;
+  const numColor = type === "add"
+    ? "text-green-400/50"
+    : type === "remove"
+      ? "text-red-400/50"
+      : "text-muted-foreground/30";
+  const displayNum = line.oldNum ?? line.newNum;
+
+  return (
+    <div className={`flex ${LINE_BG[type]}`}>
+      <span className={`inline-block w-10 shrink-0 select-none pr-1 text-right ${numColor}`}>
+        {displayNum ?? ""}
+      </span>
+      <span className={`inline-block w-4 shrink-0 select-none text-center ${LINE_TEXT[type]}`}>
+        {type === "add" ? "+" : type === "remove" ? "-" : " "}
+      </span>
+      <span className={`flex-1 whitespace-pre-wrap break-all ${LINE_TEXT[type]}`}>
+        {line.content}
+      </span>
+    </div>
+  );
+}
+
+function SideBySideContent({ lines, activeHunk, collapsedHunks, hunkRefs, setActiveHunk }: SharedContentProps) {
+  const rows = buildSideBySideRows(lines);
+
+  return (
+    <table className="w-full border-collapse table-fixed">
+      <colgroup>
+        <col className="w-1/2" />
+        <col className="w-1/2" />
+      </colgroup>
+      <tbody>
+        {rows.map((row, i) => {
+          // Full-width rows for header/collapsed
+          if ("type" in row) {
+            if (row.type === "collapsed") {
+              return renderCollapsedRow(row, i, activeHunk, 2);
+            }
+            if (row.type === "header") {
+              if (collapsedHunks.has(row.hunkIndex)) {
+                return renderHeaderRow(row, i, activeHunk, collapsedHunks, hunkRefs, setActiveHunk, lines, 2);
+              }
+              return renderHeaderRow(row, i, activeHunk, collapsedHunks, hunkRefs, setActiveHunk, lines, 2);
+            }
+            return null;
+          }
+
+          // Skip collapsed hunk content
+          const hunkIdx = row.left?.hunkIndex ?? row.right?.hunkIndex ?? -1;
+          if (hunkIdx >= 0 && collapsedHunks.has(hunkIdx)) {
+            return null;
+          }
+
+          // For context lines on the left, show oldNum; on the right, show newNum
+          const leftLine = row.left
+            ? row.left.type === "context"
+              ? { ...row.left, newNum: null }
+              : row.left
+            : null;
+          const rightLine = row.right
+            ? row.right.type === "context"
+              ? { ...row.right, oldNum: null }
+              : row.right
+            : null;
+
+          return (
+            <tr key={i}>
+              <td className="border-r border-border/20 p-0 px-1 align-top">
+                <SideBySideCellContent line={leftLine} />
+              </td>
+              <td className="p-0 px-1 align-top">
+                <SideBySideCellContent line={rightLine} />
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
 interface DiffViewProps {
   filePath: string;
   sessionId: string;
+  sideBySide?: boolean;
 }
 
-export function DiffView({ filePath, sessionId }: DiffViewProps) {
+export function DiffView({ filePath, sessionId, sideBySide = false }: DiffViewProps) {
   const [lines, setLines] = useState<DiffLine[]>([]);
   const [hunks, setHunks] = useState<Hunk[]>([]);
   const [loading, setLoading] = useState(true);
@@ -319,84 +580,23 @@ export function DiffView({ filePath, sessionId }: DiffViewProps) {
         tabIndex={-1}
       >
         <div className="font-mono text-[11px] leading-[18px]" role="region" aria-label="File diff">
-          {lines.map((line, i) => {
-            if (line.type === "collapsed") {
-              const isBottom = line.hunkIndex === activeHunk;
-              return (
-                <div
-                  key={i}
-                  className={`flex items-center justify-center border-y py-0.5 transition-colors ${
-                    isBottom
-                      ? "border-blue-500/40 bg-blue-500/5"
-                      : "border-border/30 bg-secondary/20"
-                  }`}
-                >
-                  <span className={`text-[10px] ${isBottom ? "text-blue-400/60" : "text-muted-foreground/50"}`}>
-                    {line.content}
-                  </span>
-                </div>
-              );
-            }
-
-            if (line.type === "header") {
-              const isActive = line.hunkIndex === activeHunk;
-              const isCollapsed = collapsedHunks.has(line.hunkIndex);
-              return (
-                <div
-                  key={i}
-                  ref={(el) => { if (el) hunkRefs.current.set(line.hunkIndex, el); }}
-                  onClick={() => { setActiveHunk(line.hunkIndex); }}
-                  style={{ scrollMarginTop: "8px" }}
-                  className={`flex cursor-pointer items-center gap-1 border-t px-2 py-0.5 transition-colors ${
-                    isActive
-                      ? "border-t-blue-500/40 border-l-2 border-l-blue-500 bg-blue-500/15"
-                      : "border-t-border/30 bg-secondary/30 hover:bg-secondary/50"
-                  }`}
-                >
-                  {isCollapsed
-                    ? <ChevronRight size={10} className="shrink-0 text-muted-foreground/60" />
-                    : <ChevronLeft size={10} className="shrink-0 text-muted-foreground/40" />
-                  }
-                  <span className={`text-[10px] truncate ${isActive ? "text-blue-400" : "text-muted-foreground"}`}>
-                    {line.content}
-                  </span>
-                  {isCollapsed && (
-                    <span className="ml-auto shrink-0 text-[10px] text-muted-foreground/50">
-                      {lines.filter((l) => l.hunkIndex === line.hunkIndex && l.type !== "header" && l.type !== "collapsed").length} lines
-                    </span>
-                  )}
-                </div>
-              );
-            }
-
-            // Skip content lines of collapsed hunks
-            if (collapsedHunks.has(line.hunkIndex)) {
-              return null;
-            }
-
-            const numColor = line.type === "add"
-              ? "text-green-400/50"
-              : line.type === "remove"
-                ? "text-red-400/50"
-                : "text-muted-foreground/30";
-
-            return (
-              <div key={i} className={`flex ${LINE_BG[line.type]}`}>
-                <span className={`inline-block w-10 shrink-0 select-none pr-1 text-right ${numColor}`}>
-                  {line.oldNum ?? ""}
-                </span>
-                <span className={`inline-block w-10 shrink-0 select-none pr-1 text-right ${numColor}`}>
-                  {line.newNum ?? ""}
-                </span>
-                <span className={`inline-block w-4 shrink-0 select-none text-center ${LINE_TEXT[line.type]}`}>
-                  {line.type === "add" ? "+" : line.type === "remove" ? "-" : " "}
-                </span>
-                <span className={`flex-1 whitespace-pre ${LINE_TEXT[line.type]}`}>
-                  {line.content}
-                </span>
-              </div>
-            );
-          })}
+          {sideBySide ? (
+            <SideBySideContent
+              lines={lines}
+              activeHunk={activeHunk}
+              collapsedHunks={collapsedHunks}
+              hunkRefs={hunkRefs}
+              setActiveHunk={setActiveHunk}
+            />
+          ) : (
+            <UnifiedContent
+              lines={lines}
+              activeHunk={activeHunk}
+              collapsedHunks={collapsedHunks}
+              hunkRefs={hunkRefs}
+              setActiveHunk={setActiveHunk}
+            />
+          )}
         </div>
       </div>
     </div>

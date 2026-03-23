@@ -59,11 +59,21 @@ export function FileBrowser() {
     });
   }
 
-  function openFile(filePath: string) {
+  function previewFile(filePath: string) {
     if (!sessionId) return;
     const name = filePath.split("/").pop() ?? filePath;
     openTab({
       tab: { id: `file:${filePath}`, type: "file", label: name, data: { path: filePath, sessionId } },
+      isPinned: false,
+    });
+  }
+
+  function pinFile(filePath: string) {
+    if (!sessionId) return;
+    const name = filePath.split("/").pop() ?? filePath;
+    openTab({
+      tab: { id: `file:${filePath}`, type: "file", label: name, data: { path: filePath, sessionId } },
+      isPinned: true,
     });
   }
 
@@ -99,7 +109,8 @@ export function FileBrowser() {
         <button
           key={entry.path}
           type="button"
-          onDoubleClick={() => openFile(entry.path)}
+          onClick={() => previewFile(entry.path)}
+          onDoubleClick={() => pinFile(entry.path)}
           className="flex w-full items-center gap-1 rounded px-1 py-0.5 text-left text-xs text-foreground/70 hover:bg-secondary/50 hover:text-foreground transition-colors"
           style={{ paddingLeft: `${depth * 12 + 16}px` }}
         >

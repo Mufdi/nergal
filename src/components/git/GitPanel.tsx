@@ -14,9 +14,9 @@ import {
   ChevronRight,
   ExternalLink,
   Loader2,
-  Maximize2,
   GitCommitHorizontal,
   List,
+  Maximize2,
 } from "lucide-react";
 
 interface ChangedFile {
@@ -58,9 +58,11 @@ const STATUS_LETTERS: Record<string, string> = {
 
 interface GitPanelProps {
   sessionId: string;
+  hideHistory?: boolean;
+  hideChanges?: boolean;
 }
 
-export function GitPanel({ sessionId }: GitPanelProps) {
+export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }: GitPanelProps) {
   const [status, setStatus] = useState<GitFullStatus>({ staged: [], unstaged: [], untracked: [] });
   const [commits, setCommits] = useState<CommitEntry[]>([]);
   const [prInfo, setPrInfo] = useState<PrInfo | null>(null);
@@ -72,6 +74,8 @@ export function GitPanel({ sessionId }: GitPanelProps) {
   const [creatingPr, setCreatingPr] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedFile, setExpandedFile] = useState<string | null>(null);
+  const [expandedCommit, setExpandedCommit] = useState<string | null>(null);
+  const [commitFiles, setCommitFiles] = useState<Record<string, string[]>>({});
   const [historyView, setHistoryView] = useState<"list" | "graph">("list");
   const refreshGit = useSetAtom(refreshGitInfoAtom);
   const openZenMode = useSetAtom(openZenModeAtom);
@@ -84,6 +88,24 @@ export function GitPanel({ sessionId }: GitPanelProps) {
 
   function openZen(filePath: string) {
     openZenMode({ filePath, sessionId, files: allFiles });
+  }
+
+  function toggleCommitExpand(hash: string) {
+    if (expandedCommit === hash) {
+      setExpandedCommit(null);
+      return;
+    }
+    setExpandedCommit(hash);
+    if (!commitFiles[hash]) {
+      invoke<string[]>("get_commit_files", { sessionId, hash })
+        .then((files) => setCommitFiles((prev) => ({ ...prev, [hash]: files })))
+        .catch(() => {});
+    }
+  }
+
+  function openCommitFileZen(hash: string, filePath: string) {
+    const files = commitFiles[hash] ?? [filePath];
+    openZenMode({ filePath, sessionId, files });
   }
 
   const refreshCore = useCallback(() => {
@@ -187,148 +209,186 @@ export function GitPanel({ sessionId }: GitPanelProps) {
         {ahead > 0 && (
           <span className="text-[10px] text-green-400">+{ahead} ahead</span>
         )}
+        {prInfo && (
+          <>
+            <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+              prInfo.state === "OPEN" ? "bg-green-500/15 text-green-400" : "bg-purple-500/15 text-purple-400"
+            }`}>
+              PR #{prInfo.number}
+            </span>
+            <a href={prInfo.url} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground">
+              <ExternalLink size={10} />
+            </a>
+          </>
+        )}
       </div>
 
-      {/* PR info */}
-      {prInfo && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-border/50 px-3 py-1">
-          <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-            prInfo.state === "OPEN" ? "bg-green-500/15 text-green-400" : "bg-purple-500/15 text-purple-400"
-          }`}>
-            PR #{prInfo.number}
-          </span>
-          <span className="text-[10px] text-muted-foreground truncate flex-1">{prInfo.title}</span>
-          <a href={prInfo.url} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground">
-            <ExternalLink size={10} />
-          </a>
-        </div>
-      )}
-
-      {/* Error */}
       {error && (
         <div className="shrink-0 border-b border-border/50 px-3 py-1">
           <span className="text-[10px] text-red-400">{error}</span>
         </div>
       )}
 
-      {/* Scrollable content: files + history */}
-      <div className="flex-1 overflow-y-auto">
-        {/* Staged files */}
-        <FileSection
-          title="Staged"
-          count={status.staged.length}
-          action={status.staged.length > 0 ? { label: "Unstage all", icon: <ChevronDown size={10} />, onClick: handleUnstageAll } : undefined}
-        >
-          {status.staged.map((f) => (
-            <FileRow
-              key={f.path}
-              path={f.path}
-              status={f.status}
-              actionIcon={<Minus size={10} />}
-              actionLabel="Unstage"
-              expanded={expandedFile === f.path}
-              onAction={() => handleUnstageFile(f.path)}
-              onToggleDiff={() => toggleFileDiff(f.path)}
-              onOpenZen={() => openZen(f.path)}
-              sessionId={sessionId}
-            />
-          ))}
-        </FileSection>
+      {/* Two-column: History (left) + Files sidebar (right) */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left: History/Timeline */}
+        {!hideHistory && (
+        <div className={`overflow-y-auto ${hideChanges ? "flex-1" : "flex-1 border-r border-border/50"}`}>
+          {commits.length > 0 ? (
+            <div>
+              <div className="flex items-center justify-between px-3 py-1.5">
+                <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                  History ({commits.length})
+                </span>
+                <div className="flex items-center gap-0.5">
+                  <button
+                    onClick={() => setHistoryView("list")}
+                    className={`rounded p-0.5 transition-colors ${historyView === "list" ? "text-foreground bg-secondary" : "text-muted-foreground hover:text-foreground"}`}
+                    aria-label="List view"
+                  >
+                    <List size={10} />
+                  </button>
+                  <button
+                    onClick={() => setHistoryView("graph")}
+                    className={`rounded p-0.5 transition-colors ${historyView === "graph" ? "text-foreground bg-secondary" : "text-muted-foreground hover:text-foreground"}`}
+                    aria-label="Graph view"
+                  >
+                    <GitCommitHorizontal size={10} />
+                  </button>
+                </div>
+              </div>
+              {commits.map((c, i) => {
+                const isExpanded = expandedCommit === c.hash;
+                const files = commitFiles[c.hash] ?? [];
+                return (
+                  <div key={c.hash}>
+                    {historyView === "graph" ? (
+                      <div
+                        onClick={() => toggleCommitExpand(c.hash)}
+                        className={`flex items-start gap-2 rounded px-3 py-0.5 transition-colors cursor-pointer ${isExpanded ? "bg-secondary/40" : "hover:bg-secondary/30"}`}
+                      >
+                        <div className="flex flex-col items-center pt-1">
+                          <div className={`size-2 rounded-full ${isExpanded ? "bg-primary" : "bg-muted-foreground/60"}`} />
+                          {i < commits.length - 1 && <div className="w-px flex-1 bg-border/50 min-h-3" />}
+                        </div>
+                        <div className="min-w-0 flex-1 pb-1">
+                          <p className="truncate text-[10px] text-foreground/80">{c.message}</p>
+                          <span className="font-mono text-[9px] text-muted-foreground/50">{c.hash}</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div
+                        onClick={() => toggleCommitExpand(c.hash)}
+                        className={`flex items-center gap-2 px-3 py-0.5 transition-colors cursor-pointer ${isExpanded ? "bg-secondary/40" : "hover:bg-secondary/30"}`}
+                      >
+                        <span className="shrink-0 font-mono text-[10px] text-muted-foreground/60">{c.hash}</span>
+                        <span className="truncate text-[10px] text-foreground/70">{c.message}</span>
+                      </div>
+                    )}
+                    {isExpanded && files.length > 0 && (
+                      <div className="ml-6 mb-1">
+                        {files.map((f) => {
+                          const name = f.split("/").pop() ?? f;
+                          return (
+                            <button
+                              key={f}
+                              type="button"
+                              onClick={() => openCommitFileZen(c.hash, f)}
+                              className="flex w-full items-center gap-1.5 rounded px-2 py-0.5 text-left text-[10px] text-muted-foreground hover:bg-secondary/30 hover:text-foreground transition-colors"
+                            >
+                              <span className="size-1 shrink-0 rounded-full bg-muted-foreground/40" />
+                              <span className="truncate">{name}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {isExpanded && files.length === 0 && (
+                      <div className="ml-6 mb-1 px-2 py-0.5">
+                        <span className="text-[10px] text-muted-foreground/50">Loading files...</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="flex h-full items-center justify-center">
+              <span className="text-[10px] text-muted-foreground">No commits yet</span>
+            </div>
+          )}
+        </div>
+        )}
 
-        {/* Unstaged files */}
-        <FileSection
-          title="Changes"
-          count={status.unstaged.length}
-          action={status.unstaged.length > 0 ? { label: "Stage all", icon: <ChevronUp size={10} />, onClick: handleStageAll } : undefined}
-        >
-          {status.unstaged.map((f) => (
-            <FileRow
-              key={f.path}
-              path={f.path}
-              status={f.status}
-              actionIcon={<Plus size={10} />}
-              actionLabel="Stage"
-              expanded={expandedFile === f.path}
-              onAction={() => handleStageFile(f.path)}
-              onToggleDiff={() => toggleFileDiff(f.path)}
-              onOpenZen={() => openZen(f.path)}
-              sessionId={sessionId}
-            />
-          ))}
-        </FileSection>
-
-        {/* Untracked files */}
-        {status.untracked.length > 0 && (
-          <FileSection title="Untracked" count={status.untracked.length}>
-            {status.untracked.map((path) => (
+        {/* Right sidebar: Staged / Unstaged / Untracked */}
+        {!hideChanges && (
+        <div className={`overflow-y-auto ${hideHistory ? "flex-1" : "w-52 shrink-0"}`}>
+          <FileSection
+            title="Staged"
+            count={status.staged.length}
+            action={status.staged.length > 0 ? { label: "Unstage all", icon: <ChevronDown size={10} />, onClick: handleUnstageAll } : undefined}
+          >
+            {status.staged.map((f) => (
               <FileRow
-                key={path}
-                path={path}
-                status="Create"
-                actionIcon={<Plus size={10} />}
-                actionLabel="Stage"
-                expanded={expandedFile === path}
-                onAction={() => handleStageFile(path)}
-                onToggleDiff={() => toggleFileDiff(path)}
-                onOpenZen={() => openZen(path)}
+                key={f.path}
+                path={f.path}
+                status={f.status}
+                actionIcon={<Minus size={10} />}
+                actionLabel="Unstage"
+                expanded={expandedFile === f.path}
+                onAction={() => handleUnstageFile(f.path)}
+                onToggleDiff={() => toggleFileDiff(f.path)}
+                onOpenZen={() => openZen(f.path)}
                 sessionId={sessionId}
               />
             ))}
           </FileSection>
-        )}
 
-        {/* History */}
-        {commits.length > 0 && (
-          <div className="border-t border-border/50">
-            <div className="flex items-center justify-between px-3 py-1.5">
-              <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                History ({commits.length})
-              </span>
-              <div className="flex items-center gap-0.5">
-                <button
-                  onClick={() => setHistoryView("list")}
-                  className={`rounded p-0.5 transition-colors ${historyView === "list" ? "text-foreground bg-secondary" : "text-muted-foreground hover:text-foreground"}`}
-                  aria-label="List view"
-                >
-                  <List size={10} />
-                </button>
-                <button
-                  onClick={() => setHistoryView("graph")}
-                  className={`rounded p-0.5 transition-colors ${historyView === "graph" ? "text-foreground bg-secondary" : "text-muted-foreground hover:text-foreground"}`}
-                  aria-label="Graph view"
-                >
-                  <GitCommitHorizontal size={10} />
-                </button>
-              </div>
-            </div>
-            {historyView === "list" ? (
-              commits.map((c) => (
-                <div key={c.hash} className="flex items-center gap-2 px-3 py-0.5 hover:bg-secondary/30 transition-colors">
-                  <span className="shrink-0 font-mono text-[10px] text-muted-foreground/60">{c.hash}</span>
-                  <span className="truncate text-[10px] text-foreground/70">{c.message}</span>
-                </div>
-              ))
-            ) : (
-              <div className="px-3 pb-2">
-                {commits.map((c, i) => (
-                  <div key={c.hash} className="flex items-start gap-2 hover:bg-secondary/30 rounded px-1 py-0.5 transition-colors">
-                    <div className="flex flex-col items-center">
-                      <div className="size-2 rounded-full bg-primary" />
-                      {i < commits.length - 1 && <div className="w-px flex-1 bg-border/50 min-h-3" />}
-                    </div>
-                    <div className="min-w-0 flex-1 pb-1">
-                      <p className="truncate text-[10px] text-foreground/80">{c.message}</p>
-                      <span className="font-mono text-[9px] text-muted-foreground/50">{c.hash}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <FileSection
+            title="Changes"
+            count={status.unstaged.length}
+            action={status.unstaged.length > 0 ? { label: "Stage all", icon: <ChevronUp size={10} />, onClick: handleStageAll } : undefined}
+          >
+            {status.unstaged.map((f) => (
+              <FileRow
+                key={f.path}
+                path={f.path}
+                status={f.status}
+                actionIcon={<Plus size={10} />}
+                actionLabel="Stage"
+                expanded={expandedFile === f.path}
+                onAction={() => handleStageFile(f.path)}
+                onToggleDiff={() => toggleFileDiff(f.path)}
+                onOpenZen={() => openZen(f.path)}
+                sessionId={sessionId}
+              />
+            ))}
+          </FileSection>
+
+          {status.untracked.length > 0 && (
+            <FileSection title="Untracked" count={status.untracked.length}>
+              {status.untracked.map((path) => (
+                <FileRow
+                  key={path}
+                  path={path}
+                  status="Create"
+                  actionIcon={<Plus size={10} />}
+                  actionLabel="Stage"
+                  expanded={expandedFile === path}
+                  onAction={() => handleStageFile(path)}
+                  onToggleDiff={() => toggleFileDiff(path)}
+                  onOpenZen={() => openZen(path)}
+                  sessionId={sessionId}
+                />
+              ))}
+            </FileSection>
+          )}
+        </div>
         )}
       </div>
 
       {/* Fixed commit bar at bottom */}
+      {!hideHistory && (
       <div className="shrink-0 border-t border-border/50 p-2">
         <Textarea
           value={commitMsg}
@@ -361,6 +421,7 @@ export function GitPanel({ sessionId }: GitPanelProps) {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }
@@ -433,18 +494,11 @@ function FileRow({
         </button>
         <span className={`shrink-0 font-mono text-[10px] font-bold w-3 ${color}`}>{letter}</span>
         <button
-          onClick={onToggleDiff}
+          onClick={onOpenZen}
           className="min-w-0 flex-1 truncate text-left text-[11px] text-foreground/80 hover:text-foreground transition-colors"
           title={path}
         >
           {filename}
-        </button>
-        <button
-          onClick={onOpenZen}
-          className="flex size-4 shrink-0 items-center justify-center rounded opacity-0 transition-opacity group-hover:opacity-100 hover:bg-secondary text-muted-foreground hover:text-foreground"
-          aria-label="Open in Zen Mode"
-        >
-          <Maximize2 size={10} />
         </button>
         <button
           onClick={onAction}
@@ -455,8 +509,15 @@ function FileRow({
         </button>
       </div>
       {expanded && (
-        <div className="mx-2 mb-1 max-h-64 overflow-hidden rounded border border-border/30">
+        <div className="relative mx-2 mb-1 max-h-64 overflow-hidden rounded border border-border/30">
           <DiffView filePath={path} sessionId={sessionId} />
+          <button
+            onClick={onOpenZen}
+            className="absolute right-1 top-1 flex size-5 items-center justify-center rounded bg-card/80 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+            aria-label="Expand to Zen Mode"
+          >
+            <Maximize2 size={10} />
+          </button>
         </div>
       )}
     </div>

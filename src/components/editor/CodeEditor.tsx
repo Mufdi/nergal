@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { EditorView, keymap } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { basicSetup } from "codemirror";
@@ -51,17 +51,31 @@ export function CodeEditor({ filePath, sessionId, readOnly = false }: CodeEditor
   const viewRef = useRef<EditorView | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
 
-  const saveFile = useCallback(async () => {
+  function doSave() {
     const view = viewRef.current;
     if (!view || readOnly) return;
     const content = view.state.doc.toString();
-    try {
-      await invoke("write_file_content", { sessionId, path: filePath, content });
-    } catch (err) {
-      setError(String(err));
-    }
-  }, [filePath, sessionId, readOnly]);
+    console.log("[CodeEditor] saving", { sessionId, filePath, contentLength: content.length });
+    invoke<string>("write_file_content", { sessionId, path: filePath, content })
+      .then((absPath) => {
+        console.log("[CodeEditor] saved OK to", absPath);
+        setSaved(true);
+        setTimeout(() => setSaved(false), 1500);
+      })
+      .catch((err) => {
+        console.error("[CodeEditor] save failed:", err);
+        setError(String(err));
+      });
+  }
+
+  // Listen for global save event (from Ctrl+S shortcut)
+  useEffect(() => {
+    const handler = () => doSave();
+    document.addEventListener("cluihud:save-file", handler);
+    return () => document.removeEventListener("cluihud:save-file", handler);
+  });
 
   useEffect(() => {
     const container = containerRef.current;
@@ -71,19 +85,32 @@ export function CodeEditor({ filePath, sessionId, readOnly = false }: CodeEditor
 
     invoke<string>("read_file_content", { sessionId, path: filePath })
       .then((content) => {
+        const saveKeymap = keymap.of([
+          {
+            key: "Mod-s",
+            run: (v) => {
+              const doc = v.state.doc.toString();
+              console.log("[CodeEditor:keymap] saving via Mod-s", { contentLength: doc.length });
+              invoke<string>("write_file_content", { sessionId, path: filePath, content: doc })
+                .then((absPath) => {
+                  console.log("[CodeEditor:keymap] saved OK to", absPath);
+                  setSaved(true);
+                  setTimeout(() => setSaved(false), 1500);
+                })
+                .catch((err) => console.error("[CodeEditor:keymap] save failed:", err));
+              return true;
+            },
+          },
+        ]);
+
         const state = EditorState.create({
           doc: content,
           extensions: [
             basicSetup,
             oneDark,
             getLanguageExtension(filePath),
-            keymap.of([
-              ...searchKeymap,
-              {
-                key: "Ctrl-s",
-                run: () => { saveFile(); return true; },
-              },
-            ]),
+            saveKeymap,
+            keymap.of(searchKeymap),
             EditorView.editable.of(!readOnly),
             EditorView.theme({
               "&": { height: "100%", fontSize: "12px" },
@@ -105,7 +132,7 @@ export function CodeEditor({ filePath, sessionId, readOnly = false }: CodeEditor
       view?.destroy();
       viewRef.current = null;
     };
-  }, [filePath, sessionId, readOnly, saveFile]);
+  }, [filePath, sessionId, readOnly]);
 
   if (error) {
     return (
@@ -120,6 +147,11 @@ export function CodeEditor({ filePath, sessionId, readOnly = false }: CodeEditor
       {loading && (
         <div className="absolute inset-0 flex items-center justify-center bg-card">
           <Loader2 className="size-4 animate-spin text-muted-foreground" />
+        </div>
+      )}
+      {saved && (
+        <div className="absolute right-2 top-2 z-10 rounded bg-green-500/20 px-2 py-0.5 text-[10px] text-green-400">
+          Saved
         </div>
       )}
       <div ref={containerRef} className="h-full w-full" />

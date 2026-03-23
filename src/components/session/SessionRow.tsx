@@ -57,9 +57,12 @@ export function SessionRow({
   }
 
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onSelect}
-      className={`group flex w-full items-center gap-1.5 pl-7 pr-3 py-1 text-left transition-colors ${
+      onKeyDown={(e) => { if (e.key === "Enter") onSelect(); }}
+      className={`group flex w-full items-center gap-1.5 pl-7 pr-3 py-1 text-left transition-colors cursor-pointer ${
         isActive
           ? "bg-secondary/60 text-foreground"
           : "hover:bg-secondary/40 text-foreground/70"
@@ -165,7 +168,7 @@ export function SessionRow({
       ) : (
         <CircleDot className="size-3 shrink-0 text-muted-foreground/40" />
       )}
-    </button>
+    </div>
   );
 }
 

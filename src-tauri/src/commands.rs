@@ -1314,3 +1314,76 @@ pub fn create_pr(
 
     crate::worktree::create_pr(&cwd, branch, base, &title, &body).map_err(|e| e.to_string())
 }
+
+// ── File Browser ──
+
+#[derive(serde::Serialize)]
+pub struct DirEntry {
+    name: String,
+    is_dir: bool,
+    path: String,
+}
+
+#[tauri::command]
+pub fn list_directory(
+    session_id: String,
+    path: String,
+    db: State<'_, SharedDb>,
+) -> Result<Vec<DirEntry>, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let target = if path == "." { cwd.clone() } else { cwd.join(&path) };
+
+    let mut entries = Vec::new();
+    let read_dir = std::fs::read_dir(&target).map_err(|e| e.to_string())?;
+
+    for entry in read_dir {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') {
+            continue;
+        }
+        let metadata = entry.metadata().map_err(|e| e.to_string())?;
+        let rel_path = if path == "." {
+            name.clone()
+        } else {
+            format!("{}/{}", path, name)
+        };
+        entries.push(DirEntry {
+            name,
+            is_dir: metadata.is_dir(),
+            path: rel_path,
+        });
+    }
+
+    entries.sort_by(|a, b| {
+        b.is_dir.cmp(&a.is_dir).then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+
+    Ok(entries)
+}
+
+#[tauri::command]
+pub fn read_file_content(
+    session_id: String,
+    path: String,
+    db: State<'_, SharedDb>,
+) -> Result<String, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let file_path = cwd.join(&path);
+    std::fs::read_to_string(&file_path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn write_file_content(
+    session_id: String,
+    path: String,
+    content: String,
+    db: State<'_, SharedDb>,
+) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let file_path = cwd.join(&path);
+    std::fs::write(&file_path, content).map_err(|e| e.to_string())
+}

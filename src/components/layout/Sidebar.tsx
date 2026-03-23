@@ -19,6 +19,7 @@ import { CommitModal } from "@/components/session/CommitModal";
 import { invoke } from "@/lib/tauri";
 import { open } from "@tauri-apps/plugin-dialog";
 import * as terminalService from "@/components/terminal/terminalService";
+import { TasksIsland } from "@/components/tasks/TasksIsland";
 import { Eye, EyeOff } from "lucide-react";
 import {
   Tooltip,
@@ -74,6 +75,8 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
       <div className="flex-1 overflow-y-auto">
         <WorkspacesView />
       </div>
+
+      <TasksIsland />
     </div>
   );
 }

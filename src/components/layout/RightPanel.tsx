@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import {
   Tooltip,
+  TooltipProvider,
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
@@ -78,6 +79,7 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
 
   if (collapsed) {
     return (
+      <TooltipProvider delay={0}>
       <div className="flex h-full w-full flex-col items-center gap-0.5 bg-background py-1">
         <button
           onClick={onToggle}
@@ -111,6 +113,7 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
           );
         })}
       </div>
+      </TooltipProvider>
     );
   }
 

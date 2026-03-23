@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, type ReactNode, type ComponentPropsWithoutRef } from "react";
+import { useState, useEffect, useRef, useCallback, type ReactNode, type ComponentPropsWithoutRef } from "react";
 import { useAtomValue } from "jotai";
 import { activeAnnotationsAtom, type Annotation } from "@/stores/annotations";
 import { PlanAnnotationToolbar } from "./PlanAnnotationToolbar";
@@ -24,10 +24,12 @@ interface Props {
 }
 
 export function AnnotatableMarkdownView({ content }: Props) {
-  const [toolbar, setToolbar] = useState<ToolbarState | null>(null);
-  const annotations = useAtomValue(activeAnnotationsAtom);
   const containerRef = useRef<HTMLDivElement>(null);
-  const activeElRef = useRef<HTMLElement | null>(null);
+  const [toolbar, setToolbar] = useState<ToolbarState | null>(null);
+  const toolbarOpenRef = useRef(false);
+  const annotations = useAtomValue(activeAnnotationsAtom);
+
+  toolbarOpenRef.current = !!toolbar;
 
   const annotationMap = new Map<string, Annotation>();
   for (const ann of annotations) {
@@ -40,100 +42,166 @@ export function AnnotatableMarkdownView({ content }: Props) {
     return ann ? `border-l-2 ${GUTTER_COLORS[ann.type]} pl-2` : "";
   }
 
-  // Clear active element highlight
-  function clearActive() {
-    activeElRef.current?.classList.remove("annotatable-active");
-    activeElRef.current = null;
-  }
-
-  // Set active element highlight (yellow dashed)
-  function setActive(el: HTMLElement) {
-    clearActive();
-    el.classList.add("annotatable-active");
-    activeElRef.current = el;
+  // Clear all DOM-level highlights
+  function clearDomState() {
+    const c = containerRef.current;
+    if (!c) return;
+    c.querySelector("[data-pinpoint-active]")?.removeAttribute("data-pinpoint-active");
+    c.querySelectorAll("mark.pending-selection").forEach((el) => {
+      const parent = el.parentNode;
+      while (el.firstChild) parent?.insertBefore(el.firstChild, el);
+      el.remove();
+    });
   }
 
   const closeToolbar = useCallback(() => {
-    clearActive();
+    clearDomState();
     setToolbar(null);
   }, []);
 
-  // Escape closes toolbar
+  // Click handler for pinpoint mode
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    function handleClick(e: MouseEvent) {
+      if (!container) return;
+
+      // If toolbar is open, close it (unless clicking inside toolbar)
+      if (toolbarOpenRef.current) {
+        const toolbarEl = document.querySelector("[data-annotation-toolbar]");
+        if (toolbarEl?.contains(e.target as Node)) return;
+        closeToolbar();
+        return;
+      }
+
+      // If there's a text selection, don't do pinpoint
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed && sel.toString().trim().length > 1) return;
+
+      const target = (e.target as HTMLElement).closest("[data-annotatable]") as HTMLElement | null;
+      if (!target || !container.contains(target)) return;
+
+      // Clear previous, set new
+      container.querySelector("[data-pinpoint-active]")?.removeAttribute("data-pinpoint-active");
+      target.setAttribute("data-pinpoint-active", "");
+
+      const text = target.textContent ?? "";
+      const rect = target.getBoundingClientRect();
+      setToolbar({
+        position: { top: rect.bottom + 4, left: rect.left },
+        targetText: text,
+        targetRange: { start: 0, end: text.length },
+        mode: "pinpoint",
+      });
+    }
+
+    container.addEventListener("click", handleClick);
+    return () => container.removeEventListener("click", handleClick);
+  }, [closeToolbar]);
+
+  // Selection handler
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    function handleMouseUp() {
+      if (toolbarOpenRef.current) return;
+
+      setTimeout(() => {
+        const sel = window.getSelection();
+        if (!sel || sel.isCollapsed || sel.toString().trim().length < 2) return;
+        if (!sel.rangeCount || !container!.contains(sel.anchorNode)) return;
+
+        const text = sel.toString().trim();
+        const range = sel.getRangeAt(0);
+
+        // Clear pinpoint
+        container!.querySelector("[data-pinpoint-active]")?.removeAttribute("data-pinpoint-active");
+
+        // Wrap selection in <mark> (DOM-direct, no React re-render needed for this)
+        try {
+          const mark = document.createElement("mark");
+          mark.className = "pending-selection";
+          range.surroundContents(mark);
+
+          const rect = mark.getBoundingClientRect();
+          sel.removeAllRanges();
+          setToolbar({
+            position: { top: rect.bottom + 4, left: rect.left },
+            targetText: text,
+            targetRange: { start: 0, end: text.length },
+            mode: "selection",
+          });
+        } catch {
+          // Multi-element selection — use range rect as fallback
+          const rect = range.getBoundingClientRect();
+          sel.removeAllRanges();
+          setToolbar({
+            position: { top: rect.bottom + 4, left: rect.left },
+            targetText: text,
+            targetRange: { start: 0, end: text.length },
+            mode: "selection",
+          });
+        }
+      }, 10);
+    }
+
+    container.addEventListener("mouseup", handleMouseUp);
+    return () => container.removeEventListener("mouseup", handleMouseUp);
+  }, []);
+
+  // Escape
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && toolbar) {
+      if (e.key === "Escape" && toolbarOpenRef.current) {
         e.preventDefault();
         closeToolbar();
       }
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [toolbar, closeToolbar]);
+  }, [closeToolbar]);
 
-  // mousedown on annotatable = pinpoint click
-  // We use mousedown (not click) so it fires before selection starts
-  function handleMouseDown(e: React.MouseEvent) {
-    // If toolbar is open and click is outside toolbar, close it
-    if (toolbar) {
-      const toolbarEl = document.querySelector("[data-annotation-toolbar]");
-      if (toolbarEl && !toolbarEl.contains(e.target as Node)) {
-        closeToolbar();
+  // Restore existing annotations as <mark> in DOM
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    // Small delay to ensure markdown has rendered
+    const timer = setTimeout(() => {
+      container.querySelectorAll("mark.annotation-mark").forEach((el) => {
+        const parent = el.parentNode;
+        while (el.firstChild) parent?.insertBefore(el.firstChild, el);
+        el.remove();
+      });
+
+      for (const ann of annotations) {
+        const range = findTextInContainer(container, ann.target);
+        if (!range) continue;
+        try {
+          const mark = document.createElement("mark");
+          mark.className = `annotation-mark annotation-${ann.type}`;
+          mark.dataset.annotationId = ann.id;
+          range.surroundContents(mark);
+        } catch {
+          // Skip multi-element ranges
+        }
       }
-      return;
-    }
-  }
+    }, 50);
 
-  // mouseup: check for text selection
-  function handleMouseUp(_e: React.MouseEvent) {
-    // Small delay to let browser finalize selection
-    setTimeout(() => {
-      const sel = window.getSelection();
-      if (sel && !sel.isCollapsed && sel.toString().trim().length >= 2) {
-        if (!containerRef.current?.contains(sel.anchorNode)) return;
+    return () => clearTimeout(timer);
+  }, [annotations, content]);
 
-        // If we had a pinpoint active, clear it — selection takes over
-        clearActive();
-
-        const range = sel.getRangeAt(0);
-        const rect = range.getBoundingClientRect();
-        setToolbar({
-          position: { top: rect.bottom + 4, left: rect.left },
-          targetText: sel.toString().trim(),
-          targetRange: { start: 0, end: sel.toString().length },
-          mode: "selection",
-        });
-      }
-    }, 10);
-  }
-
-  // Single click on annotatable element (no drag)
-  function handleClick(e: React.MouseEvent) {
-    if (toolbar) return;
-
-    const sel = window.getSelection();
-    if (sel && !sel.isCollapsed && sel.toString().trim().length >= 2) return;
-
-    const target = (e.target as HTMLElement).closest("[data-annotatable]") as HTMLElement | null;
-    if (!target) return;
-
-    setActive(target);
-    const text = target.textContent ?? "";
-    const rect = target.getBoundingClientRect();
-    setToolbar({
-      position: { top: rect.bottom + 4, left: rect.left },
-      targetText: text,
-      targetRange: { start: 0, end: text.length },
-      mode: "pinpoint",
-    });
-  }
+  // Right panel tooltip instant
+  useEffect(() => {
+    // Set tooltip delay on right panel collapsed tooltips
+  }, []);
 
   return (
     <div
       ref={containerRef}
       className="annotatable-plan prose-invert max-w-none px-4 py-3 text-sm text-text"
-      onMouseDown={handleMouseDown}
-      onMouseUp={handleMouseUp}
-      onClick={handleClick}
     >
       <Markdown
         remarkPlugins={[remarkGfm]}
@@ -162,10 +230,10 @@ export function AnnotatableMarkdownView({ content }: Props) {
             <li data-annotatable="list-item" className={`annotatable-el mb-0.5 text-text ${getGutter(props.children)}`} {...props} />
           ),
           ul: ({ node, ...props }: ComponentPropsWithoutRef<"ul"> & { node?: unknown }) => (
-            <ul data-annotatable="list" className={`annotatable-el mb-2 ml-4 list-disc text-text`} {...props} />
+            <ul data-annotatable="list" className="annotatable-el mb-2 ml-4 list-disc text-text" {...props} />
           ),
           ol: ({ node, ...props }: ComponentPropsWithoutRef<"ol"> & { node?: unknown }) => (
-            <ol data-annotatable="list" className={`annotatable-el mb-2 ml-4 list-decimal text-text`} {...props} />
+            <ol data-annotatable="list" className="annotatable-el mb-2 ml-4 list-decimal text-text" {...props} />
           ),
           code: ({ className, children, node, ...props }: ComponentPropsWithoutRef<"code"> & { node?: unknown }) => {
             const isBlock = className?.startsWith("language-");
@@ -180,7 +248,7 @@ export function AnnotatableMarkdownView({ content }: Props) {
             }
             return <code className="bg-surface-raised px-1 py-0.5 font-mono text-xs text-accent" {...props}>{children}</code>;
           },
-          pre: ({ node: _node, children }: ComponentPropsWithoutRef<"pre"> & { node?: unknown }) => <div>{children}</div>,
+          pre: ({ node: _n, children }: ComponentPropsWithoutRef<"pre"> & { node?: unknown }) => <div>{children}</div>,
           a: ({ node, ...props }: ComponentPropsWithoutRef<"a"> & { node?: unknown }) => <a className="text-accent underline" {...props} />,
           blockquote: ({ node, ...props }: ComponentPropsWithoutRef<"blockquote"> & { node?: unknown }) => (
             <div data-annotatable="blockquote" className={`annotatable-el ${getGutter(props.children)}`}>
@@ -224,4 +292,20 @@ function extractText(children: ReactNode): string {
     return extractText((children as { props: { children?: ReactNode } }).props.children);
   }
   return "";
+}
+
+function findTextInContainer(container: HTMLElement, searchText: string): Range | null {
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+  let node: Text | null;
+  while ((node = walker.nextNode() as Text | null)) {
+    const text = node.textContent ?? "";
+    const idx = text.indexOf(searchText);
+    if (idx !== -1) {
+      const range = document.createRange();
+      range.setStart(node, idx);
+      range.setEnd(node, idx + searchText.length);
+      return range;
+    }
+  }
+  return null;
 }

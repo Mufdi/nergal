@@ -77,18 +77,6 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
   }
 
   if (collapsed) {
-    // Show tabs if any, otherwise show the active panel view icon
-    const items: { id: string; type: TabType; label: string; onClick: () => void }[] = tabs.length > 0
-      ? tabs.map((tab) => ({
-          id: tab.id,
-          type: tab.type,
-          label: tab.label,
-          onClick: () => { setActiveTabId(tab.id); onToggle(); },
-        }))
-      : activePanelView
-        ? [{ id: `view-${activePanelView}`, type: activePanelView, label: viewPanelLabel(activePanelView), onClick: onToggle }]
-        : [];
-
     return (
       <div className="flex h-full w-full flex-col items-center gap-0.5 bg-background py-1">
         <button
@@ -100,25 +88,25 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
             <polyline points="15 18 9 12 15 6" />
           </svg>
         </button>
-        {items.map((item) => {
-          const Icon = TAB_ICONS[item.type];
-          const isActive = item.id === (activeTab?.id ?? `view-${activePanelView}`);
+        {tabs.map((tab) => {
+          const Icon = TAB_ICONS[tab.type];
+          const isActive = tab.id === activeTab?.id;
           return (
-            <Tooltip key={item.id}>
+            <Tooltip key={tab.id}>
               <TooltipTrigger
                 render={
                   <button
-                    onClick={item.onClick}
+                    onClick={() => { setActiveTabId(tab.id); onToggle(); }}
                     className={`flex size-4 items-center justify-center rounded transition-colors ${
                       isActive ? "text-foreground bg-secondary" : "text-muted-foreground hover:bg-secondary hover:text-foreground"
                     }`}
-                    aria-label={item.label}
+                    aria-label={tab.label}
                   />
                 }
               >
                 <Icon size={12} />
               </TooltipTrigger>
-              <TooltipContent side="left">{item.label}</TooltipContent>
+              <TooltipContent side="left">{tab.label}</TooltipContent>
             </Tooltip>
           );
         })}

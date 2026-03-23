@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, type ReactNode, type ComponentPropsWithoutRef } from "react";
+import { useState, useCallback, useRef, useEffect, type ReactNode, type ComponentPropsWithoutRef } from "react";
 import { useAtomValue } from "jotai";
 import { activeAnnotationsAtom, type Annotation } from "@/stores/annotations";
 import { PlanAnnotationToolbar } from "./PlanAnnotationToolbar";
@@ -27,7 +27,6 @@ export function AnnotatableMarkdownView({ content }: Props) {
   const [toolbar, setToolbar] = useState<ToolbarState | null>(null);
   const annotations = useAtomValue(activeAnnotationsAtom);
   const containerRef = useRef<HTMLDivElement>(null);
-  const mouseDownPos = useRef<{ x: number; y: number } | null>(null);
   const activeElRef = useRef<HTMLElement | null>(null);
 
   const annotationMap = new Map<string, Annotation>();
@@ -41,29 +40,60 @@ export function AnnotatableMarkdownView({ content }: Props) {
     return ann ? `border-l-2 ${GUTTER_COLORS[ann.type]} pl-2` : "";
   }
 
-  // Track mouse down position to distinguish click from drag (text selection)
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    mouseDownPos.current = { x: e.clientX, y: e.clientY };
+  // Clear active element highlight
+  function clearActive() {
+    activeElRef.current?.classList.remove("annotatable-active");
+    activeElRef.current = null;
+  }
+
+  // Set active element highlight (yellow dashed)
+  function setActive(el: HTMLElement) {
+    clearActive();
+    el.classList.add("annotatable-active");
+    activeElRef.current = el;
+  }
+
+  const closeToolbar = useCallback(() => {
+    clearActive();
+    setToolbar(null);
   }, []);
 
-  const handleMouseUp = useCallback((e: React.MouseEvent) => {
-    if (toolbar) return;
+  // Escape closes toolbar
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && toolbar) {
+        e.preventDefault();
+        closeToolbar();
+      }
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [toolbar, closeToolbar]);
 
-    const downPos = mouseDownPos.current;
-    mouseDownPos.current = null;
-    if (!downPos) return;
+  // mousedown on annotatable = pinpoint click
+  // We use mousedown (not click) so it fires before selection starts
+  function handleMouseDown(e: React.MouseEvent) {
+    // If toolbar is open and click is outside toolbar, close it
+    if (toolbar) {
+      const toolbarEl = document.querySelector("[data-annotation-toolbar]");
+      if (toolbarEl && !toolbarEl.contains(e.target as Node)) {
+        closeToolbar();
+      }
+      return;
+    }
+  }
 
-    const dx = Math.abs(e.clientX - downPos.x);
-    const dy = Math.abs(e.clientY - downPos.y);
-    const wasDrag = dx > 5 || dy > 5;
-
-    // Small delay so browser finalizes selection before we read it
+  // mouseup: check for text selection
+  function handleMouseUp(_e: React.MouseEvent) {
+    // Small delay to let browser finalize selection
     setTimeout(() => {
       const sel = window.getSelection();
-      const hasSelection = sel && !sel.isCollapsed && sel.toString().trim().length >= 2;
+      if (sel && !sel.isCollapsed && sel.toString().trim().length >= 2) {
+        if (!containerRef.current?.contains(sel.anchorNode)) return;
 
-      if (hasSelection && containerRef.current?.contains(sel.anchorNode)) {
-        // Text selection → show selection toolbar (don't clear selection)
+        // If we had a pinpoint active, clear it — selection takes over
+        clearActive();
+
         const range = sel.getRangeAt(0);
         const rect = range.getBoundingClientRect();
         setToolbar({
@@ -72,49 +102,30 @@ export function AnnotatableMarkdownView({ content }: Props) {
           targetRange: { start: 0, end: sel.toString().length },
           mode: "selection",
         });
-        return;
       }
-
-      if (wasDrag) return;
-
-      // Clean click on annotatable element → pinpoint toolbar
-      const target = (e.target as HTMLElement).closest("[data-annotatable]") as HTMLElement | null;
-      if (!target) return;
-
-      // Mark element as active (yellow dashed outline)
-      activeElRef.current?.classList.remove("annotatable-active");
-      target.classList.add("annotatable-active");
-      activeElRef.current = target;
-
-      const text = target.textContent ?? "";
-      const rect = target.getBoundingClientRect();
-      setToolbar({
-        position: { top: rect.bottom + 4, left: rect.left },
-        targetText: text,
-        targetRange: { start: 0, end: text.length },
-        mode: "pinpoint",
-      });
     }, 10);
-  }, [toolbar]);
+  }
 
-  const closeToolbar = useCallback(() => {
-    activeElRef.current?.classList.remove("annotatable-active");
-    activeElRef.current = null;
-    setToolbar((prev) => {
-      if (prev?.mode !== "selection") {
-        window.getSelection()?.removeAllRanges();
-      }
-      return null;
+  // Single click on annotatable element (no drag)
+  function handleClick(e: React.MouseEvent) {
+    if (toolbar) return;
+
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed && sel.toString().trim().length >= 2) return;
+
+    const target = (e.target as HTMLElement).closest("[data-annotatable]") as HTMLElement | null;
+    if (!target) return;
+
+    setActive(target);
+    const text = target.textContent ?? "";
+    const rect = target.getBoundingClientRect();
+    setToolbar({
+      position: { top: rect.bottom + 4, left: rect.left },
+      targetText: text,
+      targetRange: { start: 0, end: text.length },
+      mode: "pinpoint",
     });
-  }, []);
-
-  // Escape closes toolbar
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === "Escape" && toolbar) {
-      e.preventDefault();
-      closeToolbar();
-    }
-  }, [toolbar, closeToolbar]);
+  }
 
   return (
     <div
@@ -122,8 +133,7 @@ export function AnnotatableMarkdownView({ content }: Props) {
       className="annotatable-plan prose-invert max-w-none px-4 py-3 text-sm text-text"
       onMouseDown={handleMouseDown}
       onMouseUp={handleMouseUp}
-      onKeyDown={handleKeyDown}
-      tabIndex={-1}
+      onClick={handleClick}
     >
       <Markdown
         remarkPlugins={[remarkGfm]}
@@ -192,13 +202,15 @@ export function AnnotatableMarkdownView({ content }: Props) {
       </Markdown>
 
       {toolbar && (
-        <PlanAnnotationToolbar
-          position={toolbar.position}
-          targetText={toolbar.targetText}
-          targetRange={toolbar.targetRange}
-          mode={toolbar.mode}
-          onClose={closeToolbar}
-        />
+        <div data-annotation-toolbar>
+          <PlanAnnotationToolbar
+            position={toolbar.position}
+            targetText={toolbar.targetText}
+            targetRange={toolbar.targetRange}
+            mode={toolbar.mode}
+            onClose={closeToolbar}
+          />
+        </div>
       )}
     </div>
   );

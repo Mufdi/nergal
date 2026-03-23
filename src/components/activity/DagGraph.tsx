@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState, useCallback } from "react";
 import { useAtomValue } from "jotai";
 import { activeActivityAtom } from "@/stores/activity";
 import {
@@ -6,6 +6,7 @@ import {
   Background,
   type Node,
   type Edge,
+  type NodeMouseHandler,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import type { ActivityEntry } from "@/lib/types";
@@ -21,21 +22,47 @@ const TYPE_COLORS: Record<ActivityEntry["type"], string> = {
 
 export function DagGraph() {
   const entries = useAtomValue(activeActivityAtom);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+
+  const toggleExpanded = useCallback((id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const onNodeClick: NodeMouseHandler = useCallback((_event, node) => {
+    const entry = entries.find((e) => e.id === node.id);
+    if (entry?.detail) {
+      toggleExpanded(node.id);
+    }
+  }, [entries, toggleExpanded]);
 
   const { nodes, edges } = useMemo(() => {
     const ns: Node[] = [];
     const es: Edge[] = [];
 
+    let yOffset = 0;
+
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
       const color = TYPE_COLORS[entry.type] ?? "#5c5c5f";
+      const isExpanded = expandedIds.has(entry.id);
+      const hasDetail = !!entry.detail;
+      const nodeWidth = isExpanded ? 360 : 240;
+      const nodeHeight = isExpanded ? "auto" : undefined;
 
       ns.push({
         id: entry.id,
-        position: { x: 50, y: i * 80 },
+        position: { x: 50, y: yOffset },
         data: {
           label: (
-            <div className="max-w-52">
+            <div style={{ maxWidth: isExpanded ? 340 : 220 }}>
               <div className="flex items-center gap-1.5">
                 <span
                   className="inline-block size-2 rounded-full"
@@ -45,8 +72,20 @@ export function DagGraph() {
                   {entry.message}
                 </span>
               </div>
-              {entry.detail && (
+              {entry.detail && !isExpanded && (
                 <p className="mt-0.5 truncate text-[9px] text-muted-foreground">{entry.detail}</p>
+              )}
+              {isExpanded && entry.detail && (
+                <div className="mt-1 rounded bg-background/60 px-1.5 py-1">
+                  <p className="whitespace-pre-wrap text-[9px] leading-relaxed text-muted-foreground">
+                    {entry.detail}
+                  </p>
+                </div>
+              )}
+              {hasDetail && (
+                <p className="mt-0.5 text-[8px] text-muted-foreground/60">
+                  {isExpanded ? "click to collapse" : "click to expand"}
+                </p>
               )}
             </div>
           ),
@@ -56,9 +95,13 @@ export function DagGraph() {
           border: `1px solid ${color}40`,
           borderRadius: "6px",
           padding: "6px 10px",
-          width: 240,
+          width: nodeWidth,
+          height: nodeHeight,
+          cursor: hasDetail ? "pointer" : "default",
         },
       });
+
+      yOffset += isExpanded ? 140 : 80;
 
       if (i > 0) {
         es.push({
@@ -71,7 +114,7 @@ export function DagGraph() {
     }
 
     return { nodes: ns, edges: es };
-  }, [entries]);
+  }, [entries, expandedIds]);
 
   if (entries.length === 0) {
     return (
@@ -86,6 +129,7 @@ export function DagGraph() {
       <ReactFlow
         nodes={nodes}
         edges={edges}
+        onNodeClick={onNodeClick}
         fitView
         panOnDrag
         zoomOnScroll

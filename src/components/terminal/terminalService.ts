@@ -86,12 +86,12 @@ function wireIMEFix(term: Terminal, container: HTMLElement, ptyId: string) {
 
     if (event.type !== "keydown") return true;
 
-    // Ctrl+Ñ / Ctrl+K
-    if (event.ctrlKey && !event.shiftKey && !event.altKey && (event.code === "Semicolon" || event.code === "KeyK")) return false;
+    // Ctrl+Ñ / Ctrl+K / Ctrl+B / Ctrl+S
+    if (event.ctrlKey && !event.shiftKey && !event.altKey && (event.code === "Semicolon" || event.code === "KeyK" || event.code === "KeyB" || event.code === "KeyS")) return false;
 
     // Ctrl+Shift+{letter}
     if (event.ctrlKey && event.shiftKey && !event.altKey) {
-      if (["KeyB","KeyP","KeyF","KeyD","KeyS","KeyG","KeyK","KeyL","KeyT","KeyE","KeyM","KeyN","KeyC"].includes(event.code)) return false;
+      if (["KeyB","KeyP","KeyF","KeyD","KeyS","KeyG","KeyK","KeyL","KeyT","KeyE","KeyM","KeyN","KeyC","KeyI"].includes(event.code)) return false;
     }
 
     // Ctrl+{digit}

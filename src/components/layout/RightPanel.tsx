@@ -23,6 +23,8 @@ import { GitPanel } from "@/components/git/GitPanel";
 import { FileBrowser } from "@/components/files/FileBrowser";
 import { CodeEditor } from "@/components/editor/CodeEditor";
 import { DagGraph } from "@/components/activity/DagGraph";
+import { openZenModeAtom } from "@/stores/zenMode";
+import { activeSessionFilesAtom } from "@/stores/files";
 import { TabBar } from "@/components/ui/TabBar";
 import {
   FileText,
@@ -34,6 +36,7 @@ import {
   ScrollText,
   PanelRightClose,
   PanelRightOpen,
+  Maximize2,
 } from "lucide-react";
 import {
   Tooltip,
@@ -130,7 +133,7 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
               <DocumentContent tab={activeTab} />
             </div>
             {showSidebar && sidebarOpen && (
-              <div className="w-44 shrink-0 overflow-y-auto border-l border-border/50">
+              <div className={`shrink-0 overflow-y-auto border-l border-border/50 ${activeTab.type === "file" ? "w-52" : "w-44"}`}>
                 <SidebarContent type={activeTab.type} />
               </div>
             )}
@@ -141,22 +144,25 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
   }
 
   if (activePanelView) {
-    const hasSidebar = activePanelView === "diff" || activePanelView === "spec";
-    const sidebarHint = activePanelView === "diff" ? "Select a file to view diff" : "Select a change to view";
-    const SidebarComponent = activePanelView === "diff" ? FileListView : SpecListView;
+    const sidebarViews: Record<string, { hint: string; Component: React.ComponentType }> = {
+      diff: { hint: "Select a file to view diff", Component: FileListView },
+      spec: { hint: "Select a change to view", Component: SpecListView },
+      file: { hint: "Select a file to open", Component: FileBrowser },
+    };
+    const sidebar = sidebarViews[activePanelView];
     return (
       <div className="flex h-full overflow-hidden rounded-lg bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
         <div className="flex flex-1 flex-col overflow-hidden">
           <PanelHeader onToggle={onToggle} label={viewPanelLabel(activePanelView)} />
           {tabs.length > 0 && <TabBar />}
           <div className="flex flex-1 overflow-hidden">
-            {hasSidebar ? (
+            {sidebar ? (
               <>
                 <div className="flex flex-1 items-center justify-center">
-                  <span className="text-[11px] text-muted-foreground">{sidebarHint}</span>
+                  <span className="text-[11px] text-muted-foreground">{sidebar.hint}</span>
                 </div>
-                <div className="w-44 shrink-0 overflow-y-auto border-l border-border/50">
-                  <SidebarComponent />
+                <div className="w-52 shrink-0 overflow-y-auto border-l border-border/50">
+                  <sidebar.Component />
                 </div>
               </>
             ) : (
@@ -218,10 +224,13 @@ function SidebarContent({ type }: { type: TabType }) {
     case "plan":
       return <PlanListView />;
     case "file":
+      return <FileBrowser />;
     case "diff":
       return <FileListView />;
     case "spec":
       return <SpecListView />;
+    case "git":
+      return null;
     default:
       return null;
   }
@@ -256,13 +265,13 @@ function DocumentContent({ tab }: { tab: Tab }) {
       return null;
     case "transcript": {
       const sessionId = tab.data?.sessionId as string | undefined;
-      return sessionId ? <TranscriptViewer sessionId={sessionId} /> : null;
+      return sessionId ? <TranscriptViewer sessionId={sessionId} /> : <DagGraph />;
     }
     case "diff": {
       const diffPath = tab.data?.path as string | undefined;
       const diffSession = tab.data?.sessionId as string | undefined;
       return diffPath && diffSession
-        ? <DiffView filePath={diffPath} sessionId={diffSession} />
+        ? <DiffWithExpand filePath={diffPath} sessionId={diffSession} />
         : <PlaceholderView label="Diff view" />;
     }
     case "spec": {
@@ -279,7 +288,7 @@ function DocumentContent({ tab }: { tab: Tab }) {
       const filePath = tab.data?.path as string | undefined;
       const fileSession = tab.data?.sessionId as string | undefined;
       return filePath && fileSession
-        ? <CodeEditor filePath={filePath} sessionId={fileSession} />
+        ? <CodeEditor key={tab.id} filePath={filePath} sessionId={fileSession} />
         : <PlaceholderView label={`File: ${filePath ?? "unknown"}`} />;
     }
     default:
@@ -315,6 +324,29 @@ function GitPanelWrapper() {
   const sessionId = useAtomValue(activeSessionIdAtom);
   if (!sessionId) return <PlaceholderView label="No session active" />;
   return <GitPanel sessionId={sessionId} />;
+}
+
+function DiffWithExpand({ filePath, sessionId }: { filePath: string; sessionId: string }) {
+  const openZen = useSetAtom(openZenModeAtom);
+  const files = useAtomValue(activeSessionFilesAtom);
+
+  function handleExpand() {
+    const allPaths = files.map((f) => f.path);
+    openZen({ filePath, sessionId, files: allPaths.length > 0 ? allPaths : [filePath] });
+  }
+
+  return (
+    <div className="relative h-full">
+      <DiffView filePath={filePath} sessionId={sessionId} />
+      <button
+        onClick={handleExpand}
+        className="absolute right-2 top-2 z-10 flex size-6 items-center justify-center rounded bg-card/80 border border-border/50 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+        aria-label="Expand to Zen Mode"
+      >
+        <Maximize2 size={12} />
+      </button>
+    </div>
+  );
 }
 
 function PlaceholderView({ label }: { label: string }) {

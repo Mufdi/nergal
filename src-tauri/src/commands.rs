@@ -1315,6 +1315,39 @@ pub fn create_pr(
     crate::worktree::create_pr(&cwd, branch, base, &title, &body).map_err(|e| e.to_string())
 }
 
+// ── Git: commit files ──
+
+#[tauri::command]
+pub fn get_commit_files(
+    session_id: String,
+    hash: String,
+    db: State<'_, SharedDb>,
+) -> Result<Vec<String>, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+
+    let output = std::process::Command::new("git")
+        .args(["diff-tree", "--no-commit-id", "-r", "--name-only", &hash])
+        .current_dir(&cwd)
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+
+    let files = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            // Return absolute path for DiffView compatibility
+            cwd.join(l).to_string_lossy().to_string()
+        })
+        .collect();
+
+    Ok(files)
+}
+
 // ── File Browser ──
 
 #[derive(serde::Serialize)]
@@ -1381,9 +1414,10 @@ pub fn write_file_content(
     path: String,
     content: String,
     db: State<'_, SharedDb>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let db = db.lock().map_err(|e| e.to_string())?;
     let cwd = resolve_session_cwd(&db, &session_id)?;
     let file_path = cwd.join(&path);
-    std::fs::write(&file_path, content).map_err(|e| e.to_string())
+    std::fs::write(&file_path, &content).map_err(|e| e.to_string())?;
+    Ok(file_path.to_string_lossy().to_string())
 }

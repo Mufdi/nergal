@@ -1,8 +1,9 @@
+import { useState } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { activeActivityAtom, activityDrawerOpenAtom } from "@/stores/activity";
-import { activePanelViewAtom, expandRightPanelAtom } from "@/stores/rightPanel";
+import { openTabAction, expandRightPanelAtom } from "@/stores/rightPanel";
 import type { ActivityEntry } from "@/lib/types";
-import { X, ExternalLink, Zap } from "lucide-react";
+import { X, ExternalLink, Zap, ChevronDown, ChevronRight } from "lucide-react";
 
 const TYPE_COLORS: Record<ActivityEntry["type"], string> = {
   tool_use: "bg-blue-500",
@@ -30,16 +31,31 @@ export function ActivityDrawer() {
   const entries = useAtomValue(activeActivityAtom);
   const isOpen = useAtomValue(activityDrawerOpenAtom);
   const setOpen = useSetAtom(activityDrawerOpenAtom);
-  const setPanelView = useSetAtom(activePanelViewAtom);
+  const openTab = useSetAtom(openTabAction);
   const setExpand = useSetAtom(expandRightPanelAtom);
 
   if (!isOpen) return null;
 
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const reversed = [...entries].reverse();
+
+  function toggleThinking(id: string) {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
 
   function openDagTab() {
     setOpen(false);
-    setPanelView("transcript");
+    openTab({
+      tab: { id: "dag-graph", type: "transcript", label: "Activity DAG" },
+    });
     setExpand((p) => p + 1);
   }
 
@@ -92,26 +108,46 @@ export function ActivityDrawer() {
           </div>
         ) : (
           <div className="space-y-px px-2 py-1">
-            {reversed.map((entry) => (
-              <div
-                key={entry.id}
-                className="flex items-start gap-2 rounded px-2 py-1.5 hover:bg-secondary/50"
-              >
-                <span
-                  className={`mt-1.5 size-1.5 flex-shrink-0 rounded-full ${TYPE_COLORS[entry.type]}`}
-                  aria-hidden="true"
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs text-foreground">{entry.message}</p>
-                  {entry.detail && (
-                    <p className="truncate text-[10px] text-muted-foreground">{entry.detail}</p>
+            {reversed.map((entry) => {
+              const hasThinking = !!entry.detail && entry.detail.length > 50;
+              const isExpanded = expandedIds.has(entry.id);
+              return (
+                <div key={entry.id} className="rounded hover:bg-secondary/50">
+                  <div className="flex items-start gap-2 px-2 py-1.5">
+                    <span
+                      className={`mt-1.5 size-1.5 flex-shrink-0 rounded-full ${TYPE_COLORS[entry.type]}`}
+                      aria-hidden="true"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs text-foreground">{entry.message}</p>
+                      {entry.detail && !hasThinking && (
+                        <p className="truncate text-[10px] text-muted-foreground">{entry.detail}</p>
+                      )}
+                      {hasThinking && (
+                        <button
+                          type="button"
+                          onClick={() => toggleThinking(entry.id)}
+                          className="mt-0.5 flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+                        >
+                          {isExpanded ? <ChevronDown className="size-2.5" /> : <ChevronRight className="size-2.5" />}
+                          thinking
+                        </button>
+                      )}
+                    </div>
+                    <time className="mt-px flex-shrink-0 text-[10px] text-muted-foreground">
+                      {formatTime(entry.timestamp)}
+                    </time>
+                  </div>
+                  {hasThinking && isExpanded && (
+                    <div className="mx-2 mb-1.5 ml-6 rounded bg-background/60 px-2 py-1.5">
+                      <p className="whitespace-pre-wrap text-[10px] leading-relaxed text-muted-foreground">
+                        {entry.detail}
+                      </p>
+                    </div>
                   )}
                 </div>
-                <time className="mt-px flex-shrink-0 text-[10px] text-muted-foreground">
-                  {formatTime(entry.timestamp)}
-                </time>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { TopBar } from "./TopBar";
 import { Sidebar } from "./Sidebar";
@@ -9,9 +9,10 @@ import { TerminalManager } from "@/components/terminal/TerminalManager";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { ActivityDrawer } from "@/components/activity/ActivityDrawer";
 import { ZenMode } from "@/components/zen/ZenMode";
-import { expandRightPanelAtom } from "@/stores/rightPanel";
+import { expandRightPanelAtom, activePanelViewAtom, activeTabAtom } from "@/stores/rightPanel";
+import { activeSessionIdAtom } from "@/stores/workspace";
 import { toggleSidebarAtom, toggleRightPanelAtom } from "@/stores/shortcuts";
-import { layoutPresetAtom, PRESET_SIZES, isDraggingAtom, sessionLayoutPresetAtom, type LayoutPreset } from "@/stores/layout";
+import { layoutPresetAtom, PRESET_SIZES, sessionLayoutPresetAtom, type LayoutPreset } from "@/stores/layout";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { CommandPalette } from "@/components/command/CommandPalette";
 import {
@@ -34,8 +35,7 @@ export function Workspace() {
   const rightToggle = useAtomValue(toggleRightPanelAtom);
   const layoutPreset = useAtomValue(layoutPresetAtom);
   const setSessionPreset = useSetAtom(sessionLayoutPresetAtom);
-  const setIsDragging = useSetAtom(isDraggingAtom);
-  const isDragging = useAtomValue(isDraggingAtom);
+  const activeSessionId = useAtomValue(activeSessionIdAtom);
 
   const sidebarPanelRef = usePanelRef();
   const centerPanelRef = usePanelRef();
@@ -43,44 +43,38 @@ export function Workspace() {
 
   const prevPresetRef = useRef<LayoutPreset | null>(null);
   const sidebarAutoCollapsedRef = useRef(false);
-  const transitionEnabledRef = useRef(true);
-  const groupRef = useRef<HTMLDivElement>(null);
 
-  // Manage CSS transition class on the panel group
-  const setTransition = useCallback((enabled: boolean) => {
-    transitionEnabledRef.current = enabled;
-    const el = groupRef.current;
-    if (!el) return;
-    if (enabled) {
-      el.classList.add("panel-transition");
-    } else {
-      el.classList.remove("panel-transition");
+  // Force re-apply when session changes (the new session may have the same preset name but different panel state)
+  const prevSessionRef = useRef<string | null>(null);
+
+  const setActivePanelView = useSetAtom(activePanelViewAtom);
+  const activeTab = useAtomValue(activeTabAtom);
+
+  // Clear global panel view on session switch if new session has no tabs
+  useEffect(() => {
+    if (prevSessionRef.current !== null && prevSessionRef.current !== activeSessionId) {
+      if (!activeTab) {
+        setActivePanelView(null);
+      }
     }
-  }, []);
+  }, [activeSessionId, activeTab, setActivePanelView]);
 
-  // Disable transition while dragging
+  // Apply layout preset when it changes or session switches
   useEffect(() => {
-    setTransition(!isDragging);
-  }, [isDragging, setTransition]);
+    const sessionChanged = prevSessionRef.current !== activeSessionId;
+    prevSessionRef.current = activeSessionId ?? null;
 
-  const handleDragStart = useCallback(() => setIsDragging(true), [setIsDragging]);
-  const handleDragEnd = useCallback(() => setIsDragging(false), [setIsDragging]);
-
-  // Apply layout preset when it changes
-  useEffect(() => {
-    if (prevPresetRef.current === layoutPreset) return;
+    if (!sessionChanged && prevPresetRef.current === layoutPreset) return;
     prevPresetRef.current = layoutPreset;
 
     const sizes = PRESET_SIZES[layoutPreset];
     setSessionPreset(layoutPreset);
-    setTransition(true);
 
     requestAnimationFrame(() => {
       const sidebar = sidebarPanelRef.current;
       const center = centerPanelRef.current;
       const right = rightPanelRef.current;
 
-      // Sidebar auto-collapse for tool-workspace
       if (sizes.sidebarAutoCollapse) {
         if (sidebar && !sidebarCollapsed) {
           sidebar.collapse();
@@ -93,18 +87,17 @@ export function Workspace() {
         sidebarAutoCollapsedRef.current = false;
       }
 
-      // Right panel: collapse or expand
       if (sizes.right === 0) {
         if (right) right.collapse();
       } else {
         if (right) {
           if (right.isCollapsed()) right.expand();
-          right.resize(sizes.right);
+          right.resize(`${sizes.right}%`);
         }
-        if (center) center.resize(sizes.center);
+        if (center) center.resize(`${sizes.center}%`);
       }
     });
-  }, [layoutPreset, sidebarCollapsed, setSessionPreset, setTransition]);
+  }, [layoutPreset, sidebarCollapsed, setSessionPreset]);
 
   // Collapse right panel on mount
   useEffect(() => {
@@ -155,7 +148,7 @@ export function Workspace() {
     <div className="flex h-full flex-col bg-background">
       <TopBar onOpenSettings={() => setSettingsOpen(true)} rightPanelVisible={!rightCollapsed} />
 
-      <div ref={groupRef} className="flex flex-1 overflow-hidden p-1.5">
+      <div className="flex flex-1 overflow-hidden p-1.5">
         <ResizablePanelGroup
           orientation="horizontal"
           className="flex-1"
@@ -179,9 +172,9 @@ export function Workspace() {
             />
           </ResizablePanel>
 
-          <ResizableHandle onPointerDown={handleDragStart} onPointerUp={handleDragEnd} />
+          <ResizableHandle />
 
-          {/* Center: Terminal (full height — activity log moved to status bar drawer) */}
+          {/* Center: Terminal */}
           <ResizablePanel
             id="center"
             panelRef={centerPanelRef}
@@ -193,7 +186,7 @@ export function Workspace() {
             </div>
           </ResizablePanel>
 
-          <ResizableHandle onPointerDown={handleDragStart} onPointerUp={handleDragEnd} />
+          <ResizableHandle />
 
           {/* Right panel */}
           <ResizablePanel

@@ -26,7 +26,7 @@ export function TasksIsland() {
   const activeCount = tasks.filter((t) => t.status !== "completed").length;
 
   return (
-    <div className="mt-auto border-t border-border/50 bg-card/50">
+    <div className="shrink-0 rounded-lg bg-card overflow-hidden">
       {/* Header */}
       <button
         type="button"

@@ -23,6 +23,7 @@ import { TasksIsland } from "@/components/tasks/TasksIsland";
 import { Eye, EyeOff } from "lucide-react";
 import {
   Tooltip,
+  TooltipProvider,
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
@@ -44,17 +45,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   return (
     <div className="flex h-full flex-col outline-none" tabIndex={-1} data-focus-zone="sidebar" onMouseDown={handleSidebarFocus}>
       {collapsed ? (
-        <div className="flex h-full w-full flex-col items-center gap-1 bg-background py-2">
-          <button
-            onClick={onToggle}
-            className="flex size-7 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-            aria-label="Expand sidebar"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="9 18 15 12 9 6" />
-            </svg>
-          </button>
-        </div>
+        <CollapsedSidebar onToggle={onToggle} />
       ) : (
         <div className="flex flex-1 flex-col gap-1.5">
           {/* Workspaces card */}
@@ -89,6 +80,59 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         </div>
       )}
     </div>
+  );
+}
+
+const STATUS_DOT: Record<string, string> = {
+  running: "bg-green-500",
+  idle: "bg-muted-foreground",
+  thinking: "bg-yellow-500",
+  completed: "bg-muted-foreground/40",
+};
+
+function CollapsedSidebar({ onToggle }: { onToggle: () => void }) {
+  const workspaces = useAtomValue(workspacesAtom);
+  const activeSessionId = useAtomValue(activeSessionIdAtom);
+  const setActiveSessionId = useSetAtom(activeSessionIdAtom);
+
+  const sessionsWithWs = workspaces.flatMap((w) =>
+    w.sessions
+      .filter((s) => s.status !== "completed")
+      .map((s) => ({ session: s, workspaceName: w.name }))
+  );
+
+  return (
+    <TooltipProvider delay={0}>
+    <div className="flex h-full w-full flex-col items-center gap-0.5 bg-background py-1">
+      <button
+        onClick={onToggle}
+        className="flex size-4 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors mb-0.5"
+        aria-label="Expand sidebar"
+      >
+        <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="9 18 15 12 9 6" />
+        </svg>
+      </button>
+      {sessionsWithWs.map(({ session: s, workspaceName }) => (
+        <Tooltip key={s.id}>
+          <TooltipTrigger
+            onClick={() => setActiveSessionId(s.id)}
+            className={`flex size-4 items-center justify-center rounded transition-colors ${
+              s.id === activeSessionId ? "bg-secondary" : "hover:bg-secondary/50"
+            }`}
+          >
+            <span className={`size-1.5 rounded-full ${STATUS_DOT[s.status] ?? "bg-muted-foreground"} ${s.status === "running" ? "animate-dot-pulse" : ""}`} />
+          </TooltipTrigger>
+          <TooltipContent side="right" className="p-0" sideOffset={4}>
+            <div className="px-2.5 py-1.5">
+              <p className="text-[9px] text-muted-foreground">{workspaceName}</p>
+              <p className="text-[11px] font-medium">{s.name}</p>
+            </div>
+          </TooltipContent>
+        </Tooltip>
+      ))}
+    </div>
+    </TooltipProvider>
   );
 }
 

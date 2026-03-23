@@ -19,13 +19,6 @@ function formatTime(ts: number): string {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-function formatRelativeTime(ts: number): string {
-  const delta = Math.floor((Date.now() - ts) / 1000);
-  if (delta < 5) return "now";
-  if (delta < 60) return `${delta}s ago`;
-  if (delta < 3600) return `${Math.floor(delta / 60)}m ago`;
-  return `${Math.floor(delta / 3600)}h ago`;
-}
 
 export function ActivityDrawer() {
   const entries = useAtomValue(activeActivityAtom);
@@ -33,10 +26,10 @@ export function ActivityDrawer() {
   const setOpen = useSetAtom(activityDrawerOpenAtom);
   const openTab = useSetAtom(openTabAction);
   const setExpand = useSetAtom(expandRightPanelAtom);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
   if (!isOpen) return null;
 
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const reversed = [...entries].reverse();
 
   function toggleThinking(id: string) {
@@ -60,7 +53,7 @@ export function ActivityDrawer() {
   }
 
   return (
-    <div className="border-t border-border bg-card" style={{ height: "30vh", minHeight: 180 }}>
+    <div className="m-1 rounded-lg border border-border/50 bg-card overflow-hidden" style={{ maxHeight: "30vh" }}>
       {/* Header */}
       <div className="flex h-8 items-center justify-between border-b border-border px-3">
         <div className="flex items-center gap-2">
@@ -87,21 +80,8 @@ export function ActivityDrawer() {
         </div>
       </div>
 
-      {/* Timeline strip */}
-      {entries.length > 0 && (
-        <div className="flex h-6 items-center gap-0.5 overflow-x-auto px-3 scrollbar-none">
-          {entries.map((entry) => (
-            <div
-              key={entry.id}
-              className={`size-1.5 flex-shrink-0 rounded-full ${TYPE_COLORS[entry.type]} opacity-70`}
-              title={`${entry.message} — ${formatRelativeTime(entry.timestamp)}`}
-            />
-          ))}
-        </div>
-      )}
-
       {/* Event list */}
-      <div className="flex-1 overflow-y-auto" style={{ height: "calc(30vh - 56px)" }}>
+      <div className="flex-1 overflow-y-auto">
         {reversed.length === 0 ? (
           <div className="flex h-full items-center justify-center">
             <p className="text-xs text-muted-foreground">No activity yet</p>

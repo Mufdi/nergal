@@ -196,3 +196,41 @@ body,
   animation: dot-pulse 1.5s ease-in-out infinite;
 }
 
+/* ── Plan annotation hover ── */
+.annotatable-plan ::selection {
+  background: rgba(234, 179, 8, 0.3);
+  color: inherit;
+}
+
+.annotatable-plan .annotatable-el {
+  position: relative;
+  border-radius: 3px;
+  transition: outline-color 0.1s;
+}
+
+.annotatable-plan .annotatable-el:hover {
+  outline: 1px dashed var(--primary);
+  outline-offset: 2px;
+}
+
+.annotatable-plan .annotatable-el:hover::after {
+  content: attr(data-annotatable);
+  position: absolute;
+  top: -18px;
+  left: 0;
+  font-size: 9px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  pointer-events: none;
+  z-index: 10;
+}
+
+.annotatable-plan .annotatable-el.annotatable-active {
+  outline: 2px dashed #eab308 !important;
+  outline-offset: 2px;
+  background: rgba(234, 179, 8, 0.05);
+}
+

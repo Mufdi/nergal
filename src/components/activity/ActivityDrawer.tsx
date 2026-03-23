@@ -53,7 +53,7 @@ export function ActivityDrawer() {
   }
 
   return (
-    <div className="m-1 rounded-lg border border-border/50 bg-card overflow-hidden" style={{ maxHeight: "30vh" }}>
+    <div className="rounded-lg border-t border-border/50 bg-card overflow-hidden" style={{ maxHeight: "30vh" }}>
       {/* Header */}
       <div className="flex h-8 items-center justify-between border-b border-border px-3">
         <div className="flex items-center gap-2">
@@ -79,6 +79,19 @@ export function ActivityDrawer() {
           </button>
         </div>
       </div>
+
+      {/* Timeline strip */}
+      {entries.length > 1 && (
+        <div className="flex h-5 items-center gap-0.5 overflow-x-auto border-b border-border/30 px-3 scrollbar-none">
+          {entries.map((entry) => (
+            <div
+              key={entry.id}
+              className={`size-1.5 flex-shrink-0 rounded-full ${TYPE_COLORS[entry.type]} opacity-70`}
+              title={entry.message}
+            />
+          ))}
+        </div>
+      )}
 
       {/* Event list */}
       <div className="flex-1 overflow-y-auto">

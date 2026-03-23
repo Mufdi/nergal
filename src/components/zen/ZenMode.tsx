@@ -1,14 +1,18 @@
-import { useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { zenModeAtom, closeZenModeAtom, zenModeNavigateAtom, zenModeSelectFileAtom } from "@/stores/zenMode";
+import { zenModeAtom, closeZenModeAtom, zenModeNavigateAtom } from "@/stores/zenMode";
 import { DiffView } from "@/components/plan/DiffView";
+import { GitPanel } from "@/components/git/GitPanel";
 import { X, ChevronLeft, ChevronRight } from "lucide-react";
 
-export function ZenMode() {
+type SidebarTab = "changes" | "history";
+
+/// Full-screen diff review overlay with git sidebar.
+export function GitFullView() {
   const state = useAtomValue(zenModeAtom);
   const close = useSetAtom(closeZenModeAtom);
   const navigate = useSetAtom(zenModeNavigateAtom);
-  const selectFile = useSetAtom(zenModeSelectFileAtom);
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("changes");
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (!state.open) return;
@@ -35,9 +39,9 @@ export function ZenMode() {
 
   return (
     <div
-      className="fixed inset-0 z-40 flex"
+      className="fixed inset-0 z-40 flex overflow-hidden"
       role="dialog"
-      aria-label="Zen Mode diff review"
+      aria-label="Git full diff review"
     >
       {/* Blur backdrop */}
       <div
@@ -46,9 +50,9 @@ export function ZenMode() {
       />
 
       {/* Diff content area */}
-      <div className="relative z-10 flex flex-1 flex-col m-4 mr-0">
+      <div className="relative z-10 flex min-w-0 flex-1 flex-col m-3 mr-0 overflow-hidden">
         {/* Header */}
-        <div className="flex h-9 items-center justify-between rounded-t-lg bg-card/95 border border-border px-3">
+        <div className="flex h-9 shrink-0 items-center justify-between rounded-t-lg bg-card/95 border border-border px-3">
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -58,7 +62,7 @@ export function ZenMode() {
             >
               <ChevronLeft className="size-4" />
             </button>
-            <span className="text-xs text-foreground font-medium">{fileName}</span>
+            <span className="text-xs text-foreground font-medium truncate">{fileName}</span>
             <span className="text-[10px] text-muted-foreground">
               ({state.currentIndex + 1}/{state.files.length})
             </span>
@@ -77,46 +81,69 @@ export function ZenMode() {
               type="button"
               onClick={close}
               className="rounded p-0.5 text-muted-foreground hover:text-foreground hover:bg-secondary"
-              aria-label="Close Zen Mode"
+              aria-label="Close"
             >
               <X className="size-4" />
             </button>
           </div>
         </div>
 
-        {/* Diff viewer */}
-        <div className="flex-1 overflow-auto rounded-b-lg bg-card/95 border border-t-0 border-border">
-          <DiffView filePath={state.filePath} sessionId={state.sessionId} />
+        {/* Diff viewer — side by side */}
+        <div className="flex-1 overflow-hidden rounded-b-lg bg-card/95 border border-t-0 border-border">
+          <DiffView key={state.filePath} filePath={state.filePath} sessionId={state.sessionId} sideBySide />
         </div>
       </div>
 
-      {/* Git sidebar */}
-      <div className="relative z-10 w-56 flex flex-col m-4 ml-2">
-        <div className="flex h-9 items-center rounded-t-lg bg-card/95 border border-border px-3">
-          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Files</span>
+      {/* Git sidebar with tabs */}
+      <div className="relative z-10 w-72 shrink-0 flex flex-col m-3 ml-1.5 overflow-hidden rounded-lg bg-card/95 border border-border">
+        {/* Tab bar */}
+        <div className="flex shrink-0 border-b border-border/50">
+          {(["changes", "history"] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => setSidebarTab(tab)}
+              className={`flex-1 py-1.5 text-center text-[10px] font-medium uppercase tracking-wider transition-colors ${
+                sidebarTab === tab
+                  ? "text-foreground border-b-2 border-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
         </div>
-        <div className="flex-1 overflow-y-auto rounded-b-lg bg-card/95 border border-t-0 border-border">
-          {state.files.map((file, idx) => {
-            const name = file.split("/").pop() ?? file;
-            const isActive = idx === state.currentIndex;
-            return (
-              <button
-                key={file}
-                type="button"
-                onClick={() => selectFile(file)}
-                className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors ${
-                  isActive
-                    ? "bg-primary/10 text-primary"
-                    : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
-                }`}
-              >
-                <span className={`size-1.5 flex-shrink-0 rounded-full ${isActive ? "bg-primary" : "bg-muted-foreground/40"}`} />
-                <span className="truncate">{name}</span>
-              </button>
-            );
-          })}
+
+        {/* Tab content */}
+        <div className="flex-1 overflow-hidden">
+          {sidebarTab === "changes" ? (
+            <GitPanelChangesOnly sessionId={state.sessionId} />
+          ) : (
+            <GitPanelHistoryOnly sessionId={state.sessionId} />
+          )}
         </div>
       </div>
     </div>
   );
 }
+
+/// Stripped-down git panel showing only staged/unstaged/untracked + commit bar.
+function GitPanelChangesOnly({ sessionId }: { sessionId: string }) {
+  return (
+    <div className="h-full overflow-hidden">
+      <GitPanel sessionId={sessionId} hideHistory />
+    </div>
+  );
+}
+
+/// Stripped-down git panel showing only history.
+function GitPanelHistoryOnly({ sessionId }: { sessionId: string }) {
+  return (
+    <div className="h-full overflow-hidden">
+      <GitPanel sessionId={sessionId} hideChanges />
+    </div>
+  );
+}
+
+// Re-export for backwards compat with Workspace import
+export { GitFullView as ZenMode };

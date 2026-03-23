@@ -181,6 +181,9 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   // -- Panel (tabs) --
   { id: "next-tab", label: "Next Tab", keys: "ctrl+tab", category: "panel", keywords: ["tab", "next"], handler: nextTab },
   { id: "prev-tab", label: "Previous Tab", keys: "ctrl+shift+tab", category: "panel", keywords: ["tab", "previous", "prev"], handler: prevTab },
+  { id: "save-file", label: "Save File", keys: "ctrl+s", category: "action", keywords: ["save", "file", "write"], handler: () => {
+    document.dispatchEvent(new CustomEvent("cluihud:save-file"));
+  }},
   { id: "close-tab", label: "Close Tab", keys: "ctrl+w", category: "panel", keywords: ["tab", "close"], handler: closeCurrentTab },
   { id: "reopen-tab", label: "Reopen Closed Tab", keys: "ctrl+shift+t", category: "panel", keywords: ["tab", "reopen", "undo"], handler: reopenLastTab },
   { id: "open-plan", label: "Open Plan Panel", keys: "ctrl+shift+p", category: "panel", keywords: ["plan", "panel"], handler: () => togglePanel("plan", "Plan") },

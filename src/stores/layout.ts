@@ -25,10 +25,10 @@ export const PRESET_SIZES: Record<LayoutPreset, PresetSizes> = {
     sidebarAutoCollapse: false,
   },
   "tool-workspace": {
-    sidebar: 0,
-    center: 30,
-    right: 55,
-    sidebarAutoCollapse: true,
+    sidebar: 15,
+    center: 50,
+    right: 35,
+    sidebarAutoCollapse: false,
   },
 };
 
@@ -63,6 +63,3 @@ export const sessionLayoutPresetAtom = atom(
 
 /// Signals Workspace to transition. Incremented when preset changes should be applied.
 export const applyPresetSignalAtom = atom(0);
-
-/// Tracks whether a resize drag is in progress (disables CSS transitions).
-export const isDraggingAtom = atom(false);

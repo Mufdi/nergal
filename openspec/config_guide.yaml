@@ -1,0 +1,26 @@
+schema: spec-driven
+
+context: |
+  Sistema de administracion de Centros Comerciales. Stack y convenciones detalladas en CLAUDE.md (root del proyecto).
+
+rules:
+  proposal:
+    - Verificar specs existentes en openspec/specs/ antes de listar capabilities
+    - Capabilities deben usar kebab-case descriptivo del dominio, no nombres genericos
+
+  specs:
+    - Cada requirement debe ser verificable y tener al menos un scenario concreto
+    - Incluir modelo de datos (tablas, campos, tipos) cuando el requirement lo amerite
+    - Detalles de implementacion van en implementation.md, no en specs
+
+  design:
+    - Incluir alternatives considered con trade-offs en cada decision
+    - Referenciar patrones existentes del codebase cuando aplique
+
+  tasks:
+    - Tareas atomicas y accionables — cada una debe poder implementarse sin depender de contexto externo
+    - DB changes como SQL directo en temp/db_updates/DB_UPDATE_*.sql, NO migraciones CI4
+    - Especificar COLLATE utf8mb4_general_ci en toda tabla nueva
+    - Incluir descripcion de schema (campos, tipos, FKs) en cada tarea de creacion de tabla
+    - Al finalizar la generacion de todos los artifacts, evaluar complejidad del change (low/medium/high). Para changes medium o high, entrar en plan mode con objetivo de escribir implementation.md en el directorio del change. Este archivo documenta el plan detallado de implementacion mapeado contra el codebase actual (archivos a tocar, funciones existentes a reutilizar, orden de ejecucion, edge cases). No se implementa codigo — solo se documenta. Para changes low, implementation.md es opcional.
+    - Antes de implementar tareas, verificar si existe implementation.md en el directorio del change. Si existe, leerlo primero — contiene el plan detallado de implementacion con archivos, patrones y orden de ejecucion que debe guiar la implementacion.

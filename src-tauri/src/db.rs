@@ -9,6 +9,18 @@ use crate::claude::cost::CostSummary;
 use crate::models::{Session, SessionStatus, Workspace};
 use crate::tasks::{Task, TaskStatus};
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AnnotationRow {
+    pub id: String,
+    pub session_id: String,
+    pub ann_type: String,
+    pub target: String,
+    pub content: String,
+    pub start_meta: String,
+    pub end_meta: String,
+    pub created_at: String,
+}
+
 /// Thread-safe database handle managed as Tauri state.
 pub type SharedDb = Arc<Mutex<Database>>;
 
@@ -59,7 +71,7 @@ impl Database {
             )
             .unwrap_or(0);
 
-        let migrations: &[&str] = &[include_str!("../migrations/001_initial.sql"), include_str!("../migrations/002_merge_target.sql")];
+        let migrations: &[&str] = &[include_str!("../migrations/001_initial.sql"), include_str!("../migrations/002_merge_target.sql"), include_str!("../migrations/003_annotations.sql"), include_str!("../migrations/004_annotation_highlight_source.sql")];
 
         for (i, sql) in migrations.iter().enumerate() {
             let version = (i + 1) as i64;
@@ -412,5 +424,58 @@ impl Database {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.into()),
         }
+    }
+
+    // ── Annotations ──
+
+    pub fn save_annotation(
+        &self,
+        id: &str,
+        session_id: &str,
+        ann_type: &str,
+        target: &str,
+        content: &str,
+        start_meta: &str,
+        end_meta: &str,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO annotations (id, session_id, type, target, content, start_meta, end_meta) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![id, session_id, ann_type, target, content, start_meta, end_meta],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_annotations(&self, session_id: &str) -> Result<Vec<AnnotationRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, session_id, type, target, content, start_meta, end_meta, created_at FROM annotations WHERE session_id = ?1 ORDER BY created_at",
+        )?;
+        let rows = stmt
+            .query_map([session_id], |row| {
+                Ok(AnnotationRow {
+                    id: row.get(0)?,
+                    session_id: row.get(1)?,
+                    ann_type: row.get(2)?,
+                    target: row.get(3)?,
+                    content: row.get(4)?,
+                    start_meta: row.get(5)?,
+                    end_meta: row.get(6)?,
+                    created_at: row.get(7)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(rows)
+    }
+
+    pub fn delete_annotation(&self, id: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM annotations WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn clear_annotations(&self, session_id: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM annotations WHERE session_id = ?1", [session_id])?;
+        Ok(())
     }
 }

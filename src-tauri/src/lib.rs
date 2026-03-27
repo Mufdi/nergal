@@ -71,6 +71,12 @@ pub fn run() {
             commands::list_plans,
             commands::list_session_plans,
             commands::load_plan,
+            // Annotation commands
+            commands::save_annotation,
+            commands::get_annotations,
+            commands::delete_annotation,
+            commands::clear_annotations,
+            commands::set_pending_annotations,
             // Setup command
             commands::send_notification,
             commands::setup_hooks,

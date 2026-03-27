@@ -272,6 +272,53 @@ pub fn get_cost(transcript_path: String) -> Result<CostSummary, String> {
     Ok(cost::parse_cost_from_transcript(&path))
 }
 
+// -- Annotation commands --
+
+#[tauri::command]
+pub fn save_annotation(
+    id: String,
+    session_id: String,
+    ann_type: String,
+    target: String,
+    content: String,
+    start_meta: String,
+    end_meta: String,
+    db: State<'_, SharedDb>,
+) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    db.save_annotation(&id, &session_id, &ann_type, &target, &content, &start_meta, &end_meta)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_annotations(
+    session_id: String,
+    db: State<'_, SharedDb>,
+) -> Result<Vec<crate::db::AnnotationRow>, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    db.get_annotations(&session_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_annotation(id: String, db: State<'_, SharedDb>) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    db.delete_annotation(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn clear_annotations(session_id: String, db: State<'_, SharedDb>) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    db.clear_annotations(&session_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_pending_annotations(feedback: String) -> Result<(), String> {
+    if feedback.is_empty() {
+        return Ok(());
+    }
+    HookState::set_pending_annotations(feedback).map_err(|e| e.to_string())
+}
+
 // -- Workspace commands --
 
 #[tauri::command]

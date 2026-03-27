@@ -40,15 +40,21 @@ pub fn send_hook_event(socket_path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Checks for pending plan edits and injects a re-read instruction into the prompt.
+/// Checks for pending plan edits and/or annotation feedback and injects
+/// instructions into the prompt via stdout JSON mutation.
 ///
-/// If there's a pending edit in HookState, reads stdin JSON, appends a
-/// re-read instruction to the message field, and writes modified JSON to stdout.
-/// If no pending edit, passes through silently (exit 0).
+/// Reads HookState once to avoid race conditions between separate take calls.
+/// If nothing is pending, passes through silently (exit 0).
 pub fn inject_edits() -> Result<()> {
-    let Some(edit_path) = HookState::take_pending_edit()? else {
+    let mut state = HookState::read()?;
+    let edit_path = state.pending_plan_edit.take();
+    let annotations = state.pending_annotations.take();
+
+    if edit_path.is_none() && annotations.is_none() {
         return Ok(());
-    };
+    }
+
+    state.write()?;
 
     let mut input = String::new();
     std::io::stdin()
@@ -58,10 +64,17 @@ pub fn inject_edits() -> Result<()> {
     let mut json: serde_json::Value =
         serde_json::from_str(input.trim()).context("stdin is not valid JSON")?;
 
-    let instruction = format!(
-        "\n\nRe-read the updated plan at {} and incorporate the user's inline edits.",
-        edit_path.display()
-    );
+    let mut parts = Vec::new();
+    if let Some(path) = edit_path {
+        parts.push(format!(
+            "Re-read the updated plan at {} and incorporate the user's inline edits.",
+            path.display()
+        ));
+    }
+    if let Some(feedback) = annotations {
+        parts.push(feedback);
+    }
+    let instruction = format!("\n\n{}", parts.join("\n\n"));
 
     if let Some(message) = json.get_mut("message") {
         if let Some(s) = message.as_str() {

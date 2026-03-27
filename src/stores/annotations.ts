@@ -1,5 +1,7 @@
 import { atom } from "jotai";
 import { activeSessionIdAtom } from "./workspace";
+import { invoke } from "@/lib/tauri";
+import type { DomMeta } from "@/lib/highlighter";
 
 export type AnnotationType = "comment" | "replace" | "delete" | "insert";
 
@@ -8,7 +10,8 @@ export interface Annotation {
   type: AnnotationType;
   target: string;
   content: string;
-  position: { start: number; end: number };
+  startMeta: DomMeta;
+  endMeta: DomMeta;
 }
 
 export const annotationMapAtom = atom<Record<string, Annotation[]>>({});
@@ -29,6 +32,15 @@ export const addAnnotationAtom = atom(
       const existing = prev[sessionId] ?? [];
       return { ...prev, [sessionId]: [...existing, { ...annotation, id }] };
     });
+    invoke("save_annotation", {
+      id,
+      sessionId,
+      annType: annotation.type,
+      target: annotation.target,
+      content: annotation.content,
+      startMeta: JSON.stringify(annotation.startMeta),
+      endMeta: JSON.stringify(annotation.endMeta),
+    }).catch(console.error);
   },
 );
 
@@ -41,6 +53,7 @@ export const removeAnnotationAtom = atom(
       const existing = prev[sessionId] ?? [];
       return { ...prev, [sessionId]: existing.filter((a) => a.id !== annotationId) };
     });
+    invoke("delete_annotation", { id: annotationId }).catch(console.error);
   },
 );
 
@@ -50,10 +63,10 @@ export const clearAnnotationsAtom = atom(
     const sessionId = get(activeSessionIdAtom);
     if (!sessionId) return;
     set(annotationMapAtom, (prev) => ({ ...prev, [sessionId]: [] }));
+    invoke("clear_annotations", { sessionId }).catch(console.error);
   },
 );
 
-/// Serialize annotations into structured feedback for the UserPromptSubmit hook.
 export function serializeAnnotations(annotations: Annotation[], planPath: string): string {
   if (annotations.length === 0) return "";
 

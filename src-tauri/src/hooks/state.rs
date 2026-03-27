@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 pub struct HookState {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending_plan_edit: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending_annotations: Option<String>,
 }
 
 impl HookState {
@@ -44,6 +46,23 @@ impl HookState {
     pub fn take_pending_edit() -> Result<Option<PathBuf>> {
         let mut state = Self::read()?;
         let pending = state.pending_plan_edit.take();
+        if pending.is_some() {
+            state.write()?;
+        }
+        Ok(pending)
+    }
+
+    /// Stores serialized annotation feedback for the inject-edits hook.
+    pub fn set_pending_annotations(feedback: String) -> Result<()> {
+        let mut state = Self::read()?;
+        state.pending_annotations = Some(feedback);
+        state.write()
+    }
+
+    /// Reads the pending annotations, clears from disk, and returns them.
+    pub fn take_pending_annotations() -> Result<Option<String>> {
+        let mut state = Self::read()?;
+        let pending = state.pending_annotations.take();
         if pending.is_some() {
             state.write()?;
         }

@@ -1,65 +1,201 @@
-import { useState, useEffect, useRef, useCallback, type ReactNode, type ComponentPropsWithoutRef } from "react";
-import { useAtomValue } from "jotai";
-import { activeAnnotationsAtom, type Annotation } from "@/stores/annotations";
+import { useState, useEffect, useRef, useCallback, memo, type ComponentPropsWithoutRef } from "react";
+import { useAtomValue, useSetAtom } from "jotai";
+import { activeAnnotationsAtom, annotationMapAtom, type AnnotationType } from "@/stores/annotations";
+import { activeSessionIdAtom } from "@/stores/workspace";
+import { toastsAtom } from "@/stores/toast";
 import { PlanAnnotationToolbar } from "./PlanAnnotationToolbar";
+import { createHighlighter, createTextRange, resolvePinpointTarget, HighlightEvent, type Highlighter, type HighlightSource, type DomMeta } from "@/lib/highlighter";
+import { invoke } from "@/lib/tauri";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 interface ToolbarState {
   position: { top: number; left: number };
   targetText: string;
-  targetRange: { start: number; end: number };
+  highlightId: string;
+  startMeta: DomMeta;
+  endMeta: DomMeta;
   mode: "pinpoint" | "selection";
 }
 
-const GUTTER_COLORS: Record<Annotation["type"], string> = {
-  comment: "border-l-blue-500",
-  replace: "border-l-yellow-500",
-  delete: "border-l-red-500",
-  insert: "border-l-green-500",
+const ANNOTATION_TYPE_CLASSES: Record<AnnotationType, string> = {
+  comment: "annotation-comment",
+  replace: "annotation-replace",
+  delete: "annotation-delete",
+  insert: "annotation-insert",
 };
+
 
 interface Props {
   content: string;
 }
 
+/**
+ * Memoized Markdown renderer — only re-renders when `content` changes.
+ * This prevents web-highlighter DOM marks from being destroyed by React re-renders
+ * triggered by annotation state changes.
+ */
+const PlanMarkdown = memo(function PlanMarkdown({ content }: { content: string }) {
+  return (
+    <Markdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        h1: ({ node, ...props }: ComponentPropsWithoutRef<"h1"> & { node?: unknown }) => (
+          <div data-annotatable="heading" className="annotatable-el">
+            <h1 className="mb-2 mt-4 border-b border-border pb-1 text-lg font-semibold text-text" {...props} />
+          </div>
+        ),
+        h2: ({ node, ...props }: ComponentPropsWithoutRef<"h2"> & { node?: unknown }) => (
+          <div data-annotatable="heading" className="annotatable-el">
+            <h2 className="mb-2 mt-3 text-base font-semibold text-text" {...props} />
+          </div>
+        ),
+        h3: ({ node, ...props }: ComponentPropsWithoutRef<"h3"> & { node?: unknown }) => (
+          <div data-annotatable="heading" className="annotatable-el">
+            <h3 className="mb-1 mt-2 text-sm font-semibold text-text" {...props} />
+          </div>
+        ),
+        p: ({ node, ...props }: ComponentPropsWithoutRef<"p"> & { node?: unknown }) => (
+          <div data-annotatable="paragraph" className="annotatable-el">
+            <p className="mb-2 leading-relaxed text-text" {...props} />
+          </div>
+        ),
+        li: ({ node, ...props }: ComponentPropsWithoutRef<"li"> & { node?: unknown }) => (
+          <li data-annotatable="list-item" className="annotatable-el mb-0.5 text-text" {...props} />
+        ),
+        ul: ({ node, ...props }: ComponentPropsWithoutRef<"ul"> & { node?: unknown }) => (
+          <ul data-annotatable="list" className="annotatable-el mb-2 ml-4 list-disc text-text" {...props} />
+        ),
+        ol: ({ node, ...props }: ComponentPropsWithoutRef<"ol"> & { node?: unknown }) => (
+          <ol data-annotatable="list" className="annotatable-el mb-2 ml-4 list-decimal text-text" {...props} />
+        ),
+        code: ({ className, children, node, ...props }: ComponentPropsWithoutRef<"code"> & { node?: unknown }) => {
+          const isBlock = className?.startsWith("language-");
+          if (isBlock) {
+            return (
+              <div data-annotatable="code-block" className="annotatable-el">
+                <pre className="my-2 overflow-x-auto bg-surface p-3 font-mono text-xs text-text">
+                  <code className={className} {...props}>{children}</code>
+                </pre>
+              </div>
+            );
+          }
+          return <code className="bg-surface-raised px-1 py-0.5 font-mono text-xs text-accent" {...props}>{children}</code>;
+        },
+        pre: ({ node: _n, children }: ComponentPropsWithoutRef<"pre"> & { node?: unknown }) => <div>{children}</div>,
+        a: ({ node, ...props }: ComponentPropsWithoutRef<"a"> & { node?: unknown }) => <a className="text-accent underline" {...props} />,
+        blockquote: ({ node, ...props }: ComponentPropsWithoutRef<"blockquote"> & { node?: unknown }) => (
+          <div data-annotatable="blockquote" className="annotatable-el">
+            <blockquote className="my-2 border-l-2 border-accent pl-3 text-text-muted" {...props} />
+          </div>
+        ),
+        table: ({ node, ...props }: ComponentPropsWithoutRef<"table"> & { node?: unknown }) => (
+          <table className="my-2 w-full border-collapse text-xs" {...props} />
+        ),
+        th: ({ node, ...props }: ComponentPropsWithoutRef<"th"> & { node?: unknown }) => (
+          <th className="border border-border bg-surface-raised px-2 py-1 text-left font-medium" {...props} />
+        ),
+        td: ({ node, ...props }: ComponentPropsWithoutRef<"td"> & { node?: unknown }) => (
+          <td data-annotatable="table-cell" className="annotatable-el border border-border px-2 py-1" {...props} />
+        ),
+      }}
+    >
+      {content}
+    </Markdown>
+  );
+});
+
 export function AnnotatableMarkdownView({ content }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const highlighterRef = useRef<Highlighter | null>(null);
   const [toolbar, setToolbar] = useState<ToolbarState | null>(null);
   const toolbarOpenRef = useRef(false);
+  const pendingSourceRef = useRef<HighlightSource | null>(null);
+  const hoverTargetRef = useRef<HTMLElement | null>(null);
+  const pinpointTargetRef = useRef<HTMLElement | null>(null);
+  const justCreatedRef = useRef(false);
   const annotations = useAtomValue(activeAnnotationsAtom);
+  const sessionId = useAtomValue(activeSessionIdAtom);
+  const setAnnotationMap = useSetAtom(annotationMapAtom);
+  const addToast = useSetAtom(toastsAtom);
+  const loadedRef = useRef<string | null>(null);
+  const prevContentRef = useRef(content);
 
   toolbarOpenRef.current = !!toolbar;
 
-  const annotationMap = new Map<string, Annotation>();
-  for (const ann of annotations) {
-    annotationMap.set(ann.target, ann);
-  }
-
-  function getGutter(children: ReactNode): string {
-    const text = extractText(children).slice(0, 80);
-    const ann = annotationMap.get(text);
-    return ann ? `border-l-2 ${GUTTER_COLORS[ann.type]} pl-2` : "";
-  }
-
-  // Clear all DOM-level highlights
-  function clearDomState() {
-    const c = containerRef.current;
-    if (!c) return;
-    c.querySelector("[data-pinpoint-active]")?.removeAttribute("data-pinpoint-active");
-    c.querySelectorAll("mark.pending-selection").forEach((el) => {
-      const parent = el.parentNode;
-      while (el.firstChild) parent?.insertBefore(el.firstChild, el);
-      el.remove();
-    });
-  }
-
+  // Close toolbar AND remove pending highlight (cancel/dismiss)
   const closeToolbar = useCallback(() => {
-    clearDomState();
+    if (pendingSourceRef.current && highlighterRef.current) {
+      highlighterRef.current.remove(pendingSourceRef.current.id);
+      pendingSourceRef.current = null;
+    }
+    if (pinpointTargetRef.current) {
+      pinpointTargetRef.current.removeAttribute("data-pinpoint-active");
+      pinpointTargetRef.current = null;
+    }
+    if (hoverTargetRef.current) {
+      hoverTargetRef.current.removeAttribute("data-pinpoint-hover");
+      hoverTargetRef.current = null;
+    }
     setToolbar(null);
   }, []);
 
-  // Click handler for pinpoint mode
+  // Close toolbar but KEEP the highlight (annotation confirmed)
+  const confirmToolbar = useCallback(() => {
+    if (pinpointTargetRef.current) {
+      pinpointTargetRef.current.removeAttribute("data-pinpoint-active");
+      pinpointTargetRef.current = null;
+    }
+    pendingSourceRef.current = null;
+    setToolbar(null);
+  }, []);
+
+  // Initialize web-highlighter
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const highlighter = createHighlighter(container);
+    highlighterRef.current = highlighter;
+
+    highlighter.on(HighlightEvent.CREATE, ({ sources }) => {
+      const source = sources[0];
+      if (!source) return;
+
+      // Remove previous pending highlight if any (prevents ghost marks on re-selection)
+      if (pendingSourceRef.current) {
+        try { highlighter.remove(pendingSourceRef.current.id); } catch { /* already gone */ }
+      }
+
+      pendingSourceRef.current = source;
+      // Prevent the click event (which fires after mouseup) from immediately closing
+      justCreatedRef.current = true;
+      requestAnimationFrame(() => { justCreatedRef.current = false; });
+
+      const doms = highlighter.getDoms(source.id);
+      if (doms.length === 0) return;
+      const rect = doms[0].getBoundingClientRect();
+
+      setToolbar({
+        position: { top: rect.bottom + 4, left: rect.left },
+        targetText: source.text,
+        highlightId: source.id,
+        startMeta: source.startMeta,
+        endMeta: source.endMeta,
+        mode: "selection",
+      });
+    });
+
+    const stopAutoHighlight = highlighter.run();
+
+    return () => {
+      stopAutoHighlight();
+      highlighter.dispose();
+      highlighterRef.current = null;
+    };
+  }, [content]);
+
+  // Pinpoint click handler
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -67,7 +203,9 @@ export function AnnotatableMarkdownView({ content }: Props) {
     function handleClick(e: MouseEvent) {
       if (!container) return;
 
-      // If toolbar is open, close it (unless clicking inside toolbar)
+      // If toolbar just opened via CREATE (mouseup → CREATE → click), skip
+      if (justCreatedRef.current) return;
+
       if (toolbarOpenRef.current) {
         const toolbarEl = document.querySelector("[data-annotation-toolbar]");
         if (toolbarEl?.contains(e.target as Node)) return;
@@ -75,83 +213,91 @@ export function AnnotatableMarkdownView({ content }: Props) {
         return;
       }
 
-      // If there's a text selection, don't do pinpoint
+      // If there's a text selection, let web-highlighter handle it via CREATE
       const sel = window.getSelection();
       if (sel && !sel.isCollapsed && sel.toString().trim().length > 1) return;
 
-      const target = (e.target as HTMLElement).closest("[data-annotatable]") as HTMLElement | null;
+      const target = resolvePinpointTarget(e.target, e);
       if (!target || !container.contains(target)) return;
 
-      // Clear previous, set new
-      container.querySelector("[data-pinpoint-active]")?.removeAttribute("data-pinpoint-active");
-      target.setAttribute("data-pinpoint-active", "");
+      const range = createTextRange(target);
+      if (!highlighterRef.current) return;
 
-      const text = target.textContent ?? "";
+      // Clear hover
+      if (hoverTargetRef.current) {
+        hoverTargetRef.current.removeAttribute("data-pinpoint-hover");
+        hoverTargetRef.current = null;
+      }
+
+      // Clear previous pinpoint
+      if (pinpointTargetRef.current) {
+        pinpointTargetRef.current.removeAttribute("data-pinpoint-active");
+      }
+
+      // Set yellow dashed outline on the annotatable element
+      target.setAttribute("data-pinpoint-active", "");
+      pinpointTargetRef.current = target;
+
+      const source = highlighterRef.current.fromRange(range);
+      pendingSourceRef.current = source;
+
+      const doms = highlighterRef.current.getDoms(source.id);
+      if (doms.length === 0) return;
       const rect = target.getBoundingClientRect();
+
       setToolbar({
         position: { top: rect.bottom + 4, left: rect.left },
-        targetText: text,
-        targetRange: { start: 0, end: text.length },
+        targetText: source.text,
+        highlightId: source.id,
+        startMeta: source.startMeta,
+        endMeta: source.endMeta,
         mode: "pinpoint",
       });
     }
 
     container.addEventListener("click", handleClick);
     return () => container.removeEventListener("click", handleClick);
-  }, [closeToolbar]);
+  }, [closeToolbar, content]);
 
-  // Selection handler
+  // Hover via mousemove + data-pinpoint-hover attribute
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    function handleMouseUp() {
+    function handleMouseMove(e: MouseEvent) {
       if (toolbarOpenRef.current) return;
 
-      setTimeout(() => {
-        const sel = window.getSelection();
-        if (!sel || sel.isCollapsed || sel.toString().trim().length < 2) return;
-        if (!sel.rangeCount || !container!.contains(sel.anchorNode)) return;
+      const target = resolvePinpointTarget(e.target, e);
+      if (target === hoverTargetRef.current) return;
 
-        const text = sel.toString().trim();
-        const range = sel.getRangeAt(0);
+      if (hoverTargetRef.current) {
+        hoverTargetRef.current.removeAttribute("data-pinpoint-hover");
+      }
 
-        // Clear pinpoint
-        container!.querySelector("[data-pinpoint-active]")?.removeAttribute("data-pinpoint-active");
-
-        // Wrap selection in <mark> (DOM-direct, no React re-render needed for this)
-        try {
-          const mark = document.createElement("mark");
-          mark.className = "pending-selection";
-          range.surroundContents(mark);
-
-          const rect = mark.getBoundingClientRect();
-          sel.removeAllRanges();
-          setToolbar({
-            position: { top: rect.bottom + 4, left: rect.left },
-            targetText: text,
-            targetRange: { start: 0, end: text.length },
-            mode: "selection",
-          });
-        } catch {
-          // Multi-element selection — use range rect as fallback
-          const rect = range.getBoundingClientRect();
-          sel.removeAllRanges();
-          setToolbar({
-            position: { top: rect.bottom + 4, left: rect.left },
-            targetText: text,
-            targetRange: { start: 0, end: text.length },
-            mode: "selection",
-          });
-        }
-      }, 10);
+      if (target && container!.contains(target)) {
+        target.setAttribute("data-pinpoint-hover", "");
+        hoverTargetRef.current = target;
+      } else {
+        hoverTargetRef.current = null;
+      }
     }
 
-    container.addEventListener("mouseup", handleMouseUp);
-    return () => container.removeEventListener("mouseup", handleMouseUp);
-  }, []);
+    function handleMouseLeave() {
+      if (hoverTargetRef.current) {
+        hoverTargetRef.current.removeAttribute("data-pinpoint-hover");
+        hoverTargetRef.current = null;
+      }
+    }
 
-  // Escape
+    container.addEventListener("mousemove", handleMouseMove);
+    container.addEventListener("mouseleave", handleMouseLeave);
+    return () => {
+      container.removeEventListener("mousemove", handleMouseMove);
+      container.removeEventListener("mouseleave", handleMouseLeave);
+    };
+  }, [content]);
+
+  // Escape handler
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
       if (e.key === "Escape" && toolbarOpenRef.current) {
@@ -163,149 +309,131 @@ export function AnnotatableMarkdownView({ content }: Props) {
     return () => window.removeEventListener("keydown", handleKey);
   }, [closeToolbar]);
 
-  // Restore existing annotations as <mark> in DOM
+  // Restore persisted annotations + apply gutter indicators via DOM
   useEffect(() => {
+    const highlighter = highlighterRef.current;
     const container = containerRef.current;
-    if (!container) return;
+    if (!highlighter || !container) return;
 
-    // Small delay to ensure markdown has rendered
     const timer = setTimeout(() => {
-      container.querySelectorAll("mark.annotation-mark").forEach((el) => {
-        const parent = el.parentNode;
-        while (el.firstChild) parent?.insertBefore(el.firstChild, el);
-        el.remove();
+      // Clear previous gutters
+      container.querySelectorAll("[data-gutter-types]").forEach((el) => {
+        (el as HTMLElement).style.boxShadow = "";
+        (el as HTMLElement).style.paddingLeft = "";
+        el.removeAttribute("data-gutter-types");
       });
 
+      // Collect annotation types per annotatable element
+      const gutterMap = new Map<Element, Set<AnnotationType>>();
+
       for (const ann of annotations) {
-        const range = findTextInContainer(container, ann.target);
-        if (!range) continue;
+        // Skip global comments — no DOM target
+        if (ann.target === "[global]") continue;
+
+        // Restore highlight marks via web-highlighter
         try {
-          const mark = document.createElement("mark");
-          mark.className = `annotation-mark annotation-${ann.type}`;
-          mark.dataset.annotationId = ann.id;
-          range.surroundContents(mark);
+          const existing = highlighter.getDoms(ann.id);
+          if (existing.length === 0) {
+            highlighter.fromStore(ann.startMeta, ann.endMeta, ann.target, ann.id);
+          }
+          highlighter.addClass(ANNOTATION_TYPE_CLASSES[ann.type], ann.id);
         } catch {
-          // Skip multi-element ranges
+          // DOM structure changed — can't restore visual highlight
         }
+
+        // Collect gutter types per element
+        const doms = highlighter.getDoms(ann.id);
+        if (doms.length > 0) {
+          const annotatableEl = doms[0].closest("[data-annotatable]");
+          if (annotatableEl) {
+            if (!gutterMap.has(annotatableEl)) gutterMap.set(annotatableEl, new Set());
+            gutterMap.get(annotatableEl)!.add(ann.type);
+          }
+        }
+      }
+
+      // Apply multi-color gutter via inset box-shadow
+      const GUTTER_CSS_COLORS: Record<AnnotationType, string> = {
+        comment: "rgb(59, 130, 246)",
+        replace: "rgb(234, 179, 8)",
+        delete: "rgb(239, 68, 68)",
+        insert: "rgb(34, 197, 94)",
+      };
+
+      for (const [el, types] of gutterMap) {
+        const htmlEl = el as HTMLElement;
+        const typeArr = [...types];
+        const lineWidth = 3;
+        const shadows = typeArr.map((type, i) => {
+          const offset = -(i * lineWidth + lineWidth);
+          return `inset ${offset}px 0 0 0 ${GUTTER_CSS_COLORS[type]}`;
+        });
+        htmlEl.style.boxShadow = shadows.join(", ");
+        htmlEl.style.paddingLeft = `${typeArr.length * lineWidth + 4}px`;
+        htmlEl.setAttribute("data-gutter-types", typeArr.join(","));
       }
     }, 50);
 
     return () => clearTimeout(timer);
   }, [annotations, content]);
 
-  // Right panel tooltip instant
+  // Load annotations from SQLite on mount / session change
   useEffect(() => {
-    // Set tooltip delay on right panel collapsed tooltips
-  }, []);
+    if (!sessionId || loadedRef.current === sessionId) return;
+    loadedRef.current = sessionId;
+
+    invoke("get_annotations", { sessionId }).then((rows: unknown) => {
+      const loaded = (rows as Array<{
+        id: string;
+        ann_type: string;
+        target: string;
+        content: string;
+        start_meta: string;
+        end_meta: string;
+      }>).map((r) => ({
+        id: r.id,
+        type: r.ann_type as AnnotationType,
+        target: r.target,
+        content: r.content,
+        startMeta: JSON.parse(r.start_meta || "{}"),
+        endMeta: JSON.parse(r.end_meta || "{}"),
+      }));
+      setAnnotationMap((prev) => ({ ...prev, [sessionId]: loaded }));
+    }).catch(console.error);
+  }, [sessionId, setAnnotationMap]);
+
+  // Stale annotations toast
+  useEffect(() => {
+    if (prevContentRef.current !== content && annotations.length > 0) {
+      addToast({
+        message: "Plan updated",
+        description: "Annotations may be stale. Clear them if they no longer apply.",
+        type: "info",
+      });
+    }
+    prevContentRef.current = content;
+  }, [content, annotations.length, addToast]);
 
   return (
     <div
       ref={containerRef}
       className="annotatable-plan prose-invert max-w-none px-4 py-3 text-sm text-text"
     >
-      <Markdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          h1: ({ node, ...props }: ComponentPropsWithoutRef<"h1"> & { node?: unknown }) => (
-            <div data-annotatable="heading" className={`annotatable-el ${getGutter(props.children)}`}>
-              <h1 className="mb-2 mt-4 border-b border-border pb-1 text-lg font-semibold text-text" {...props} />
-            </div>
-          ),
-          h2: ({ node, ...props }: ComponentPropsWithoutRef<"h2"> & { node?: unknown }) => (
-            <div data-annotatable="heading" className={`annotatable-el ${getGutter(props.children)}`}>
-              <h2 className="mb-2 mt-3 text-base font-semibold text-text" {...props} />
-            </div>
-          ),
-          h3: ({ node, ...props }: ComponentPropsWithoutRef<"h3"> & { node?: unknown }) => (
-            <div data-annotatable="heading" className={`annotatable-el ${getGutter(props.children)}`}>
-              <h3 className="mb-1 mt-2 text-sm font-semibold text-text" {...props} />
-            </div>
-          ),
-          p: ({ node, ...props }: ComponentPropsWithoutRef<"p"> & { node?: unknown }) => (
-            <div data-annotatable="paragraph" className={`annotatable-el ${getGutter(props.children)}`}>
-              <p className="mb-2 leading-relaxed text-text" {...props} />
-            </div>
-          ),
-          li: ({ node, ...props }: ComponentPropsWithoutRef<"li"> & { node?: unknown }) => (
-            <li data-annotatable="list-item" className={`annotatable-el mb-0.5 text-text ${getGutter(props.children)}`} {...props} />
-          ),
-          ul: ({ node, ...props }: ComponentPropsWithoutRef<"ul"> & { node?: unknown }) => (
-            <ul data-annotatable="list" className="annotatable-el mb-2 ml-4 list-disc text-text" {...props} />
-          ),
-          ol: ({ node, ...props }: ComponentPropsWithoutRef<"ol"> & { node?: unknown }) => (
-            <ol data-annotatable="list" className="annotatable-el mb-2 ml-4 list-decimal text-text" {...props} />
-          ),
-          code: ({ className, children, node, ...props }: ComponentPropsWithoutRef<"code"> & { node?: unknown }) => {
-            const isBlock = className?.startsWith("language-");
-            if (isBlock) {
-              return (
-                <div data-annotatable="code-block" className="annotatable-el">
-                  <pre className="my-2 overflow-x-auto bg-surface p-3 font-mono text-xs text-text">
-                    <code className={className} {...props}>{children}</code>
-                  </pre>
-                </div>
-              );
-            }
-            return <code className="bg-surface-raised px-1 py-0.5 font-mono text-xs text-accent" {...props}>{children}</code>;
-          },
-          pre: ({ node: _n, children }: ComponentPropsWithoutRef<"pre"> & { node?: unknown }) => <div>{children}</div>,
-          a: ({ node, ...props }: ComponentPropsWithoutRef<"a"> & { node?: unknown }) => <a className="text-accent underline" {...props} />,
-          blockquote: ({ node, ...props }: ComponentPropsWithoutRef<"blockquote"> & { node?: unknown }) => (
-            <div data-annotatable="blockquote" className={`annotatable-el ${getGutter(props.children)}`}>
-              <blockquote className="my-2 border-l-2 border-accent pl-3 text-text-muted" {...props} />
-            </div>
-          ),
-          table: ({ node, ...props }: ComponentPropsWithoutRef<"table"> & { node?: unknown }) => (
-            <table className="my-2 w-full border-collapse text-xs" {...props} />
-          ),
-          th: ({ node, ...props }: ComponentPropsWithoutRef<"th"> & { node?: unknown }) => (
-            <th className="border border-border bg-surface-raised px-2 py-1 text-left font-medium" {...props} />
-          ),
-          td: ({ node, ...props }: ComponentPropsWithoutRef<"td"> & { node?: unknown }) => (
-            <td data-annotatable="table-cell" className="annotatable-el border border-border px-2 py-1" {...props} />
-          ),
-        }}
-      >
-        {content}
-      </Markdown>
+      <PlanMarkdown content={content} />
 
       {toolbar && (
         <div data-annotation-toolbar>
           <PlanAnnotationToolbar
             position={toolbar.position}
             targetText={toolbar.targetText}
-            targetRange={toolbar.targetRange}
+            startMeta={toolbar.startMeta}
+            endMeta={toolbar.endMeta}
             mode={toolbar.mode}
             onClose={closeToolbar}
+            onConfirm={confirmToolbar}
           />
         </div>
       )}
     </div>
   );
-}
-
-function extractText(children: ReactNode): string {
-  if (typeof children === "string") return children;
-  if (typeof children === "number") return String(children);
-  if (Array.isArray(children)) return children.map(extractText).join("");
-  if (children && typeof children === "object" && "props" in children) {
-    return extractText((children as { props: { children?: ReactNode } }).props.children);
-  }
-  return "";
-}
-
-function findTextInContainer(container: HTMLElement, searchText: string): Range | null {
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
-  let node: Text | null;
-  while ((node = walker.nextNode() as Text | null)) {
-    const text = node.textContent ?? "";
-    const idx = text.indexOf(searchText);
-    if (idx !== -1) {
-      const range = document.createRange();
-      range.setStart(node, idx);
-      range.setEnd(node, idx + searchText.length);
-      return range;
-    }
-  }
-  return null;
 }

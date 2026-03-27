@@ -13,6 +13,33 @@ const TYPE_BADGE: Record<Annotation["type"], { label: string; bg: string; text: 
   insert: { label: "INSERT", bg: "bg-green-500/15", text: "text-green-400" },
 };
 
+function scrollToAnnotation(id: string) {
+  const marks = document.querySelectorAll(`mark[data-bindid="${id}"], mark[data-bindid]`);
+  for (const mark of marks) {
+    // web-highlighter stores the id; check the parent too
+    const highlighter = mark as HTMLElement;
+    if (highlighter.dataset.bindid === id || highlighter.closest(`[data-bindid="${id}"]`)) {
+      highlighter.scrollIntoView({ behavior: "smooth", block: "center" });
+      // Brief flash effect
+      highlighter.style.outline = "2px solid rgba(253, 224, 71, 0.8)";
+      highlighter.style.outlineOffset = "2px";
+      setTimeout(() => {
+        highlighter.style.outline = "";
+        highlighter.style.outlineOffset = "";
+      }, 1500);
+      return;
+    }
+  }
+  // Fallback: search by annotation text content in annotatable elements
+  const allMarks = document.querySelectorAll(".annotatable-plan mark");
+  for (const mark of allMarks) {
+    if (mark.textContent?.includes(id.slice(0, 10))) {
+      (mark as HTMLElement).scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+  }
+}
+
 export function PlanSidebar() {
   const [tab, setTab] = useState<SidebarTab>("files");
   const annotations = useAtomValue(activeAnnotationsAtom);
@@ -61,29 +88,39 @@ export function PlanSidebar() {
               <div className="space-y-1 px-1.5">
                 {annotations.map((ann) => {
                   const badge = TYPE_BADGE[ann.type];
+                  const isGlobal = ann.target === "[global]";
                   return (
-                    <div key={ann.id} className="group relative rounded-md border border-border/30 bg-secondary/20 p-2">
+                    <button
+                      key={ann.id}
+                      type="button"
+                      onClick={() => { if (!isGlobal) scrollToAnnotation(ann.id); }}
+                      className={`group relative w-full rounded-md border border-border/30 bg-secondary/20 p-2 text-left transition-colors ${isGlobal ? "" : "hover:bg-secondary/40 cursor-pointer"}`}
+                    >
                       {/* Header: type badge + remove */}
                       <div className="mb-1 flex items-center justify-between">
                         <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${badge.bg} ${badge.text}`}>
-                          {badge.label}
+                          {isGlobal ? "GLOBAL" : badge.label}
                         </span>
-                        <button
-                          type="button"
-                          onClick={() => removeAnnotation(ann.id)}
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => { e.stopPropagation(); removeAnnotation(ann.id); }}
+                          onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); removeAnnotation(ann.id); } }}
                           className="flex size-4 items-center justify-center rounded opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
                           aria-label="Remove"
                         >
                           <X className="size-3" />
-                        </button>
+                        </span>
                       </div>
 
                       {/* Target text */}
-                      <div className="mb-1 rounded bg-background/50 px-2 py-1">
-                        <p className="text-[10px] text-foreground/70 line-clamp-3">
-                          &ldquo;{ann.target}&rdquo;
-                        </p>
-                      </div>
+                      {!isGlobal && (
+                        <div className="mb-1 rounded bg-background/50 px-2 py-1">
+                          <p className={`text-[10px] text-foreground/70 line-clamp-3 ${ann.type === "delete" ? "line-through text-red-400/70" : ""}`}>
+                            &ldquo;{ann.target}&rdquo;
+                          </p>
+                        </div>
+                      )}
 
                       {/* Annotation content */}
                       {ann.content && (
@@ -91,7 +128,7 @@ export function PlanSidebar() {
                           {ann.content}
                         </p>
                       )}
-                    </div>
+                    </button>
                   );
                 })}
               </div>

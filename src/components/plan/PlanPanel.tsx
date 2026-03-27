@@ -1,5 +1,6 @@
 import { useAtomValue, useSetAtom } from "jotai";
 import { planDocumentsAtom, defaultPlanState, setPlanDocModeAtom } from "@/stores/plan";
+import { clearAnnotationsAtom } from "@/stores/annotations";
 import { toastsAtom } from "@/stores/toast";
 import { invoke } from "@/lib/tauri";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -17,6 +18,7 @@ export function PlanPanel({ path }: PlanPanelProps) {
   const plan = path ? (docs[path] ?? defaultPlanState) : defaultPlanState;
   const setMode = useSetAtom(setPlanDocModeAtom);
   const addToast = useSetAtom(toastsAtom);
+  const clearAnnotations = useSetAtom(clearAnnotationsAtom);
 
   const hasPlan = plan.content.length > 0;
   const hasEdits = plan.content !== plan.original;
@@ -38,11 +40,11 @@ export function PlanPanel({ path }: PlanPanelProps) {
   }
 
   function handleRevise(feedback: string) {
-    if (!backendSessionId || !plan.path) return;
-    const annotatedContent = `<!-- ANNOTATIONS FROM REVIEW -->\n<!-- ${feedback.replace(/--/g, "—")} -->\n\n${plan.content}`;
-    invoke("save_plan", { sessionId: backendSessionId, content: annotatedContent })
+    if (!backendSessionId || !plan.path || !feedback) return;
+    invoke("set_pending_annotations", { feedback })
       .then(() => invoke("reject_plan", { sessionId: backendSessionId }))
       .then(() => {
+        clearAnnotations();
         addToast({ message: "Annotations sent", description: "Claude will re-read plan with your feedback", type: "success" });
       })
       .catch((err: unknown) => {

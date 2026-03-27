@@ -1,20 +1,38 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  Desktop app wrapper para Claude Code CLI (Plan Pro) en Linux.
+  Stack y convenciones detalladas en CLAUDE.md (root del proyecto).
+  Stack: Tauri v2 (Rust backend) + React 19 + TypeScript + Tailwind CSS 4 + Jotai + xterm.js
+  Terminal: portable-pty, file watching: notify, DB: SQLite
+  Specs vigentes en openspec/specs/ — siempre verificar antes de proponer.
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+rules:
+  proposal:
+    - Verificar specs existentes en openspec/specs/ antes de listar capabilities
+    - Capabilities deben usar kebab-case descriptivo del dominio, no nombres genéricos
+    - Si el change afecta una spec existente, referenciarla explícitamente
+    - "Evaluación de ceremonia (inspirado en BMAD tracks): clasificar el change como quick-fix, standard, o deep. Quick-fix (1-3 archivos, bug o tweak, sin ambiguedad): generar solo proposal.md + tasks.md, saltar design.md y specs. Standard (un módulo, algunas decisiones): flujo completo spec-driven. Deep (cross-module, arquitectural, múltiples alternativas): flujo completo + implementation.md obligatorio. Si se usó /discovery, la clasificación ya está hecha — respetarla."
+
+  specs:
+    - Cada requirement debe ser verificable y tener al menos un scenario concreto
+    - Incluir modelo de datos (tablas, campos, tipos) cuando el requirement lo amerite
+    - Detalles de implementación van en implementation.md, no en specs
+
+  design:
+    - Incluir alternatives considered con trade-offs en cada decisión
+    - Referenciar patrones existentes del codebase cuando aplique
+    - Para decisiones de UI, referenciar las specs de layout (adaptive-layout, panel-categories) si aplica
+
+  tasks:
+    - Tareas atómicas y accionables — cada una debe poder implementarse sin depender de contexto externo
+    - Cambios de schema SQLite como migraciones en src-tauri/migrations/
+    - Incluir descripción de schema (campos, tipos, FKs) en cada tarea de creación de tabla
+    - Al finalizar la generación de todos los artifacts, si no se realizó evaluación de complejidad previamente (vía /discovery), evaluar complejidad del change (low/medium/high). Para changes medium o high, entrar en plan mode con objetivo de escribir implementation.md en el directorio del change. Este archivo documenta el plan detallado de implementación mapeado contra el codebase actual (archivos a tocar, funciones existentes a reutilizar, orden de ejecución, edge cases). No se implementa código — solo se documenta. Para changes low, implementation.md es opcional.
+    - Antes de implementar tareas, verificar si existe implementation.md en el directorio del change. Si existe, leerlo primero — contiene el plan detallado de implementación con archivos, patrones y orden de ejecución que debe guiar la implementación.
+    - "Auto-detección de tareas completadas (inspirado en Kiro): al reescribir tasks.md durante una revision, verificar contra el codebase actual qué tareas ya están implementadas (archivos creados, funciones existentes, migraciones aplicadas). Marcar esas tareas como [x] automáticamente en vez de requerir que el usuario las re-checkee manualmente."
+
+  apply:
+    - "Mid-implementation revision: cuando la implementación revela que el design es incorrecto o subóptimo, actualizar los artifacts del change existente (no crear uno nuevo) si el intent original se mantiene. Agregar sección '## Revision N: <título>' en design.md documentando qué cambió y por qué. Reescribir tasks.md preservando tareas completadas que siguen siendo válidas y reemplazando las que cambian. Reescribir implementation.md con el nuevo approach."
+    - "Post-implementation spec update: después de completar todas las tareas, verificar si la implementación reveló comportamientos o decisiones no capturadas en las specs. Si es así, actualizar las delta specs del change antes de archivar. Las specs deben reflejar la realidad implementada, no solo la intención original."
+    - "Revert de tareas invalidadas: si una revision invalida tareas ya completadas, revertir el código de esas tareas antes de reimplementar. Marcar como '- [ ] (revised)' en tasks.md para distinguirlas de tareas nuevas."

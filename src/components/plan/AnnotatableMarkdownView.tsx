@@ -480,7 +480,7 @@ export function AnnotatableMarkdownView({ content }: Props) {
   return (
     <div
       ref={containerRef}
-      className="annotatable-plan prose-invert max-w-none px-4 py-3 text-[11px] text-text"
+      className="annotatable-plan prose-invert max-w-none px-4 py-3 text-[12px] text-text"
     >
       <PlanMarkdown content={content} />
 

@@ -8,7 +8,7 @@ interface MarkdownViewProps {
 
 export function MarkdownView({ content }: MarkdownViewProps) {
   return (
-    <div className="prose-invert max-w-none px-4 py-3 text-sm text-text">
+    <div className="prose-invert max-w-none px-4 py-3 text-[12px] text-text">
       <Markdown
         remarkPlugins={[remarkGfm]}
         components={{

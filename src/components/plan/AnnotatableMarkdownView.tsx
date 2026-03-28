@@ -114,6 +114,7 @@ export function AnnotatableMarkdownView({ content }: Props) {
   const hoverTargetRef = useRef<HTMLElement | null>(null);
   const pinpointTargetRef = useRef<HTMLElement | null>(null);
   const justCreatedRef = useRef(false);
+  const restoringRef = useRef(false);
   const annotations = useAtomValue(activeAnnotationsAtom);
   const sessionId = useAtomValue(activeSessionIdAtom);
   const setAnnotationMap = useSetAtom(annotationMapAtom);
@@ -159,6 +160,9 @@ export function AnnotatableMarkdownView({ content }: Props) {
     highlighterRef.current = highlighter;
 
     highlighter.on(HighlightEvent.CREATE, ({ sources }) => {
+      // Skip during annotation restoration — fromRange triggers CREATE but we don't want toolbar/pending logic
+      if (restoringRef.current) return;
+
       const source = sources[0];
       if (!source) return;
 
@@ -309,72 +313,131 @@ export function AnnotatableMarkdownView({ content }: Props) {
     return () => window.removeEventListener("keydown", handleKey);
   }, [closeToolbar]);
 
+  // Close toolbar on scroll (prevents sticky toolbar)
+  useEffect(() => {
+    const scrollParent = containerRef.current?.closest(".overflow-y-auto");
+    if (!scrollParent) return;
+
+    function handleScroll() {
+      if (toolbarOpenRef.current) closeToolbar();
+    }
+    scrollParent.addEventListener("scroll", handleScroll);
+    return () => scrollParent.removeEventListener("scroll", handleScroll);
+  }, [closeToolbar]);
+
   // Restore persisted annotations + apply gutter indicators via DOM
   useEffect(() => {
     const highlighter = highlighterRef.current;
     const container = containerRef.current;
-    if (!highlighter || !container) return;
+    if (!highlighter || !container || annotations.length === 0) return;
+    // Skip if content is empty (plan not loaded yet)
+    if (!content) return;
 
-    const timer = setTimeout(() => {
-      // Clear previous gutters
-      container.querySelectorAll("[data-gutter-types]").forEach((el) => {
-        (el as HTMLElement).style.boxShadow = "";
-        (el as HTMLElement).style.paddingLeft = "";
-        el.removeAttribute("data-gutter-types");
-      });
+    let cancelled = false;
 
-      // Collect annotation types per annotatable element
+    function restoreAnnotations() {
+      if (cancelled || !highlighter || !container) return;
+
+      // Wait for markdown to render
+      if (!container.querySelector("[data-annotatable]")) {
+        requestAnimationFrame(restoreAnnotations);
+        return;
+      }
+
+      // Clear previous gutter dots
+      container.querySelectorAll(".annotation-dots").forEach((el) => el.remove());
+
       const gutterMap = new Map<Element, Set<AnnotationType>>();
 
+      restoringRef.current = true;
       for (const ann of annotations) {
-        // Skip global comments — no DOM target
         if (ann.target === "[global]") continue;
 
-        // Restore highlight marks via web-highlighter
-        try {
-          const existing = highlighter.getDoms(ann.id);
-          if (existing.length === 0) {
-            highlighter.fromStore(ann.startMeta, ann.endMeta, ann.target, ann.id);
-          }
-          highlighter.addClass(ANNOTATION_TYPE_CLASSES[ann.type], ann.id);
-        } catch {
-          // DOM structure changed — can't restore visual highlight
+        let restored = false;
+
+        // Check if already restored from a previous render cycle
+        const existing = highlighter.getDoms(ann.id);
+        if (existing.length > 0) {
+          restored = true;
         }
 
-        // Collect gutter types per element
-        const doms = highlighter.getDoms(ann.id);
-        if (doms.length > 0) {
-          const annotatableEl = doms[0].closest("[data-annotatable]");
-          if (annotatableEl) {
-            if (!gutterMap.has(annotatableEl)) gutterMap.set(annotatableEl, new Set());
-            gutterMap.get(annotatableEl)!.add(ann.type);
+        // Try fromStore first (exact position match)
+        if (!restored && ann.startMeta?.parentTagName) {
+          try {
+            highlighter.fromStore(ann.startMeta, ann.endMeta, ann.target, ann.id);
+            restored = highlighter.getDoms(ann.id).length > 0;
+          } catch {
+            // DomMeta doesn't match current DOM structure
+          }
+        }
+
+        // Fallback: text search + fromRange (reliable across re-renders)
+        if (!restored) {
+          const range = findTextInDOM(container, ann.target);
+          if (range) {
+            try {
+              const source = highlighter.fromRange(range);
+              // Remap: web-highlighter assigned its own ID, but we need ours for scroll
+              // Store the mapping — the mark will have source.id as data-highlight-id
+              // Update the mark attribute to use our annotation ID
+              const doms = highlighter.getDoms(source.id);
+              for (const dom of doms) {
+                dom.setAttribute("data-highlight-id", ann.id);
+              }
+              restored = true;
+            } catch {
+              // Text not found or range invalid
+            }
+          }
+        }
+
+        if (restored) {
+          // Apply type class — try via highlighter API first, fallback to direct DOM
+          try {
+            highlighter.addClass(ANNOTATION_TYPE_CLASSES[ann.type], ann.id);
+          } catch {
+            // Fallback: apply class directly to DOM marks (needed when ID was remapped)
+          }
+          const doms = document.querySelectorAll(`.annotatable-plan mark[data-highlight-id="${ann.id}"]`);
+          for (const dom of doms) {
+            dom.classList.add(ANNOTATION_TYPE_CLASSES[ann.type]);
+          }
+          if (doms.length > 0) {
+            const annotatableEl = doms[0].closest("[data-annotatable]");
+            if (annotatableEl) {
+              if (!gutterMap.has(annotatableEl)) gutterMap.set(annotatableEl, new Set());
+              gutterMap.get(annotatableEl)!.add(ann.type);
+            }
           }
         }
       }
+      restoringRef.current = false;
 
-      // Apply multi-color gutter via inset box-shadow
-      const GUTTER_CSS_COLORS: Record<AnnotationType, string> = {
-        comment: "rgb(59, 130, 246)",
-        replace: "rgb(234, 179, 8)",
-        delete: "rgb(239, 68, 68)",
-        insert: "rgb(34, 197, 94)",
+      // Apply gutter dots
+      const GUTTER_DOT_COLORS: Record<AnnotationType, string> = {
+        comment: "#3b82f6",
+        replace: "#eab308",
+        delete: "#ef4444",
+        insert: "#22c55e",
       };
 
       for (const [el, types] of gutterMap) {
         const htmlEl = el as HTMLElement;
-        const typeArr = [...types];
-        const lineWidth = 3;
-        const shadows = typeArr.map((type, i) => {
-          const offset = -(i * lineWidth + lineWidth);
-          return `inset ${offset}px 0 0 0 ${GUTTER_CSS_COLORS[type]}`;
-        });
-        htmlEl.style.boxShadow = shadows.join(", ");
-        htmlEl.style.paddingLeft = `${typeArr.length * lineWidth + 4}px`;
-        htmlEl.setAttribute("data-gutter-types", typeArr.join(","));
+        htmlEl.style.position = "relative";
+        const dotsContainer = document.createElement("span");
+        dotsContainer.className = "annotation-dots";
+        dotsContainer.style.cssText = "position:absolute;left:-12px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:2px;";
+        for (const type of types) {
+          const dot = document.createElement("span");
+          dot.style.cssText = `width:6px;height:6px;border-radius:50%;background:${GUTTER_DOT_COLORS[type]};`;
+          dotsContainer.appendChild(dot);
+        }
+        htmlEl.appendChild(dotsContainer);
       }
-    }, 50);
+    }
 
-    return () => clearTimeout(timer);
+    const frame = requestAnimationFrame(restoreAnnotations);
+    return () => { cancelled = true; cancelAnimationFrame(frame); };
   }, [annotations, content]);
 
   // Load annotations from SQLite on mount / session change
@@ -417,7 +480,7 @@ export function AnnotatableMarkdownView({ content }: Props) {
   return (
     <div
       ref={containerRef}
-      className="annotatable-plan prose-invert max-w-none px-4 py-3 text-sm text-text"
+      className="annotatable-plan prose-invert max-w-none px-4 py-3 text-[11px] text-text"
     >
       <PlanMarkdown content={content} />
 
@@ -426,6 +489,7 @@ export function AnnotatableMarkdownView({ content }: Props) {
           <PlanAnnotationToolbar
             position={toolbar.position}
             targetText={toolbar.targetText}
+            highlightId={toolbar.highlightId}
             startMeta={toolbar.startMeta}
             endMeta={toolbar.endMeta}
             mode={toolbar.mode}
@@ -436,4 +500,47 @@ export function AnnotatableMarkdownView({ content }: Props) {
       )}
     </div>
   );
+}
+
+/// Find text in the container DOM, returning a Range for web-highlighter.
+function findTextInDOM(container: HTMLElement, searchText: string): Range | null {
+  if (!searchText || searchText.length < 2) return null;
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  let node: Text | null;
+
+  // Try exact match in a single text node first
+  while ((node = walker.nextNode() as Text | null)) {
+    const text = node.textContent ?? "";
+    const idx = text.indexOf(searchText);
+    if (idx !== -1) {
+      const range = document.createRange();
+      range.setStart(node, idx);
+      range.setEnd(node, idx + searchText.length);
+      return range;
+    }
+  }
+
+  // Fallback: cross-node match (text spans multiple nodes)
+  const walker2 = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  let accumulated = "";
+  const nodes: { node: Text; start: number }[] = [];
+  while ((node = walker2.nextNode() as Text | null)) {
+    const text = node.textContent ?? "";
+    nodes.push({ node, start: accumulated.length });
+    accumulated += text;
+    const idx = accumulated.indexOf(searchText);
+    if (idx !== -1) {
+      const startEntry = nodes.find((n) => n.start + (n.node.textContent?.length ?? 0) > idx);
+      if (!startEntry) return null;
+      const range = document.createRange();
+      range.setStart(startEntry.node, idx - startEntry.start);
+      const endOffset = idx + searchText.length;
+      const endEntry = nodes.find((n) => n.start + (n.node.textContent?.length ?? 0) >= endOffset);
+      if (!endEntry) return null;
+      range.setEnd(endEntry.node, endOffset - endEntry.start);
+      return range;
+    }
+  }
+
+  return null;
 }

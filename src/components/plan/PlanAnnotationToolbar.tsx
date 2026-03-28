@@ -4,7 +4,21 @@ import { addAnnotationAtom, activeAnnotationsAtom, clearAnnotationsAtom, seriali
 import { toastsAtom } from "@/stores/toast";
 import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import type { DomMeta } from "@/lib/highlighter";
-import { MessageSquare, Replace, Trash2, Plus, Copy, X } from "lucide-react";
+import { MessageSquare, Replace, Trash2, Copy, X } from "lucide-react";
+
+// Quick labels inspired by plannotator
+const QUICK_LABELS = [
+  "Clarify this",
+  "Too vague",
+  "Verify this",
+  "Give me an example",
+  "Simplify this",
+  "Consider alternatives",
+  "Too risky",
+  "Out of scope",
+  "Break this down",
+  "Nice approach",
+] as const;
 
 interface ToolbarPosition {
   top: number;
@@ -14,6 +28,7 @@ interface ToolbarPosition {
 interface PlanAnnotationToolbarProps {
   position: ToolbarPosition | null;
   targetText: string;
+  highlightId: string;
   startMeta: DomMeta;
   endMeta: DomMeta;
   mode: "pinpoint" | "selection";
@@ -21,44 +36,41 @@ interface PlanAnnotationToolbarProps {
   onConfirm: () => void;
 }
 
-export function PlanAnnotationToolbar({ position, targetText, startMeta, endMeta, onClose, onConfirm }: PlanAnnotationToolbarProps) {
-  const [activeAction, setActiveAction] = useState<AnnotationType | null>(null);
+export function PlanAnnotationToolbar({ position, targetText, highlightId, startMeta, endMeta, onClose, onConfirm }: PlanAnnotationToolbarProps) {
+  const [view, setView] = useState<"actions" | "quicklabel" | "comment" | "replace">("actions");
   const [inputValue, setInputValue] = useState("");
   const addAnnotation = useSetAtom(addAnnotationAtom);
   const addToast = useSetAtom(toastsAtom);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    if (activeAction) {
+    if (view === "comment" || view === "replace") {
       inputRef.current?.focus();
     }
-  }, [activeAction]);
+  }, [view]);
 
   if (!position) return null;
 
-  function handleSubmit() {
-    if (!activeAction) return;
+  function submitAnnotation(type: AnnotationType, content: string) {
     addAnnotation({
-      type: activeAction,
+      type,
       target: targetText.slice(0, 80),
-      content: inputValue,
+      content,
       startMeta,
       endMeta,
+      highlightId,
     });
-    setActiveAction(null);
+    setView("actions");
     setInputValue("");
     onConfirm();
   }
 
+  function handleQuickLabel(label: string) {
+    submitAnnotation("comment", label);
+  }
+
   function handleDelete() {
-    addAnnotation({
-      type: "delete",
-      target: targetText.slice(0, 80),
-      content: "",
-      startMeta,
-      endMeta,
-    });
-    onConfirm();
+    submitAnnotation("delete", "");
   }
 
   function handleCopy() {
@@ -68,36 +80,39 @@ export function PlanAnnotationToolbar({ position, targetText, startMeta, endMeta
     onClose();
   }
 
-  function handleAction(type: AnnotationType) {
-    setActiveAction(type);
-    setInputValue(type === "replace" ? targetText : "");
+  function handleSubmit() {
+    if (!inputValue.trim()) return;
+    if (view === "comment") submitAnnotation("comment", inputValue);
+    if (view === "replace") submitAnnotation("replace", inputValue);
   }
 
-  const actions: Array<{ type: AnnotationType; icon: typeof MessageSquare; label: string }> = [
-    { type: "comment", icon: MessageSquare, label: "Comment" },
-    { type: "replace", icon: Replace, label: "Replace" },
-    { type: "insert", icon: Plus, label: "Insert" },
-  ];
-
-  return (
-    <div
-      className="fixed z-50 rounded-lg border border-border bg-popover shadow-lg"
-      style={{ top: position.top, left: position.left }}
-    >
-      {!activeAction ? (
+  // Actions view — icon toolbar
+  if (view === "actions") {
+    return (
+      <div
+        className="fixed z-50 rounded-lg border border-border bg-popover shadow-lg"
+        style={{ top: position.top, left: position.left }}
+      >
         <TooltipProvider delay={0}>
           <div className="flex items-center gap-0 p-0.5">
-            {actions.map(({ type, icon: Icon, label }) => (
-              <Tooltip key={type}>
-                <TooltipTrigger
-                  onClick={() => handleAction(type)}
-                  className="rounded p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-                >
-                  <Icon className="size-3.5" />
-                </TooltipTrigger>
-                <TooltipContent side="bottom" sideOffset={4}>{label}</TooltipContent>
-              </Tooltip>
-            ))}
+            <Tooltip>
+              <TooltipTrigger
+                onClick={() => setView("comment")}
+                className="rounded p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+              >
+                <MessageSquare className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipContent side="bottom" sideOffset={4}>Comment</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                onClick={() => setView("replace")}
+                className="rounded p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+              >
+                <Replace className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipContent side="bottom" sideOffset={4}>Replace</TooltipContent>
+            </Tooltip>
             <Tooltip>
               <TooltipTrigger
                 onClick={handleDelete}
@@ -119,6 +134,16 @@ export function PlanAnnotationToolbar({ position, targetText, startMeta, endMeta
             <div className="mx-0.5 h-4 w-px bg-border" />
             <Tooltip>
               <TooltipTrigger
+                onClick={() => setView("quicklabel")}
+                className="rounded px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+              >
+                ⚡
+              </TooltipTrigger>
+              <TooltipContent side="bottom" sideOffset={4}>Quick label</TooltipContent>
+            </Tooltip>
+            <div className="mx-0.5 h-4 w-px bg-border" />
+            <Tooltip>
+              <TooltipTrigger
                 onClick={onClose}
                 className="rounded p-1.5 text-muted-foreground hover:text-foreground transition-colors"
               >
@@ -128,32 +153,60 @@ export function PlanAnnotationToolbar({ position, targetText, startMeta, endMeta
             </Tooltip>
           </div>
         </TooltipProvider>
-      ) : (
-        <div className="w-72 p-2">
-          <div className="mb-1.5 flex items-center justify-between">
-            <span className="text-[10px] font-medium uppercase text-muted-foreground">{activeAction}</span>
-            <button type="button" onClick={() => { setActiveAction(null); setInputValue(""); }} className="text-muted-foreground hover:text-foreground">
-              <X className="size-3" />
-            </button>
-          </div>
-          <textarea
-            ref={inputRef}
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && e.ctrlKey) { e.preventDefault(); handleSubmit(); } }}
-            placeholder={activeAction === "comment" ? "Your comment..." : activeAction === "replace" ? "Replace with..." : "Content to insert..."}
-            className="mb-1.5 h-20 w-full resize-none rounded border border-border bg-background p-2 text-xs focus:ring-1 focus:ring-ring"
-          />
+      </div>
+    );
+  }
+
+  // Quick label picker — compact, no emojis
+  if (view === "quicklabel") {
+    return (
+      <div
+        className="fixed z-50 w-40 rounded-md border border-border/60 bg-popover py-0.5 shadow-md"
+        style={{ top: position.top, left: position.left }}
+      >
+        {QUICK_LABELS.map((label, i) => (
           <button
+            key={label}
             type="button"
-            onClick={handleSubmit}
-            disabled={!inputValue.trim()}
-            className="w-full rounded bg-primary px-2 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={() => handleQuickLabel(label)}
+            className="flex w-full items-center justify-between px-2 py-[3px] text-left text-[10px] text-foreground/80 hover:bg-secondary transition-colors"
           >
-            Add {activeAction} (Ctrl+Enter)
+            <span>{label}</span>
+            <span className="text-[9px] text-muted-foreground/40">{i + 1}</span>
           </button>
-        </div>
-      )}
+        ))}
+      </div>
+    );
+  }
+
+  // Comment or Replace input view
+  return (
+    <div
+      className="fixed z-50 w-72 rounded-lg border border-border bg-popover p-2 shadow-lg"
+      style={{ top: position.top, left: position.left }}
+    >
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="text-[10px] font-medium uppercase text-muted-foreground">{view}</span>
+        <button type="button" onClick={() => { setView("actions"); setInputValue(""); }} className="text-muted-foreground hover:text-foreground">
+          <X className="size-3" />
+        </button>
+      </div>
+      <textarea
+        ref={inputRef}
+        value={inputValue}
+        onChange={(e) => setInputValue(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter" && e.ctrlKey) { e.preventDefault(); handleSubmit(); } }}
+        placeholder={view === "comment" ? "Your comment..." : "Replace with..."}
+        className="mb-1.5 h-20 w-full resize-none rounded border border-border bg-background p-2 text-xs focus:ring-1 focus:ring-ring"
+      />
+      <button
+        type="button"
+        onClick={handleSubmit}
+        disabled={!inputValue.trim()}
+        className="w-full rounded bg-primary px-2 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        Add {view} (Ctrl+Enter)
+      </button>
     </div>
   );
 }

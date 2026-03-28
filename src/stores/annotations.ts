@@ -24,10 +24,10 @@ export const activeAnnotationsAtom = atom<Annotation[]>((get) => {
 
 export const addAnnotationAtom = atom(
   null,
-  (get, set, annotation: Omit<Annotation, "id">) => {
+  (get, set, annotation: Omit<Annotation, "id"> & { highlightId?: string }) => {
     const sessionId = get(activeSessionIdAtom);
     if (!sessionId) return;
-    const id = `ann-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const id = annotation.highlightId ?? `ann-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     set(annotationMapAtom, (prev) => {
       const existing = prev[sessionId] ?? [];
       return { ...prev, [sessionId]: [...existing, { ...annotation, id }] };

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useAtomValue, useSetAtom, useAtom } from "jotai";
 import { activeAnnotationsAtom, removeAnnotationAtom, type Annotation } from "@/stores/annotations";
 import { planSidebarTabAtom } from "@/stores/plan";
@@ -47,12 +47,14 @@ export function PlanSidebar() {
   const annotations = useAtomValue(activeAnnotationsAtom);
   const removeAnnotation = useSetAtom(removeAnnotationAtom);
 
-  // Auto-switch to annotations tab when annotations exist
+  // Auto-switch to annotations tab only when first annotation is added (0 → >0)
+  const prevCountRef = useRef(annotations.length);
   useEffect(() => {
-    if (annotations.length > 0 && tab === "files") {
+    if (prevCountRef.current === 0 && annotations.length > 0) {
       setTab("annotations");
     }
-  }, [annotations.length, tab, setTab]);
+    prevCountRef.current = annotations.length;
+  }, [annotations.length, setTab]);
 
   return (
     <div className="flex h-full flex-col">

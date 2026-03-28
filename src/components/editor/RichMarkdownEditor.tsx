@@ -66,7 +66,7 @@ export function RichMarkdownEditor({
     <MDXEditor
       ref={editorRef}
       className={`dark-theme dark-editor ${className ?? ""}`}
-      contentEditableClassName="prose-invert max-w-none text-[12px] leading-relaxed text-foreground px-3 py-2 min-h-[200px] outline-none"
+      contentEditableClassName="prose-invert max-w-none text-[11px] leading-relaxed text-foreground px-3 py-2 min-h-[200px] outline-none"
       markdown={markdown}
       onChange={onChange}
       readOnly={readOnly}

@@ -1,10 +1,9 @@
-import { useState } from "react";
-import { useAtomValue, useSetAtom } from "jotai";
+import { useEffect } from "react";
+import { useAtomValue, useSetAtom, useAtom } from "jotai";
 import { activeAnnotationsAtom, removeAnnotationAtom, type Annotation } from "@/stores/annotations";
+import { planSidebarTabAtom } from "@/stores/plan";
 import { PlanListView } from "@/components/panel/PlanListView";
 import { X } from "lucide-react";
-
-type SidebarTab = "files" | "annotations";
 
 const TYPE_BADGE: Record<Annotation["type"], { label: string; bg: string; text: string }> = {
   comment: { label: "COMMENT", bg: "bg-blue-500/15", text: "text-blue-400" },
@@ -14,36 +13,46 @@ const TYPE_BADGE: Record<Annotation["type"], { label: string; bg: string; text: 
 };
 
 function scrollToAnnotation(id: string) {
-  const marks = document.querySelectorAll(`mark[data-bindid="${id}"], mark[data-bindid]`);
-  for (const mark of marks) {
-    // web-highlighter stores the id; check the parent too
-    const highlighter = mark as HTMLElement;
-    if (highlighter.dataset.bindid === id || highlighter.closest(`[data-bindid="${id}"]`)) {
-      highlighter.scrollIntoView({ behavior: "smooth", block: "center" });
-      // Brief flash effect
-      highlighter.style.outline = "2px solid rgba(253, 224, 71, 0.8)";
-      highlighter.style.outlineOffset = "2px";
-      setTimeout(() => {
-        highlighter.style.outline = "";
-        highlighter.style.outlineOffset = "";
-      }, 1500);
-      return;
-    }
+  // web-highlighter uses data-highlight-id attribute
+  const mark = document.querySelector(`.annotatable-plan mark[data-highlight-id="${id}"]`) as HTMLElement | null;
+  if (mark) {
+    mark.scrollIntoView({ behavior: "smooth", block: "center" });
+    mark.style.outline = "2px solid #fde047";
+    mark.style.outlineOffset = "2px";
+    setTimeout(() => {
+      mark.style.outline = "";
+      mark.style.outlineOffset = "";
+    }, 1500);
+    return;
   }
-  // Fallback: search by annotation text content in annotatable elements
-  const allMarks = document.querySelectorAll(".annotatable-plan mark");
-  for (const mark of allMarks) {
-    if (mark.textContent?.includes(id.slice(0, 10))) {
-      (mark as HTMLElement).scrollIntoView({ behavior: "smooth", block: "center" });
+  // Fallback: search by annotation id in any highlight-id containing the id
+  const allMarks = document.querySelectorAll(".annotatable-plan mark[data-highlight-id]");
+  for (const m of allMarks) {
+    const highlightId = (m as HTMLElement).dataset.highlightId ?? "";
+    if (highlightId.includes(id) || id.includes(highlightId)) {
+      (m as HTMLElement).scrollIntoView({ behavior: "smooth", block: "center" });
+      (m as HTMLElement).style.outline = "2px solid #fde047";
+      (m as HTMLElement).style.outlineOffset = "2px";
+      setTimeout(() => {
+        (m as HTMLElement).style.outline = "";
+        (m as HTMLElement).style.outlineOffset = "";
+      }, 1500);
       return;
     }
   }
 }
 
 export function PlanSidebar() {
-  const [tab, setTab] = useState<SidebarTab>("files");
+  const [tab, setTab] = useAtom(planSidebarTabAtom);
   const annotations = useAtomValue(activeAnnotationsAtom);
   const removeAnnotation = useSetAtom(removeAnnotationAtom);
+
+  // Auto-switch to annotations tab when annotations exist
+  useEffect(() => {
+    if (annotations.length > 0 && tab === "files") {
+      setTab("annotations");
+    }
+  }, [annotations.length, tab, setTab]);
 
   return (
     <div className="flex h-full flex-col">

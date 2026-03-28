@@ -275,16 +275,16 @@ body,
 
 /* web-highlighter default mark (pending and active selection) */
 .annotatable-plan mark.annotation-highlight,
-.annotatable-plan mark[data-bindid] {
-  background: rgba(253, 224, 71, 0.55) !important;
-  color: inherit;
+.annotatable-plan mark[data-highlight-id] {
+  background: #fde047 !important;
+  color: #0a0a0b !important;
   border-radius: 2px;
   padding: 0 1px;
 }
 
 /* Persisted annotation type colors (applied via highlighter.addClass) */
-.annotatable-plan mark.annotation-comment { background: rgba(59, 130, 246, 0.25) !important; }
-.annotatable-plan mark.annotation-replace { background: rgba(253, 224, 71, 0.4) !important; }
-.annotatable-plan mark.annotation-delete { background: rgba(239, 68, 68, 0.3) !important; text-decoration: line-through; color: rgba(255, 255, 255, 0.6); }
-.annotatable-plan mark.annotation-insert { background: rgba(34, 197, 94, 0.25) !important; }
+.annotatable-plan mark.annotation-comment { background: rgba(59, 130, 246, 0.3) !important; color: inherit !important; }
+.annotatable-plan mark.annotation-replace { background: #fde047 !important; color: #0a0a0b !important; }
+.annotatable-plan mark.annotation-delete { background: rgba(239, 68, 68, 0.35) !important; text-decoration: line-through; color: rgba(255, 255, 255, 0.5) !important; }
+.annotatable-plan mark.annotation-insert { background: rgba(34, 197, 94, 0.3) !important; color: inherit !important; }
 

@@ -2,6 +2,9 @@ import { atom } from "jotai";
 import type { PlanMode, DiffLine } from "@/lib/types";
 import { activeSessionIdAtom } from "./workspace";
 
+export type PlanSidebarTab = "files" | "annotations";
+export const planSidebarTabAtom = atom<PlanSidebarTab>("files");
+
 export interface PlanState {
   content: string;
   original: string;

@@ -31,6 +31,7 @@ impl FrontendHookEvent {
             HookEvent::Stop { session_id, stop_reason, transcript_path } => (session_id.clone(), "stop", None, None, stop_reason.clone(), transcript_path.clone()),
             HookEvent::TaskCompleted { session_id, task_subject, .. } => (session_id.clone(), "task_completed", task_subject.clone(), None, None, None),
             HookEvent::UserPromptSubmit { session_id } => (session_id.clone(), "user_prompt_submit", None, None, None, None),
+            HookEvent::PlanReview { session_id, tool_name, tool_input, .. } => (session_id.clone(), "plan_review", Some(tool_name.clone()), Some(tool_input.clone()), None, None),
         };
         Self {
             session_id,
@@ -240,6 +241,63 @@ fn process_event(
         HookEvent::TaskCompleted { .. } => {}
 
         HookEvent::UserPromptSubmit { .. } => {}
+
+        HookEvent::PlanReview {
+            tool_input,
+            session_id,
+            fifo_path,
+            ..
+        } => {
+            tracing::debug!("PlanReview: fifo_path={fifo_path}");
+
+            if let Ok(mut state) = plan_state.lock() {
+                let runtime = state.get_or_create(session_id);
+                let plan_path = tool_input
+                    .get("plan_path")
+                    .and_then(|v| v.as_str())
+                    .map(std::path::PathBuf::from)
+                    .or_else(|| {
+                        if let Some(csid) = cluihud_session_id
+                            && let Ok(db_guard) = db.lock()
+                            && let Ok(Some(session)) = db_guard.find_session(csid)
+                        {
+                            let cwd = session.worktree_path
+                                .or_else(|| db_guard.workspace_repo_path(&session.workspace_id).ok().flatten());
+                            if let Some(cwd) = cwd {
+                                let local_plans = cwd.join(".claude").join("plans");
+                                if local_plans.exists() {
+                                    let local_mgr = crate::claude::plan::PlanManager::new(local_plans);
+                                    return local_mgr.find_latest_plan().ok().flatten();
+                                }
+                            }
+                        }
+                        runtime.find_latest_plan().ok().flatten()
+                    });
+
+                if let Some(path) = plan_path
+                    && let Ok(()) = runtime.load_plan(&path)
+                {
+                    #[derive(Clone, serde::Serialize)]
+                    struct PlanReady {
+                        path: String,
+                        content: String,
+                        session_id: String,
+                        decision_path: String,
+                    }
+                    if let Some(content) = runtime.current_content() {
+                        let _ = app.emit(
+                            "plan:ready",
+                            PlanReady {
+                                path: path.display().to_string(),
+                                content: content.to_string(),
+                                session_id: session_id.clone(),
+                                decision_path: fifo_path.clone(),
+                            },
+                        );
+                    }
+                }
+            }
+        }
     }
 }
 

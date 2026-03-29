@@ -68,6 +68,7 @@ pub fn run() {
             commands::diff_plan,
             commands::approve_plan,
             commands::reject_plan,
+            commands::submit_plan_decision,
             commands::list_plans,
             commands::list_session_plans,
             commands::load_plan,

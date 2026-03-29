@@ -213,11 +213,13 @@ export function PlanAnnotationToolbar({ position, targetText, highlightId, start
 
 interface PlanAnnotationFooterProps {
   planPath: string;
+  reviewStatus: "idle" | "pending_review" | "submitted";
   onRevise: (feedback: string) => void;
+  onApprove: () => void;
   onAddGlobalComment?: (comment: string) => void;
 }
 
-export function PlanAnnotationFooter({ planPath, onRevise, onAddGlobalComment }: PlanAnnotationFooterProps) {
+export function PlanAnnotationFooter({ planPath, reviewStatus, onRevise, onApprove, onAddGlobalComment }: PlanAnnotationFooterProps) {
   const annotations = useAtomValue(activeAnnotationsAtom);
   const clearAll = useSetAtom(clearAnnotationsAtom);
   const addAnnotation = useSetAtom(addAnnotationAtom);
@@ -248,9 +250,12 @@ export function PlanAnnotationFooter({ planPath, onRevise, onAddGlobalComment }:
     setShowGlobalInput(false);
   }
 
+  const isPending = reviewStatus === "pending_review";
+  const isSubmitted = reviewStatus === "submitted";
+
   return (
     <div className="border-t border-border">
-      {showGlobalInput && (
+      {isPending && showGlobalInput && (
         <div className="border-b border-border/50 p-2">
           <textarea
             ref={globalInputRef}
@@ -276,43 +281,51 @@ export function PlanAnnotationFooter({ planPath, onRevise, onAddGlobalComment }:
         </div>
       )}
       <div className="flex items-center justify-between px-3 py-1.5">
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">{annotations.length} annotation{annotations.length !== 1 ? "s" : ""}</span>
-          {!showGlobalInput && (
-            <button
-              type="button"
-              onClick={() => setShowGlobalInput(true)}
-              title="Add global comment"
-              className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
-            >
-              <MessageSquare className="size-3" />
-              Comment
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={clearAll}
-            className="text-[10px] text-muted-foreground hover:text-foreground"
-          >
-            Clear all
-          </button>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={clearAll}
-            className="rounded border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
-          >
-            Approve
-          </button>
-          <button
-            type="button"
-            onClick={handleRevise}
-            className="rounded bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
-          >
-            Revise
-          </button>
-        </div>
+        {isSubmitted ? (
+          <span className="text-xs text-muted-foreground">Waiting for Claude to revise...</span>
+        ) : isPending ? (
+          <>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">{annotations.length} annotation{annotations.length !== 1 ? "s" : ""}</span>
+              {!showGlobalInput && (
+                <button
+                  type="button"
+                  onClick={() => setShowGlobalInput(true)}
+                  title="Add global comment"
+                  className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
+                >
+                  <MessageSquare className="size-3" />
+                  Comment
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={clearAll}
+                className="text-[10px] text-muted-foreground hover:text-foreground"
+              >
+                Clear all
+              </button>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={onApprove}
+                className="rounded border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
+              >
+                Approve
+              </button>
+              <button
+                type="button"
+                onClick={handleRevise}
+                className="rounded bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+              >
+                Revise
+              </button>
+            </div>
+          </>
+        ) : (
+          <span className="text-xs text-muted-foreground">Plan review complete</span>
+        )}
       </div>
     </div>
   );

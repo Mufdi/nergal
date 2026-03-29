@@ -28,6 +28,7 @@ const ANNOTATION_TYPE_CLASSES: Record<AnnotationType, string> = {
 
 interface Props {
   content: string;
+  annotationsEnabled?: boolean;
 }
 
 /**
@@ -105,7 +106,7 @@ const PlanMarkdown = memo(function PlanMarkdown({ content }: { content: string }
   );
 });
 
-export function AnnotatableMarkdownView({ content }: Props) {
+export function AnnotatableMarkdownView({ content, annotationsEnabled = true }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const highlighterRef = useRef<Highlighter | null>(null);
   const [toolbar, setToolbar] = useState<ToolbarState | null>(null);
@@ -162,6 +163,7 @@ export function AnnotatableMarkdownView({ content }: Props) {
     highlighter.on(HighlightEvent.CREATE, ({ sources }) => {
       // Skip during annotation restoration — fromRange triggers CREATE but we don't want toolbar/pending logic
       if (restoringRef.current) return;
+      if (!annotationsEnabled) return;
 
       const source = sources[0];
       if (!source) return;
@@ -190,14 +192,14 @@ export function AnnotatableMarkdownView({ content }: Props) {
       });
     });
 
-    const stopAutoHighlight = highlighter.run();
+    const stopAutoHighlight = annotationsEnabled ? highlighter.run() : undefined;
 
     return () => {
-      stopAutoHighlight();
+      stopAutoHighlight?.();
       highlighter.dispose();
       highlighterRef.current = null;
     };
-  }, [content]);
+  }, [content, annotationsEnabled]);
 
   // Pinpoint click handler
   useEffect(() => {
@@ -206,6 +208,7 @@ export function AnnotatableMarkdownView({ content }: Props) {
 
     function handleClick(e: MouseEvent) {
       if (!container) return;
+      if (!annotationsEnabled) return;
 
       // If toolbar just opened via CREATE (mouseup → CREATE → click), skip
       if (justCreatedRef.current) return;
@@ -261,7 +264,7 @@ export function AnnotatableMarkdownView({ content }: Props) {
 
     container.addEventListener("click", handleClick);
     return () => container.removeEventListener("click", handleClick);
-  }, [closeToolbar, content]);
+  }, [closeToolbar, content, annotationsEnabled]);
 
   // Hover via mousemove + data-pinpoint-hover attribute
   useEffect(() => {
@@ -269,7 +272,7 @@ export function AnnotatableMarkdownView({ content }: Props) {
     if (!container) return;
 
     function handleMouseMove(e: MouseEvent) {
-      if (toolbarOpenRef.current) return;
+      if (toolbarOpenRef.current || !annotationsEnabled) return;
 
       const target = resolvePinpointTarget(e.target, e);
       if (target === hoverTargetRef.current) return;
@@ -299,7 +302,7 @@ export function AnnotatableMarkdownView({ content }: Props) {
       container.removeEventListener("mousemove", handleMouseMove);
       container.removeEventListener("mouseleave", handleMouseLeave);
     };
-  }, [content]);
+  }, [content, annotationsEnabled]);
 
   // Escape handler
   useEffect(() => {

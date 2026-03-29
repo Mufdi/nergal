@@ -4,7 +4,7 @@ import type { HookEvent, CostSummary, Task, ActivityEntry } from "@/lib/types";
 import { costMapAtom, modeMapAtom, activeSessionIdAtom } from "./workspace";
 import { taskMapAtom } from "./tasks";
 import { fileMapAtom, type ModifiedFile } from "./files";
-import { planStateMapAtom, planDocumentsAtom, registerPlanAtom } from "./plan";
+import { planStateMapAtom, planDocumentsAtom, registerPlanAtom, planReviewStatusMapAtom } from "./plan";
 import { openTabAction, expandRightPanelAtom, activePanelViewAtom } from "./rightPanel";
 import { refreshGitInfoAtom } from "./git";
 import { addActivityAtom } from "./activity";
@@ -48,6 +48,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
         }
         case "stop": {
           set(modeMapAtom, (prev) => ({ ...prev, [sid]: "idle" }));
+          set(planReviewStatusMapAtom, (prev) => ({ ...prev, [sid]: "idle" }));
           set(addActivityAtom, { sessionId: sid, entry: createActivity("session", `Stopped: ${stop_reason ?? "completed"}`) });
           set(refreshGitInfoAtom, sid);
           notify("Claude stopped", stop_reason ?? "completed");
@@ -65,6 +66,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
         }
         case "session_end": {
           set(modeMapAtom, (prev) => ({ ...prev, [sid]: "idle" }));
+          set(planReviewStatusMapAtom, (prev) => ({ ...prev, [sid]: "idle" }));
           set(addActivityAtom, { sessionId: sid, entry: createActivity("session", "Session ended") });
           break;
         }
@@ -121,7 +123,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
   );
 
   unlisteners.push(
-    await listen<{ path: string; content: string; session_id: string }>("plan:ready", (payload) => {
+    await listen<{ path: string; content: string; session_id: string; decision_path?: string }>("plan:ready", (payload) => {
       const sid = get(activeSessionIdAtom);
       if (!sid) return;
       const planData = {
@@ -131,6 +133,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
         mode: "view" as const,
         diff: [] as never[],
         claudeSessionId: payload.session_id,
+        decisionPath: payload.decision_path ?? "",
       };
       set(planStateMapAtom, (prev) => ({ ...prev, [sid]: planData }));
       set(planDocumentsAtom, (prev) => ({ ...prev, [payload.path]: planData }));
@@ -139,6 +142,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
       set(registerPlanAtom, { sessionId: sid, path: payload.path });
       set(activePanelViewAtom, "plan");
       set(expandRightPanelAtom, (prev: number) => prev + 1);
+      set(planReviewStatusMapAtom, (prev) => ({ ...prev, [sid]: "pending_review" }));
       set(addActivityAtom, { sessionId: sid, entry: createActivity("plan", "Plan ready for review") });
     }),
   );

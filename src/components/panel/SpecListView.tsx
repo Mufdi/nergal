@@ -14,9 +14,7 @@ interface OpenSpecChange {
   name: string;
   status: string;
   created: string;
-  has_proposal: boolean;
-  has_design: boolean;
-  has_tasks: boolean;
+  artifacts: string[];
   specs: SpecEntry[];
 }
 

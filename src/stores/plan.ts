@@ -5,6 +5,16 @@ import { activeSessionIdAtom } from "./workspace";
 export type PlanSidebarTab = "files" | "annotations";
 export const planSidebarTabAtom = atom<PlanSidebarTab>("files");
 
+export type PlanReviewStatus = "idle" | "pending_review" | "submitted";
+
+export const planReviewStatusMapAtom = atom<Record<string, PlanReviewStatus>>({});
+
+export const activePlanReviewStatusAtom = atom<PlanReviewStatus>((get) => {
+  const id = get(activeSessionIdAtom);
+  if (!id) return "idle";
+  return get(planReviewStatusMapAtom)[id] ?? "idle";
+});
+
 export interface PlanState {
   content: string;
   original: string;
@@ -12,9 +22,10 @@ export interface PlanState {
   mode: PlanMode;
   diff: DiffLine[];
   claudeSessionId: string;
+  decisionPath: string;
 }
 
-export const defaultPlanState: PlanState = { content: "", original: "", path: "", mode: "view", diff: [], claudeSessionId: "" };
+export const defaultPlanState: PlanState = { content: "", original: "", path: "", mode: "view", diff: [], claudeSessionId: "", decisionPath: "" };
 
 export const planStateMapAtom = atom<Record<string, PlanState>>({});
 

@@ -69,12 +69,18 @@ The system SHALL maintain an annotation store (array of typed annotations) and d
 - **THEN** all annotations SHALL be removed from the store and visual markers cleared
 
 ### Requirement: Structured feedback export on Revise
-The system SHALL serialize annotations into structured instructions and inject them via the `UserPromptSubmit` hook when the user clicks "Revise".
+The system SHALL serialize annotations into structured instructions and deliver them via the `PermissionRequest[ExitPlanMode]` hook's deny message when the user clicks "Revise". The hook blocks Claude until the user approves or denies.
 
 #### Scenario: Revise exports structured feedback
 - **WHEN** user clicks "Revise" with 3 annotations
-- **THEN** the system SHALL inject via hook: "Re-read plan at <path>. Address these annotations: [1] DELETE section 'X' — reason: Y. [2] REPLACE 'A' with 'B' in section Z. [3] COMMENT on step N: feedback."
+- **THEN** the system SHALL deny the PermissionRequest with message: "YOUR PLAN WAS NOT APPROVED. You MUST revise the plan to address ALL of the feedback below... [1] DELETE section 'X' — reason: Y. [2] REPLACE 'A' with 'B' in section Z. [3] COMMENT on step N: feedback."
+- **AND** Claude SHALL automatically re-plan based on the deny message
 
-#### Scenario: Approve clears annotations
-- **WHEN** user clicks "Approve" on a plan with annotations
-- **THEN** all annotations SHALL be cleared and the plan SHALL be accepted as-is
+#### Scenario: Approve allows Claude to proceed
+- **WHEN** user clicks "Approve" on a plan
+- **THEN** all annotations SHALL be cleared and the PermissionRequest SHALL be allowed, letting Claude proceed
+
+#### Scenario: Annotations disabled outside plan review
+- **WHEN** Claude is not awaiting plan approval (no pending PermissionRequest)
+- **THEN** the annotation toolbar, pinpoint mode, and selection highlighting SHALL be disabled
+- **AND** the plan SHALL be displayed in read-only mode

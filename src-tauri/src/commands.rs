@@ -140,6 +140,46 @@ pub fn reject_plan(
     Ok(())
 }
 
+/// Writes approval/denial decision to the FIFO, unblocking the plan-review CLI.
+#[tauri::command]
+pub fn submit_plan_decision(
+    session_id: String,
+    decision_path: String,
+    approved: bool,
+    feedback: Option<String>,
+    state: State<'_, SharedPlanState>,
+) -> Result<(), String> {
+    // If plan was edited, save to disk first
+    if let Ok(mut mgr) = state.lock() {
+        let runtime = mgr.get_or_create(&session_id);
+        if let Some(plan) = &runtime.current_plan {
+            if plan.content != plan.original {
+                let _ = runtime.save_edits(plan.content.clone());
+            }
+        }
+    }
+
+    let decision = if approved {
+        serde_json::json!({ "approved": true })
+    } else {
+        let msg = feedback.unwrap_or_else(|| "Plan changes requested".to_string());
+        let deny_msg = format!(
+            "YOUR PLAN WAS NOT APPROVED.\n\n\
+             You MUST revise the plan to address ALL of the feedback below before calling ExitPlanMode again.\n\n\
+             Rules:\n\
+             - Do not resubmit the same plan unchanged.\n\
+             - Do NOT change the plan title (first # heading) unless the user explicitly asks you to.\n\n\
+             {msg}"
+        );
+        serde_json::json!({ "approved": false, "message": deny_msg })
+    };
+
+    std::fs::write(&decision_path, serde_json::to_string(&decision).map_err(|e| e.to_string())?)
+        .map_err(|e| format!("writing decision to FIFO: {e}"))?;
+
+    Ok(())
+}
+
 // -- Plan list command --
 
 #[derive(Clone, serde::Serialize)]

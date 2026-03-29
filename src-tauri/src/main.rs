@@ -26,8 +26,10 @@ enum HookAction {
         #[arg(trailing_var_arg = true)]
         _args: Vec<String>,
     },
-    /// Inject plan edits into the UserPromptSubmit hook
+    /// Inject plan edits into the UserPromptSubmit hook (deprecated)
     InjectEdits,
+    /// Synchronous plan review for PermissionRequest[ExitPlanMode] hook
+    PlanReview,
     /// Configure Claude Code hooks in ~/.claude/settings.json
     Setup,
 }
@@ -51,6 +53,12 @@ fn main() {
                 HookAction::InjectEdits => {
                     if let Err(e) = cluihud::hooks::cli::inject_edits() {
                         eprintln!("cluihud hook inject-edits: {e:#}");
+                        std::process::exit(1);
+                    }
+                }
+                HookAction::PlanReview => {
+                    if let Err(e) = cluihud::hooks::cli::plan_review(&config.hook_socket_path) {
+                        eprintln!("cluihud hook plan-review: {e:#}");
                         std::process::exit(1);
                     }
                 }

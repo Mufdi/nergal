@@ -4,9 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { currentSpecArtifactAtom } from "@/stores/rightPanel";
 import { MarkdownView } from "@/components/plan/MarkdownView";
 import { RichMarkdownEditor } from "@/components/editor/RichMarkdownEditor";
-import { FileText, Pencil, CheckSquare, ClipboardList, ArrowLeft } from "lucide-react";
-
-type ArtifactTab = "proposal" | "design" | "tasks" | "specs";
+import { FileText, Pencil, CheckSquare, ClipboardList, Wrench, Cog, ArrowLeft } from "lucide-react";
 
 interface SpecEntry {
   name: string;
@@ -17,18 +15,25 @@ interface OpenSpecChange {
   name: string;
   status: string;
   created: string;
-  has_proposal: boolean;
-  has_design: boolean;
-  has_tasks: boolean;
+  artifacts: string[];
   specs: SpecEntry[];
 }
 
-const ARTIFACT_TABS: { key: ArtifactTab; label: string; icon: typeof FileText; field: keyof OpenSpecChange }[] = [
-  { key: "proposal", label: "Proposal", icon: FileText, field: "has_proposal" },
-  { key: "design", label: "Design", icon: Pencil, field: "has_design" },
-  { key: "tasks", label: "Tasks", icon: CheckSquare, field: "has_tasks" },
-  { key: "specs", label: "Specs", icon: ClipboardList, field: "specs" },
-];
+const ARTIFACT_ICONS: Record<string, typeof FileText> = {
+  proposal: FileText,
+  design: Pencil,
+  tasks: CheckSquare,
+  implementation: Wrench,
+  specs: ClipboardList,
+};
+
+function artifactIcon(name: string) {
+  return ARTIFACT_ICONS[name] ?? Cog;
+}
+
+function artifactLabel(name: string): string {
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
 
 function formatDate(dateStr: string): string {
   if (!dateStr) return "";
@@ -46,7 +51,7 @@ interface SpecPanelProps {
 
 export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChange }: SpecPanelProps) {
   const isMaster = changeName === "_master";
-  const [activeTab, setActiveTab] = useState<ArtifactTab>(
+  const [activeTab, setActiveTab] = useState<string>(
     isMaster || initialSpecPath ? "specs" : "proposal"
   );
   const [content, setContent] = useState("");
@@ -62,7 +67,6 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
   const isEditable = change?.status === "active";
   const dirty = mode === "edit" && editContent !== content;
 
-  // Notify parent of dirty state
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
@@ -71,7 +75,13 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
     invoke<OpenSpecChange[]>("list_openspec_changes", { sessionId })
       .then((changes) => {
         const found = changes.find((c) => c.name === changeName);
-        if (found) setChange(found);
+        if (found) {
+          setChange(found);
+          // If current tab doesn't exist in artifacts, switch to first available
+          if (found.artifacts.length > 0 && !found.artifacts.includes(activeTab) && activeTab !== "specs") {
+            setActiveTab(found.artifacts[0]);
+          }
+        }
       })
       .catch(() => {});
   }, [changeName, sessionId]);
@@ -80,7 +90,6 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
     ? activeSpec
     : `${activeTab}.md`;
 
-  // Keep global atom in sync for "Open in IDE" to read
   useEffect(() => {
     if (currentArtifactPath) {
       setCurrentSpecArtifact({ changeName, artifactPath: currentArtifactPath });
@@ -152,18 +161,23 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
     setMode("view");
   }
 
-  function handleTabSwitch(key: ArtifactTab) {
+  function handleTabSwitch(key: string) {
     setActiveTab(key);
     if (key !== "specs") setActiveSpec(null);
   }
 
-  const availableTabs = isMaster
-    ? [ARTIFACT_TABS[3]]
-    : ARTIFACT_TABS.filter((tab) => {
-        if (!change) return tab.key === "proposal";
-        if (tab.key === "specs") return change.specs.length > 0;
-        return change[tab.field as keyof OpenSpecChange] === true;
-      });
+  // Build tabs dynamically from artifacts + specs
+  const tabs: { key: string; label: string; icon: typeof FileText }[] = [];
+  if (!isMaster && change) {
+    for (const artifact of change.artifacts) {
+      tabs.push({ key: artifact, label: artifactLabel(artifact), icon: artifactIcon(artifact) });
+    }
+    if (change.specs.length > 0) {
+      tabs.push({ key: "specs", label: "Specs", icon: ClipboardList });
+    }
+  } else if (isMaster) {
+    tabs.push({ key: "specs", label: "Specs", icon: ClipboardList });
+  }
 
   const displayName = isMaster ? "Consolidated Specs" : changeName;
   const showingContent = activeTab !== "specs" || activeSpec !== null;
@@ -188,18 +202,18 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
       </div>
 
       {/* Artifact tab bar + View/Edit toggle */}
-      {(availableTabs.length > 1 || isEditable) && (
+      {(tabs.length > 1 || isEditable) && (
         <div className="flex shrink-0 items-center border-b border-border/50">
-          {availableTabs.length > 1 && (
-            <div className="flex flex-1">
-              {availableTabs.map((tab) => {
+          {tabs.length > 1 && (
+            <div className="flex flex-1 overflow-x-auto scrollbar-none px-1 py-1 -mb-px">
+              {tabs.map((tab) => {
                 const Icon = tab.icon;
                 const isActive = activeTab === tab.key;
                 return (
                   <button
                     key={tab.key}
                     onClick={() => handleTabSwitch(tab.key)}
-                    className={`flex items-center gap-1.5 px-3 py-1 text-[11px] transition-colors ${
+                    className={`flex shrink-0 items-center gap-1.5 px-3 py-1 text-[11px] whitespace-nowrap transition-colors ${
                       isActive
                         ? "border-b-2 border-blue-500 text-foreground"
                         : "text-muted-foreground hover:text-foreground/80"
@@ -215,7 +229,7 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
               })}
             </div>
           )}
-          {availableTabs.length <= 1 && <div className="flex-1" />}
+          {tabs.length <= 1 && <div className="flex-1" />}
 
           {/* View/Edit toggle — only for active changes when showing content */}
           {isEditable && showingContent && (

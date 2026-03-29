@@ -768,9 +768,7 @@ pub struct OpenSpecChange {
     pub name: String,
     pub status: String,
     pub created: String,
-    pub has_proposal: bool,
-    pub has_design: bool,
-    pub has_tasks: bool,
+    pub artifacts: Vec<String>,
     pub specs: Vec<SpecEntry>,
 }
 
@@ -817,9 +815,34 @@ fn scan_change_dir(dir: &std::path::Path, status: &str) -> Option<OpenSpecChange
         })
         .unwrap_or_default();
 
-    let has_proposal = dir.join("proposal.md").exists();
-    let has_design = dir.join("design.md").exists();
-    let has_tasks = dir.join("tasks.md").exists();
+    // Scan all .md files in the change directory as artifacts
+    let mut artifacts = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries {
+            let Ok(entry) = entry else { continue };
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    if ext == "md" {
+                        if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+                            artifacts.push(name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Stable ordering: proposal first, then design, implementation, tasks, rest alphabetically
+    let priority = |name: &str| -> usize {
+        match name {
+            "proposal" => 0,
+            "design" => 1,
+            "implementation" => 2,
+            "tasks" => 3,
+            _ => 4,
+        }
+    };
+    artifacts.sort_by(|a, b| priority(a).cmp(&priority(b)).then_with(|| a.cmp(b)));
 
     let mut specs = Vec::new();
     let specs_dir = dir.join("specs");
@@ -848,9 +871,7 @@ fn scan_change_dir(dir: &std::path::Path, status: &str) -> Option<OpenSpecChange
         name,
         status: status.to_string(),
         created,
-        has_proposal,
-        has_design,
-        has_tasks,
+        artifacts,
         specs,
     })
 }
@@ -924,9 +945,7 @@ pub fn list_openspec_changes(
                 name: "_master".to_string(),
                 status: "master".to_string(),
                 created: String::new(),
-                has_proposal: false,
-                has_design: false,
-                has_tasks: false,
+                artifacts: Vec::new(),
                 specs: master_specs,
             });
         }

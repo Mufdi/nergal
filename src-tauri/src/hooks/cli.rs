@@ -188,6 +188,91 @@ pub fn plan_review(socket_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Synchronous AskUserQuestion interception via GUI.
+///
+/// Same FIFO pattern as plan_review: reads the PreToolUse[AskUserQuestion]
+/// event from stdin, sends it to the GUI, blocks until the user answers,
+/// then outputs a PreToolUse response with updatedInput containing the answer.
+pub fn ask_user(socket_path: &Path) -> Result<()> {
+    let mut input = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input)
+        .context("reading stdin for ask-user")?;
+
+    let stdin_json: serde_json::Value =
+        serde_json::from_str(input.trim()).context("stdin is not valid JSON")?;
+
+    let cluihud_id = std::env::var("CLUIHUD_SESSION_ID").unwrap_or_default();
+    if cluihud_id.is_empty() {
+        // No session — pass through (Claude will ask in terminal)
+        return Ok(());
+    }
+
+    let fifo_path = PathBuf::from(format!("/tmp/cluihud-ask-{}.fifo", std::process::id()));
+    if fifo_path.exists() {
+        std::fs::remove_file(&fifo_path)?;
+    }
+    std::process::Command::new("mkfifo")
+        .arg(&fifo_path)
+        .status()
+        .context("creating FIFO")?;
+    let _guard = FifoGuard(fifo_path.clone());
+
+    let session_id = stdin_json
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let tool_input = stdin_json
+        .get("tool_input")
+        .cloned()
+        .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
+    let socket_msg = serde_json::json!({
+        "hook_event_name": "AskUser",
+        "session_id": session_id,
+        "tool_input": tool_input,
+        "fifo_path": fifo_path.display().to_string(),
+        "cluihud_session_id": cluihud_id,
+    });
+
+    let payload = serde_json::to_string(&socket_msg).context("serializing socket message")?;
+    let mut stream = UnixStream::connect(socket_path)
+        .with_context(|| format!("connecting to {}", socket_path.display()))?;
+    stream.write_all(payload.as_bytes()).context("writing to socket")?;
+    stream.write_all(b"\n").context("writing newline")?;
+    stream.flush().context("flushing socket")?;
+    drop(stream);
+
+    // Block reading from FIFO until the GUI writes the answers
+    let answer_str = std::fs::read_to_string(&fifo_path)
+        .context("reading answers from FIFO")?;
+
+    let answer_json: serde_json::Value =
+        serde_json::from_str(answer_str.trim()).context("parsing answer JSON")?;
+
+    // Build updatedInput: echo back original questions + add answers map
+    let mut updated_input = tool_input;
+    if let Some(obj) = updated_input.as_object_mut() {
+        if let Some(answers) = answer_json.get("answers") {
+            obj.insert("answers".to_string(), answers.clone());
+        }
+    }
+
+    let output = serde_json::json!({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": updated_input
+        }
+    });
+    std::io::stdout()
+        .write_all(serde_json::to_string(&output)?.as_bytes())
+        .context("writing ask-user response to stdout")?;
+
+    Ok(())
+}
+
 fn output_allow() -> Result<()> {
     let output = serde_json::json!({
         "hookSpecificOutput": {

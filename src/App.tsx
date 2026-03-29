@@ -1,6 +1,7 @@
 import { useEffect, Component, type ReactNode } from "react";
 import { useSetAtom, useStore } from "jotai";
 import { Workspace } from "./components/layout/Workspace";
+import { AskUserModal } from "./components/session/AskUserModal";
 import { setupHookListeners } from "./stores/hooks";
 import { configAtom } from "./stores/config";
 import { invoke } from "./lib/tauri";
@@ -64,6 +65,7 @@ export function App() {
   return (
     <ErrorBoundary>
       <Workspace />
+      <AskUserModal />
     </ErrorBoundary>
   );
 }

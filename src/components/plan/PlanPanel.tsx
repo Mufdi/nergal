@@ -1,5 +1,6 @@
 import { useAtomValue, useSetAtom } from "jotai";
-import { planDocumentsAtom, defaultPlanState, setPlanDocModeAtom } from "@/stores/plan";
+import { planDocumentsAtom, defaultPlanState, setPlanDocModeAtom, activePlanReviewStatusAtom, planReviewStatusMapAtom } from "@/stores/plan";
+import { activeSessionIdAtom } from "@/stores/workspace";
 import { clearAnnotationsAtom } from "@/stores/annotations";
 import { toastsAtom } from "@/stores/toast";
 import { invoke } from "@/lib/tauri";
@@ -19,10 +20,15 @@ export function PlanPanel({ path }: PlanPanelProps) {
   const setMode = useSetAtom(setPlanDocModeAtom);
   const addToast = useSetAtom(toastsAtom);
   const clearAnnotations = useSetAtom(clearAnnotationsAtom);
+  const reviewStatus = useAtomValue(activePlanReviewStatusAtom);
+  const setReviewStatusMap = useSetAtom(planReviewStatusMapAtom);
+  const sessionId = useAtomValue(activeSessionIdAtom);
+  const canAnnotate = reviewStatus === "pending_review";
 
   const hasPlan = plan.content.length > 0;
   const hasEdits = plan.content !== plan.original;
   const backendSessionId = plan.claudeSessionId;
+  const decisionPath = plan.decisionPath;
 
   function handleSave() {
     if (!plan.path || !backendSessionId) {
@@ -30,9 +36,8 @@ export function PlanPanel({ path }: PlanPanelProps) {
       return;
     }
     invoke("save_plan", { sessionId: backendSessionId, content: plan.content })
-      .then(() => invoke("reject_plan", { sessionId: backendSessionId }))
       .then(() => {
-        addToast({ message: "Plan Saved", description: "Will re-read on next prompt", type: "success" });
+        addToast({ message: "Plan Saved", description: "Edits saved to disk", type: "success" });
       })
       .catch((err: unknown) => {
         addToast({ message: "Save Failed", description: String(err), type: "error" });
@@ -40,15 +45,46 @@ export function PlanPanel({ path }: PlanPanelProps) {
   }
 
   function handleRevise(feedback: string) {
-    if (!backendSessionId || !plan.path || !feedback) return;
-    invoke("set_pending_annotations", { feedback })
-      .then(() => invoke("reject_plan", { sessionId: backendSessionId }))
+    if (!backendSessionId || !feedback || !decisionPath) return;
+    invoke("submit_plan_decision", {
+      sessionId: backendSessionId,
+      decisionPath,
+      approved: false,
+      feedback,
+    })
       .then(() => {
+        if (sessionId) {
+          setReviewStatusMap((prev) => ({ ...prev, [sessionId]: "submitted" }));
+        }
         clearAnnotations();
-        addToast({ message: "Annotations sent", description: "Claude will re-read plan with your feedback", type: "success" });
+        addToast({ message: "Annotations sent", description: "Claude will revise the plan", type: "success" });
       })
       .catch((err: unknown) => {
         addToast({ message: "Revise Failed", description: String(err), type: "error" });
+      });
+  }
+
+  function handleApprove() {
+    if (!backendSessionId || !decisionPath) {
+      clearAnnotations();
+      if (sessionId) {
+        setReviewStatusMap((prev) => ({ ...prev, [sessionId]: "idle" }));
+      }
+      return;
+    }
+    invoke("submit_plan_decision", {
+      sessionId: backendSessionId,
+      decisionPath,
+      approved: true,
+    })
+      .then(() => {
+        clearAnnotations();
+        if (sessionId) {
+          setReviewStatusMap((prev) => ({ ...prev, [sessionId]: "idle" }));
+        }
+      })
+      .catch((err: unknown) => {
+        addToast({ message: "Approve Failed", description: String(err), type: "error" });
       });
   }
 
@@ -88,7 +124,7 @@ export function PlanPanel({ path }: PlanPanelProps) {
       </div>
 
       <TabsContent value="view" className="flex-1 overflow-y-auto">
-        <AnnotatableMarkdownView content={plan.content} />
+        <AnnotatableMarkdownView content={plan.content} annotationsEnabled={canAnnotate} />
       </TabsContent>
 
       <TabsContent value="edit" className="flex-1 overflow-hidden">
@@ -96,7 +132,12 @@ export function PlanPanel({ path }: PlanPanelProps) {
       </TabsContent>
 
       {plan.mode === "view" && (
-        <PlanAnnotationFooter planPath={plan.path ?? path} onRevise={handleRevise} />
+        <PlanAnnotationFooter
+          planPath={plan.path ?? path}
+          reviewStatus={reviewStatus}
+          onRevise={handleRevise}
+          onApprove={handleApprove}
+        />
       )}
     </Tabs>
   );

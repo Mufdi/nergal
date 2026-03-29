@@ -42,10 +42,27 @@ pub enum HookEvent {
     },
     #[serde(rename = "UserPromptSubmit")]
     UserPromptSubmit { session_id: String },
+    #[serde(rename = "TaskCreated")]
+    TaskCreated {
+        session_id: String,
+        #[serde(default)]
+        task_id: Option<String>,
+        #[serde(default)]
+        task_subject: Option<String>,
+        #[serde(default)]
+        tool_input: serde_json::Value,
+    },
     #[serde(rename = "PlanReview")]
     PlanReview {
         session_id: String,
         tool_name: String,
+        #[serde(default)]
+        tool_input: serde_json::Value,
+        fifo_path: String,
+    },
+    #[serde(rename = "AskUser")]
+    AskUser {
+        session_id: String,
         #[serde(default)]
         tool_input: serde_json::Value,
         fifo_path: String,
@@ -61,8 +78,10 @@ impl HookEvent {
             | Self::PostToolUse { session_id, .. }
             | Self::Stop { session_id, .. }
             | Self::TaskCompleted { session_id, .. }
+            | Self::TaskCreated { session_id, .. }
             | Self::UserPromptSubmit { session_id }
-            | Self::PlanReview { session_id, .. } => session_id,
+            | Self::PlanReview { session_id, .. }
+            | Self::AskUser { session_id, .. } => session_id,
         }
     }
 }

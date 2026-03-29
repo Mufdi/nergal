@@ -5,6 +5,7 @@ import { costMapAtom, modeMapAtom, activeSessionIdAtom } from "./workspace";
 import { taskMapAtom } from "./tasks";
 import { fileMapAtom, type ModifiedFile } from "./files";
 import { planStateMapAtom, planDocumentsAtom, registerPlanAtom, planReviewStatusMapAtom } from "./plan";
+import { askUserAtom } from "./askUser";
 import { openTabAction, expandRightPanelAtom, activePanelViewAtom } from "./rightPanel";
 import { refreshGitInfoAtom } from "./git";
 import { addActivityAtom } from "./activity";
@@ -144,6 +145,21 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
       set(expandRightPanelAtom, (prev: number) => prev + 1);
       set(planReviewStatusMapAtom, (prev) => ({ ...prev, [sid]: "pending_review" }));
       set(addActivityAtom, { sessionId: sid, entry: createActivity("plan", "Plan ready for review") });
+    }),
+  );
+
+  unlisteners.push(
+    await listen<{ session_id: string; questions: Array<{ question: string; header: string; options: string[]; multi_select: boolean }>; decision_path: string }>("ask:user", (payload) => {
+      const sid = get(activeSessionIdAtom);
+      if (!sid) return;
+      set(askUserAtom, {
+        questions: payload.questions,
+        decisionPath: payload.decision_path,
+        sessionId: payload.session_id,
+      });
+      const firstQ = payload.questions[0]?.question ?? "Claude needs input";
+      set(addActivityAtom, { sessionId: sid, entry: createActivity("session", "Claude is asking a question") });
+      notify("Claude needs input", firstQ);
     }),
   );
 

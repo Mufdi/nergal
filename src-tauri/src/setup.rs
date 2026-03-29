@@ -48,6 +48,20 @@ const HOOKS: &[HookDef] = &[
         timeout: None,
     },
     HookDef {
+        event: "TaskCreated",
+        matcher: None,
+        command: "cluihud hook send task-created",
+        is_async: true,
+        timeout: None,
+    },
+    HookDef {
+        event: "PreToolUse",
+        matcher: Some("AskUserQuestion"),
+        command: "cluihud hook ask-user",
+        is_async: false,
+        timeout: Some(86400),
+    },
+    HookDef {
         event: "Stop",
         matcher: None,
         command: "cluihud hook send stop",

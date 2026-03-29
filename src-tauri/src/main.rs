@@ -30,6 +30,8 @@ enum HookAction {
     InjectEdits,
     /// Synchronous plan review for PermissionRequest[ExitPlanMode] hook
     PlanReview,
+    /// Synchronous AskUserQuestion interception via GUI
+    AskUser,
     /// Configure Claude Code hooks in ~/.claude/settings.json
     Setup,
 }
@@ -59,6 +61,12 @@ fn main() {
                 HookAction::PlanReview => {
                     if let Err(e) = cluihud::hooks::cli::plan_review(&config.hook_socket_path) {
                         eprintln!("cluihud hook plan-review: {e:#}");
+                        std::process::exit(1);
+                    }
+                }
+                HookAction::AskUser => {
+                    if let Err(e) = cluihud::hooks::cli::ask_user(&config.hook_socket_path) {
+                        eprintln!("cluihud hook ask-user: {e:#}");
                         std::process::exit(1);
                     }
                 }

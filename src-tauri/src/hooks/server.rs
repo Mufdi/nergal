@@ -31,7 +31,9 @@ impl FrontendHookEvent {
             HookEvent::Stop { session_id, stop_reason, transcript_path } => (session_id.clone(), "stop", None, None, stop_reason.clone(), transcript_path.clone()),
             HookEvent::TaskCompleted { session_id, task_subject, .. } => (session_id.clone(), "task_completed", task_subject.clone(), None, None, None),
             HookEvent::UserPromptSubmit { session_id } => (session_id.clone(), "user_prompt_submit", None, None, None, None),
+            HookEvent::TaskCreated { session_id, task_subject, tool_input, .. } => (session_id.clone(), "task_created", task_subject.clone(), Some(tool_input.clone()), None, None),
             HookEvent::PlanReview { session_id, tool_name, tool_input, .. } => (session_id.clone(), "plan_review", Some(tool_name.clone()), Some(tool_input.clone()), None, None),
+            HookEvent::AskUser { session_id, tool_input, .. } => (session_id.clone(), "ask_user", None, Some(tool_input.clone()), None, None),
         };
         Self {
             session_id,
@@ -240,6 +242,15 @@ fn process_event(
 
         HookEvent::TaskCompleted { .. } => {}
 
+        HookEvent::TaskCreated {
+            session_id,
+            tool_input,
+            ..
+        } => {
+            let csid = cluihud_session_id.unwrap_or(session_id);
+            process_task_event(app, "TaskCreate", tool_input, csid, db);
+        }
+
         HookEvent::UserPromptSubmit { .. } => {}
 
         HookEvent::PlanReview {
@@ -297,6 +308,56 @@ fn process_event(
                     }
                 }
             }
+        }
+
+        HookEvent::AskUser {
+            session_id,
+            tool_input,
+            fifo_path,
+        } => {
+            tracing::debug!("AskUser: fifo_path={fifo_path}");
+
+            #[derive(Clone, serde::Serialize)]
+            struct AskUserQuestion {
+                question: String,
+                header: String,
+                options: Vec<String>,
+                multi_select: bool,
+            }
+
+            #[derive(Clone, serde::Serialize)]
+            struct AskUserPayload {
+                session_id: String,
+                questions: Vec<AskUserQuestion>,
+                decision_path: String,
+            }
+
+            let mut questions = Vec::new();
+            if let Some(arr) = tool_input.get("questions").and_then(|v| v.as_array()) {
+                for q in arr {
+                    let question = q.get("question").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let header = q.get("header").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let multi_select = q.get("multiSelect").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let options = q.get("options")
+                        .and_then(|v| v.as_array())
+                        .map(|opts| {
+                            opts.iter()
+                                .filter_map(|o| o.get("label").and_then(|l| l.as_str()).map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    questions.push(AskUserQuestion { question, header, options, multi_select });
+                }
+            }
+
+            let _ = app.emit(
+                "ask:user",
+                AskUserPayload {
+                    session_id: session_id.clone(),
+                    questions,
+                    decision_path: fifo_path.clone(),
+                },
+            );
         }
     }
 }

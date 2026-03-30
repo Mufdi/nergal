@@ -140,7 +140,11 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
               <DocumentContent tab={activeTab} />
             </div>
             {showSidebar && sidebarOpen && (
-              <div className={`shrink-0 overflow-hidden border-l border-border/50 ${activeTab.type === "file" || activeTab.type === "plan" ? "w-52" : "w-44"}`}>
+              <div
+                className={`shrink-0 overflow-hidden border-l border-border/50 outline-none ${activeTab.type === "file" || activeTab.type === "plan" ? "w-52" : "w-44"}`}
+                data-focus-zone="panel-sidebar"
+                tabIndex={-1}
+              >
                 <SidebarContent type={activeTab.type} />
               </div>
             )}
@@ -169,7 +173,7 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
                 <div className="flex flex-1 items-center justify-center">
                   <span className="text-[11px] text-muted-foreground">{sidebar.hint}</span>
                 </div>
-                <div className="w-52 shrink-0 overflow-y-auto border-l border-border/50">
+                <div className="w-52 shrink-0 overflow-y-auto border-l border-border/50 outline-none" data-focus-zone="panel-sidebar" tabIndex={-1}>
                   <sidebar.Component />
                 </div>
               </>

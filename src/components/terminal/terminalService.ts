@@ -102,8 +102,8 @@ function wireIMEFix(term: Terminal, container: HTMLElement, ptyId: string) {
     if (event.ctrlKey && !event.shiftKey && event.code === "KeyW") return false;
     if (event.ctrlKey && !event.shiftKey && event.code === "KeyN") return false;
 
-    // Alt+arrows
-    if (event.altKey && (event.code === "ArrowLeft" || event.code === "ArrowRight")) return false;
+    // Alt+arrows (navigation between zones + items)
+    if (event.altKey && event.code.startsWith("Arrow")) return false;
 
     return true;
   });

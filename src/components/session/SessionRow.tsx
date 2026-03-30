@@ -60,6 +60,7 @@ export function SessionRow({
     <div
       role="button"
       tabIndex={0}
+      data-nav-item
       onClick={onSelect}
       onKeyDown={(e) => { if (e.key === "Enter") onSelect(); }}
       className={`group flex w-full items-center gap-1.5 pl-7 pr-3 py-1 text-left transition-colors cursor-pointer ${

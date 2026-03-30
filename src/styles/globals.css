@@ -186,6 +186,17 @@ body,
   scrollbar-width: none;
 }
 
+/* ── Focus zone flash — shows and fades a ring when switching panels ── */
+@keyframes zone-flash {
+  0% { outline: 1.5px solid var(--ring); outline-offset: -1.5px; }
+  100% { outline: 1.5px solid transparent; outline-offset: -1.5px; }
+}
+
+.zone-flash {
+  animation: zone-flash 0.8s ease-out forwards;
+  border-radius: var(--radius);
+}
+
 /* ── Pulse animation for active sessions ── */
 @keyframes dot-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }

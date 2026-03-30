@@ -181,6 +181,7 @@ function ChangeItem({
           <div className="w-6 shrink-0" />
         )}
         <button
+          data-nav-item
           onClick={() => onClick(change)}
           onDoubleClick={() => onDoubleClick(change)}
           className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pr-3 text-left"

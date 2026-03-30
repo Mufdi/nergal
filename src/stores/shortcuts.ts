@@ -19,7 +19,7 @@ import {
 import { layoutPresetAtom, sessionLayoutPresetAtom, applyPresetSignalAtom, type LayoutPreset } from "./layout";
 import { activityDrawerOpenAtom } from "./activity";
 
-export type FocusZone = "sidebar" | "terminal" | "panel";
+export type FocusZone = "sidebar" | "terminal" | "panel" | "panel-sidebar";
 
 export interface ShortcutAction {
   id: string;
@@ -97,16 +97,73 @@ function togglePanel(type: Tab["type"], _label: string) {
   s.set(expandRightPanelAtom, (prev: number) => prev + 1);
 }
 
+function getVisibleZones(): FocusZone[] {
+  const zones: FocusZone[] = ["sidebar", "terminal"];
+  if (document.querySelector("[data-focus-zone='panel']")) zones.push("panel");
+  if (document.querySelector("[data-focus-zone='panel-sidebar']")) zones.push("panel-sidebar");
+  return zones;
+}
+
+function detectCurrentZone(): FocusZone {
+  const active = document.activeElement;
+  if (active?.closest("[data-focus-zone='panel-sidebar']")) return "panel-sidebar";
+  if (active?.closest("[data-focus-zone='panel']")) return "panel";
+  if (active?.closest("[data-focus-zone='sidebar']")) return "sidebar";
+  return "terminal";
+}
+
 function focusZone(zone: FocusZone) {
+  store().set(focusZoneAtom, zone);
+
+  const el = document.querySelector(`[data-focus-zone='${zone}']`) as HTMLElement | null;
+  if (!el) return;
+
   if (zone === "terminal") {
     terminalService.focusActive();
-  } else if (zone === "sidebar") {
-    const el = document.querySelector("[data-focus-zone='sidebar']") as HTMLElement | null;
-    el?.focus();
   } else {
-    const el = document.querySelector("[data-focus-zone='panel']") as HTMLElement | null;
-    el?.focus();
+    // For sidebars/panels, focus the first navigable item if available
+    const firstItem = el.querySelector("[data-nav-item]") as HTMLElement | null;
+    if (firstItem) {
+      firstItem.focus();
+    } else {
+      el.focus();
+    }
   }
+  flashZone(el);
+}
+
+function flashZone(el: HTMLElement | null) {
+  if (!el) return;
+  el.classList.remove("zone-flash");
+  void el.offsetWidth;
+  el.classList.add("zone-flash");
+  el.addEventListener("animationend", () => el.classList.remove("zone-flash"), { once: true });
+}
+
+function navigateItems(direction: "up" | "down") {
+  const zone = detectCurrentZone();
+  if (zone === "terminal") return;
+
+  const container = document.querySelector(`[data-focus-zone='${zone}']`) as HTMLElement | null;
+  if (!container) return;
+
+  const items = Array.from(container.querySelectorAll<HTMLElement>("[data-nav-item]"));
+  if (items.length === 0) return;
+
+  const active = document.activeElement as HTMLElement;
+  const currentItem = active?.closest("[data-nav-item]") as HTMLElement | null;
+  const currentIdx = currentItem ? items.indexOf(currentItem) : -1;
+
+  let nextIdx: number;
+  if (currentIdx === -1) {
+    nextIdx = direction === "down" ? 0 : items.length - 1;
+  } else {
+    nextIdx = direction === "down"
+      ? (currentIdx + 1) % items.length
+      : (currentIdx - 1 + items.length) % items.length;
+  }
+  items[nextIdx].focus();
+  items[nextIdx].scrollIntoView({ block: "nearest" });
 }
 
 function nextTab() {
@@ -144,26 +201,22 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   { id: "toggle-sidebar", label: "Toggle Sidebar", keys: "ctrl+b", category: "navigation", keywords: ["sidebar", "left", "panel"], handler: () => store().set(toggleSidebarAtom, (p: number) => p + 1) },
   { id: "toggle-right-panel", label: "Toggle Right Panel", keys: "ctrl+shift+b", category: "navigation", keywords: ["right", "panel"], handler: () => store().set(toggleRightPanelAtom, (p: number) => p + 1) },
   { id: "focus-left", label: "Focus Left", keys: "alt+arrowleft", category: "navigation", keywords: ["move", "focus", "left"], handler: () => {
-    const zones: FocusZone[] = ["sidebar", "terminal", "panel"];
-    const active = document.activeElement;
-    let current = 1;
-    if (active?.closest("[data-focus-zone='sidebar']")) current = 0;
-    else if (active?.closest("[data-focus-zone='panel']")) current = 2;
-    else if (active?.closest(".xterm")) current = 1;
-    const prev = current <= 0 ? zones.length - 1 : current - 1;
+    const zones = getVisibleZones();
+    const current = detectCurrentZone();
+    const idx = zones.indexOf(current);
+    const prev = idx <= 0 ? zones.length - 1 : idx - 1;
     focusZone(zones[prev]);
   }},
   { id: "focus-right", label: "Focus Right", keys: "alt+arrowright", category: "navigation", keywords: ["move", "focus", "right"], handler: () => {
-    const zones: FocusZone[] = ["sidebar", "terminal", "panel"];
-    const active = document.activeElement;
-    let current = 1;
-    if (active?.closest("[data-focus-zone='sidebar']")) current = 0;
-    else if (active?.closest("[data-focus-zone='panel']")) current = 2;
-    else if (active?.closest(".xterm")) current = 1;
-    const next = (current + 1) % zones.length;
+    const zones = getVisibleZones();
+    const current = detectCurrentZone();
+    const idx = zones.indexOf(current);
+    const next = (idx + 1) % zones.length;
     focusZone(zones[next]);
   }},
   { id: "focus-terminal", label: "Focus Terminal", keys: "ctrl+ñ", category: "navigation", keywords: ["terminal", "pty", "cli"], handler: () => focusZone("terminal") },
+  { id: "nav-up", label: "Navigate Up", keys: "alt+arrowup", category: "navigation", keywords: ["navigate", "up", "item"], handler: () => navigateItems("up") },
+  { id: "nav-down", label: "Navigate Down", keys: "alt+arrowdown", category: "navigation", keywords: ["navigate", "down", "item"], handler: () => navigateItems("down") },
 
   // -- Session --
   { id: "session-1", label: "Switch to Session 1", keys: "ctrl+1", category: "session", keywords: ["session", "switch"], handler: () => switchToSession(0) },

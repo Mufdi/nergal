@@ -254,28 +254,23 @@ function NavigablePickerContainer({ type, className }: { type: TabType; classNam
     } else if (e.key === "ArrowRight") {
       e.preventDefault();
       const selected = items[idx];
-      if (!selected) return;
-      if (selected.dataset.navDir && selected.dataset.navExpanded === "false") {
+      if (!selected || selected.dataset.navExpanded !== "false") return;
+      // Use chevron if present (SpecListView), otherwise click item (FileBrowser dirs)
+      const chevron = selected.querySelector("[data-nav-chevron]") as HTMLElement | null;
+      if (chevron) {
+        chevron.click();
+      } else {
         selected.click();
-        return;
-      }
-      const row = selected.closest("[data-nav-expandable]");
-      if (row) {
-        const chevron = row.querySelector("button:not([data-nav-item])") as HTMLElement | null;
-        if (chevron) chevron.click();
       }
     } else if (e.key === "ArrowLeft") {
       e.preventDefault();
       const selected = items[idx];
-      if (!selected) return;
-      if (selected.dataset.navDir && selected.dataset.navExpanded === "true") {
+      if (!selected || selected.dataset.navExpanded !== "true") return;
+      const chevron = selected.querySelector("[data-nav-chevron]") as HTMLElement | null;
+      if (chevron) {
+        chevron.click();
+      } else {
         selected.click();
-        return;
-      }
-      const row = selected.closest("[data-nav-expandable]");
-      if (row) {
-        const chevron = row.querySelector("button:not([data-nav-item])") as HTMLElement | null;
-        if (chevron) chevron.click();
       }
     } else if (e.key === "Enter") {
       e.preventDefault();
@@ -286,7 +281,7 @@ function NavigablePickerContainer({ type, className }: { type: TabType; classNam
   return (
     <div
       ref={containerRef}
-      className={`w-full max-w-xs max-h-[70%] overflow-hidden rounded bg-background ring-1 ring-border/20 shadow-2xl outline-none ${className ?? ""}`}
+      className={`w-full max-w-xs max-h-[70%] overflow-y-auto rounded border border-border bg-card shadow-2xl outline-none ${className ?? ""}`}
       tabIndex={-1}
       onKeyDown={handleKeyDown}
     >

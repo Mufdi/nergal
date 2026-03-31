@@ -2,7 +2,7 @@ import { atom } from "jotai";
 import { invoke } from "@/lib/tauri";
 import { appStore } from "./jotaiStore";
 import { configAtom } from "./config";
-import { activeSessionIdAtom, activeWorkspaceAtom, workspacesAtom, freshSessionsAtom } from "./workspace";
+import { activeSessionIdAtom, activeWorkspaceAtom, workspacesAtom, freshSessionsAtom, sessionTabIdsAtom } from "./workspace";
 import * as terminalService from "@/components/terminal/terminalService";
 import {
   activeTabsAtom,
@@ -166,7 +166,27 @@ function navigateItems(direction: "up" | "down") {
   items[nextIdx].scrollIntoView({ block: "nearest" });
 }
 
-function nextTab() {
+function nextSessionTab() {
+  const s = store();
+  const tabIds = s.get(sessionTabIdsAtom);
+  const activeId = s.get(activeSessionIdAtom);
+  if (tabIds.length <= 1) return;
+  const idx = tabIds.indexOf(activeId ?? "");
+  const next = (idx + 1) % tabIds.length;
+  s.set(activeSessionIdAtom, tabIds[next]);
+}
+
+function prevSessionTab() {
+  const s = store();
+  const tabIds = s.get(sessionTabIdsAtom);
+  const activeId = s.get(activeSessionIdAtom);
+  if (tabIds.length <= 1) return;
+  const idx = tabIds.indexOf(activeId ?? "");
+  const prev = idx <= 0 ? tabIds.length - 1 : idx - 1;
+  s.set(activeSessionIdAtom, tabIds[prev]);
+}
+
+function nextPanelTab() {
   const s = store();
   const tabs = s.get(activeTabsAtom);
   const activeId = s.get(activeTabIdAtom);
@@ -176,7 +196,7 @@ function nextTab() {
   s.set(activeTabIdAtom, tabs[next].id);
 }
 
-function prevTab() {
+function prevPanelTab() {
   const s = store();
   const tabs = s.get(activeTabsAtom);
   const activeId = s.get(activeTabIdAtom);
@@ -232,8 +252,10 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   { id: "add-workspace", label: "Add Workspace", keys: "ctrl+shift+n", category: "session", keywords: ["workspace", "add", "folder"], handler: () => store().set(triggerAddWorkspaceAtom, (p: number) => p + 1) },
 
   // -- Panel (tabs) --
-  { id: "next-tab", label: "Next Tab", keys: "ctrl+tab", category: "panel", keywords: ["tab", "next"], handler: nextTab },
-  { id: "prev-tab", label: "Previous Tab", keys: "ctrl+shift+tab", category: "panel", keywords: ["tab", "previous", "prev"], handler: prevTab },
+  { id: "next-session-tab", label: "Next Session", keys: "ctrl+tab", category: "session", keywords: ["session", "tab", "next", "cycle"], handler: nextSessionTab },
+  { id: "prev-session-tab", label: "Previous Session", keys: "ctrl+shift+tab", category: "session", keywords: ["session", "tab", "previous", "cycle"], handler: prevSessionTab },
+  { id: "next-panel-tab", label: "Next Panel Tab", keys: "alt+tab", category: "panel", keywords: ["tab", "next", "panel"], handler: nextPanelTab },
+  { id: "prev-panel-tab", label: "Previous Panel Tab", keys: "alt+shift+tab", category: "panel", keywords: ["tab", "previous", "panel"], handler: prevPanelTab },
   { id: "save-file", label: "Save File", keys: "ctrl+s", category: "action", keywords: ["save", "file", "write"], handler: () => {
     document.dispatchEvent(new CustomEvent("cluihud:save-file"));
   }},

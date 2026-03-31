@@ -45,6 +45,9 @@ export const activeWorkspaceAtom = atom<Workspace | null>((get) => {
   return workspaces.find((w) => w.id === session.workspace_id) ?? null;
 });
 
+// Session tabs — ordered list of session IDs open as tabs in the TopBar
+export const sessionTabIdsAtom = atom<string[]>([]);
+
 // Session-scoped state maps
 export const costMapAtom = atom<Record<string, CostSummary>>({});
 export const modeMapAtom = atom<Record<string, string>>({});

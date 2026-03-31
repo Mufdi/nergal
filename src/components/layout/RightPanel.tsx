@@ -73,9 +73,16 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const tabOpenedSignal = useAtomValue(tabOpenedSignalAtom);
 
-  // Close picker when any tab is opened/selected
+  // Close picker and focus panel when any tab is opened/selected
   useEffect(() => {
-    if (tabOpenedSignal > 0) setPickerOpen(false);
+    if (tabOpenedSignal > 0) {
+      setPickerOpen(false);
+      setFocusZone("panel");
+      requestAnimationFrame(() => {
+        const panel = document.querySelector("[data-focus-zone='panel']") as HTMLElement | null;
+        if (panel) panel.focus();
+      });
+    }
   }, [tabOpenedSignal]);
 
   // Listen for file picker shortcut + Esc to close
@@ -100,6 +107,31 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
   function handlePanelFocus() {
     setFocusZone("panel");
     setPreviousZone("panel");
+  }
+
+  function handlePanelKeyDown(e: React.KeyboardEvent) {
+    if (e.ctrlKey || e.altKey || pickerOpen) return;
+    if (!activeTab) return;
+
+    const SCROLL_KEYS = ["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End"];
+    if (!SCROLL_KEYS.includes(e.key)) return;
+
+    // Find the scrollable content area
+    const panel = e.currentTarget as HTMLElement;
+    const scrollable = panel.querySelector("[data-scrollable], .overflow-y-auto") as HTMLElement | null;
+    if (!scrollable || scrollable.scrollHeight <= scrollable.clientHeight) return;
+
+    e.preventDefault();
+    const page = scrollable.clientHeight - 40;
+
+    switch (e.key) {
+      case "ArrowDown": scrollable.scrollBy(0, 24); break;
+      case "ArrowUp": scrollable.scrollBy(0, -24); break;
+      case "PageDown": scrollable.scrollBy({ top: page, behavior: "smooth" }); break;
+      case "PageUp": scrollable.scrollBy({ top: -page, behavior: "smooth" }); break;
+      case "Home": scrollable.scrollTo({ top: 0, behavior: "smooth" }); break;
+      case "End": scrollable.scrollTo({ top: scrollable.scrollHeight, behavior: "smooth" }); break;
+    }
   }
 
   if (collapsed) {
@@ -146,7 +178,7 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
 
   if (activeTab) {
     return (
-      <div className="relative flex h-full flex-col overflow-hidden rounded bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
+      <div className="relative flex h-full flex-col overflow-hidden rounded bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus} onKeyDown={handlePanelKeyDown}>
         <PanelHeader onToggle={onToggle} label={activeTab.label}>
           {hasPicker && (
             <button

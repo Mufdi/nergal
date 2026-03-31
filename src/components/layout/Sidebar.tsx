@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { focusZoneAtom, previousNonTerminalZoneAtom, triggerResumeSessionAtom, triggerNewSessionAtom, triggerAddWorkspaceAtom } from "@/stores/shortcuts";
 import {
@@ -40,10 +40,51 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   function handleSidebarFocus() {
     setFocusZone("sidebar");
     setPreviousZone("sidebar");
+    sidebarSelectedIdx.current = 0;
+  }
+
+  const sidebarSelectedIdx = useRef(-1);
+
+  function updateSidebarSelection(container: HTMLElement, idx: number) {
+    const items = Array.from(container.querySelectorAll<HTMLElement>("[data-nav-item]"));
+    for (const item of items) item.removeAttribute("data-nav-selected");
+    if (items[idx]) {
+      items[idx].setAttribute("data-nav-selected", "true");
+      items[idx].scrollIntoView({ block: "nearest" });
+    }
+    sidebarSelectedIdx.current = idx;
+  }
+
+  function handleSidebarKeyDown(e: React.KeyboardEvent) {
+    if (e.ctrlKey || e.altKey || e.shiftKey) return;
+
+    const container = e.currentTarget as HTMLElement;
+    const items = Array.from(container.querySelectorAll<HTMLElement>("[data-nav-item]"));
+    if (items.length === 0) return;
+
+    const idx = sidebarSelectedIdx.current;
+    const selectedItem = idx >= 0 && idx < items.length ? items[idx] : null;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      updateSidebarSelection(container, idx === -1 ? 0 : Math.min(idx + 1, items.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      updateSidebarSelection(container, idx === -1 ? items.length - 1 : Math.max(idx - 1, 0));
+    } else if (e.key === "ArrowRight" && selectedItem?.dataset.navExpanded === "false") {
+      e.preventDefault();
+      selectedItem.click();
+    } else if (e.key === "ArrowLeft" && selectedItem?.dataset.navExpanded === "true") {
+      e.preventDefault();
+      selectedItem.click();
+    } else if (e.key === "Enter" && selectedItem) {
+      e.preventDefault();
+      selectedItem.click();
+    }
   }
 
   return (
-    <div className="flex h-full flex-col outline-none" tabIndex={-1} data-focus-zone="sidebar" onMouseDown={handleSidebarFocus}>
+    <div className="flex h-full flex-col outline-none" tabIndex={-1} data-focus-zone="sidebar" onMouseDown={handleSidebarFocus} onKeyDown={handleSidebarKeyDown}>
       {collapsed ? (
         <CollapsedSidebar onToggle={onToggle} />
       ) : (
@@ -307,9 +348,15 @@ function WorkspacesView() {
         const filteredSessions = showCompleted
           ? ws.sessions
           : ws.sessions.filter((s) => s.status !== "completed");
+        // Shortcut numbers: non-completed sessions of the active workspace (or first with sessions)
+        const activeWs = workspaces.find((w) => w.sessions.some((s) => s.id === activeSessionId)) ?? workspaces.find((w) => w.sessions.length > 0);
+        const isShortcutWorkspace = ws.id === activeWs?.id;
+        const nonCompletedSessions = ws.sessions.filter((s) => s.status !== "completed");
         return (
           <div key={ws.id}>
             <button
+              data-nav-item
+              data-nav-expanded={isExpanded ? "true" : "false"}
               onClick={() => toggleWorkspace(ws.id)}
               className="flex w-full items-center gap-1.5 px-3 py-1 text-left hover:bg-secondary/40 transition-colors"
             >
@@ -327,12 +374,16 @@ function WorkspacesView() {
 
             {isExpanded && (
               <>
-                {filteredSessions.map((s) => (
+                {filteredSessions.map((s) => {
+                  const shortcutIdx = isShortcutWorkspace ? nonCompletedSessions.indexOf(s) : -1;
+                  const shortcutNumber = shortcutIdx >= 0 && shortcutIdx < 9 ? shortcutIdx + 1 : undefined;
+                  return (
                   <SessionRow
                     key={s.id}
                     session={s}
                     workspace={ws}
                     isActive={activeSessionId === s.id}
+                    shortcutNumber={shortcutNumber}
                     onSelect={() => handleSessionClick(s)}
                     onRename={(newName) => {
                       invoke("rename_session", { sessionId: s.id, name: newName })
@@ -391,7 +442,8 @@ function WorkspacesView() {
                         .catch(() => addToast({ message: "Error", description: "Failed to check status", type: "error" }));
                     }}
                   />
-                ))}
+                  );
+                })}
 
                 {addingSessionFor === ws.id ? (
                   <div className="flex items-center gap-1 pl-7 pr-3 py-1">

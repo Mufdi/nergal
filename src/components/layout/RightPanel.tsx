@@ -222,12 +222,14 @@ function NavigablePickerContainer({ type, className }: { type: TabType; classNam
   }
 
   useEffect(() => {
-    containerRef.current?.focus();
     selectedIdxRef.current = 0;
-    requestAnimationFrame(() => {
+    // Wait for children to render before highlighting + focusing
+    const timer = setTimeout(() => {
       const items = getItems();
       if (items[0]) items[0].setAttribute("data-nav-selected", "true");
-    });
+      containerRef.current?.focus();
+    }, 50);
+    return () => clearTimeout(timer);
   }, [type]);
 
   function updateSelection(idx: number) {
@@ -282,6 +284,7 @@ function NavigablePickerContainer({ type, className }: { type: TabType; classNam
     <div
       ref={containerRef}
       className={`w-full max-w-xs max-h-[70%] overflow-y-auto rounded border border-border bg-card shadow-2xl outline-none ${className ?? ""}`}
+      data-nav-container
       tabIndex={-1}
       onKeyDown={handleKeyDown}
     >

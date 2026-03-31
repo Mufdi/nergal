@@ -56,19 +56,6 @@ export function SpecListView() {
         label: change.name === "_master" ? "Specs" : change.name,
         data: { changeName: change.name, sessionId },
       },
-      isPinned: false,
-    });
-  }
-
-  function handleDoubleClick(change: OpenSpecChange) {
-    openTab({
-      tab: {
-        id: `spec-${change.name}`,
-        type: "spec",
-        label: change.name === "_master" ? "Specs" : change.name,
-        data: { changeName: change.name, sessionId },
-      },
-      isPinned: true,
     });
   }
 
@@ -102,7 +89,7 @@ export function SpecListView() {
             </span>
           </div>
           {master.map((change) => (
-            <ChangeItem key={change.name} change={change} onClick={handleClick} onDoubleClick={handleDoubleClick} />
+            <ChangeItem key={change.name} change={change} onClick={handleClick} />
           ))}
         </>
       )}
@@ -114,7 +101,7 @@ export function SpecListView() {
             </span>
           </div>
           {active.map((change) => (
-            <ChangeItem key={change.name} change={change} onClick={handleClick} onDoubleClick={handleDoubleClick} />
+            <ChangeItem key={change.name} change={change} onClick={handleClick} />
           ))}
         </>
       )}
@@ -126,7 +113,7 @@ export function SpecListView() {
             </span>
           </div>
           {archived.map((change) => (
-            <ChangeItem key={change.name} change={change} onClick={handleClick} onDoubleClick={handleDoubleClick} />
+            <ChangeItem key={change.name} change={change} onClick={handleClick} />
           ))}
         </>
       )}
@@ -137,11 +124,9 @@ export function SpecListView() {
 function ChangeItem({
   change,
   onClick,
-  onDoubleClick,
 }: {
   change: OpenSpecChange;
   onClick: (c: OpenSpecChange) => void;
-  onDoubleClick: (c: OpenSpecChange) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const openTab = useSetAtom(openTabAction);
@@ -155,7 +140,7 @@ function ChangeItem({
   const hasSpecs = change.specs.length > 0;
   const displayName = change.name === "_master" ? "Consolidated" : change.name;
 
-  function handleSpecClick(spec: SpecEntry, pin: boolean) {
+  function handleSpecClick(spec: SpecEntry) {
     openTab({
       tab: {
         id: `spec-${change.name}-${spec.name}`,
@@ -163,13 +148,12 @@ function ChangeItem({
         label: spec.name,
         data: { changeName: change.name, sessionId, specPath: spec.path },
       },
-      isPinned: pin,
     });
   }
 
   return (
     <div>
-      <div className="flex w-full items-center hover:bg-secondary/50 transition-colors">
+      <div className="flex w-full items-center hover:bg-secondary/50 transition-colors" data-nav-expandable>
         {hasSpecs ? (
           <button
             onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
@@ -183,7 +167,6 @@ function ChangeItem({
         <button
           data-nav-item
           onClick={() => onClick(change)}
-          onDoubleClick={() => onDoubleClick(change)}
           className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pr-3 text-left"
         >
           <Icon size={12} className="shrink-0 text-muted-foreground" />
@@ -198,8 +181,8 @@ function ChangeItem({
           {change.specs.map((spec) => (
             <button
               key={spec.path}
-              onClick={() => handleSpecClick(spec, false)}
-              onDoubleClick={() => handleSpecClick(spec, true)}
+              data-nav-item
+              onClick={() => handleSpecClick(spec)}
               className="flex w-full items-center gap-1.5 px-2 py-1 text-left transition-colors hover:bg-secondary/50"
             >
               <ClipboardList size={10} className="shrink-0 text-muted-foreground/60" />

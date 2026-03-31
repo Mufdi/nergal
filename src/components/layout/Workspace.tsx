@@ -170,7 +170,7 @@ export function Workspace() {
     <div className="flex h-full flex-col bg-background">
       <TopBar onOpenSettings={() => setSettingsOpen(true)} rightPanelVisible={!rightCollapsed} />
 
-      <div className="flex flex-1 overflow-hidden px-1 pb-1">
+      <div className="flex flex-1 overflow-hidden p-1">
         <ResizablePanelGroup
           orientation="horizontal"
           className="flex-1"

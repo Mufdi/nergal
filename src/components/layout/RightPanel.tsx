@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import {
   activeTabAtom,
@@ -6,6 +6,7 @@ import {
   activeTabIdAtom,
   activePanelViewAtom,
   setDirtyAction,
+  tabOpenedSignalAtom,
   type Tab,
   type TabType,
 } from "@/stores/rightPanel";
@@ -16,7 +17,7 @@ import { PlanPanel } from "@/components/plan/PlanPanel";
 import { TranscriptViewer } from "@/components/session/TranscriptViewer";
 import { DiffView } from "@/components/plan/DiffView";
 import { PlanListView } from "@/components/panel/PlanListView";
-import { PlanSidebar } from "@/components/plan/PlanSidebar";
+// PlanSidebar will be replaced by annotations drawer in the plan panel
 import { FileListView } from "@/components/panel/FileListView";
 import { SpecListView } from "@/components/panel/SpecListView";
 import { SpecPanel } from "@/components/spec/SpecPanel";
@@ -35,8 +36,7 @@ import {
   CheckSquare,
   GitBranch,
   ScrollText,
-  PanelRightClose,
-  PanelRightOpen,
+  FolderOpen,
   Maximize2,
 } from "lucide-react";
 import {
@@ -56,7 +56,7 @@ const TAB_ICONS: Record<TabType, typeof FileText> = {
   transcript: ScrollText,
 };
 
-const SIDEBAR_TYPES: TabType[] = ["plan", "file", "diff", "spec"];
+const PICKER_TYPES: TabType[] = ["plan", "file", "diff", "spec"];
 
 interface RightPanelProps {
   collapsed: boolean;
@@ -70,7 +70,32 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
   const setActiveTabId = useSetAtom(activeTabIdAtom);
   const setFocusZone = useSetAtom(focusZoneAtom);
   const setPreviousZone = useSetAtom(previousNonTerminalZoneAtom);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const tabOpenedSignal = useAtomValue(tabOpenedSignalAtom);
+
+  // Close picker when any tab is opened/selected
+  useEffect(() => {
+    if (tabOpenedSignal > 0) setPickerOpen(false);
+  }, [tabOpenedSignal]);
+
+  // Listen for file picker shortcut + Esc to close
+  useEffect(() => {
+    function handlePickerToggle() {
+      setPickerOpen((prev) => !prev);
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape" && pickerOpen) {
+        e.preventDefault();
+        setPickerOpen(false);
+      }
+    }
+    document.addEventListener("cluihud:toggle-file-picker", handlePickerToggle);
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      document.removeEventListener("cluihud:toggle-file-picker", handlePickerToggle);
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [pickerOpen]);
 
   function handlePanelFocus() {
     setFocusZone("panel");
@@ -80,7 +105,7 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
   if (collapsed) {
     return (
       <TooltipProvider delay={0}>
-      <div className="flex h-full w-full flex-col items-center gap-0.5 bg-background py-1">
+      <div className="flex h-full w-full flex-col items-center gap-0.5 bg-card py-1">
         <button
           onClick={onToggle}
           className="flex size-4 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors mb-0.5"
@@ -117,72 +142,58 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
     );
   }
 
-  const showSidebar = activeTab && SIDEBAR_TYPES.includes(activeTab.type);
+  const hasPicker = activeTab && PICKER_TYPES.includes(activeTab.type);
 
   if (activeTab) {
     return (
-      <div className="flex h-full overflow-hidden rounded bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <PanelHeader onToggle={onToggle} label={activeTab.label}>
-            {showSidebar && (
-              <button
-                onClick={() => setSidebarOpen(!sidebarOpen)}
-                className="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-                aria-label={sidebarOpen ? "Hide file list" : "Show file list"}
-              >
-                {sidebarOpen ? <PanelRightClose size={12} /> : <PanelRightOpen size={12} />}
-              </button>
-            )}
-          </PanelHeader>
-          <TabBar />
-          <div className="flex flex-1 overflow-hidden">
-            <div className="min-w-0 flex-1 overflow-hidden">
-              <DocumentContent tab={activeTab} />
-            </div>
-            {showSidebar && sidebarOpen && (
-              <div
-                className={`shrink-0 overflow-hidden border-l border-border/50 outline-none ${activeTab.type === "file" || activeTab.type === "plan" ? "w-52" : "w-44"}`}
-                data-focus-zone="panel-sidebar"
-                tabIndex={-1}
-              >
-                <SidebarContent type={activeTab.type} />
-              </div>
-            )}
-          </div>
+      <div className="relative flex h-full flex-col overflow-hidden rounded bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
+        <PanelHeader onToggle={onToggle} label={activeTab.label}>
+          {hasPicker && (
+            <button
+              onClick={() => setPickerOpen(!pickerOpen)}
+              className={`flex size-6 items-center justify-center rounded transition-colors ${
+                pickerOpen
+                  ? "text-foreground bg-secondary"
+                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+              }`}
+              aria-label={pickerOpen ? "Close file picker" : "Open file picker"}
+            >
+              <FolderOpen size={12} />
+            </button>
+          )}
+        </PanelHeader>
+        <TabBar />
+        <div className="flex-1 overflow-hidden">
+          <DocumentContent tab={activeTab} />
         </div>
+
+        {/* Floating file picker overlay */}
+        {hasPicker && pickerOpen && (
+          <FilePickerOverlay
+            type={activeTab.type}
+            onClose={() => setPickerOpen(false)}
+          />
+        )}
       </div>
     );
   }
 
   if (activePanelView) {
-    const sidebarViews: Record<string, { hint: string; Component: React.ComponentType }> = {
-      plan: { hint: "Select a plan file", Component: PlanSidebar },
-      diff: { hint: "Select a file to view diff", Component: FileListView },
-      spec: { hint: "Select a change to view", Component: SpecListView },
-      file: { hint: "Select a file to open", Component: FileBrowser },
-    };
-    const sidebar = sidebarViews[activePanelView];
+    const hasPanelPicker = PICKER_TYPES.includes(activePanelView);
     return (
-      <div className="flex h-full overflow-hidden rounded bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <PanelHeader onToggle={onToggle} label={viewPanelLabel(activePanelView)} />
-          {tabs.length > 0 && <TabBar />}
-          <div className="flex flex-1 overflow-hidden">
-            {sidebar ? (
-              <>
-                <div className="flex flex-1 items-center justify-center">
-                  <span className="text-[11px] text-muted-foreground">{sidebar.hint}</span>
-                </div>
-                <div className="w-52 shrink-0 overflow-y-auto border-l border-border/50 outline-none" data-focus-zone="panel-sidebar" tabIndex={-1}>
-                  <sidebar.Component />
-                </div>
-              </>
-            ) : (
-              <div className="flex-1 overflow-y-auto">
-                <ViewPanelContent view={activePanelView} />
-              </div>
-            )}
-          </div>
+      <div className="relative flex h-full flex-col overflow-hidden rounded bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
+        <PanelHeader onToggle={onToggle} label={viewPanelLabel(activePanelView)} />
+        {tabs.length > 0 && <TabBar />}
+        <div className="flex-1 overflow-hidden">
+          {hasPanelPicker ? (
+            <div className="flex h-full items-center justify-center px-6">
+              <NavigablePickerContainer type={activePanelView} />
+            </div>
+          ) : (
+            <div className="h-full overflow-y-auto">
+              <ViewPanelContent view={activePanelView} />
+            </div>
+          )}
         </div>
       </div>
     );
@@ -198,6 +209,119 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
     </div>
   );
 }
+
+// ── File picker overlay ──
+
+function NavigablePickerContainer({ type, className }: { type: TabType; className?: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const selectedIdxRef = useRef(0);
+
+  function getItems(): HTMLElement[] {
+    if (!containerRef.current) return [];
+    return Array.from(containerRef.current.querySelectorAll("[data-nav-item]"));
+  }
+
+  useEffect(() => {
+    containerRef.current?.focus();
+    selectedIdxRef.current = 0;
+    requestAnimationFrame(() => {
+      const items = getItems();
+      if (items[0]) items[0].setAttribute("data-nav-selected", "true");
+    });
+  }, [type]);
+
+  function updateSelection(idx: number) {
+    const items = getItems();
+    for (const item of items) item.removeAttribute("data-nav-selected");
+    if (items[idx]) {
+      items[idx].setAttribute("data-nav-selected", "true");
+      items[idx].scrollIntoView({ block: "nearest" });
+    }
+    selectedIdxRef.current = idx;
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    const items = getItems();
+    if (items.length === 0) return;
+    const idx = selectedIdxRef.current;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      updateSelection(Math.min(idx + 1, items.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      updateSelection(Math.max(idx - 1, 0));
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      const selected = items[idx];
+      if (!selected) return;
+      if (selected.dataset.navDir && selected.dataset.navExpanded === "false") {
+        selected.click();
+        return;
+      }
+      const row = selected.closest("[data-nav-expandable]");
+      if (row) {
+        const chevron = row.querySelector("button:not([data-nav-item])") as HTMLElement | null;
+        if (chevron) chevron.click();
+      }
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      const selected = items[idx];
+      if (!selected) return;
+      if (selected.dataset.navDir && selected.dataset.navExpanded === "true") {
+        selected.click();
+        return;
+      }
+      const row = selected.closest("[data-nav-expandable]");
+      if (row) {
+        const chevron = row.querySelector("button:not([data-nav-item])") as HTMLElement | null;
+        if (chevron) chevron.click();
+      }
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      items[idx]?.click();
+    }
+  }
+
+  return (
+    <div
+      ref={containerRef}
+      className={`w-full max-w-xs max-h-[70%] overflow-hidden rounded bg-background ring-1 ring-border/20 shadow-2xl outline-none ${className ?? ""}`}
+      tabIndex={-1}
+      onKeyDown={handleKeyDown}
+    >
+      <PickerContent type={type} />
+    </div>
+  );
+}
+
+function FilePickerOverlay({ type, onClose }: { type: TabType; onClose: () => void }) {
+  return (
+    <>
+      <div className="absolute inset-0 z-30 backdrop-blur-sm bg-black/20" onClick={onClose} />
+      <div className="absolute inset-0 z-40 flex items-center justify-center px-6 pointer-events-none">
+        <NavigablePickerContainer type={type} className="pointer-events-auto" />
+      </div>
+    </>
+  );
+}
+
+function PickerContent({ type }: { type: TabType }) {
+  switch (type) {
+    case "plan":
+      return <PlanListView />;
+    case "file":
+      return <FileBrowser />;
+    case "diff":
+      return <FileListView />;
+    case "spec":
+      return <SpecListView />;
+    default:
+      return null;
+  }
+}
+
+// ── Helpers ──
 
 function viewPanelLabel(view: TabType): string {
   const labels: Record<TabType, string> = {
@@ -229,23 +353,6 @@ function PanelHeader({ onToggle, label, children }: { onToggle: () => void; labe
       {children}
     </div>
   );
-}
-
-function SidebarContent({ type }: { type: TabType }) {
-  switch (type) {
-    case "plan":
-      return <PlanSidebar />;
-    case "file":
-      return <FileBrowser />;
-    case "diff":
-      return <FileListView />;
-    case "spec":
-      return <SpecListView />;
-    case "git":
-      return null;
-    default:
-      return null;
-  }
 }
 
 function ViewPanelContent({ view }: { view: TabType }) {
@@ -324,38 +431,30 @@ function PlanContentWrapper({ tabId, path }: { tabId: string; path: string }) {
 
 function SpecContentWrapper({ tabId, changeName, sessionId, initialSpecPath }: { tabId: string; changeName: string; sessionId: string; initialSpecPath?: string }) {
   const setDirty = useSetAtom(setDirtyAction);
-
   const handleDirtyChange = useCallback((dirty: boolean) => {
     setDirty({ tabId, dirty });
   }, [tabId, setDirty]);
-
   return <SpecPanel changeName={changeName} sessionId={sessionId} initialSpecPath={initialSpecPath} onDirtyChange={handleDirtyChange} />;
 }
 
 function GitPanelWrapper() {
   const sessionId = useAtomValue(activeSessionIdAtom);
-  if (!sessionId) return <PlaceholderView label="No session active" />;
-  return <GitPanel sessionId={sessionId} />;
+  return sessionId ? <GitPanel sessionId={sessionId} /> : null;
 }
 
 function DiffWithExpand({ filePath, sessionId }: { filePath: string; sessionId: string }) {
-  const openZen = useSetAtom(openZenModeAtom);
+  const setZenMode = useSetAtom(openZenModeAtom);
   const files = useAtomValue(activeSessionFilesAtom);
-
-  function handleExpand() {
-    const allPaths = files.map((f) => f.path);
-    openZen({ filePath, sessionId, files: allPaths.length > 0 ? allPaths : [filePath] });
-  }
-
+  const filePaths = files.map((f) => f.path);
   return (
     <div className="relative h-full">
       <DiffView filePath={filePath} sessionId={sessionId} />
       <button
-        onClick={handleExpand}
+        onClick={() => setZenMode({ filePath, sessionId, files: filePaths })}
         className="absolute right-2 top-2 z-10 flex size-6 items-center justify-center rounded bg-card/80 border border-border/50 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-        aria-label="Expand to Zen Mode"
+        aria-label="Expand to zen mode"
       >
-        <Maximize2 size={12} />
+        <Maximize2 size={11} />
       </button>
     </div>
   );
@@ -363,8 +462,8 @@ function DiffWithExpand({ filePath, sessionId }: { filePath: string; sessionId: 
 
 function PlaceholderView({ label }: { label: string }) {
   return (
-    <div className="flex h-full w-full items-center justify-center">
-      <span className="text-[11px] text-muted-foreground">{label} — coming soon</span>
+    <div className="flex h-full items-center justify-center">
+      <span className="text-sm text-muted-foreground">{label}</span>
     </div>
   );
 }

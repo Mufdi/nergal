@@ -2,7 +2,7 @@ import { atom } from "jotai";
 import { invoke } from "@/lib/tauri";
 import { appStore } from "./jotaiStore";
 import { configAtom } from "./config";
-import { activeSessionIdAtom, activeWorkspaceAtom, workspacesAtom, freshSessionsAtom, sessionTabIdsAtom } from "./workspace";
+import { activeSessionIdAtom, activeWorkspaceAtom, workspacesAtom, freshSessionsAtom } from "./workspace";
 import * as terminalService from "@/components/terminal/terminalService";
 import {
   activeTabsAtom,
@@ -166,26 +166,6 @@ function navigateItems(direction: "up" | "down") {
   items[nextIdx].scrollIntoView({ block: "nearest" });
 }
 
-function nextSessionTab() {
-  const s = store();
-  const tabIds = s.get(sessionTabIdsAtom);
-  const activeId = s.get(activeSessionIdAtom);
-  if (tabIds.length <= 1) return;
-  const idx = tabIds.indexOf(activeId ?? "");
-  const next = (idx + 1) % tabIds.length;
-  s.set(activeSessionIdAtom, tabIds[next]);
-}
-
-function prevSessionTab() {
-  const s = store();
-  const tabIds = s.get(sessionTabIdsAtom);
-  const activeId = s.get(activeSessionIdAtom);
-  if (tabIds.length <= 1) return;
-  const idx = tabIds.indexOf(activeId ?? "");
-  const prev = idx <= 0 ? tabIds.length - 1 : idx - 1;
-  s.set(activeSessionIdAtom, tabIds[prev]);
-}
-
 function nextPanelTab() {
   const s = store();
   const tabs = s.get(activeTabsAtom);
@@ -252,10 +232,8 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   { id: "add-workspace", label: "Add Workspace", keys: "ctrl+shift+n", category: "session", keywords: ["workspace", "add", "folder"], handler: () => store().set(triggerAddWorkspaceAtom, (p: number) => p + 1) },
 
   // -- Panel (tabs) --
-  { id: "next-session-tab", label: "Next Session", keys: "ctrl+tab", category: "session", keywords: ["session", "tab", "next", "cycle"], handler: nextSessionTab },
-  { id: "prev-session-tab", label: "Previous Session", keys: "ctrl+shift+tab", category: "session", keywords: ["session", "tab", "previous", "cycle"], handler: prevSessionTab },
-  { id: "next-panel-tab", label: "Next Panel Tab", keys: "alt+tab", category: "panel", keywords: ["tab", "next", "panel"], handler: nextPanelTab },
-  { id: "prev-panel-tab", label: "Previous Panel Tab", keys: "alt+shift+tab", category: "panel", keywords: ["tab", "previous", "panel"], handler: prevPanelTab },
+  { id: "next-panel-tab", label: "Next Tab", keys: "ctrl+tab", category: "panel", keywords: ["tab", "next"], handler: nextPanelTab },
+  { id: "prev-panel-tab", label: "Previous Tab", keys: "ctrl+shift+tab", category: "panel", keywords: ["tab", "previous", "prev"], handler: prevPanelTab },
   { id: "save-file", label: "Save File", keys: "ctrl+s", category: "action", keywords: ["save", "file", "write"], handler: () => {
     document.dispatchEvent(new CustomEvent("cluihud:save-file"));
   }},
@@ -266,7 +244,9 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   { id: "open-diff", label: "Open Diff Panel", keys: "ctrl+shift+d", category: "panel", keywords: ["diff", "changes", "panel"], handler: () => togglePanel("diff", "Diff") },
   { id: "open-spec", label: "Open Spec Panel", keys: "ctrl+shift+s", category: "panel", keywords: ["spec", "openspec", "panel"], handler: () => togglePanel("spec", "Spec") },
   { id: "open-git", label: "Open Git Panel", keys: "ctrl+shift+g", category: "panel", keywords: ["git", "branch", "panel"], handler: () => togglePanel("git", "Git") },
-  { id: "open-tasks", label: "Open Tasks Panel", keys: "ctrl+shift+k", category: "panel", keywords: ["tasks", "todo", "panel"], handler: () => togglePanel("tasks", "Tasks") },
+  { id: "toggle-file-picker", label: "Toggle File Picker", keys: "ctrl+shift+k", category: "panel", keywords: ["file", "picker", "browse", "explorer"], handler: () => {
+    document.dispatchEvent(new CustomEvent("cluihud:toggle-file-picker"));
+  }},
   { id: "toggle-activity", label: "Toggle Activity Drawer", keys: "ctrl+shift+l", category: "panel", keywords: ["activity", "log", "timeline", "drawer"], handler: () => store().set(activityDrawerOpenAtom, (prev: boolean) => !prev) },
   { id: "cycle-layout", label: "Cycle Layout Preset", keys: "ctrl+shift+i", category: "navigation", keywords: ["layout", "preset", "cycle", "resize"], handler: () => {
     const s = store();

@@ -5,7 +5,7 @@ import {
   activeTabAtom,
   activeTabIdAtom,
   closeTabAction,
-  pinTabAction,
+  reorderTabsAction,
   type Tab,
   type TabType,
 } from "@/stores/rightPanel";
@@ -20,11 +20,6 @@ import {
   MoreHorizontal,
   X,
 } from "lucide-react";
-import {
-  Tooltip,
-  TooltipTrigger,
-  TooltipContent,
-} from "@/components/ui/tooltip";
 
 const TAB_ICONS: Record<TabType, typeof FileText> = {
   plan: FileText,
@@ -41,11 +36,14 @@ export function TabBar() {
   const activeTab = useAtomValue(activeTabAtom);
   const setActiveTabId = useSetAtom(activeTabIdAtom);
   const closeTab = useSetAtom(closeTabAction);
-  const pinTab = useSetAtom(pinTabAction);
+  const reorderTabs = useSetAtom(reorderTabsAction);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [overflowing, setOverflowing] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dragIdRef = useRef<string | null>(null);
+  const dropSideRef = useRef<"left" | "right">("left");
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -64,6 +62,38 @@ export function TabBar() {
     if (el) el.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
   }, [activeTab?.id]);
 
+  function handleDragStart(id: string, e: React.DragEvent) {
+    dragIdRef.current = id;
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", id);
+    (e.currentTarget as HTMLElement).style.opacity = "0.5";
+  }
+
+  function handleDragEnd(e: React.DragEvent) {
+    dragIdRef.current = null;
+    setDragOverId(null);
+    (e.currentTarget as HTMLElement).style.opacity = "1";
+  }
+
+  function handleDragOver(id: string, e: React.DragEvent) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (dragIdRef.current && dragIdRef.current !== id) {
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      dropSideRef.current = e.clientX < rect.left + rect.width / 2 ? "left" : "right";
+      setDragOverId(id);
+    }
+  }
+
+  function handleDrop(targetId: string, e: React.DragEvent) {
+    e.preventDefault();
+    const sourceId = dragIdRef.current;
+    if (!sourceId || sourceId === targetId) return;
+    reorderTabs({ sourceId, targetId, side: dropSideRef.current });
+    setDragOverId(null);
+    dragIdRef.current = null;
+  }
+
   if (tabs.length === 0) return null;
 
   return (
@@ -77,9 +107,13 @@ export function TabBar() {
             key={tab.id}
             tab={tab}
             isActive={activeTab?.id === tab.id}
+            dragOver={dragOverId === tab.id ? dropSideRef.current : null}
             onClick={() => setActiveTabId(tab.id)}
-            onDoubleClick={() => pinTab(tab.id)}
             onClose={() => closeTab(tab.id)}
+            onDragStart={(e) => handleDragStart(tab.id, e)}
+            onDragEnd={handleDragEnd}
+            onDragOver={(e) => handleDragOver(tab.id, e)}
+            onDrop={(e) => handleDrop(tab.id, e)}
           />
         ))}
       </div>
@@ -132,15 +166,23 @@ export function TabBar() {
 function TabItem({
   tab,
   isActive,
+  dragOver,
   onClick,
-  onDoubleClick,
   onClose,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDrop,
 }: {
   tab: Tab;
   isActive: boolean;
+  dragOver: "left" | "right" | null;
   onClick: () => void;
-  onDoubleClick: () => void;
   onClose: () => void;
+  onDragStart: (e: React.DragEvent) => void;
+  onDragEnd: (e: React.DragEvent) => void;
+  onDragOver: (e: React.DragEvent) => void;
+  onDrop: (e: React.DragEvent) => void;
 }) {
   const Icon = TAB_ICONS[tab.type];
   const tooltipText = (tab.type === "diff" || tab.type === "file")
@@ -148,46 +190,40 @@ function TabItem({
     : tab.label;
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <div
-            data-tab-active={isActive}
-            onClick={onClick}
-            onDoubleClick={onDoubleClick}
-            onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); onClose(); } }}
-            className={`group flex min-w-20 max-w-40 shrink-0 cursor-pointer items-center gap-1.5 px-2.5 py-1.5 text-xs transition-colors ${
-              isActive
-                ? "bg-secondary text-foreground"
-                : "text-muted-foreground hover:text-foreground/80"
-            }`}
-          />
-        }
-      >
-        <Icon size={12} className="shrink-0" />
-        <span className={`truncate ${!tab.pinned ? "italic" : ""}`}>
-          {tab.label}
-        </span>
-        <div className="ml-auto shrink-0">
-          {tab.dirty ? (
-            <span className="block size-1 rounded-full bg-foreground" />
-          ) : (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onClose();
-              }}
-              className="flex size-4 items-center justify-center rounded opacity-0 transition-opacity group-hover:opacity-100 hover:bg-secondary"
-              aria-label={`Close ${tab.label}`}
-            >
-              <X size={10} />
-            </button>
-          )}
-        </div>
-      </TooltipTrigger>
-      <TooltipContent side="bottom" className="max-w-md">
-        <p className="font-mono text-xs break-all">{tooltipText}</p>
-      </TooltipContent>
-    </Tooltip>
+    <div
+      draggable
+      data-tab-active={isActive}
+      onClick={onClick}
+      onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); onClose(); } }}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      className={`group flex min-w-20 max-w-40 shrink-0 cursor-pointer items-center gap-1.5 px-2.5 py-1.5 text-xs transition-colors ${
+        isActive
+          ? "bg-secondary text-foreground"
+          : "text-muted-foreground hover:text-foreground/80"
+      } ${dragOver === "left" ? "border-l-2 border-l-primary/60" : ""} ${dragOver === "right" ? "border-r-2 border-r-primary/60" : ""}`}
+      title={tooltipText}
+    >
+      <Icon size={12} className="shrink-0" />
+      <span className="truncate">{tab.label}</span>
+      <div className="ml-auto shrink-0">
+        {tab.dirty ? (
+          <span className="block size-1 rounded-full bg-foreground" />
+        ) : (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose();
+            }}
+            className="flex size-4 items-center justify-center rounded opacity-0 transition-opacity group-hover:opacity-100 hover:bg-secondary"
+            aria-label={`Close ${tab.label}`}
+          >
+            <X size={10} />
+          </button>
+        )}
+      </div>
+    </div>
   );
 }

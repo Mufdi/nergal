@@ -40,7 +40,6 @@ export function ModifiedFiles() {
     const filename = path.split("/").pop() ?? path;
     openTab({
       tab: { id: `diff-${path}`, type: "diff", label: filename, data: { path, sessionId } },
-      isPinned: false,
     });
   }
 

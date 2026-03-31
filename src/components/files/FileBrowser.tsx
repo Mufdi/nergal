@@ -59,21 +59,11 @@ export function FileBrowser() {
     });
   }
 
-  function previewFile(filePath: string) {
+  function openFile(filePath: string) {
     if (!sessionId) return;
     const name = filePath.split("/").pop() ?? filePath;
     openTab({
       tab: { id: `file:${filePath}`, type: "file", label: name, data: { path: filePath, sessionId } },
-      isPinned: false,
-    });
-  }
-
-  function pinFile(filePath: string) {
-    if (!sessionId) return;
-    const name = filePath.split("/").pop() ?? filePath;
-    openTab({
-      tab: { id: `file:${filePath}`, type: "file", label: name, data: { path: filePath, sessionId } },
-      isPinned: true,
     });
   }
 
@@ -92,6 +82,9 @@ export function FileBrowser() {
           <div key={entry.path}>
             <button
               type="button"
+              data-nav-item
+              data-nav-dir={entry.path}
+              data-nav-expanded={isExpanded ? "true" : "false"}
               onClick={() => toggleDir(entry.path)}
               className="flex w-full items-center gap-1 rounded px-1 py-0.5 text-left text-xs text-foreground/80 hover:bg-secondary/50 transition-colors"
               style={{ paddingLeft: `${depth * 12 + 4}px` }}
@@ -109,8 +102,8 @@ export function FileBrowser() {
         <button
           key={entry.path}
           type="button"
-          onClick={() => previewFile(entry.path)}
-          onDoubleClick={() => pinFile(entry.path)}
+          data-nav-item
+          onClick={() => openFile(entry.path)}
           className="flex w-full items-center gap-1 rounded px-1 py-0.5 text-left text-xs text-foreground/70 hover:bg-secondary/50 hover:text-foreground transition-colors"
           style={{ paddingLeft: `${depth * 12 + 16}px` }}
         >

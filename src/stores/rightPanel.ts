@@ -36,6 +36,7 @@ const SINGLETON_TYPES: TabType[] = ["tasks", "git"];
 const defaultTabState: TabState = { tabs: [], activeTabId: null, previewTabId: null };
 
 export const expandRightPanelAtom = atom(0);
+export const tabOpenedSignalAtom = atom(0);
 
 export const activePanelViewAtom = atom<TabType | null>(null);
 
@@ -75,12 +76,13 @@ export const activeTabIdAtom = atom(
 
 export const openTabAction = atom(
   null,
-  (get, set, params: { tab: Omit<Tab, "pinned" | "dirty" | "category"> & { pinned?: boolean; dirty?: boolean }; isPinned?: boolean }) => {
+  (get, set, params: { tab: Omit<Tab, "pinned" | "dirty" | "category"> & { dirty?: boolean }; isPinned?: boolean }) => {
     const sessionId = get(activeSessionIdAtom);
     if (!sessionId) return;
 
-    const { tab: partial, isPinned = true } = params;
+    const { tab: partial } = params;
 
+    set(tabOpenedSignalAtom, (n) => n + 1);
     set(tabStateMapAtom, (prev) => {
       const state = prev[sessionId] ?? defaultTabState;
       const isSingleton = SINGLETON_TYPES.includes(partial.type);
@@ -94,35 +96,21 @@ export const openTabAction = atom(
 
       const existingById = state.tabs.find((t) => t.id === partial.id);
       if (existingById) {
-        const tabs = isPinned && !existingById.pinned
-          ? state.tabs.map((t) => (t.id === existingById.id ? { ...t, pinned: true } : t))
-          : state.tabs;
-        const previewTabId = isPinned && state.previewTabId === existingById.id ? null : state.previewTabId;
-        return { ...prev, [sessionId]: { tabs, activeTabId: existingById.id, previewTabId } };
+        return { ...prev, [sessionId]: { ...state, activeTabId: existingById.id } };
       }
 
       const newTab: Tab = {
         id: partial.id,
         type: partial.type,
         label: partial.label,
-        pinned: isPinned,
+        pinned: true,
         dirty: partial.dirty ?? false,
         category: PANEL_CATEGORY_MAP[partial.type],
         data: partial.data,
       };
 
-      let tabs = [...state.tabs];
-      let previewTabId = state.previewTabId;
-
-      if (!isPinned) {
-        if (previewTabId) {
-          tabs = tabs.filter((t) => t.id !== previewTabId);
-        }
-        previewTabId = newTab.id;
-      }
-
-      tabs.push(newTab);
-      return { ...prev, [sessionId]: { tabs, activeTabId: newTab.id, previewTabId } };
+      const tabs = [...state.tabs, newTab];
+      return { ...prev, [sessionId]: { ...state, tabs, activeTabId: newTab.id } };
     });
   },
 );
@@ -167,6 +155,23 @@ export const pinTabAction = atom(null, (get, set, tabId: string) => {
     const tabs = state.tabs.map((t) => (t.id === tabId ? { ...t, pinned: true } : t));
     const previewTabId = state.previewTabId === tabId ? null : state.previewTabId;
     return { ...prev, [sessionId]: { ...state, tabs, previewTabId } };
+  });
+});
+
+export const reorderTabsAction = atom(null, (get, set, params: { sourceId: string; targetId: string; side: "left" | "right" }) => {
+  const sessionId = get(activeSessionIdAtom);
+  if (!sessionId) return;
+
+  set(tabStateMapAtom, (prev) => {
+    const state = prev[sessionId] ?? defaultTabState;
+    const source = state.tabs.find((t) => t.id === params.sourceId);
+    if (!source) return prev;
+    const filtered = state.tabs.filter((t) => t.id !== params.sourceId);
+    const targetIdx = filtered.findIndex((t) => t.id === params.targetId);
+    if (targetIdx === -1) return prev;
+    const insertIdx = params.side === "right" ? targetIdx + 1 : targetIdx;
+    filtered.splice(insertIdx, 0, source);
+    return { ...prev, [sessionId]: { ...state, tabs: filtered } };
   });
 });
 

@@ -20,7 +20,7 @@ export function PlanListView() {
       .catch(() => setPlans([]));
   }, [sessionId]);
 
-  function loadAndOpenPlan(path: string, name: string, pinned: boolean) {
+  function loadAndOpenPlan(path: string, name: string) {
     invoke<{ path: string; content: string; has_edits: boolean }>("load_plan", { sessionId, path })
       .then((result) => {
         setPlanDocs((prev) => ({
@@ -34,7 +34,6 @@ export function PlanListView() {
         }));
         openTab({
           tab: { id: `plan-${result.path}`, type: "plan", label: name, data: { path: result.path } },
-          isPinned: pinned,
         });
       })
       .catch(() => {});
@@ -62,8 +61,8 @@ export function PlanListView() {
         return (
           <button
             key={plan.path}
-            onClick={() => loadAndOpenPlan(plan.path, plan.name, false)}
-            onDoubleClick={() => loadAndOpenPlan(plan.path, plan.name, true)}
+            data-nav-item
+            onClick={() => loadAndOpenPlan(plan.path, plan.name)}
             className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] transition-colors ${
               isActive
                 ? "bg-secondary/70 text-foreground"

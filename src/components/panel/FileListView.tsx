@@ -17,14 +17,6 @@ export function FileListView() {
   function handleClick(path: string, filename: string) {
     openTab({
       tab: { id: `diff-${path}`, type: "diff", label: filename, data: { path, sessionId } },
-      isPinned: false,
-    });
-  }
-
-  function handleDoubleClick(path: string, filename: string) {
-    openTab({
-      tab: { id: `diff-${path}`, type: "diff", label: filename, data: { path, sessionId } },
-      isPinned: true,
     });
   }
 
@@ -53,7 +45,6 @@ export function FileListView() {
                 <button
                   data-nav-item
                   onClick={() => handleClick(file.path, filename)}
-                  onDoubleClick={() => handleDoubleClick(file.path, filename)}
                   className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-secondary/50"
                   aria-label={filename}
                 />

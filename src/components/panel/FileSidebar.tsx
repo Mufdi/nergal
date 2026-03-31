@@ -15,14 +15,6 @@ export function FileSidebar() {
   function handleClick(path: string, filename: string) {
     openTab({
       tab: { id: `file-${path}`, type: "file", label: filename, data: { path } },
-      isPinned: false,
-    });
-  }
-
-  function handleDoubleClick(path: string, filename: string) {
-    openTab({
-      tab: { id: `file-${path}`, type: "file", label: filename, data: { path } },
-      isPinned: true,
     });
   }
 
@@ -44,7 +36,6 @@ export function FileSidebar() {
               render={
                 <button
                   onClick={() => handleClick(file.path, filename)}
-                  onDoubleClick={() => handleDoubleClick(file.path, filename)}
                   className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[11px] text-muted-foreground hover:bg-secondary/50 hover:text-foreground transition-colors"
                   aria-label={filename}
                 />

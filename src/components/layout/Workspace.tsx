@@ -11,7 +11,8 @@ import { ActivityDrawer } from "@/components/activity/ActivityDrawer";
 import { ZenMode } from "@/components/zen/ZenMode";
 import { expandRightPanelAtom, activePanelViewAtom, activeTabAtom } from "@/stores/rightPanel";
 import { activeSessionIdAtom } from "@/stores/workspace";
-import { toggleSidebarAtom, toggleRightPanelAtom } from "@/stores/shortcuts";
+import { toggleSidebarAtom, toggleRightPanelAtom, focusZoneAtom } from "@/stores/shortcuts";
+
 import { layoutPresetAtom, PRESET_SIZES, sessionLayoutPresetAtom, type LayoutPreset } from "@/stores/layout";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { CommandPalette } from "@/components/command/CommandPalette";
@@ -36,6 +37,7 @@ export function Workspace() {
   const layoutPreset = useAtomValue(layoutPresetAtom);
   const setSessionPreset = useSetAtom(sessionLayoutPresetAtom);
   const activeSessionId = useAtomValue(activeSessionIdAtom);
+  const setFocusZone = useSetAtom(focusZoneAtom);
 
   const sidebarPanelRef = usePanelRef();
   const centerPanelRef = usePanelRef();
@@ -204,7 +206,7 @@ export function Workspace() {
             minSize="25%"
           >
             <div className="flex h-full flex-col gap-1 overflow-hidden">
-              <div className="flex-1 overflow-hidden rounded" style={{ background: "#0a0a0b" }} data-focus-zone="terminal">
+              <div className="flex-1 overflow-hidden rounded" style={{ background: "#0a0a0b" }} data-focus-zone="terminal" onMouseDown={() => setFocusZone("terminal")}>
                 <TerminalManager />
               </div>
               <ActivityDrawer />

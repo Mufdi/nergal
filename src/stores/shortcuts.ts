@@ -2,7 +2,7 @@ import { atom } from "jotai";
 import { invoke } from "@/lib/tauri";
 import { appStore } from "./jotaiStore";
 import { configAtom } from "./config";
-import { activeSessionIdAtom, activeWorkspaceAtom, workspacesAtom, freshSessionsAtom } from "./workspace";
+import { activeSessionIdAtom, activeWorkspaceAtom, workspacesAtom, freshSessionsAtom, sessionTabIdsAtom } from "./workspace";
 import * as terminalService from "@/components/terminal/terminalService";
 import {
   activeTabsAtom,
@@ -19,7 +19,7 @@ import {
 import { layoutPresetAtom, sessionLayoutPresetAtom, applyPresetSignalAtom, type LayoutPreset } from "./layout";
 import { activityDrawerOpenAtom } from "./activity";
 
-export type FocusZone = "sidebar" | "terminal" | "panel" | "panel-sidebar";
+export type FocusZone = "sidebar" | "terminal" | "panel";
 
 export interface ShortcutAction {
   id: string;
@@ -95,21 +95,23 @@ function togglePanel(type: Tab["type"], _label: string) {
   }
   s.set(activePanelViewAtom, type);
   s.set(expandRightPanelAtom, (prev: number) => prev + 1);
+  // Move focus to panel after opening
+  requestAnimationFrame(() => focusZone("panel"));
 }
 
 function getVisibleZones(): FocusZone[] {
   const zones: FocusZone[] = ["sidebar", "terminal"];
   if (document.querySelector("[data-focus-zone='panel']")) zones.push("panel");
-  if (document.querySelector("[data-focus-zone='panel-sidebar']")) zones.push("panel-sidebar");
   return zones;
 }
 
 function detectCurrentZone(): FocusZone {
   const active = document.activeElement;
-  if (active?.closest("[data-focus-zone='panel-sidebar']")) return "panel-sidebar";
   if (active?.closest("[data-focus-zone='panel']")) return "panel";
   if (active?.closest("[data-focus-zone='sidebar']")) return "sidebar";
-  return "terminal";
+  if (active?.closest(".xterm")) return "terminal";
+  // Fallback to stored zone
+  return store().get(focusZoneAtom);
 }
 
 function focusZone(zone: FocusZone) {
@@ -121,12 +123,20 @@ function focusZone(zone: FocusZone) {
   if (zone === "terminal") {
     terminalService.focusActive();
   } else {
-    // For sidebars/panels, focus the first navigable item if available
-    const firstItem = el.querySelector("[data-nav-item]") as HTMLElement | null;
-    if (firstItem) {
-      firstItem.focus();
+    // Blur terminal first to prevent it from recapturing focus
+    const xtermTextarea = document.querySelector(".xterm-helper-textarea") as HTMLElement | null;
+    if (xtermTextarea) xtermTextarea.blur();
+    // Focus the deepest focusable container (e.g. file picker inside panel)
+    const focusTarget = el.querySelector<HTMLElement>("[data-nav-container]") ?? el;
+    focusTarget.focus();
+    const items = focusTarget.querySelectorAll<HTMLElement>("[data-nav-item]");
+    if (items.length === 0) {
+      const outerItems = el.querySelectorAll<HTMLElement>("[data-nav-item]");
+      for (const item of outerItems) item.removeAttribute("data-nav-selected");
+      if (outerItems[0]) outerItems[0].setAttribute("data-nav-selected", "true");
     } else {
-      el.focus();
+      for (const item of items) item.removeAttribute("data-nav-selected");
+      if (items[0]) items[0].setAttribute("data-nav-selected", "true");
     }
   }
   flashZone(el);
@@ -166,6 +176,44 @@ function navigateItems(direction: "up" | "down") {
   items[nextIdx].scrollIntoView({ block: "nearest" });
 }
 
+function nextTab() {
+  const zone = store().get(focusZoneAtom);
+  if (zone === "panel") {
+    nextPanelTab();
+  } else {
+    nextSessionTab();
+  }
+}
+
+function prevTab() {
+  const zone = store().get(focusZoneAtom);
+  if (zone === "panel") {
+    prevPanelTab();
+  } else {
+    prevSessionTab();
+  }
+}
+
+function nextSessionTab() {
+  const s = store();
+  const tabIds = s.get(sessionTabIdsAtom);
+  const activeId = s.get(activeSessionIdAtom);
+  if (tabIds.length <= 1) return;
+  const idx = tabIds.indexOf(activeId ?? "");
+  const next = (idx + 1) % tabIds.length;
+  s.set(activeSessionIdAtom, tabIds[next]);
+}
+
+function prevSessionTab() {
+  const s = store();
+  const tabIds = s.get(sessionTabIdsAtom);
+  const activeId = s.get(activeSessionIdAtom);
+  if (tabIds.length <= 1) return;
+  const idx = tabIds.indexOf(activeId ?? "");
+  const prev = idx <= 0 ? tabIds.length - 1 : idx - 1;
+  s.set(activeSessionIdAtom, tabIds[prev]);
+}
+
 function nextPanelTab() {
   const s = store();
   const tabs = s.get(activeTabsAtom);
@@ -202,14 +250,14 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   { id: "toggle-right-panel", label: "Toggle Right Panel", keys: "ctrl+shift+b", category: "navigation", keywords: ["right", "panel"], handler: () => store().set(toggleRightPanelAtom, (p: number) => p + 1) },
   { id: "focus-left", label: "Focus Left", keys: "alt+arrowleft", category: "navigation", keywords: ["move", "focus", "left"], handler: () => {
     const zones = getVisibleZones();
-    const current = detectCurrentZone();
+    const current = store().get(focusZoneAtom);
     const idx = zones.indexOf(current);
     const prev = idx <= 0 ? zones.length - 1 : idx - 1;
     focusZone(zones[prev]);
   }},
   { id: "focus-right", label: "Focus Right", keys: "alt+arrowright", category: "navigation", keywords: ["move", "focus", "right"], handler: () => {
     const zones = getVisibleZones();
-    const current = detectCurrentZone();
+    const current = store().get(focusZoneAtom);
     const idx = zones.indexOf(current);
     const next = (idx + 1) % zones.length;
     focusZone(zones[next]);
@@ -232,8 +280,8 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   { id: "add-workspace", label: "Add Workspace", keys: "ctrl+shift+n", category: "session", keywords: ["workspace", "add", "folder"], handler: () => store().set(triggerAddWorkspaceAtom, (p: number) => p + 1) },
 
   // -- Panel (tabs) --
-  { id: "next-panel-tab", label: "Next Tab", keys: "ctrl+tab", category: "panel", keywords: ["tab", "next"], handler: nextPanelTab },
-  { id: "prev-panel-tab", label: "Previous Tab", keys: "ctrl+shift+tab", category: "panel", keywords: ["tab", "previous", "prev"], handler: prevPanelTab },
+  { id: "next-tab", label: "Next Tab", keys: "ctrl+tab", category: "panel", keywords: ["tab", "next", "session"], handler: nextTab },
+  { id: "prev-tab", label: "Previous Tab", keys: "ctrl+shift+tab", category: "panel", keywords: ["tab", "previous", "prev", "session"], handler: prevTab },
   { id: "save-file", label: "Save File", keys: "ctrl+s", category: "action", keywords: ["save", "file", "write"], handler: () => {
     document.dispatchEvent(new CustomEvent("cluihud:save-file"));
   }},

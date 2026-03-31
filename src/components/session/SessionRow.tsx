@@ -26,6 +26,7 @@ interface SessionRowProps {
   session: Session;
   workspace: Workspace;
   isActive: boolean;
+  shortcutNumber?: number;
   onSelect: () => void;
   onRename: (newName: string) => void;
   onDelete: () => void;
@@ -37,6 +38,7 @@ export function SessionRow({
   session,
   workspace: _workspace,
   isActive,
+  shortcutNumber,
   onSelect,
   onRename,
   onDelete,
@@ -63,12 +65,22 @@ export function SessionRow({
       data-nav-item
       onClick={onSelect}
       onKeyDown={(e) => { if (e.key === "Enter") onSelect(); }}
-      className={`group flex w-full items-center gap-1.5 pl-7 pr-3 py-1 text-left transition-colors cursor-pointer ${
+      className={`group flex w-full items-center gap-1.5 ${shortcutNumber != null ? "pl-3" : "pl-7"} pr-3 py-1 text-left transition-colors cursor-pointer ${
         isActive
           ? "bg-secondary/60 text-foreground"
           : "hover:bg-secondary/40 text-foreground/70"
       } ${isCompleted ? "opacity-50" : ""}`}
     >
+      {shortcutNumber != null && (
+        <Tooltip>
+          <TooltipTrigger>
+            <span className="flex size-4 shrink-0 items-center justify-center rounded-sm bg-muted/50 text-[9px] font-medium tabular-nums text-muted-foreground">
+              {shortcutNumber}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="text-[10px]">Ctrl+{shortcutNumber}</TooltipContent>
+        </Tooltip>
+      )}
       {isCompleted ? (
         <Check className="size-3 shrink-0 text-muted-foreground/50" />
       ) : (

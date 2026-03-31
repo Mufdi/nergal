@@ -161,21 +161,6 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
     setMode("view");
   }
 
-  // Backspace to go back from spec delta to specs list
-  useEffect(() => {
-    if (!activeSpec || mode === "edit") return;
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Backspace" && !e.ctrlKey && !e.altKey) {
-        const active = document.activeElement;
-        if (active?.tagName === "INPUT" || active?.tagName === "TEXTAREA") return;
-        e.preventDefault();
-        handleBackToSpecs();
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeSpec, mode]);
-
   function handleTabSwitch(key: string) {
     setActiveTab(key);
     if (key !== "specs") setActiveSpec(null);
@@ -196,6 +181,33 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
 
   const displayName = isMaster ? "Consolidated Specs" : changeName;
   const showingContent = activeTab !== "specs" || activeSpec !== null;
+
+  // Keyboard navigation: Backspace to go back, Shift+Left/Right to cycle sub-tabs
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const active = document.activeElement;
+      if (active?.tagName === "INPUT" || active?.tagName === "TEXTAREA") return;
+
+      if (e.key === "Backspace" && !e.ctrlKey && !e.altKey && activeSpec && mode !== "edit") {
+        e.preventDefault();
+        handleBackToSpecs();
+        return;
+      }
+
+      if (e.shiftKey && !e.ctrlKey && !e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+        if (tabs.length <= 1) return;
+        e.preventDefault();
+        const currentIdx = tabs.findIndex((t) => t.key === activeTab);
+        if (currentIdx === -1) return;
+        const nextIdx = e.key === "ArrowRight"
+          ? (currentIdx + 1) % tabs.length
+          : (currentIdx - 1 + tabs.length) % tabs.length;
+        handleTabSwitch(tabs[nextIdx].key);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeSpec, mode, activeTab, tabs.length]);
 
   return (
     <div className="flex h-full flex-col overflow-hidden">

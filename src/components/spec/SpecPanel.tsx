@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useSetAtom } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
 import { currentSpecArtifactAtom } from "@/stores/rightPanel";
@@ -161,6 +161,21 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
     setMode("view");
   }
 
+  // Backspace to go back from spec delta to specs list
+  useEffect(() => {
+    if (!activeSpec || mode === "edit") return;
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Backspace" && !e.ctrlKey && !e.altKey) {
+        const active = document.activeElement;
+        if (active?.tagName === "INPUT" || active?.tagName === "TEXTAREA") return;
+        e.preventDefault();
+        handleBackToSpecs();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeSpec, mode]);
+
   function handleTabSwitch(key: string) {
     setActiveTab(key);
     if (key !== "specs") setActiveSpec(null);
@@ -310,6 +325,50 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
 }
 
 function SpecsList({ specs, onSelect }: { specs: SpecEntry[]; onSelect: (path: string) => void }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const selectedIdxRef = useRef(0);
+
+  useEffect(() => {
+    containerRef.current?.focus();
+    selectedIdxRef.current = 0;
+    requestAnimationFrame(() => {
+      const items = containerRef.current?.querySelectorAll("[data-nav-item]");
+      if (items?.[0]) items[0].setAttribute("data-nav-selected", "true");
+    });
+  }, [specs]);
+
+  function getItems(): HTMLElement[] {
+    if (!containerRef.current) return [];
+    return Array.from(containerRef.current.querySelectorAll("[data-nav-item]"));
+  }
+
+  function updateSelection(idx: number) {
+    const items = getItems();
+    for (const item of items) item.removeAttribute("data-nav-selected");
+    if (items[idx]) {
+      items[idx].setAttribute("data-nav-selected", "true");
+      items[idx].scrollIntoView({ block: "nearest" });
+    }
+    selectedIdxRef.current = idx;
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    const items = getItems();
+    if (items.length === 0) return;
+    const idx = selectedIdxRef.current;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      updateSelection(Math.min(idx + 1, items.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      updateSelection(Math.max(idx - 1, 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      items[idx]?.click();
+    }
+  }
+
   if (specs.length === 0) {
     return (
       <div className="flex h-32 items-center justify-center">
@@ -319,10 +378,16 @@ function SpecsList({ specs, onSelect }: { specs: SpecEntry[]; onSelect: (path: s
   }
 
   return (
-    <div className="flex flex-col gap-0.5 p-2">
+    <div
+      ref={containerRef}
+      className="flex flex-col gap-0.5 p-2 outline-none"
+      tabIndex={-1}
+      onKeyDown={handleKeyDown}
+    >
       {specs.map((spec) => (
         <button
           key={spec.path}
+          data-nav-item
           onClick={() => onSelect(spec.path)}
           className="flex items-center gap-2 rounded-md px-3 py-2 text-left transition-colors hover:bg-secondary/50"
         >

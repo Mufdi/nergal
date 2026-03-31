@@ -132,13 +132,14 @@ function ChangeItem({
   const openTab = useSetAtom(openTabAction);
   const sessionId = useAtomValue(activeSessionIdAtom);
 
+  const isMaster = change.status === "master";
   const Icon = change.status === "archived"
     ? Archive
-    : change.status === "master"
+    : isMaster
       ? BookOpen
       : ClipboardList;
   const hasSpecs = change.specs.length > 0;
-  const displayName = change.name === "_master" ? "Consolidated" : change.name;
+  const displayName = isMaster ? "Consolidated" : change.name;
 
   function handleSpecClick(spec: SpecEntry) {
     openTab({
@@ -151,31 +152,39 @@ function ChangeItem({
     });
   }
 
+  function handleItemClick() {
+    if (isMaster && hasSpecs) {
+      setExpanded(!expanded);
+    } else {
+      onClick(change);
+    }
+  }
+
   return (
     <div>
-      <div className="flex w-full items-center hover:bg-secondary/50 transition-colors" data-nav-expandable>
+      <button
+        data-nav-item
+        data-nav-expanded={hasSpecs ? (expanded ? "true" : "false") : undefined}
+        onClick={handleItemClick}
+        className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left hover:bg-secondary/50 transition-colors"
+      >
         {hasSpecs ? (
-          <button
+          <span
+            data-nav-chevron
             onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
-            className="flex size-6 shrink-0 items-center justify-center text-muted-foreground/60"
+            className="flex size-4 shrink-0 items-center justify-center text-muted-foreground/60"
           >
             {expanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-          </button>
+          </span>
         ) : (
-          <div className="w-6 shrink-0" />
+          <span className="w-4 shrink-0" />
         )}
-        <button
-          data-nav-item
-          onClick={() => onClick(change)}
-          className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pr-3 text-left"
-        >
-          <Icon size={12} className="shrink-0 text-muted-foreground" />
-          <span className="truncate text-[11px] text-foreground">{displayName}</span>
-          {change.specs.length > 0 && (
-            <span className="ml-auto shrink-0 text-[10px] text-muted-foreground/60">{change.specs.length}</span>
-          )}
-        </button>
-      </div>
+        <Icon size={12} className="shrink-0 text-muted-foreground" />
+        <span className="truncate text-[11px] text-foreground">{displayName}</span>
+        {change.specs.length > 0 && (
+          <span className="ml-auto shrink-0 text-[10px] text-muted-foreground/60">{change.specs.length}</span>
+        )}
+      </button>
       {expanded && hasSpecs && (
         <div className="ml-6 border-l border-border/30 pl-1">
           {change.specs.map((spec) => (

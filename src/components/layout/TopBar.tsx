@@ -26,7 +26,6 @@ import {
   Files,
   GitCompareArrows,
   ClipboardList,
-  CheckSquare,
   GitBranch,
   ChevronDown,
   ExternalLink,
@@ -94,7 +93,6 @@ const PANEL_BUTTONS: { type: TabType; label: string; shortcut: string; icon: typ
   { type: "file", label: "Files", shortcut: "Ctrl+Shift+F", icon: Files },
   { type: "diff", label: "Diff", shortcut: "Ctrl+Shift+D", icon: GitCompareArrows },
   { type: "spec", label: "Spec", shortcut: "Ctrl+Shift+S", icon: ClipboardList },
-  { type: "tasks", label: "Tasks", shortcut: "Ctrl+Shift+K", icon: CheckSquare },
   { type: "git", label: "Git", shortcut: "Ctrl+Shift+G", icon: GitBranch },
 ];
 
@@ -266,7 +264,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   }, [setSessionTabIds]);
 
   return (
-    <div className="flex h-8 shrink-0 items-center bg-background px-2">
+    <div className="flex h-8 shrink-0 items-center bg-card px-2">
       {/* Left: settings + workspace */}
       <div className="flex items-center gap-1.5 shrink-0">
         <button

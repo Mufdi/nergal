@@ -49,7 +49,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
       ) : (
         <div className="flex flex-1 flex-col gap-1">
           {/* Workspaces card */}
-          <div className="flex flex-1 flex-col overflow-hidden rounded bg-background">
+          <div className="flex flex-1 flex-col overflow-hidden rounded bg-card">
             <div className="flex h-9 shrink-0 items-center px-3">
               <span className="flex-1 text-[11px] font-medium text-foreground/80">Workspaces</span>
               <button
@@ -103,7 +103,7 @@ function CollapsedSidebar({ onToggle }: { onToggle: () => void }) {
 
   return (
     <TooltipProvider delay={0}>
-    <div className="flex h-full w-full flex-col items-center gap-0.5 bg-background py-1">
+    <div className="flex h-full w-full flex-col items-center gap-0.5 bg-card py-1">
       <button
         onClick={onToggle}
         className="flex size-4 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors mb-0.5"

@@ -170,7 +170,7 @@ export function Workspace() {
     <div className="flex h-full flex-col bg-background">
       <TopBar onOpenSettings={() => setSettingsOpen(true)} rightPanelVisible={!rightCollapsed} />
 
-      <div className="flex flex-1 overflow-hidden p-1.5">
+      <div className="flex flex-1 overflow-hidden px-1 pb-1">
         <ResizablePanelGroup
           orientation="horizontal"
           className="flex-1"
@@ -203,8 +203,8 @@ export function Workspace() {
             defaultSize="42%"
             minSize="25%"
           >
-            <div className="flex h-full flex-col gap-1.5 overflow-hidden">
-              <div className="flex-1 overflow-hidden rounded-lg" style={{ background: "#141415" }} data-focus-zone="terminal">
+            <div className="flex h-full flex-col gap-1 overflow-hidden">
+              <div className="flex-1 overflow-hidden rounded" style={{ background: "#0a0a0b" }} data-focus-zone="terminal">
                 <TerminalManager />
               </div>
               <ActivityDrawer />

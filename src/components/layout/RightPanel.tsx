@@ -121,7 +121,7 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
 
   if (activeTab) {
     return (
-      <div className="flex h-full overflow-hidden rounded-lg bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
+      <div className="flex h-full overflow-hidden rounded bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
         <div className="flex flex-1 flex-col overflow-hidden">
           <PanelHeader onToggle={onToggle} label={activeTab.label}>
             {showSidebar && (
@@ -163,7 +163,7 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
     };
     const sidebar = sidebarViews[activePanelView];
     return (
-      <div className="flex h-full overflow-hidden rounded-lg bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
+      <div className="flex h-full overflow-hidden rounded bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
         <div className="flex flex-1 flex-col overflow-hidden">
           <PanelHeader onToggle={onToggle} label={viewPanelLabel(activePanelView)} />
           {tabs.length > 0 && <TabBar />}
@@ -189,7 +189,7 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
   }
 
   return (
-    <div className="flex h-full flex-col rounded-lg bg-card">
+    <div className="flex h-full flex-col rounded bg-card">
       <PanelHeader onToggle={onToggle} />
       {tabs.length > 0 && <TabBar />}
       <div className="flex flex-1 items-center justify-center">
@@ -214,7 +214,7 @@ function viewPanelLabel(view: TabType): string {
 
 function PanelHeader({ onToggle, label, children }: { onToggle: () => void; label?: string; children?: React.ReactNode }) {
   return (
-    <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border/50 px-2">
+    <div className="flex h-9 shrink-0 items-center gap-2 px-2">
       <button
         onClick={onToggle}
         className="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"

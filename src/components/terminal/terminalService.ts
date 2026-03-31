@@ -31,13 +31,13 @@ const TERM_OPTIONS: ConstructorParameters<typeof Terminal>[0] = {
   fontSize: 13,
   fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
   theme: {
-    background: "#141415",
+    background: "#0a0a0b",
     foreground: "#ededef",
     cursor: "#f97316",
-    cursorAccent: "#141415",
+    cursorAccent: "#0a0a0b",
     selectionBackground: "#f9731633",
     selectionForeground: "#ededef",
-    black: "#141415",
+    black: "#0a0a0b",
     red: "#ef4444",
     green: "#22c55e",
     yellow: "#eab308",
@@ -149,7 +149,7 @@ export async function show(sessionId: string, cwd: string, mode: "new" | "contin
 
   try {
     const container = document.createElement("div");
-    container.style.cssText = "position:absolute;inset:0;display:flex;overflow:hidden;background:#141415;";
+    container.style.cssText = "position:absolute;inset:0;display:flex;overflow:hidden;background:#0a0a0b;";
     hostElement.appendChild(container);
 
     // Wait for browser layout so container has real dimensions

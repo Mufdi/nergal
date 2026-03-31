@@ -58,7 +58,7 @@ export function StatusBar({ layoutPreset }: StatusBarProps) {
 
   return (
     <footer
-      className="flex h-7 items-center justify-between border-t border-border bg-background px-3 text-xs"
+      className="flex h-7 items-center justify-between bg-card px-3 text-xs"
       role="status"
     >
       {/* Left: git info + mode */}

@@ -17,8 +17,11 @@ const KEY_TO_CODE: Record<string, string> = {
   "7": "Digit7", "8": "Digit8", "9": "Digit9",
   "0": "Digit0",
   tab: "Tab",
+  backspace: "Backspace",
   arrowleft: "ArrowLeft", arrowright: "ArrowRight",
   arrowup: "ArrowUp", arrowdown: "ArrowDown",
+  pagedown: "PageDown", pageup: "PageUp",
+  home: "Home", end: "End",
   ñ: "Semicolon",
 };
 

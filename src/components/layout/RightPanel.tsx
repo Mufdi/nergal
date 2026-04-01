@@ -13,6 +13,7 @@ import {
 import { focusZoneAtom, previousNonTerminalZoneAtom } from "@/stores/shortcuts";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { planDocumentsAtom, defaultPlanState } from "@/stores/plan";
+import { AnnotationsDrawer } from "@/components/plan/AnnotationsDrawer";
 import { PlanPanel } from "@/components/plan/PlanPanel";
 import { TranscriptViewer } from "@/components/session/TranscriptViewer";
 import { DiffView } from "@/components/plan/DiffView";
@@ -71,6 +72,40 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
   const setFocusZone = useSetAtom(focusZoneAtom);
   const setPreviousZone = useSetAtom(previousNonTerminalZoneAtom);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [annotationsDrawerOpen, setAnnotationsDrawerOpen] = useState(false);
+
+  // Toggle annotations drawer via custom event (from shortcuts registry or PlanPanel)
+  useEffect(() => {
+    function handleToggle() {
+      setAnnotationsDrawerOpen((prev) => !prev);
+    }
+    document.addEventListener("cluihud:toggle-annotations-drawer", handleToggle);
+    return () => document.removeEventListener("cluihud:toggle-annotations-drawer", handleToggle);
+  }, []);
+
+  // Focus drawer when it opens
+  useEffect(() => {
+    if (!annotationsDrawerOpen) return;
+    const timer = setTimeout(() => {
+      const drawer = document.querySelector("[data-annotations-drawer]") as HTMLElement | null;
+      if (drawer) {
+        drawer.focus();
+        const items = drawer.querySelectorAll("[data-nav-item]");
+        for (const item of items) item.removeAttribute("data-nav-selected");
+        if (items[0]) items[0].setAttribute("data-nav-selected", "true");
+      }
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [annotationsDrawerOpen]);
+
+  // Auto-open drawer when annotations appear
+  useEffect(() => {
+    if (activeTab?.type === "plan") {
+      const handleAnnotationAdded = () => setAnnotationsDrawerOpen(true);
+      document.addEventListener("cluihud:annotation-added", handleAnnotationAdded);
+      return () => document.removeEventListener("cluihud:annotation-added", handleAnnotationAdded);
+    }
+  }, [activeTab?.type]);
   const tabOpenedSignal = useAtomValue(tabOpenedSignalAtom);
 
   // Close picker and focus panel when any tab is opened/selected
@@ -177,33 +212,42 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
   const hasPicker = activeTab && PICKER_TYPES.includes(activeTab.type);
 
   if (activeTab) {
+    const showAnnotationsDrawer = activeTab.type === "plan";
     return (
-      <div className="relative flex h-full flex-col overflow-hidden rounded bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus} onKeyDown={handlePanelKeyDown}>
-        <PanelHeader onToggle={onToggle} label={activeTab.label}>
-          {hasPicker && (
-            <button
-              onClick={() => setPickerOpen(!pickerOpen)}
-              className={`flex size-6 items-center justify-center rounded transition-colors ${
-                pickerOpen
-                  ? "text-foreground bg-secondary"
-                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-              }`}
-              aria-label={pickerOpen ? "Close file picker" : "Open file picker"}
-            >
-              <FolderOpen size={12} />
-            </button>
+      <div className="flex h-full flex-col gap-1 overflow-hidden">
+        <div className="relative flex flex-1 flex-col overflow-hidden rounded bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus} onKeyDown={handlePanelKeyDown}>
+          <PanelHeader onToggle={onToggle} label={activeTab.label}>
+            {hasPicker && (
+              <button
+                onClick={() => setPickerOpen(!pickerOpen)}
+                className={`flex size-6 items-center justify-center rounded transition-colors ${
+                  pickerOpen
+                    ? "text-foreground bg-secondary"
+                    : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                }`}
+                aria-label={pickerOpen ? "Close file picker" : "Open file picker"}
+              >
+                <FolderOpen size={12} />
+              </button>
+            )}
+          </PanelHeader>
+          <TabBar />
+          <div className="flex-1 overflow-hidden">
+            <DocumentContent tab={activeTab} />
+          </div>
+
+          {hasPicker && pickerOpen && (
+            <FilePickerOverlay
+              type={activeTab.type}
+              onClose={() => setPickerOpen(false)}
+            />
           )}
-        </PanelHeader>
-        <TabBar />
-        <div className="flex-1 overflow-hidden">
-          <DocumentContent tab={activeTab} />
         </div>
 
-        {/* Floating file picker overlay */}
-        {hasPicker && pickerOpen && (
-          <FilePickerOverlay
-            type={activeTab.type}
-            onClose={() => setPickerOpen(false)}
+        {showAnnotationsDrawer && (
+          <AnnotationsDrawer
+            open={annotationsDrawerOpen}
+            onToggle={() => setAnnotationsDrawerOpen(!annotationsDrawerOpen)}
           />
         )}
       </div>

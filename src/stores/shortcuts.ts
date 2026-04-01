@@ -296,6 +296,26 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     document.dispatchEvent(new CustomEvent("cluihud:toggle-file-picker"));
   }},
   { id: "toggle-activity", label: "Toggle Activity Drawer", keys: "ctrl+shift+l", category: "panel", keywords: ["activity", "log", "timeline", "drawer"], handler: () => store().set(activityDrawerOpenAtom, (prev: boolean) => !prev) },
+  { id: "toggle-annotations", label: "Toggle Annotations Drawer", keys: "ctrl+shift+j", category: "panel", keywords: ["annotations", "drawer", "comments", "plan"], handler: () => {
+    document.dispatchEvent(new CustomEvent("cluihud:toggle-annotations-drawer"));
+  }},
+
+  // -- Plan review (contextual — only active during pending_review) --
+  { id: "global-comment", label: "Add Global Comment", keys: "ctrl+shift+o", category: "action", keywords: ["comment", "global", "plan", "annotation"], handler: () => {
+    document.dispatchEvent(new CustomEvent("cluihud:toggle-global-comment"));
+  }},
+  { id: "clear-annotations", label: "Clear All Annotations", keys: "ctrl+shift+x", category: "action", keywords: ["clear", "annotations", "plan", "remove"], handler: () => {
+    document.dispatchEvent(new CustomEvent("cluihud:clear-annotations"));
+  }},
+  { id: "approve-plan", label: "Approve Plan", keys: "ctrl+shift+a", category: "action", keywords: ["approve", "plan", "review", "accept"], handler: () => {
+    document.dispatchEvent(new CustomEvent("cluihud:approve-plan"));
+  }},
+  { id: "revise-plan", label: "Revise Plan", keys: "ctrl+shift+r", category: "action", keywords: ["revise", "plan", "review", "reject", "feedback"], handler: () => {
+    document.dispatchEvent(new CustomEvent("cluihud:revise-plan"));
+  }},
+
+
+
   { id: "cycle-layout", label: "Cycle Layout Preset", keys: "ctrl+shift+i", category: "navigation", keywords: ["layout", "preset", "cycle", "resize"], handler: () => {
     const s = store();
     const presets: LayoutPreset[] = ["terminal-focus", "doc-review", "tool-workspace"];

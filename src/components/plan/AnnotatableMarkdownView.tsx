@@ -16,6 +16,7 @@ interface ToolbarState {
   startMeta: DomMeta;
   endMeta: DomMeta;
   mode: "pinpoint" | "selection";
+  flipped: boolean;
 }
 
 const ANNOTATION_TYPE_CLASSES: Record<AnnotationType, string> = {
@@ -117,6 +118,19 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true }: 
   const justCreatedRef = useRef(false);
   const restoringRef = useRef(false);
   const annotations = useAtomValue(activeAnnotationsAtom);
+
+  // Remove whitespace-only marks that web-highlighter creates between list items
+  function cleanWhitespaceMarks() {
+    const container = containerRef.current;
+    if (!container) return;
+    container.querySelectorAll("mark[data-highlight-id]").forEach((mark) => {
+      if (mark.textContent && mark.textContent.trim() === "") {
+        const parent = mark.parentNode;
+        while (mark.firstChild) parent?.insertBefore(mark.firstChild, mark);
+        mark.remove();
+      }
+    });
+  }
   const sessionId = useAtomValue(activeSessionIdAtom);
   const setAnnotationMap = useSetAtom(annotationMapAtom);
   const addToast = useSetAtom(toastsAtom);
@@ -162,7 +176,7 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true }: 
 
     highlighter.on(HighlightEvent.CREATE, ({ sources }) => {
       // Skip during annotation restoration — fromRange triggers CREATE but we don't want toolbar/pending logic
-      if (restoringRef.current) return;
+      if (restoringRef.current) { cleanWhitespaceMarks(); return; }
       if (!annotationsEnabled) return;
 
       const source = sources[0];
@@ -182,13 +196,17 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true }: 
       if (doms.length === 0) return;
       const rect = doms[0].getBoundingClientRect();
 
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const isFlipped = spaceBelow < 120;
+      const toolbarTop = isFlipped ? rect.top - 4 : rect.bottom + 4;
       setToolbar({
-        position: { top: rect.bottom + 4, left: rect.left },
+        position: { top: toolbarTop, left: rect.left },
         targetText: source.text,
         highlightId: source.id,
         startMeta: source.startMeta,
         endMeta: source.endMeta,
         mode: "selection",
+        flipped: isFlipped,
       });
     });
 
@@ -246,19 +264,25 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true }: 
       pinpointTargetRef.current = target;
 
       const source = highlighterRef.current.fromRange(range);
+      cleanWhitespaceMarks();
+      setTimeout(cleanWhitespaceMarks, 100);
       pendingSourceRef.current = source;
 
       const doms = highlighterRef.current.getDoms(source.id);
       if (doms.length === 0) return;
       const rect = target.getBoundingClientRect();
 
+      const spaceBelowPinpoint = window.innerHeight - rect.bottom;
+      const isPinpointFlipped = spaceBelowPinpoint < 120;
+      const pinpointTop = isPinpointFlipped ? rect.top - 4 : rect.bottom + 4;
       setToolbar({
-        position: { top: rect.bottom + 4, left: rect.left },
+        position: { top: pinpointTop, left: rect.left },
         targetText: source.text,
         highlightId: source.id,
         startMeta: source.startMeta,
         endMeta: source.endMeta,
         mode: "pinpoint",
+        flipped: isPinpointFlipped,
       });
     }
 
@@ -332,7 +356,16 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true }: 
   useEffect(() => {
     const highlighter = highlighterRef.current;
     const container = containerRef.current;
-    if (!highlighter || !container || annotations.length === 0) return;
+    if (!highlighter || !container) return;
+
+    // Clear all highlights and gutter dots when annotations are empty
+    if (annotations.length === 0) {
+      container.querySelectorAll("mark[data-highlight-id]").forEach((el) => {
+        try { highlighter.remove((el as HTMLElement).dataset.highlightId!); } catch { /* already gone */ }
+      });
+      return;
+    }
+
     // Skip if content is empty (plan not loaded yet)
     if (!content) return;
 
@@ -347,10 +380,15 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true }: 
         return;
       }
 
-      // Clear previous gutter dots
-      container.querySelectorAll(".annotation-dots").forEach((el) => el.remove());
 
-      const gutterMap = new Map<Element, Set<AnnotationType>>();
+      // Remove orphaned marks (annotations that were deleted)
+      const currentIds = new Set(annotations.map((a) => a.id));
+      container.querySelectorAll("mark[data-highlight-id]").forEach((el) => {
+        const id = (el as HTMLElement).dataset.highlightId ?? "";
+        if (!currentIds.has(id)) {
+          try { highlighter.remove(id); } catch { /* already gone */ }
+        }
+      });
 
       restoringRef.current = true;
       for (const ann of annotations) {
@@ -405,38 +443,12 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true }: 
           for (const dom of doms) {
             dom.classList.add(ANNOTATION_TYPE_CLASSES[ann.type]);
           }
-          if (doms.length > 0) {
-            const annotatableEl = doms[0].closest("[data-annotatable]");
-            if (annotatableEl) {
-              if (!gutterMap.has(annotatableEl)) gutterMap.set(annotatableEl, new Set());
-              gutterMap.get(annotatableEl)!.add(ann.type);
-            }
-          }
         }
       }
       restoringRef.current = false;
-
-      // Apply gutter dots
-      const GUTTER_DOT_COLORS: Record<AnnotationType, string> = {
-        comment: "#3b82f6",
-        replace: "#eab308",
-        delete: "#ef4444",
-        insert: "#22c55e",
-      };
-
-      for (const [el, types] of gutterMap) {
-        const htmlEl = el as HTMLElement;
-        htmlEl.style.position = "relative";
-        const dotsContainer = document.createElement("span");
-        dotsContainer.className = "annotation-dots";
-        dotsContainer.style.cssText = "position:absolute;left:-12px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:2px;";
-        for (const type of types) {
-          const dot = document.createElement("span");
-          dot.style.cssText = `width:6px;height:6px;border-radius:50%;background:${GUTTER_DOT_COLORS[type]};`;
-          dotsContainer.appendChild(dot);
-        }
-        htmlEl.appendChild(dotsContainer);
-      }
+      cleanWhitespaceMarks();
+      setTimeout(cleanWhitespaceMarks, 100);
+      setTimeout(cleanWhitespaceMarks, 300);
     }
 
     const frame = requestAnimationFrame(restoreAnnotations);
@@ -496,6 +508,7 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true }: 
             startMeta={toolbar.startMeta}
             endMeta={toolbar.endMeta}
             mode={toolbar.mode}
+            flipped={toolbar.flipped}
             onClose={closeToolbar}
             onConfirm={confirmToolbar}
           />

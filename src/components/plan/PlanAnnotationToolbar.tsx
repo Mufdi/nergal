@@ -32,11 +32,12 @@ interface PlanAnnotationToolbarProps {
   startMeta: DomMeta;
   endMeta: DomMeta;
   mode: "pinpoint" | "selection";
+  flipped?: boolean;
   onClose: () => void;
   onConfirm: () => void;
 }
 
-export function PlanAnnotationToolbar({ position, targetText, highlightId, startMeta, endMeta, onClose, onConfirm }: PlanAnnotationToolbarProps) {
+export function PlanAnnotationToolbar({ position, targetText, highlightId, startMeta, endMeta, flipped = false, onClose, onConfirm }: PlanAnnotationToolbarProps) {
   const [view, setView] = useState<"actions" | "quicklabel" | "comment" | "replace">("actions");
   const [inputValue, setInputValue] = useState("");
   const addAnnotation = useSetAtom(addAnnotationAtom);
@@ -86,12 +87,16 @@ export function PlanAnnotationToolbar({ position, targetText, highlightId, start
     if (view === "replace") submitAnnotation("replace", inputValue);
   }
 
+  const posStyle = flipped
+    ? { top: position.top, left: position.left, transform: "translateY(-100%)" as const }
+    : { top: position.top, left: position.left };
+
   // Actions view — icon toolbar
   if (view === "actions") {
     return (
       <div
         className="fixed z-50 rounded-lg border border-border bg-popover shadow-lg"
-        style={{ top: position.top, left: position.left }}
+        style={posStyle}
       >
         <TooltipProvider delay={0}>
           <div className="flex items-center gap-0 p-0.5">
@@ -162,7 +167,7 @@ export function PlanAnnotationToolbar({ position, targetText, highlightId, start
     return (
       <div
         className="fixed z-50 w-40 rounded-md border border-border/60 bg-popover py-0.5 shadow-md"
-        style={{ top: position.top, left: position.left }}
+        style={posStyle}
       >
         {QUICK_LABELS.map((label, i) => (
           <button
@@ -183,7 +188,7 @@ export function PlanAnnotationToolbar({ position, targetText, highlightId, start
   return (
     <div
       className="fixed z-50 w-72 rounded-lg border border-border bg-popover p-2 shadow-lg"
-      style={{ top: position.top, left: position.left }}
+      style={posStyle}
     >
       <div className="mb-1.5 flex items-center justify-between">
         <span className="text-[10px] font-medium uppercase text-muted-foreground">{view}</span>

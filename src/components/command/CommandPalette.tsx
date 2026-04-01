@@ -54,6 +54,13 @@ export function CommandPalette() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, selectedIndex, query]);
 
+  // Scroll selected item into view
+  useEffect(() => {
+    if (!isOpen || !listRef.current) return;
+    const selected = listRef.current.querySelector("[data-palette-selected]") as HTMLElement | null;
+    if (selected) selected.scrollIntoView({ block: "nearest" });
+  }, [isOpen, selectedIndex]);
+
   if (!isOpen) return null;
 
   const lowerQuery = query.toLowerCase();
@@ -65,6 +72,22 @@ export function CommandPalette() {
       action.keywords.some((k) => k.includes(lowerQuery))
     );
   });
+
+  const CONTEXTUAL_SHORTCUTS = [
+    { label: "Scroll Down", keys: "↓" },
+    { label: "Scroll Up", keys: "↑" },
+    { label: "Scroll Page Down", keys: "PageDown" },
+    { label: "Scroll Page Up", keys: "PageUp" },
+    { label: "Scroll to Top", keys: "Home" },
+    { label: "Scroll to Bottom", keys: "End" },
+    { label: "Next Spec Sub-Tab", keys: "Shift+→" },
+    { label: "Previous Spec Sub-Tab", keys: "Shift+←" },
+    { label: "Back from Spec Delta", keys: "Backspace" },
+  ];
+
+  const filteredContextual = lowerQuery
+    ? CONTEXTUAL_SHORTCUTS.filter((s) => s.label.toLowerCase().includes(lowerQuery) || s.keys.toLowerCase().includes(lowerQuery))
+    : CONTEXTUAL_SHORTCUTS;
 
   const categories = ["navigation", "session", "panel", "action"] as const;
   const grouped = new Map<string, ShortcutAction[]>();
@@ -83,7 +106,7 @@ export function CommandPalette() {
 
   return (
     <div className="fixed inset-0 z-50 flex justify-center pt-[20vh]" onClick={() => setOpen(false)}>
-      <div className="fixed inset-0 bg-black/50" />
+      <div className="fixed inset-0 backdrop-blur-sm bg-black/30" />
       <div
         className="relative z-10 w-full max-w-lg rounded-lg border border-border bg-card shadow-2xl max-h-[70vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
@@ -121,6 +144,7 @@ export function CommandPalette() {
                   return (
                     <button
                       key={action.id}
+                      data-palette-selected={isSelected ? "true" : undefined}
                       onClick={() => handleSelect(action)}
                       onMouseEnter={() => setSelectedIndex(idx)}
                       className={`flex w-full items-center justify-between px-3 py-1.5 text-left transition-colors ${
@@ -135,6 +159,30 @@ export function CommandPalette() {
               </div>
             );
           })}
+          {filteredContextual.length > 0 && (
+            <div>
+              <div className="px-3 py-1">
+                <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                  contextual
+                </span>
+              </div>
+              {filteredContextual.map((s) => (
+                <div
+                  key={s.label}
+                  className="flex w-full items-center justify-between px-3 py-1.5 text-muted-foreground"
+                >
+                  <span className="text-xs">{s.label}</span>
+                  <span className="flex items-center gap-0.5">
+                    {s.keys.split("+").map((k) => (
+                      <kbd key={k} className="rounded bg-secondary px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">
+                        {k}
+                      </kbd>
+                    ))}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

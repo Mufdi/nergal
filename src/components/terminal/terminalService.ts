@@ -91,7 +91,7 @@ function wireIMEFix(term: Terminal, container: HTMLElement, ptyId: string) {
 
     // Ctrl+Shift+{letter}
     if (event.ctrlKey && event.shiftKey && !event.altKey) {
-      if (["KeyB","KeyP","KeyF","KeyD","KeyS","KeyG","KeyK","KeyL","KeyT","KeyE","KeyM","KeyN","KeyC","KeyI"].includes(event.code)) return false;
+      if (["KeyB","KeyP","KeyF","KeyD","KeyS","KeyG","KeyK","KeyL","KeyT","KeyE","KeyM","KeyN","KeyC","KeyI","KeyJ","KeyO","KeyX","KeyA","KeyR","KeyU"].includes(event.code)) return false;
     }
 
     // Ctrl+{digit}

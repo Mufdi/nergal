@@ -11,6 +11,7 @@ const HOOKS: &[HookDef] = &[
         command: "cluihud hook send session-start",
         is_async: true,
         timeout: None,
+        if_condition: None,
     },
     HookDef {
         event: "SessionEnd",
@@ -18,6 +19,7 @@ const HOOKS: &[HookDef] = &[
         command: "cluihud hook send session-end",
         is_async: true,
         timeout: None,
+        if_condition: None,
     },
     HookDef {
         event: "PermissionRequest",
@@ -25,6 +27,7 @@ const HOOKS: &[HookDef] = &[
         command: "cluihud hook plan-review",
         is_async: false,
         timeout: Some(86400),
+        if_condition: None,
     },
     HookDef {
         event: "PreToolUse",
@@ -32,13 +35,15 @@ const HOOKS: &[HookDef] = &[
         command: "cluihud hook send pre-tool",
         is_async: true,
         timeout: None,
+        if_condition: None,
     },
     HookDef {
         event: "PostToolUse",
-        matcher: None,
+        matcher: Some("Write|Edit|MultiEdit|Bash|TaskCreate|TaskUpdate|TodoWrite|NotebookEdit|Create"),
         command: "cluihud hook send tool-done",
         is_async: true,
         timeout: None,
+        if_condition: None,
     },
     HookDef {
         event: "TaskCompleted",
@@ -46,6 +51,7 @@ const HOOKS: &[HookDef] = &[
         command: "cluihud hook send task-done",
         is_async: true,
         timeout: None,
+        if_condition: None,
     },
     HookDef {
         event: "TaskCreated",
@@ -53,6 +59,7 @@ const HOOKS: &[HookDef] = &[
         command: "cluihud hook send task-created",
         is_async: true,
         timeout: None,
+        if_condition: None,
     },
     HookDef {
         event: "PreToolUse",
@@ -60,6 +67,31 @@ const HOOKS: &[HookDef] = &[
         command: "cluihud hook ask-user",
         is_async: false,
         timeout: Some(86400),
+        if_condition: None,
+    },
+    HookDef {
+        event: "CwdChanged",
+        matcher: None,
+        command: "cluihud hook send cwd-changed",
+        is_async: true,
+        timeout: None,
+        if_condition: None,
+    },
+    HookDef {
+        event: "FileChanged",
+        matcher: None,
+        command: "cluihud hook send file-changed",
+        is_async: true,
+        timeout: None,
+        if_condition: None,
+    },
+    HookDef {
+        event: "PermissionDenied",
+        matcher: None,
+        command: "cluihud hook send permission-denied",
+        is_async: true,
+        timeout: None,
+        if_condition: None,
     },
     HookDef {
         event: "Stop",
@@ -67,6 +99,7 @@ const HOOKS: &[HookDef] = &[
         command: "cluihud hook send stop",
         is_async: true,
         timeout: None,
+        if_condition: None,
     },
     HookDef {
         event: "UserPromptSubmit",
@@ -74,6 +107,7 @@ const HOOKS: &[HookDef] = &[
         command: "cluihud hook inject-edits",
         is_async: false,
         timeout: None,
+        if_condition: None,
     },
 ];
 
@@ -83,6 +117,7 @@ struct HookDef {
     command: &'static str,
     is_async: bool,
     timeout: Option<u64>,
+    if_condition: Option<&'static str>,
 }
 
 /// Hooks that should be removed during setup (superseded by new definitions).
@@ -90,16 +125,26 @@ const OBSOLETE_HOOKS: &[ObsoleteHook] = &[
     ObsoleteHook {
         event: "PreToolUse",
         command: "cluihud hook send plan-ready",
+        only_without_matcher: false,
     },
     ObsoleteHook {
         event: "UserPromptSubmit",
         command: "cluihud hook inject-edits",
+        only_without_matcher: false,
+    },
+    // PostToolUse without matcher replaced by filtered version
+    ObsoleteHook {
+        event: "PostToolUse",
+        command: "cluihud hook send tool-done",
+        only_without_matcher: true,
     },
 ];
 
 struct ObsoleteHook {
     event: &'static str,
     command: &'static str,
+    /// Only remove if the entry has no `matcher` field.
+    only_without_matcher: bool,
 }
 
 /// Run the setup command: configure Claude Code hooks in ~/.claude/settings.json.
@@ -166,6 +211,9 @@ fn remove_hook(hooks_map: &mut Map<String, Value>, obs: &ObsoleteHook) -> bool {
 
     let before = arr.len();
     arr.retain(|entry| {
+        if obs.only_without_matcher && entry.get("matcher").is_some() {
+            return true;
+        }
         let Some(hooks) = entry.get("hooks").and_then(|h| h.as_array()) else {
             return true;
         };
@@ -230,6 +278,11 @@ fn merge_hook(hooks_map: &mut Map<String, Value>, def: &HookDef) -> bool {
             .expect("just created")
             .insert("timeout".into(), Value::Number(timeout.into()));
     }
+    if let Some(condition) = def.if_condition {
+        hook.as_object_mut()
+            .expect("just created")
+            .insert("if".into(), Value::String(condition.into()));
+    }
 
     let mut entry = json!({
         "hooks": [hook],
@@ -240,7 +293,6 @@ fn merge_hook(hooks_map: &mut Map<String, Value>, def: &HookDef) -> bool {
             .expect("just created")
             .insert("matcher".into(), Value::String(matcher.into()));
     }
-
     arr.push(entry);
     true
 }

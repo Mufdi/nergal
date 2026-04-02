@@ -51,6 +51,7 @@ export const sessionTabIdsAtom = atom<string[]>([]);
 // Session-scoped state maps
 export const costMapAtom = atom<Record<string, CostSummary>>({});
 export const modeMapAtom = atom<Record<string, string>>({});
+export const cwdMapAtom = atom<Record<string, string>>({});
 export const freshSessionsAtom = atom<Set<string>>(new Set<string>());
 export const showCompletedAtom = atom(false);
 export const sessionLaunchModeAtom = atom<Record<string, "new" | "continue" | "resume_pick">>({});
@@ -75,4 +76,10 @@ export const activeModeAtom = atom<string>((get) => {
   const id = get(activeSessionIdAtom);
   if (!id) return "idle";
   return get(modeMapAtom)[id] ?? "idle";
+});
+
+export const activeCwdAtom = atom<string | null>((get) => {
+  const id = get(activeSessionIdAtom);
+  if (!id) return null;
+  return get(cwdMapAtom)[id] ?? null;
 });

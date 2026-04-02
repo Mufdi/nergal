@@ -34,6 +34,9 @@ impl FrontendHookEvent {
             HookEvent::TaskCreated { session_id, task_subject, tool_input, .. } => (session_id.clone(), "task_created", task_subject.clone(), Some(tool_input.clone()), None, None),
             HookEvent::PlanReview { session_id, tool_name, tool_input, .. } => (session_id.clone(), "plan_review", Some(tool_name.clone()), Some(tool_input.clone()), None, None),
             HookEvent::AskUser { session_id, tool_input, .. } => (session_id.clone(), "ask_user", None, Some(tool_input.clone()), None, None),
+            HookEvent::CwdChanged { session_id, .. } => (session_id.clone(), "cwd_changed", None, None, None, None),
+            HookEvent::FileChanged { session_id, file_path, .. } => (session_id.clone(), "file_changed", file_path.clone(), None, None, None),
+            HookEvent::PermissionDenied { session_id, tool_name, tool_input, reason } => (session_id.clone(), "permission_denied", tool_name.clone(), Some(tool_input.clone()), reason.clone(), None),
         };
         Self {
             session_id,
@@ -308,6 +311,77 @@ fn process_event(
                     }
                 }
             }
+        }
+
+        HookEvent::CwdChanged {
+            session_id,
+            cwd,
+        } => {
+            tracing::debug!("CwdChanged: cwd={cwd:?}");
+
+            #[derive(Clone, serde::Serialize)]
+            struct CwdChangedPayload {
+                session_id: String,
+                cwd: String,
+            }
+            if let Some(dir) = cwd {
+                let _ = app.emit(
+                    "cwd:changed",
+                    CwdChangedPayload {
+                        session_id: session_id.clone(),
+                        cwd: dir.clone(),
+                    },
+                );
+            }
+        }
+
+        HookEvent::FileChanged {
+            session_id,
+            file_path,
+            event_type,
+        } => {
+            tracing::debug!("FileChanged: path={file_path:?} type={event_type:?}");
+
+            #[derive(Clone, serde::Serialize)]
+            struct FileChangedPayload {
+                session_id: String,
+                path: String,
+                change_type: String,
+            }
+            if let Some(path) = file_path {
+                let _ = app.emit(
+                    "file:changed",
+                    FileChangedPayload {
+                        session_id: session_id.clone(),
+                        path: path.clone(),
+                        change_type: event_type.clone().unwrap_or_default(),
+                    },
+                );
+            }
+        }
+
+        HookEvent::PermissionDenied {
+            session_id,
+            tool_name,
+            reason,
+            ..
+        } => {
+            tracing::info!("PermissionDenied: tool={tool_name:?} reason={reason:?}");
+
+            #[derive(Clone, serde::Serialize)]
+            struct PermissionDeniedPayload {
+                session_id: String,
+                tool_name: Option<String>,
+                reason: Option<String>,
+            }
+            let _ = app.emit(
+                "permission:denied",
+                PermissionDeniedPayload {
+                    session_id: session_id.clone(),
+                    tool_name: tool_name.clone(),
+                    reason: reason.clone(),
+                },
+            );
         }
 
         HookEvent::AskUser {

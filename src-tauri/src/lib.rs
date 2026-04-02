@@ -79,6 +79,8 @@ pub fn run() {
             commands::delete_annotation,
             commands::clear_annotations,
             commands::set_pending_annotations,
+            // Buddy command
+            commands::get_buddy,
             // Setup command
             commands::send_notification,
             commands::setup_hooks,

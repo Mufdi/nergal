@@ -67,6 +67,30 @@ pub enum HookEvent {
         tool_input: serde_json::Value,
         fifo_path: String,
     },
+    #[serde(rename = "CwdChanged")]
+    CwdChanged {
+        session_id: String,
+        #[serde(default)]
+        cwd: Option<String>,
+    },
+    #[serde(rename = "FileChanged")]
+    FileChanged {
+        session_id: String,
+        #[serde(default)]
+        file_path: Option<String>,
+        #[serde(default)]
+        event_type: Option<String>,
+    },
+    #[serde(rename = "PermissionDenied")]
+    PermissionDenied {
+        session_id: String,
+        #[serde(default)]
+        tool_name: Option<String>,
+        #[serde(default)]
+        tool_input: serde_json::Value,
+        #[serde(default)]
+        reason: Option<String>,
+    },
 }
 
 impl HookEvent {
@@ -81,7 +105,10 @@ impl HookEvent {
             | Self::TaskCreated { session_id, .. }
             | Self::UserPromptSubmit { session_id }
             | Self::PlanReview { session_id, .. }
-            | Self::AskUser { session_id, .. } => session_id,
+            | Self::AskUser { session_id, .. }
+            | Self::CwdChanged { session_id, .. }
+            | Self::FileChanged { session_id, .. }
+            | Self::PermissionDenied { session_id, .. } => session_id,
         }
     }
 }

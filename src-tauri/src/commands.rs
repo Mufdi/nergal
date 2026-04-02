@@ -374,6 +374,51 @@ pub fn set_pending_annotations(feedback: String) -> Result<(), String> {
     HookState::set_pending_annotations(feedback).map_err(|e| e.to_string())
 }
 
+// -- Buddy commands --
+
+#[derive(Clone, serde::Serialize)]
+pub struct BuddyData {
+    soul: Option<serde_json::Value>,
+    user_id: Option<String>,
+    access_token: Option<String>,
+}
+
+#[tauri::command]
+pub fn get_buddy() -> Result<BuddyData, String> {
+    let home = dirs::home_dir().ok_or("cannot determine home directory")?;
+
+    // Read soul from ~/.claude.json
+    let claude_json = home.join(".claude.json");
+    let (soul, user_id) = match std::fs::read_to_string(&claude_json) {
+        Ok(contents) => {
+            let json: serde_json::Value =
+                serde_json::from_str(&contents).map_err(|e| e.to_string())?;
+            let soul = json.get("companion").cloned();
+            let user_id = json.get("userID").and_then(|v| v.as_str()).map(String::from);
+            (soul, user_id)
+        }
+        Err(_) => (None, None),
+    };
+
+    // Read access token from ~/.claude/.credentials.json for OAuth profile fetch
+    let creds_json = home.join(".claude").join(".credentials.json");
+    let access_token = std::fs::read_to_string(&creds_json)
+        .ok()
+        .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok())
+        .and_then(|json| {
+            json.get("claudeAiOauth")
+                .and_then(|oauth| oauth.get("accessToken"))
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        });
+
+    Ok(BuddyData {
+        soul,
+        user_id,
+        access_token,
+    })
+}
+
 // -- Workspace commands --
 
 #[tauri::command]

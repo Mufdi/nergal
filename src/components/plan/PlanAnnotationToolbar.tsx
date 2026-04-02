@@ -37,17 +37,78 @@ interface PlanAnnotationToolbarProps {
   onConfirm: () => void;
 }
 
+const ACTION_HANDLERS = ["comment", "replace", "delete", "copy", "quicklabel", "close"] as const;
+
 export function PlanAnnotationToolbar({ position, targetText, highlightId, startMeta, endMeta, flipped = false, onClose, onConfirm }: PlanAnnotationToolbarProps) {
   const [view, setView] = useState<"actions" | "quicklabel" | "comment" | "replace">("actions");
   const [inputValue, setInputValue] = useState("");
+  const [focusedAction, setFocusedAction] = useState(0);
+  const [selectedLabel, setSelectedLabel] = useState(0);
   const addAnnotation = useSetAtom(addAnnotationAtom);
   const addToast = useSetAtom(toastsAtom);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const actionsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (view === "comment" || view === "replace") {
       inputRef.current?.focus();
     }
+    if (view === "actions") {
+      setFocusedAction(0);
+      requestAnimationFrame(() => actionsRef.current?.focus());
+    }
+    if (view === "quicklabel") {
+      setSelectedLabel(0);
+    }
+  }, [view]);
+
+  // Quicklabel keyboard handler — window capture phase so focus doesn't matter
+  useEffect(() => {
+    if (view !== "quicklabel") return;
+
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setView("actions");
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setSelectedLabel((prev) => (prev + 1) % QUICK_LABELS.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setSelectedLabel((prev) => (prev - 1 + QUICK_LABELS.length) % QUICK_LABELS.length);
+        return;
+      }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        // Read current selectedLabel from the DOM since closure might be stale
+        const items = document.querySelectorAll("[data-quicklabel-item]");
+        const selected = Array.from(items).findIndex((el) => el.getAttribute("data-nav-selected") === "true");
+        const idx = selected >= 0 ? selected : 0;
+        handleQuickLabel(QUICK_LABELS[idx]);
+        return;
+      }
+      const num = parseInt(e.key);
+      if (num >= 1 && num <= 9 && num <= QUICK_LABELS.length) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        handleQuickLabel(QUICK_LABELS[num - 1]);
+      } else if (e.key === "0" && QUICK_LABELS.length >= 10) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        handleQuickLabel(QUICK_LABELS[9]);
+      }
+    }
+
+    window.addEventListener("keydown", handleKey, true);
+    return () => window.removeEventListener("keydown", handleKey, true);
   }, [view]);
 
   if (!position) return null;
@@ -91,11 +152,54 @@ export function PlanAnnotationToolbar({ position, targetText, highlightId, start
     ? { top: position.top, left: position.left, transform: "translateY(-100%)" as const }
     : { top: position.top, left: position.left };
 
+  function handleActionsKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "ArrowRight" || e.key === "Tab" && !e.shiftKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      setFocusedAction((prev) => (prev + 1) % ACTION_HANDLERS.length);
+      return;
+    }
+    if (e.key === "ArrowLeft" || (e.key === "Tab" && e.shiftKey)) {
+      e.preventDefault();
+      e.stopPropagation();
+      setFocusedAction((prev) => (prev - 1 + ACTION_HANDLERS.length) % ACTION_HANDLERS.length);
+      return;
+    }
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      e.stopPropagation();
+      const action = ACTION_HANDLERS[focusedAction];
+      if (action === "comment") setView("comment");
+      else if (action === "replace") setView("replace");
+      else if (action === "delete") handleDelete();
+      else if (action === "copy") handleCopy();
+      else if (action === "quicklabel") setView("quicklabel");
+      else if (action === "close") onClose();
+      return;
+    }
+    // Number keys 1-4 for direct action access
+    const num = parseInt(e.key);
+    if (num >= 1 && num <= 4) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (num === 1) setView("comment");
+      else if (num === 2) setView("replace");
+      else if (num === 3) handleDelete();
+      else if (num === 4) handleCopy();
+    }
+  }
+
+  const actionClasses = (idx: number, base: string) =>
+    `${base}${focusedAction === idx ? " ring-1 ring-ring" : ""}`;
+
   // Actions view — icon toolbar
   if (view === "actions") {
     return (
       <div
-        className="fixed z-50 rounded-lg border border-border bg-popover shadow-lg"
+        ref={actionsRef}
+        tabIndex={-1}
+        onKeyDown={handleActionsKeyDown}
+        className="fixed z-50 rounded-lg border border-border bg-popover shadow-lg outline-none"
         style={posStyle}
       >
         <TooltipProvider delay={0}>
@@ -103,44 +207,44 @@ export function PlanAnnotationToolbar({ position, targetText, highlightId, start
             <Tooltip>
               <TooltipTrigger
                 onClick={() => setView("comment")}
-                className="rounded p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                className={actionClasses(0, "rounded p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors")}
               >
                 <MessageSquare className="size-3.5" />
               </TooltipTrigger>
-              <TooltipContent side="bottom" sideOffset={4}>Comment</TooltipContent>
+              <TooltipContent side="bottom" sideOffset={4}>Comment (1)</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger
                 onClick={() => setView("replace")}
-                className="rounded p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                className={actionClasses(1, "rounded p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors")}
               >
                 <Replace className="size-3.5" />
               </TooltipTrigger>
-              <TooltipContent side="bottom" sideOffset={4}>Replace</TooltipContent>
+              <TooltipContent side="bottom" sideOffset={4}>Replace (2)</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger
                 onClick={handleDelete}
-                className="rounded p-1.5 text-muted-foreground hover:bg-red-500/15 hover:text-red-400 transition-colors"
+                className={actionClasses(2, "rounded p-1.5 text-muted-foreground hover:bg-red-500/15 hover:text-red-400 transition-colors")}
               >
                 <Trash2 className="size-3.5" />
               </TooltipTrigger>
-              <TooltipContent side="bottom" sideOffset={4}>Delete</TooltipContent>
+              <TooltipContent side="bottom" sideOffset={4}>Delete (3)</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger
                 onClick={handleCopy}
-                className="rounded p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                className={actionClasses(3, "rounded p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors")}
               >
                 <Copy className="size-3.5" />
               </TooltipTrigger>
-              <TooltipContent side="bottom" sideOffset={4}>Copy</TooltipContent>
+              <TooltipContent side="bottom" sideOffset={4}>Copy (4)</TooltipContent>
             </Tooltip>
             <div className="mx-0.5 h-4 w-px bg-border" />
             <Tooltip>
               <TooltipTrigger
                 onClick={() => setView("quicklabel")}
-                className="rounded px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                className={actionClasses(4, "rounded px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors")}
               >
                 ⚡
               </TooltipTrigger>
@@ -150,7 +254,7 @@ export function PlanAnnotationToolbar({ position, targetText, highlightId, start
             <Tooltip>
               <TooltipTrigger
                 onClick={onClose}
-                className="rounded p-1.5 text-muted-foreground hover:text-foreground transition-colors"
+                className={actionClasses(5, "rounded p-1.5 text-muted-foreground hover:text-foreground transition-colors")}
               >
                 <X className="size-3.5" />
               </TooltipTrigger>
@@ -162,19 +266,24 @@ export function PlanAnnotationToolbar({ position, targetText, highlightId, start
     );
   }
 
-  // Quick label picker — compact, no emojis
+  // Quick label picker — compact, keyboard handled via window capture (see useEffect above)
   if (view === "quicklabel") {
     return (
       <div
-        className="fixed z-50 w-40 rounded-md border border-border/60 bg-popover py-0.5 shadow-md"
+        className="fixed z-50 w-40 rounded-md border border-border/60 bg-popover py-0.5 shadow-md outline-none"
         style={posStyle}
       >
         {QUICK_LABELS.map((label, i) => (
           <button
             key={label}
             type="button"
+            data-quicklabel-item
+            data-nav-item
+            {...(selectedLabel === i ? { "data-nav-selected": "true" } : {})}
             onClick={() => handleQuickLabel(label)}
-            className="flex w-full items-center justify-between px-2 py-[3px] text-left text-[10px] text-foreground/80 hover:bg-secondary transition-colors"
+            className={`flex w-full items-center justify-between rounded-sm px-2 py-[3px] text-left text-[10px] transition-colors ${
+              selectedLabel === i ? "bg-white/15 text-foreground font-medium" : "text-foreground/80 hover:bg-white/10"
+            }`}
           >
             <span>{label}</span>
             <span className="text-[9px] text-muted-foreground/40">{i + 1}</span>
@@ -200,7 +309,9 @@ export function PlanAnnotationToolbar({ position, targetText, highlightId, start
         ref={inputRef}
         value={inputValue}
         onChange={(e) => setInputValue(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter" && e.ctrlKey) { e.preventDefault(); handleSubmit(); } }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && e.ctrlKey) { e.preventDefault(); handleSubmit(); }
+        }}
         placeholder={view === "comment" ? "Your comment..." : "Replace with..."}
         className="mb-1.5 h-20 w-full resize-none rounded border border-border bg-background p-2 text-xs focus:ring-1 focus:ring-ring"
       />

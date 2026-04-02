@@ -30,6 +30,7 @@ const ANNOTATION_TYPE_CLASSES: Record<AnnotationType, string> = {
 interface Props {
   content: string;
   annotationsEnabled?: boolean;
+  annotationMode?: boolean;
 }
 
 /**
@@ -107,7 +108,7 @@ const PlanMarkdown = memo(function PlanMarkdown({ content }: { content: string }
   );
 });
 
-export function AnnotatableMarkdownView({ content, annotationsEnabled = true }: Props) {
+export function AnnotatableMarkdownView({ content, annotationsEnabled = true, annotationMode = false }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const highlighterRef = useRef<Highlighter | null>(null);
   const [toolbar, setToolbar] = useState<ToolbarState | null>(null);
@@ -119,15 +120,13 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true }: 
   const restoringRef = useRef(false);
   const annotations = useAtomValue(activeAnnotationsAtom);
 
-  // Remove whitespace-only marks that web-highlighter creates between list items
+  // Tag whitespace-only marks so CSS hides them — keeps DOM intact for web-highlighter's internal tracking
   function cleanWhitespaceMarks() {
     const container = containerRef.current;
     if (!container) return;
-    container.querySelectorAll("mark[data-highlight-id]").forEach((mark) => {
+    container.querySelectorAll("mark[data-highlight-id]:not([data-ws-hidden])").forEach((mark) => {
       if (mark.textContent && mark.textContent.trim() === "") {
-        const parent = mark.parentNode;
-        while (mark.firstChild) parent?.insertBefore(mark.firstChild, mark);
-        mark.remove();
+        (mark as HTMLElement).setAttribute("data-ws-hidden", "");
       }
     });
   }
@@ -166,6 +165,51 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true }: 
     setToolbar(null);
   }, []);
 
+  const navIndexRef = useRef(-1);
+
+  /// Activate pinpoint annotation on a [data-annotatable] element (shared by click + keyboard).
+  const activatePinpoint = useCallback((target: HTMLElement) => {
+    const container = containerRef.current;
+    if (!container || !highlighterRef.current) return;
+    if (!container.contains(target)) return;
+
+    const range = createTextRange(target);
+
+    if (hoverTargetRef.current) {
+      hoverTargetRef.current.removeAttribute("data-pinpoint-hover");
+      hoverTargetRef.current = null;
+    }
+    if (pinpointTargetRef.current) {
+      pinpointTargetRef.current.removeAttribute("data-pinpoint-active");
+    }
+
+    target.setAttribute("data-pinpoint-active", "");
+    pinpointTargetRef.current = target;
+
+    const source = highlighterRef.current.fromRange(range);
+    cleanWhitespaceMarks();
+    setTimeout(cleanWhitespaceMarks, 100);
+    setTimeout(cleanWhitespaceMarks, 300);
+    pendingSourceRef.current = source;
+
+    const doms = highlighterRef.current.getDoms(source.id);
+    if (doms.length === 0) return;
+    const rect = target.getBoundingClientRect();
+
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const isFlipped = spaceBelow < 120;
+    const top = isFlipped ? rect.top - 4 : rect.bottom + 4;
+    setToolbar({
+      position: { top, left: rect.left },
+      targetText: source.text,
+      highlightId: source.id,
+      startMeta: source.startMeta,
+      endMeta: source.endMeta,
+      mode: "pinpoint",
+      flipped: isFlipped,
+    });
+  }, []);
+
   // Initialize web-highlighter
   useEffect(() => {
     const container = containerRef.current;
@@ -175,7 +219,6 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true }: 
     highlighterRef.current = highlighter;
 
     highlighter.on(HighlightEvent.CREATE, ({ sources }) => {
-      // Skip during annotation restoration — fromRange triggers CREATE but we don't want toolbar/pending logic
       if (restoringRef.current) { cleanWhitespaceMarks(); return; }
       if (!annotationsEnabled) return;
 
@@ -245,45 +288,7 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true }: 
       const target = resolvePinpointTarget(e.target, e);
       if (!target || !container.contains(target)) return;
 
-      const range = createTextRange(target);
-      if (!highlighterRef.current) return;
-
-      // Clear hover
-      if (hoverTargetRef.current) {
-        hoverTargetRef.current.removeAttribute("data-pinpoint-hover");
-        hoverTargetRef.current = null;
-      }
-
-      // Clear previous pinpoint
-      if (pinpointTargetRef.current) {
-        pinpointTargetRef.current.removeAttribute("data-pinpoint-active");
-      }
-
-      // Set yellow dashed outline on the annotatable element
-      target.setAttribute("data-pinpoint-active", "");
-      pinpointTargetRef.current = target;
-
-      const source = highlighterRef.current.fromRange(range);
-      cleanWhitespaceMarks();
-      setTimeout(cleanWhitespaceMarks, 100);
-      pendingSourceRef.current = source;
-
-      const doms = highlighterRef.current.getDoms(source.id);
-      if (doms.length === 0) return;
-      const rect = target.getBoundingClientRect();
-
-      const spaceBelowPinpoint = window.innerHeight - rect.bottom;
-      const isPinpointFlipped = spaceBelowPinpoint < 120;
-      const pinpointTop = isPinpointFlipped ? rect.top - 4 : rect.bottom + 4;
-      setToolbar({
-        position: { top: pinpointTop, left: rect.left },
-        targetText: source.text,
-        highlightId: source.id,
-        startMeta: source.startMeta,
-        endMeta: source.endMeta,
-        mode: "pinpoint",
-        flipped: isPinpointFlipped,
-      });
+      activatePinpoint(target);
     }
 
     container.addEventListener("click", handleClick);
@@ -328,10 +333,11 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true }: 
     };
   }, [content, annotationsEnabled]);
 
-  // Escape handler
+  // Escape handler — only closes the toolbar. Annotation mode exit is via Ctrl+Shift+H toggle.
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && toolbarOpenRef.current) {
+      if (e.key !== "Escape") return;
+      if (toolbarOpenRef.current) {
         e.preventDefault();
         closeToolbar();
       }
@@ -339,6 +345,70 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true }: 
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
   }, [closeToolbar]);
+
+  // Keyboard element navigation (annotation mode)
+  useEffect(() => {
+    if (!annotationMode || !annotationsEnabled) return;
+    const container = containerRef.current;
+    if (!container) return;
+
+    function handleKey(e: KeyboardEvent) {
+      if (!container) return;
+      // Don't intercept when toolbar is open (toolbar handles its own keys)
+      if (toolbarOpenRef.current) return;
+      // Only capture when focus is in the right panel (not sidebar/terminal)
+      const active = document.activeElement;
+      if (active && !active.closest("[data-focus-zone='panel']") && active !== document.body) return;
+
+      const elements = Array.from(container.querySelectorAll<HTMLElement>("[data-annotatable]"));
+      if (elements.length === 0) return;
+
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Clear previous hover
+        if (hoverTargetRef.current) {
+          hoverTargetRef.current.removeAttribute("data-pinpoint-hover");
+          hoverTargetRef.current = null;
+        }
+
+        if (e.key === "ArrowDown") {
+          navIndexRef.current = navIndexRef.current < elements.length - 1 ? navIndexRef.current + 1 : 0;
+        } else {
+          navIndexRef.current = navIndexRef.current > 0 ? navIndexRef.current - 1 : elements.length - 1;
+        }
+
+        const target = elements[navIndexRef.current];
+        target.setAttribute("data-pinpoint-hover", "");
+        hoverTargetRef.current = target;
+        target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        return;
+      }
+
+      if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        const target = elements[navIndexRef.current];
+        if (!target) return;
+        // Clear hover before activating pinpoint
+        target.removeAttribute("data-pinpoint-hover");
+        hoverTargetRef.current = null;
+        activatePinpoint(target);
+        return;
+      }
+    }
+
+    window.addEventListener("keydown", handleKey, true);
+    return () => window.removeEventListener("keydown", handleKey, true);
+  }, [annotationMode, annotationsEnabled, activatePinpoint]);
+
+  // Reset nav index when exiting annotation mode
+  useEffect(() => {
+    if (!annotationMode) {
+      navIndexRef.current = -1;
+    }
+  }, [annotationMode]);
 
   // Close toolbar on scroll (prevents sticky toolbar)
   useEffect(() => {

@@ -1,15 +1,15 @@
 import { useState, useEffect, useRef } from "react";
-import { useAtomValue, useSetAtom } from "jotai";
+import { useAtomValue, useSetAtom, useAtom } from "jotai";
 import { planDocumentsAtom, defaultPlanState, setPlanDocModeAtom, activePlanReviewStatusAtom, planReviewStatusMapAtom } from "@/stores/plan";
 import { activeSessionIdAtom } from "@/stores/workspace";
-import { activeAnnotationsAtom, clearAnnotationsAtom, addAnnotationAtom, serializeAnnotations } from "@/stores/annotations";
+import { activeAnnotationsAtom, clearAnnotationsAtom, addAnnotationAtom, serializeAnnotations, annotationModeAtom, canEnterAnnotationModeAtom } from "@/stores/annotations";
 import { toastsAtom } from "@/stores/toast";
 import { invoke } from "@/lib/tauri";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import type { PlanMode } from "@/lib/types";
 import { AnnotatableMarkdownView } from "./AnnotatableMarkdownView";
 import { PlanEditor } from "./PlanEditor";
-import { MessageSquare, Trash2 } from "lucide-react";
+import { MessageSquare, Trash2, Highlighter } from "lucide-react";
 import {
   Tooltip,
   TooltipTrigger,
@@ -33,6 +33,13 @@ export function PlanPanel({ path }: PlanPanelProps) {
   const sessionId = useAtomValue(activeSessionIdAtom);
   const canAnnotate = reviewStatus === "pending_review";
   const isSubmitted = reviewStatus === "submitted";
+  const [annotationMode, setAnnotationMode] = useAtom(annotationModeAtom);
+  const canEnterAnnotationMode = useAtomValue(canEnterAnnotationModeAtom);
+
+  // Auto-exit annotation mode when review status changes away from pending_review
+  useEffect(() => {
+    if (!canEnterAnnotationMode && annotationMode) setAnnotationMode(false);
+  }, [canEnterAnnotationMode, annotationMode, setAnnotationMode]);
 
   const [showGlobalInput, setShowGlobalInput] = useState(false);
   const [globalComment, setGlobalComment] = useState("");
@@ -52,6 +59,15 @@ export function PlanPanel({ path }: PlanPanelProps) {
     document.addEventListener("cluihud:toggle-global-comment", handleToggleGlobal);
     return () => document.removeEventListener("cluihud:toggle-global-comment", handleToggleGlobal);
   }, []);
+
+  useEffect(() => {
+    function handleToggleAnnotationMode() {
+      if (!canEnterAnnotationMode || plan.mode !== "view") return;
+      setAnnotationMode((prev) => !prev);
+    }
+    document.addEventListener("cluihud:toggle-annotation-mode", handleToggleAnnotationMode);
+    return () => document.removeEventListener("cluihud:toggle-annotation-mode", handleToggleAnnotationMode);
+  }, [canEnterAnnotationMode, plan.mode, setAnnotationMode]);
 
   function handleSave() {
     if (!plan.path || !backendSessionId) {
@@ -156,8 +172,25 @@ export function PlanPanel({ path }: PlanPanelProps) {
           <TabsTrigger value="view" className="text-[11px]">View</TabsTrigger>
           <TabsTrigger value="edit" className="text-[11px]" disabled={canAnnotate}>Edit</TabsTrigger>
         </TabsList>
-
         <div className="flex flex-1 items-center justify-end gap-1.5">
+          {plan.mode === "view" && canAnnotate && (
+            <Tooltip>
+              <TooltipTrigger>
+                <button
+                  onClick={() => setAnnotationMode((prev) => !prev)}
+                  className={`flex h-5 items-center gap-1 rounded px-1.5 text-[10px] transition-colors ${
+                    annotationMode
+                      ? "bg-primary/15 text-primary"
+                      : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  }`}
+                >
+                  <Highlighter size={11} className={annotationMode ? "animate-pulse" : ""} />
+                  {annotationMode && <span className="text-[9px] font-medium uppercase tracking-wider">Annotate</span>}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-[10px]">Toggle annotation mode (Ctrl+Shift+H)</TooltipContent>
+            </Tooltip>
+          )}
           {plan.mode === "edit" && (
             <button
               onClick={handleSave}
@@ -254,8 +287,12 @@ export function PlanPanel({ path }: PlanPanelProps) {
         </div>
       )}
 
-      <TabsContent value="view" className="flex-1 overflow-y-auto">
-        <AnnotatableMarkdownView content={plan.content} annotationsEnabled={canAnnotate} />
+      <TabsContent value="view" className="relative flex-1 overflow-y-auto">
+        <AnnotatableMarkdownView
+          content={plan.content}
+          annotationsEnabled={canAnnotate}
+          annotationMode={annotationMode}
+        />
       </TabsContent>
 
       <TabsContent value="edit" className="flex-1 overflow-hidden">

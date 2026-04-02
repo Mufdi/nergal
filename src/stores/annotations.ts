@@ -1,5 +1,6 @@
 import { atom } from "jotai";
 import { activeSessionIdAtom } from "./workspace";
+import { activePlanReviewStatusAtom } from "./plan";
 import { invoke } from "@/lib/tauri";
 import type { DomMeta } from "@/lib/highlighter";
 
@@ -13,6 +14,12 @@ export interface Annotation {
   startMeta: DomMeta;
   endMeta: DomMeta;
 }
+
+export const annotationModeAtom = atom(false);
+
+export const canEnterAnnotationModeAtom = atom((get) => {
+  return get(activePlanReviewStatusAtom) === "pending_review";
+});
 
 export const annotationMapAtom = atom<Record<string, Annotation[]>>({});
 

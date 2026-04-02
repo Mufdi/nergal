@@ -83,20 +83,7 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
     return () => document.removeEventListener("cluihud:toggle-annotations-drawer", handleToggle);
   }, []);
 
-  // Focus drawer when it opens
-  useEffect(() => {
-    if (!annotationsDrawerOpen) return;
-    const timer = setTimeout(() => {
-      const drawer = document.querySelector("[data-annotations-drawer]") as HTMLElement | null;
-      if (drawer) {
-        drawer.focus();
-        const items = drawer.querySelectorAll("[data-nav-item]");
-        for (const item of items) item.removeAttribute("data-nav-selected");
-        if (items[0]) items[0].setAttribute("data-nav-selected", "true");
-      }
-    }, 50);
-    return () => clearTimeout(timer);
-  }, [annotationsDrawerOpen]);
+  // Drawer self-focuses via its own callback ref — no parent focus management needed
 
   // Auto-open drawer when annotations appear
   useEffect(() => {

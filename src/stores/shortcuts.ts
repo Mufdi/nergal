@@ -313,8 +313,9 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   { id: "revise-plan", label: "Revise Plan", keys: "ctrl+shift+r", category: "action", keywords: ["revise", "plan", "review", "reject", "feedback"], handler: () => {
     document.dispatchEvent(new CustomEvent("cluihud:revise-plan"));
   }},
-
-
+  { id: "toggle-annotation-mode", label: "Toggle Annotation Mode", keys: "ctrl+shift+h", category: "action", keywords: ["annotate", "annotation", "keyboard", "plan", "review", "highlight"], handler: () => {
+    document.dispatchEvent(new CustomEvent("cluihud:toggle-annotation-mode"));
+  }},
 
   { id: "cycle-layout", label: "Cycle Layout Preset", keys: "ctrl+shift+i", category: "navigation", keywords: ["layout", "preset", "cycle", "resize"], handler: () => {
     const s = store();

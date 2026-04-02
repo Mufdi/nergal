@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { activeAnnotationsAtom, removeAnnotationAtom, clearAnnotationsAtom, type Annotation } from "@/stores/annotations";
 import { X, Trash2, MessageSquareDashed, MessageSquare } from "lucide-react";
@@ -48,6 +48,28 @@ export function AnnotationsDrawer({ open, onToggle }: AnnotationsDrawerProps) {
   const removeAnnotation = useSetAtom(removeAnnotationAtom);
   const clearAnnotations = useSetAtom(clearAnnotationsAtom);
   const selectedIdxRef = useRef(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Focus the drawer when it opens — polls until the DOM element exists and receives focus
+  useEffect(() => {
+    if (!open || annotations.length === 0) return;
+    let attempts = 0;
+    const timer = setInterval(() => {
+      attempts++;
+      const el = containerRef.current;
+      if (!el) { if (attempts > 20) clearInterval(timer); return; }
+      el.focus();
+      if (document.activeElement === el || el.contains(document.activeElement)) {
+        const items = el.querySelectorAll("[data-nav-item]");
+        for (const item of items) item.removeAttribute("data-nav-selected");
+        if (items[0]) items[0].setAttribute("data-nav-selected", "true");
+        selectedIdxRef.current = 0;
+        clearInterval(timer);
+      }
+      if (attempts > 20) clearInterval(timer);
+    }, 50);
+    return () => clearInterval(timer);
+  }, [open, annotations.length]);
 
   function getItems(container: HTMLElement): HTMLElement[] {
     return Array.from(container.querySelectorAll("[data-nav-item]"));
@@ -65,6 +87,7 @@ export function AnnotationsDrawer({ open, onToggle }: AnnotationsDrawerProps) {
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.ctrlKey || e.altKey || e.shiftKey) return;
+
     const container = e.currentTarget as HTMLElement;
     const items = getItems(container);
     if (items.length === 0) return;
@@ -102,6 +125,7 @@ export function AnnotationsDrawer({ open, onToggle }: AnnotationsDrawerProps) {
 
   return (
     <div
+      ref={containerRef}
       className="flex shrink-0 flex-col rounded bg-card outline-none"
       style={{ maxHeight: "30vh" }}
       data-annotations-drawer

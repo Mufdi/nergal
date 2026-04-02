@@ -1,11 +1,11 @@
 import { useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { activeSessionAtom, activeSessionIdAtom, activeCostAtom, activeModeAtom } from "@/stores/workspace";
+import { activeSessionAtom, activeSessionIdAtom, activeCostAtom, activeModeAtom, activeCwdAtom } from "@/stores/workspace";
 import { activeGitInfoAtom, refreshGitInfoAtom } from "@/stores/git";
 import { loadSessionFilesAtom } from "@/stores/files";
 import { activitySummaryAtom, activityDrawerOpenAtom } from "@/stores/activity";
 import { Badge } from "@/components/ui/badge";
-import { GitBranch, Zap, ChevronUp } from "lucide-react";
+import { GitBranch, FolderOpen, Zap, ChevronUp } from "lucide-react";
 import {
   Tooltip,
   TooltipTrigger,
@@ -44,6 +44,7 @@ export function StatusBar({ layoutPreset }: StatusBarProps) {
   const gitInfo = useAtomValue(activeGitInfoAtom);
   const refreshGit = useSetAtom(refreshGitInfoAtom);
   const loadFiles = useSetAtom(loadSessionFilesAtom);
+  const cwd = useAtomValue(activeCwdAtom);
   const summary = useAtomValue(activitySummaryAtom);
   const setDrawerOpen = useSetAtom(activityDrawerOpenAtom);
 
@@ -78,6 +79,17 @@ export function StatusBar({ layoutPreset }: StatusBarProps) {
             {gitInfo.ahead > 0 && (
               <span className="text-[10px] text-muted-foreground/70">+{gitInfo.ahead}</span>
             )}
+          </div>
+        )}
+        {cwd && (
+          <div className="flex items-center gap-1 text-muted-foreground">
+            <FolderOpen className="size-3" />
+            <Tooltip>
+              <TooltipTrigger className="cursor-default max-w-32 truncate text-[10px]">
+                {cwd.split("/").pop() ?? cwd}
+              </TooltipTrigger>
+              <TooltipContent>{cwd}</TooltipContent>
+            </Tooltip>
           </div>
         )}
         <Badge

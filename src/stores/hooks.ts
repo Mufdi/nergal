@@ -1,7 +1,7 @@
 import { type getDefaultStore } from "jotai";
 import { listen } from "@/lib/tauri";
 import type { HookEvent, CostSummary, Task, ActivityEntry } from "@/lib/types";
-import { costMapAtom, modeMapAtom, activeSessionIdAtom } from "./workspace";
+import { costMapAtom, modeMapAtom, cwdMapAtom, activeSessionIdAtom } from "./workspace";
 import { taskMapAtom } from "./tasks";
 import { fileMapAtom, type ModifiedFile } from "./files";
 import { planStateMapAtom, planDocumentsAtom, registerPlanAtom, planReviewStatusMapAtom } from "./plan";
@@ -9,6 +9,7 @@ import { askUserAtom } from "./askUser";
 import { openTabAction, expandRightPanelAtom, activePanelViewAtom } from "./rightPanel";
 import { refreshGitInfoAtom } from "./git";
 import { addActivityAtom } from "./activity";
+import { toastsAtom } from "./toast";
 import { notify } from "@/lib/notifications";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
@@ -160,6 +161,36 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
       const firstQ = payload.questions[0]?.question ?? "Claude needs input";
       set(addActivityAtom, { sessionId: sid, entry: createActivity("session", "Claude is asking a question") });
       notify("Claude needs input", firstQ);
+    }),
+  );
+
+  unlisteners.push(
+    await listen<{ session_id: string; cwd: string }>("cwd:changed", (payload) => {
+      const sid = get(activeSessionIdAtom);
+      if (!sid) return;
+      set(cwdMapAtom, (prev) => ({ ...prev, [sid]: payload.cwd }));
+      set(addActivityAtom, { sessionId: sid, entry: createActivity("session", `cwd: ${payload.cwd}`) });
+    }),
+  );
+
+  unlisteners.push(
+    await listen<{ session_id: string; path: string; change_type: string }>("file:changed", (payload) => {
+      const sid = get(activeSessionIdAtom);
+      if (!sid) return;
+      const filename = payload.path.split("/").pop() ?? payload.path;
+      set(addActivityAtom, { sessionId: sid, entry: createActivity("file_modified", `Changed: ${filename}`, payload.path) });
+    }),
+  );
+
+  unlisteners.push(
+    await listen<{ session_id: string; tool_name?: string; reason?: string }>("permission:denied", (payload) => {
+      const sid = get(activeSessionIdAtom);
+      if (!sid) return;
+      const tool = payload.tool_name ?? "unknown tool";
+      const reason = payload.reason ?? "Auto-mode denied this action";
+      set(toastsAtom, { message: `Permission denied: ${tool}`, description: reason, type: "error" });
+      set(addActivityAtom, { sessionId: sid, entry: createActivity("session", `Permission denied: ${tool}`, reason) });
+      notify("Permission denied", `${tool}: ${reason}`);
     }),
   );
 

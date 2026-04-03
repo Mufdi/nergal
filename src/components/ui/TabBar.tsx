@@ -97,7 +97,7 @@ export function TabBar() {
   if (tabs.length === 0) return null;
 
   return (
-    <div className="flex shrink-0 items-center border-b border-border/50">
+    <div className="flex shrink-0 items-center">
       <div
         ref={containerRef}
         className="flex flex-1 items-center overflow-x-auto scrollbar-none"

@@ -194,11 +194,15 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
     return (
       <div className="flex h-full flex-col gap-1 overflow-hidden">
         <div className="relative flex flex-1 flex-col overflow-hidden rounded bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus} onKeyDown={handlePanelKeyDown}>
-          <PanelHeader label={activeTab.label}>
+          {/* Level 1: Tabs + actions */}
+          <div className="flex shrink-0 items-center border-b border-border/50">
+            <div className="flex-1 overflow-hidden">
+              <TabBar />
+            </div>
             {hasPicker && (
               <button
                 onClick={() => setPickerOpen(!pickerOpen)}
-                className={`flex size-6 items-center justify-center rounded transition-colors ${
+                className={`flex size-7 shrink-0 items-center justify-center transition-colors ${
                   pickerOpen
                     ? "text-foreground bg-secondary"
                     : "text-muted-foreground hover:bg-secondary hover:text-foreground"
@@ -208,8 +212,9 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
                 <FolderOpen size={12} />
               </button>
             )}
-          </PanelHeader>
-          <TabBar />
+          </div>
+
+          {/* Content */}
           <div className="flex-1 overflow-hidden">
             <DocumentContent tab={activeTab} />
           </div>
@@ -236,8 +241,17 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
     const hasPanelPicker = PICKER_TYPES.includes(activePanelView);
     return (
       <div className="relative flex h-full flex-col overflow-hidden rounded bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
-        <PanelHeader label={viewPanelLabel(activePanelView)} />
-        {tabs.length > 0 && <TabBar />}
+        {tabs.length > 0 ? (
+          <div className="flex shrink-0 items-center border-b border-border/50">
+            <div className="flex-1 overflow-hidden">
+              <TabBar />
+            </div>
+          </div>
+        ) : (
+          <div className="flex h-8 shrink-0 items-center px-3 border-b border-border/50">
+            <span className="text-[11px] font-medium text-foreground/80">{viewPanelLabel(activePanelView)}</span>
+          </div>
+        )}
         <div className="flex-1 overflow-hidden">
           {hasPanelPicker ? (
             <div className="flex h-full items-center justify-center px-6">
@@ -255,8 +269,13 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
 
   return (
     <div className="flex h-full flex-col rounded bg-card">
-      <PanelHeader />
-      {tabs.length > 0 && <TabBar />}
+      {tabs.length > 0 && (
+        <div className="flex shrink-0 items-center border-b border-border/50">
+          <div className="flex-1 overflow-hidden">
+            <TabBar />
+          </div>
+        </div>
+      )}
       <div className="flex flex-1 items-center justify-center">
         <span className="text-[11px] text-muted-foreground">No panel open</span>
       </div>
@@ -388,15 +407,6 @@ function viewPanelLabel(view: TabType): string {
   return labels[view];
 }
 
-function PanelHeader({ label, children }: { label?: string; children?: React.ReactNode }) {
-  return (
-    <div className="flex h-9 shrink-0 items-center gap-2 px-3">
-      {label && <span className="flex-1 text-[11px] font-medium text-foreground/80">{label}</span>}
-      {!label && <span className="flex-1" />}
-      {children}
-    </div>
-  );
-}
 
 function ViewPanelContent({ view }: { view: TabType }) {
   switch (view) {

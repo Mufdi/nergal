@@ -31,6 +31,7 @@ import { css } from "@codemirror/lang-css";
 import { html } from "@codemirror/lang-html";
 import { rust } from "@codemirror/lang-rust";
 import { searchKeymap } from "@codemirror/search";
+import { indentWithTab } from "@codemirror/commands";
 import { invoke } from "@/lib/tauri";
 import { Loader2 } from "lucide-react";
 
@@ -105,10 +106,19 @@ export function CodeEditor({ filePath, sessionId, readOnly = false }: CodeEditor
     const container = containerRef.current;
     if (!container) return;
 
-    let view: EditorView | null = null;
+    let cancelled = false;
+
+    // Destroy any leftover EditorView in the container
+    if (viewRef.current) {
+      viewRef.current.destroy();
+      viewRef.current = null;
+    }
+    container.replaceChildren();
 
     invoke<string>("read_file_content", { sessionId, path: filePath })
       .then((content) => {
+        if (cancelled) return;
+
         const saveKeymap = keymap.of([
           {
             key: "Mod-s",
@@ -127,7 +137,7 @@ export function CodeEditor({ filePath, sessionId, readOnly = false }: CodeEditor
             cluihudTheme,
             syntaxHighlighting(oneDarkHighlightStyle),
             getLanguageExtension(filePath),
-            keymap.of(searchKeymap),
+            keymap.of([indentWithTab, ...searchKeymap]),
             EditorView.editable.of(!readOnly),
             EditorView.theme({
               "&": { height: "100%", fontSize: "12px" },
@@ -136,18 +146,25 @@ export function CodeEditor({ filePath, sessionId, readOnly = false }: CodeEditor
           ],
         });
 
-        view = new EditorView({ state, parent: container });
+        const view = new EditorView({ state, parent: container });
         viewRef.current = view;
+        view.focus();
         setLoading(false);
       })
       .catch((err) => {
-        setError(String(err));
-        setLoading(false);
+        if (!cancelled) {
+          setError(String(err));
+          setLoading(false);
+        }
       });
 
     return () => {
-      view?.destroy();
-      viewRef.current = null;
+      cancelled = true;
+      if (viewRef.current) {
+        viewRef.current.destroy();
+        viewRef.current = null;
+      }
+      container.replaceChildren();
     };
   }, [filePath, sessionId, readOnly]);
 

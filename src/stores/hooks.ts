@@ -1,7 +1,7 @@
 import { type getDefaultStore } from "jotai";
 import { listen } from "@/lib/tauri";
 import type { HookEvent, CostSummary, Task, ActivityEntry } from "@/lib/types";
-import { costMapAtom, modeMapAtom, cwdMapAtom, activeSessionIdAtom } from "./workspace";
+import { costMapAtom, modeMapAtom, cwdMapAtom, statusLineMapAtom, activeSessionIdAtom, type StatusLineData } from "./workspace";
 import { taskMapAtom } from "./tasks";
 import { fileMapAtom, type ModifiedFile } from "./files";
 import { planStateMapAtom, planDocumentsAtom, registerPlanAtom, planReviewStatusMapAtom } from "./plan";
@@ -179,6 +179,15 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
       if (!sid) return;
       const filename = payload.path.split("/").pop() ?? payload.path;
       set(addActivityAtom, { sessionId: sid, entry: createActivity("file_modified", `Changed: ${filename}`, payload.path) });
+    }),
+  );
+
+  unlisteners.push(
+    await listen<StatusLineData & { session_id: string }>("statusline:update", (payload) => {
+      const sid = get(activeSessionIdAtom);
+      if (!sid) return;
+      const { session_id: _, ...data } = payload;
+      set(statusLineMapAtom, (prev) => ({ ...prev, [sid]: data }));
     }),
   );
 

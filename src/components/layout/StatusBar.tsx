@@ -117,7 +117,7 @@ export function StatusBar() {
         </Badge>
       </div>
 
-      {/* Center: activity summary + layout preset */}
+      {/* Center: activity summary */}
       <div className="flex items-center gap-3">
         <button
           type="button"

@@ -2,7 +2,28 @@ import { useEffect, useRef, useState } from "react";
 import { EditorView, keymap } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { basicSetup } from "codemirror";
-import { oneDark } from "@codemirror/theme-one-dark";
+import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark";
+import { syntaxHighlighting } from "@codemirror/language";
+
+const cluihudTheme = EditorView.theme({
+  "&": {
+    backgroundColor: "#0a0a0b",
+    color: "#ededef",
+  },
+  ".cm-content": { caretColor: "#f97316" },
+  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "#f97316" },
+  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
+    backgroundColor: "rgba(249, 115, 22, 0.2)",
+  },
+  ".cm-activeLine": { backgroundColor: "rgba(255, 255, 255, 0.03)" },
+  ".cm-gutters": {
+    backgroundColor: "#0a0a0b",
+    color: "#5c5c5f",
+    borderRight: "1px solid rgba(255, 255, 255, 0.08)",
+  },
+  ".cm-activeLineGutter": { backgroundColor: "rgba(255, 255, 255, 0.05)" },
+  ".cm-lineNumbers .cm-gutterElement": { padding: "0 8px 0 4px" },
+}, { dark: true });
 import { javascript } from "@codemirror/lang-javascript";
 import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
@@ -49,18 +70,18 @@ interface CodeEditorProps {
 export function CodeEditor({ filePath, sessionId, readOnly = false }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const propsRef = useRef({ filePath, sessionId });
+  propsRef.current = { filePath, sessionId };
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
-  function doSave() {
-    const view = viewRef.current;
-    if (!view || readOnly) return;
-    const content = view.state.doc.toString();
-    console.log("[CodeEditor] saving", { sessionId, filePath, contentLength: content.length });
-    invoke<string>("write_file_content", { sessionId, path: filePath, content })
-      .then((absPath) => {
-        console.log("[CodeEditor] saved OK to", absPath);
+  function saveFromView(v: EditorView) {
+    if (readOnly) return;
+    const { sessionId: sid, filePath: fp } = propsRef.current;
+    const content = v.state.doc.toString();
+    invoke<string>("write_file_content", { sessionId: sid, path: fp, content })
+      .then(() => {
         setSaved(true);
         setTimeout(() => setSaved(false), 1500);
       })
@@ -70,9 +91,12 @@ export function CodeEditor({ filePath, sessionId, readOnly = false }: CodeEditor
       });
   }
 
-  // Listen for global save event (from Ctrl+S shortcut)
+  // Listen for global save event (from Ctrl+S when focus is NOT in editor)
   useEffect(() => {
-    const handler = () => doSave();
+    function handler() {
+      const view = viewRef.current;
+      if (view) saveFromView(view);
+    }
     document.addEventListener("cluihud:save-file", handler);
     return () => document.removeEventListener("cluihud:save-file", handler);
   });
@@ -89,15 +113,7 @@ export function CodeEditor({ filePath, sessionId, readOnly = false }: CodeEditor
           {
             key: "Mod-s",
             run: (v) => {
-              const doc = v.state.doc.toString();
-              console.log("[CodeEditor:keymap] saving via Mod-s", { contentLength: doc.length });
-              invoke<string>("write_file_content", { sessionId, path: filePath, content: doc })
-                .then((absPath) => {
-                  console.log("[CodeEditor:keymap] saved OK to", absPath);
-                  setSaved(true);
-                  setTimeout(() => setSaved(false), 1500);
-                })
-                .catch((err) => console.error("[CodeEditor:keymap] save failed:", err));
+              saveFromView(v);
               return true;
             },
           },
@@ -106,10 +122,11 @@ export function CodeEditor({ filePath, sessionId, readOnly = false }: CodeEditor
         const state = EditorState.create({
           doc: content,
           extensions: [
-            basicSetup,
-            oneDark,
-            getLanguageExtension(filePath),
             saveKeymap,
+            basicSetup,
+            cluihudTheme,
+            syntaxHighlighting(oneDarkHighlightStyle),
+            getLanguageExtension(filePath),
             keymap.of(searchKeymap),
             EditorView.editable.of(!readOnly),
             EditorView.theme({

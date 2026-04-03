@@ -79,6 +79,9 @@ export function useKeyboardShortcuts() {
         return;
       }
 
+      // Let CodeMirror handle Ctrl+S when editor is focused
+      const inEditor = (e.target as HTMLElement)?.closest(".cm-editor") != null;
+
       for (const action of registry) {
         const parsed = parseKeys(action.keys);
         if (!parsed) continue;
@@ -88,6 +91,7 @@ export function useKeyboardShortcuts() {
           e.altKey === parsed.alt &&
           e.code === parsed.code
         ) {
+          if (inEditor && action.id === "save-file") return;
           e.preventDefault();
           e.stopPropagation();
           action.handler();

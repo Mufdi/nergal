@@ -232,7 +232,7 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
       {(tabs.length > 1 || isEditable) && (
         <div className="flex shrink-0 items-center border-b border-border/50">
           {tabs.length > 1 && (
-            <div className="flex flex-1 overflow-x-auto scrollbar-none px-1 py-1 -mb-px">
+            <div className="flex flex-1 items-center gap-1 overflow-x-auto scrollbar-none px-2 py-1.5">
               {tabs.map((tab) => {
                 const Icon = tab.icon;
                 const isActive = activeTab === tab.key;
@@ -240,10 +240,10 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
                   <button
                     key={tab.key}
                     onClick={() => handleTabSwitch(tab.key)}
-                    className={`flex shrink-0 items-center gap-1.5 px-3 py-1 text-[11px] whitespace-nowrap transition-colors ${
+                    className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] whitespace-nowrap transition-colors ${
                       isActive
-                        ? "border-b-2 border-blue-500 text-foreground"
-                        : "text-muted-foreground hover:text-foreground/80"
+                        ? "bg-secondary text-foreground"
+                        : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground/80"
                     }`}
                   >
                     <Icon size={11} />

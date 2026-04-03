@@ -236,7 +236,7 @@ export function Workspace() {
         </ResizablePanelGroup>
       </div>
 
-      <StatusBar layoutPreset={layoutPreset} />
+      <StatusBar />
 
       <ZenMode />
       <Toaster position="bottom-right" />

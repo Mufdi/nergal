@@ -91,6 +91,36 @@ pub enum HookEvent {
         #[serde(default)]
         reason: Option<String>,
     },
+    #[serde(rename = "StatusLine")]
+    StatusLine {
+        session_id: String,
+        #[serde(default)]
+        model_id: Option<String>,
+        #[serde(default)]
+        model_name: Option<String>,
+        #[serde(default)]
+        context_used_pct: Option<f64>,
+        #[serde(default)]
+        context_remaining_pct: Option<f64>,
+        #[serde(default)]
+        context_window_size: Option<u64>,
+        #[serde(default)]
+        rate_5h_pct: Option<f64>,
+        #[serde(default)]
+        rate_5h_resets_at: Option<u64>,
+        #[serde(default)]
+        rate_7d_pct: Option<f64>,
+        #[serde(default)]
+        rate_7d_resets_at: Option<u64>,
+        #[serde(default)]
+        duration_ms: Option<u64>,
+        #[serde(default)]
+        api_duration_ms: Option<u64>,
+        #[serde(default)]
+        lines_added: Option<u64>,
+        #[serde(default)]
+        lines_removed: Option<u64>,
+    },
 }
 
 impl HookEvent {
@@ -108,7 +138,8 @@ impl HookEvent {
             | Self::AskUser { session_id, .. }
             | Self::CwdChanged { session_id, .. }
             | Self::FileChanged { session_id, .. }
-            | Self::PermissionDenied { session_id, .. } => session_id,
+            | Self::PermissionDenied { session_id, .. }
+            | Self::StatusLine { session_id, .. } => session_id,
         }
     }
 }

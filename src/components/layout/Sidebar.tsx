@@ -30,10 +30,9 @@ import {
 
 interface SidebarProps {
   collapsed: boolean;
-  onToggle: () => void;
 }
 
-export function Sidebar({ collapsed, onToggle }: SidebarProps) {
+export function Sidebar({ collapsed }: SidebarProps) {
   const setFocusZone = useSetAtom(focusZoneAtom);
   const setPreviousZone = useSetAtom(previousNonTerminalZoneAtom);
 
@@ -86,22 +85,13 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   return (
     <div className="flex h-full flex-col outline-none" tabIndex={-1} data-focus-zone="sidebar" onMouseDown={handleSidebarFocus} onKeyDown={handleSidebarKeyDown}>
       {collapsed ? (
-        <CollapsedSidebar onToggle={onToggle} />
+        <CollapsedSidebar />
       ) : (
         <div className="flex flex-1 flex-col gap-1">
           {/* Workspaces card */}
           <div className="flex flex-1 flex-col overflow-hidden rounded bg-card">
             <div className="flex h-9 shrink-0 items-center px-3">
               <span className="flex-1 text-[11px] font-medium text-foreground/80">Workspaces</span>
-              <button
-                onClick={onToggle}
-                className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-                aria-label="Collapse sidebar"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="15 18 9 12 15 6" />
-                </svg>
-              </button>
             </div>
 
             <div className="flex-1 overflow-y-auto">
@@ -131,7 +121,7 @@ const STATUS_DOT: Record<string, string> = {
   completed: "bg-muted-foreground/40",
 };
 
-function CollapsedSidebar({ onToggle }: { onToggle: () => void }) {
+function CollapsedSidebar() {
   const workspaces = useAtomValue(workspacesAtom);
   const activeSessionId = useAtomValue(activeSessionIdAtom);
   const setActiveSessionId = useSetAtom(activeSessionIdAtom);
@@ -145,15 +135,6 @@ function CollapsedSidebar({ onToggle }: { onToggle: () => void }) {
   return (
     <TooltipProvider delay={0}>
     <div className="flex h-full w-full flex-col items-center gap-0.5 bg-card py-1">
-      <button
-        onClick={onToggle}
-        className="flex size-4 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors mb-0.5"
-        aria-label="Expand sidebar"
-      >
-        <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="9 18 15 12 9 6" />
-        </svg>
-      </button>
       {sessionsWithWs.map(({ session: s, workspaceName }) => (
         <Tooltip key={s.id}>
           <TooltipTrigger

@@ -160,15 +160,6 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
     return (
       <TooltipProvider delay={0}>
       <div className="flex h-full w-full flex-col items-center gap-0.5 bg-card py-1">
-        <button
-          onClick={onToggle}
-          className="flex size-4 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors mb-0.5"
-          aria-label="Expand panel"
-        >
-          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="15 18 9 12 15 6" />
-          </svg>
-        </button>
         {tabs.map((tab) => {
           const Icon = TAB_ICONS[tab.type];
           const isActive = tab.id === activeTab?.id;
@@ -203,7 +194,7 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
     return (
       <div className="flex h-full flex-col gap-1 overflow-hidden">
         <div className="relative flex flex-1 flex-col overflow-hidden rounded bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus} onKeyDown={handlePanelKeyDown}>
-          <PanelHeader onToggle={onToggle} label={activeTab.label}>
+          <PanelHeader label={activeTab.label}>
             {hasPicker && (
               <button
                 onClick={() => setPickerOpen(!pickerOpen)}
@@ -245,7 +236,7 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
     const hasPanelPicker = PICKER_TYPES.includes(activePanelView);
     return (
       <div className="relative flex h-full flex-col overflow-hidden rounded bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
-        <PanelHeader onToggle={onToggle} label={viewPanelLabel(activePanelView)} />
+        <PanelHeader label={viewPanelLabel(activePanelView)} />
         {tabs.length > 0 && <TabBar />}
         <div className="flex-1 overflow-hidden">
           {hasPanelPicker ? (
@@ -264,7 +255,7 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
 
   return (
     <div className="flex h-full flex-col rounded bg-card">
-      <PanelHeader onToggle={onToggle} />
+      <PanelHeader />
       {tabs.length > 0 && <TabBar />}
       <div className="flex flex-1 items-center justify-center">
         <span className="text-[11px] text-muted-foreground">No panel open</span>
@@ -397,18 +388,9 @@ function viewPanelLabel(view: TabType): string {
   return labels[view];
 }
 
-function PanelHeader({ onToggle, label, children }: { onToggle: () => void; label?: string; children?: React.ReactNode }) {
+function PanelHeader({ label, children }: { label?: string; children?: React.ReactNode }) {
   return (
-    <div className="flex h-9 shrink-0 items-center gap-2 px-2">
-      <button
-        onClick={onToggle}
-        className="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-        aria-label="Collapse panel"
-      >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="9 18 15 12 9 6" />
-        </svg>
-      </button>
+    <div className="flex h-9 shrink-0 items-center gap-2 px-3">
       {label && <span className="flex-1 text-[11px] font-medium text-foreground/80">{label}</span>}
       {!label && <span className="flex-1" />}
       {children}

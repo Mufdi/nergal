@@ -37,6 +37,7 @@ impl FrontendHookEvent {
             HookEvent::CwdChanged { session_id, .. } => (session_id.clone(), "cwd_changed", None, None, None, None),
             HookEvent::FileChanged { session_id, file_path, .. } => (session_id.clone(), "file_changed", file_path.clone(), None, None, None),
             HookEvent::PermissionDenied { session_id, tool_name, tool_input, reason } => (session_id.clone(), "permission_denied", tool_name.clone(), Some(tool_input.clone()), reason.clone(), None),
+            HookEvent::StatusLine { session_id, .. } => (session_id.clone(), "statusline", None, None, None, None),
         };
         Self {
             session_id,
@@ -380,6 +381,60 @@ fn process_event(
                     session_id: session_id.clone(),
                     tool_name: tool_name.clone(),
                     reason: reason.clone(),
+                },
+            );
+        }
+
+        HookEvent::StatusLine {
+            session_id,
+            model_id,
+            model_name,
+            context_used_pct,
+            context_remaining_pct,
+            context_window_size,
+            rate_5h_pct,
+            rate_5h_resets_at,
+            rate_7d_pct,
+            rate_7d_resets_at,
+            duration_ms,
+            api_duration_ms,
+            lines_added,
+            lines_removed,
+        } => {
+            #[derive(Clone, serde::Serialize)]
+            struct StatusLinePayload {
+                session_id: String,
+                model_id: Option<String>,
+                model_name: Option<String>,
+                context_used_pct: Option<f64>,
+                context_remaining_pct: Option<f64>,
+                context_window_size: Option<u64>,
+                rate_5h_pct: Option<f64>,
+                rate_5h_resets_at: Option<u64>,
+                rate_7d_pct: Option<f64>,
+                rate_7d_resets_at: Option<u64>,
+                duration_ms: Option<u64>,
+                api_duration_ms: Option<u64>,
+                lines_added: Option<u64>,
+                lines_removed: Option<u64>,
+            }
+            let _ = app.emit(
+                "statusline:update",
+                StatusLinePayload {
+                    session_id: session_id.clone(),
+                    model_id: model_id.clone(),
+                    model_name: model_name.clone(),
+                    context_used_pct: *context_used_pct,
+                    context_remaining_pct: *context_remaining_pct,
+                    context_window_size: *context_window_size,
+                    rate_5h_pct: *rate_5h_pct,
+                    rate_5h_resets_at: *rate_5h_resets_at,
+                    rate_7d_pct: *rate_7d_pct,
+                    rate_7d_resets_at: *rate_7d_resets_at,
+                    duration_ms: *duration_ms,
+                    api_duration_ms: *api_duration_ms,
+                    lines_added: *lines_added,
+                    lines_removed: *lines_removed,
                 },
             );
         }

@@ -1,28 +1,45 @@
 import { useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { activeSessionAtom, activeSessionIdAtom, activeCostAtom, activeModeAtom, activeCwdAtom } from "@/stores/workspace";
+import { activeSessionIdAtom, activeModeAtom, activeCwdAtom, activeStatusLineAtom } from "@/stores/workspace";
 import { activeGitInfoAtom, refreshGitInfoAtom } from "@/stores/git";
 import { loadSessionFilesAtom } from "@/stores/files";
 import { activitySummaryAtom, activityDrawerOpenAtom } from "@/stores/activity";
 import { Badge } from "@/components/ui/badge";
-import { GitBranch, FolderOpen, Zap, ChevronUp } from "lucide-react";
+import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock } from "lucide-react";
 import {
   Tooltip,
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
 
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
-
 function formatElapsed(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
+  if (mins >= 60) {
+    const hrs = Math.floor(mins / 60);
+    return `${hrs}h ${mins % 60}m`;
+  }
   return `${mins}m ${secs}s`;
+}
+
+function formatDuration(ms: number | null): string {
+  if (ms == null) return "--";
+  return formatElapsed(Math.floor(ms / 1000));
+}
+
+function rateLimitColor(pct: number | null): string {
+  if (pct == null) return "text-muted-foreground";
+  if (pct >= 90) return "text-red-500";
+  if (pct >= 70) return "text-yellow-500";
+  return "text-muted-foreground";
+}
+
+function contextBarColor(pct: number | null): string {
+  if (pct == null) return "bg-muted-foreground/30";
+  if (pct >= 90) return "bg-red-500";
+  if (pct >= 70) return "bg-yellow-500";
+  return "bg-primary";
 }
 
 const modeColors: Record<string, string> = {
@@ -32,21 +49,16 @@ const modeColors: Record<string, string> = {
   responding: "bg-green-500",
 };
 
-interface StatusBarProps {
-  layoutPreset?: string;
-}
-
-export function StatusBar({ layoutPreset }: StatusBarProps) {
-  const session = useAtomValue(activeSessionAtom);
+export function StatusBar() {
   const sessionId = useAtomValue(activeSessionIdAtom);
   const mode = useAtomValue(activeModeAtom);
-  const cost = useAtomValue(activeCostAtom);
   const gitInfo = useAtomValue(activeGitInfoAtom);
   const refreshGit = useSetAtom(refreshGitInfoAtom);
   const loadFiles = useSetAtom(loadSessionFilesAtom);
   const cwd = useAtomValue(activeCwdAtom);
   const summary = useAtomValue(activitySummaryAtom);
   const setDrawerOpen = useSetAtom(activityDrawerOpenAtom);
+  const sl = useAtomValue(activeStatusLineAtom);
 
   useEffect(() => {
     if (sessionId) {
@@ -56,17 +68,18 @@ export function StatusBar({ layoutPreset }: StatusBarProps) {
   }, [sessionId]);
 
   const dotColor = modeColors[mode] ?? "bg-muted-foreground";
+  const ctxPct = sl.context_used_pct != null ? Math.round(sl.context_used_pct) : null;
 
   return (
     <footer
-      className="flex h-7 items-center justify-between bg-card px-3 text-xs"
+      className="flex h-7 items-center justify-between bg-card px-3 text-[11px] leading-none"
       role="status"
     >
-      {/* Left: git info + mode */}
-      <div className="flex items-center gap-2">
+      {/* Left: git info + cwd + mode */}
+      <div className="flex items-center gap-2 text-muted-foreground">
         {gitInfo && (
-          <div className="flex items-center gap-1 text-muted-foreground">
-            <GitBranch className="size-3" />
+          <div className="flex items-center gap-1">
+            <GitBranch className="size-3 shrink-0" />
             <Tooltip>
               <TooltipTrigger className="cursor-default max-w-40 truncate">
                 {gitInfo.branch}
@@ -74,18 +87,18 @@ export function StatusBar({ layoutPreset }: StatusBarProps) {
               <TooltipContent>{gitInfo.branch}</TooltipContent>
             </Tooltip>
             {gitInfo.dirty && (
-              <span className="inline-block size-1.5 rounded-full bg-orange-500" aria-label="Uncommitted changes" />
+              <span className="inline-block size-1.5 shrink-0 rounded-full bg-orange-500" aria-label="Uncommitted changes" />
             )}
             {gitInfo.ahead > 0 && (
-              <span className="text-[10px] text-muted-foreground/70">+{gitInfo.ahead}</span>
+              <span className="text-muted-foreground/70">+{gitInfo.ahead}</span>
             )}
           </div>
         )}
         {cwd && (
-          <div className="flex items-center gap-1 text-muted-foreground">
-            <FolderOpen className="size-3" />
+          <div className="flex items-center gap-1">
+            <FolderOpen className="size-3 shrink-0" />
             <Tooltip>
-              <TooltipTrigger className="cursor-default max-w-32 truncate text-[10px]">
+              <TooltipTrigger className="cursor-default max-w-32 truncate">
                 {cwd.split("/").pop() ?? cwd}
               </TooltipTrigger>
               <TooltipContent>{cwd}</TooltipContent>
@@ -94,17 +107,17 @@ export function StatusBar({ layoutPreset }: StatusBarProps) {
         )}
         <Badge
           variant="secondary"
-          className="h-4 gap-1 px-1.5 text-[10px]"
+          className="h-4 gap-1 px-1.5 text-[11px] leading-none"
         >
           <span
-            className={`inline-block size-1.5 rounded-full ${dotColor} ${mode !== "idle" ? "animate-dot-pulse" : ""}`}
+            className={`inline-block size-1.5 shrink-0 rounded-full ${dotColor} ${mode !== "idle" ? "animate-dot-pulse" : ""}`}
             aria-hidden="true"
           />
           {mode}
         </Badge>
       </div>
 
-      {/* Center: activity summary (clickable to open drawer) + layout preset */}
+      {/* Center: activity summary + layout preset */}
       <div className="flex items-center gap-3">
         <button
           type="button"
@@ -113,7 +126,7 @@ export function StatusBar({ layoutPreset }: StatusBarProps) {
         >
           {summary.lastAction ? (
             <>
-              <Zap className="size-3 text-primary" />
+              <Zap className="size-3 shrink-0 text-primary" />
               <span className="max-w-48 truncate">{summary.lastAction}</span>
               <span className="text-muted-foreground/60">│</span>
               <span>{summary.actionCount} actions</span>
@@ -123,46 +136,81 @@ export function StatusBar({ layoutPreset }: StatusBarProps) {
           ) : (
             <span>No activity</span>
           )}
-          <ChevronUp className="ml-1 size-3" />
+          <ChevronUp className="ml-1 size-3 shrink-0" />
         </button>
 
-        {layoutPreset && (
-          <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">
-            {layoutPreset}
-          </span>
-        )}
       </div>
 
-      {/* Right: session ID + tokens + cost */}
-      <div className="flex items-center gap-2 text-muted-foreground">
-        {session && (
+      {/* Right: context %, rate limits, model, duration */}
+      <div className="flex items-center gap-2.5 text-muted-foreground">
+        {ctxPct != null && (
           <Tooltip>
-            <TooltipTrigger className="cursor-default">
-              {session.id.slice(0, 8)}
+            <TooltipTrigger className="flex cursor-default items-center gap-1">
+              <Gauge className="size-3 shrink-0" />
+              <div className="flex h-2 w-12 items-center overflow-hidden rounded-full bg-muted">
+                <div
+                  className={`h-full rounded-full transition-all ${contextBarColor(ctxPct)}`}
+                  style={{ width: `${Math.min(ctxPct, 100)}%` }}
+                />
+              </div>
+              <span>{ctxPct}%</span>
             </TooltipTrigger>
-            <TooltipContent>{session.id}</TooltipContent>
+            <TooltipContent>
+              Context window: {ctxPct}% used
+              {sl.context_window_size && ` (${(sl.context_window_size / 1000).toFixed(0)}K)`}
+            </TooltipContent>
           </Tooltip>
         )}
-        <Tooltip>
-          <TooltipTrigger className="cursor-default">
-            <span className="flex items-center gap-1.5">
-              <span>in:{formatTokens(cost.input_tokens ?? 0)}</span>
-              <span>out:{formatTokens(cost.output_tokens ?? 0)}</span>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent>
-            <div className="flex flex-col gap-0.5 text-left">
-              <span>Input: {cost.input_tokens.toLocaleString()}</span>
-              <span>Output: {cost.output_tokens.toLocaleString()}</span>
-              {cost.cache_read > 0 && (
-                <span>Cache read: {cost.cache_read.toLocaleString()}</span>
+
+        {sl.rate_5h_pct != null && (
+          <Tooltip>
+            <TooltipTrigger className={`cursor-default ${rateLimitColor(sl.rate_5h_pct)}`}>
+              5h:{Math.round(sl.rate_5h_pct)}%
+              {sl.rate_5h_resets_at && (
+                <span className="text-muted-foreground/60"> {new Date(sl.rate_5h_resets_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
               )}
-            </div>
-          </TooltipContent>
-        </Tooltip>
-        <span className="text-foreground font-medium">
-          ${(cost.total_usd ?? 0).toFixed(4)}
-        </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              5-hour rate limit: {sl.rate_5h_pct.toFixed(1)}% used
+              {sl.rate_5h_resets_at && (
+                <> — resets {new Date(sl.rate_5h_resets_at * 1000).toLocaleTimeString()}</>
+              )}
+            </TooltipContent>
+          </Tooltip>
+        )}
+
+        {sl.rate_7d_pct != null && (
+          <Tooltip>
+            <TooltipTrigger className={`cursor-default ${rateLimitColor(sl.rate_7d_pct)}`}>
+              7d:{Math.round(sl.rate_7d_pct)}%
+              {sl.rate_7d_resets_at && (
+                <span className="text-muted-foreground/60"> {new Date(sl.rate_7d_resets_at * 1000).toLocaleDateString([], { weekday: "short" })}</span>
+              )}
+            </TooltipTrigger>
+            <TooltipContent>
+              7-day rate limit: {sl.rate_7d_pct.toFixed(1)}% used
+              {sl.rate_7d_resets_at && (
+                <> — resets {new Date(sl.rate_7d_resets_at * 1000).toLocaleDateString()}</>
+              )}
+            </TooltipContent>
+          </Tooltip>
+        )}
+
+        {sl.model_name && (
+          <Tooltip>
+            <TooltipTrigger className="cursor-default font-medium text-foreground">
+              {sl.model_name}
+            </TooltipTrigger>
+            <TooltipContent>{sl.model_id ?? sl.model_name}</TooltipContent>
+          </Tooltip>
+        )}
+
+        {sl.duration_ms != null && (
+          <span className="flex items-center gap-0.5">
+            <Clock className="size-3 shrink-0" />
+            {formatDuration(sl.duration_ms)}
+          </span>
+        )}
       </div>
     </footer>
   );

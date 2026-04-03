@@ -83,3 +83,45 @@ export const activeCwdAtom = atom<string | null>((get) => {
   if (!id) return null;
   return get(cwdMapAtom)[id] ?? null;
 });
+
+// -- Statusline data (from Claude Code statusline script) --
+
+export interface StatusLineData {
+  model_id: string | null;
+  model_name: string | null;
+  context_used_pct: number | null;
+  context_remaining_pct: number | null;
+  context_window_size: number | null;
+  rate_5h_pct: number | null;
+  rate_5h_resets_at: number | null;
+  rate_7d_pct: number | null;
+  rate_7d_resets_at: number | null;
+  duration_ms: number | null;
+  api_duration_ms: number | null;
+  lines_added: number;
+  lines_removed: number;
+}
+
+const defaultStatusLine: StatusLineData = {
+  model_id: null,
+  model_name: null,
+  context_used_pct: null,
+  context_remaining_pct: null,
+  context_window_size: null,
+  rate_5h_pct: null,
+  rate_5h_resets_at: null,
+  rate_7d_pct: null,
+  rate_7d_resets_at: null,
+  duration_ms: null,
+  api_duration_ms: null,
+  lines_added: 0,
+  lines_removed: 0,
+};
+
+export const statusLineMapAtom = atom<Record<string, StatusLineData>>({});
+
+export const activeStatusLineAtom = atom<StatusLineData>((get) => {
+  const id = get(activeSessionIdAtom);
+  if (!id) return defaultStatusLine;
+  return get(statusLineMapAtom)[id] ?? defaultStatusLine;
+});

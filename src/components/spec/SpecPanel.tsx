@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useSetAtom } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
-import { currentSpecArtifactAtom } from "@/stores/rightPanel";
+import { currentSpecArtifactAtom, specSubTabMapAtom } from "@/stores/rightPanel";
 import { MarkdownView } from "@/components/plan/MarkdownView";
 import { RichMarkdownEditor } from "@/components/editor/RichMarkdownEditor";
 import { FileText, Pencil, CheckSquare, ClipboardList, Wrench, Cog, ArrowLeft } from "lucide-react";
@@ -51,9 +51,13 @@ interface SpecPanelProps {
 
 export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChange }: SpecPanelProps) {
   const isMaster = changeName === "_master";
-  const [activeTab, setActiveTab] = useState<string>(
-    isMaster || initialSpecPath ? "specs" : "proposal"
-  );
+  const specSubTabMap = useAtomValue(specSubTabMapAtom);
+  const setSpecSubTabMap = useSetAtom(specSubTabMapAtom);
+  const defaultTab = isMaster || initialSpecPath ? "specs" : "proposal";
+  const activeTab = specSubTabMap[changeName] ?? defaultTab;
+  const setActiveTab = useCallback((tab: string) => {
+    setSpecSubTabMap((prev) => ({ ...prev, [changeName]: tab }));
+  }, [changeName, setSpecSubTabMap]);
   const [content, setContent] = useState("");
   const [editContent, setEditContent] = useState("");
   const [loading, setLoading] = useState(true);

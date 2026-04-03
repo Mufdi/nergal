@@ -207,6 +207,10 @@ export const reopenTabAction = atom(null, (get, set) => {
 /// Updated by SpecPanel, read by TopBar for "Open in IDE".
 export const currentSpecArtifactAtom = atom<{ changeName: string; artifactPath: string } | null>(null);
 
+/// Persists the active sub-tab (pill) per spec change across tab switches.
+export const specSubTabMapAtom = atom<Record<string, string>>({});
+
+
 /// Returns the category of the currently active panel/tab, or null if no panel is open.
 /// Used by the layout preset engine to determine target proportions.
 export const activePanelCategoryAtom = atom<PanelCategory | null>((get) => {

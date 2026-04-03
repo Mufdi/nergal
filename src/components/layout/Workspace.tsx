@@ -190,10 +190,7 @@ export function Workspace() {
               setSidebarCollapsed(size.inPixels <= 20);
             }}
           >
-            <Sidebar
-              collapsed={sidebarCollapsed}
-              onToggle={handleToggleSidebar}
-            />
+            <Sidebar collapsed={sidebarCollapsed} />
           </ResizablePanel>
 
           <ResizableHandle />

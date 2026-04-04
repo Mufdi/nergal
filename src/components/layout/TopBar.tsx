@@ -5,7 +5,6 @@ import {
   activeWorkspaceAtom,
   workspacesAtom,
   sessionTabIdsAtom,
-  modeMapAtom,
 } from "@/stores/workspace";
 import {
   activeTabAtom,
@@ -40,6 +39,7 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
+import { SessionIndicator } from "@/components/session/SessionIndicator";
 
 // Editor logos
 import zedLogo from "@/assets/editors/zed.svg";
@@ -96,12 +96,6 @@ const PANEL_BUTTONS: { type: TabType; label: string; shortcut: string; icon: typ
   { type: "git", label: "Git", shortcut: "Ctrl+Shift+G", icon: GitBranch },
 ];
 
-const MODE_COLORS: Record<string, string> = {
-  idle: "bg-muted-foreground/50",
-  thinking: "bg-yellow-500",
-  tool: "bg-blue-500",
-  responding: "bg-green-500",
-};
 
 export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps) {
   const sessionId = useAtomValue(activeSessionIdAtom);
@@ -111,7 +105,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   const tabs = useAtomValue(activeTabsAtom);
   const activePanelView = useAtomValue(activePanelViewAtom);
   const config = useAtomValue(configAtom);
-  const modeMap = useAtomValue(modeMapAtom);
+
   const setActiveSessionId = useSetAtom(activeSessionIdAtom);
   const [sessionTabIds, setSessionTabIds] = useAtom(sessionTabIdsAtom);
   const setActiveTabId = useSetAtom(activeTabIdAtom);
@@ -295,10 +289,6 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
           const entry = sessionMap.get(tabId);
           if (!entry) return null;
           const isActive = tabId === sessionId;
-          const mode = modeMap[tabId] ?? "idle";
-          const modeColor = MODE_COLORS[mode] ?? MODE_COLORS.idle;
-          const isRunning = mode !== "idle";
-
           return (
             <button
               key={tabId}
@@ -316,9 +306,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
               } ${dragOverId === tabId && dropSideRef.current === "left" ? "border-l-2 border-l-primary/60" : ""} ${dragOverId === tabId && dropSideRef.current === "right" ? "border-r-2 border-r-primary/60" : ""}`}
             >
               {/* Status indicator */}
-              <span
-                className={`size-1.5 shrink-0 rounded-full ${modeColor} ${isRunning ? "animate-dot-pulse" : ""}`}
-              />
+              <SessionIndicator sessionId={tabId} sessionStatus={entry.session.status} size="xs" />
 
               {/* Session name */}
               <span className="truncate">{entry.session.name}</span>

@@ -21,7 +21,7 @@ All 7 requirements fully implemented. Annotations persisted to SQLite via Tauri 
 ## Requirements
 
 ### Requirement: Pinpoint mode hover targeting
-The system SHALL highlight plan elements on hover with a dashed outline and a label tooltip describing the target type (paragraph, heading, list item, code block, table cell). Targeting SHALL be context-aware. Hover outlines SHALL NOT appear while a pinpoint selection or text selection is active.
+The system SHALL highlight plan elements on hover with a dashed outline and a label tooltip describing the target type (paragraph, heading, list item, code block, table cell). Targeting SHALL be context-aware.
 
 #### Scenario: Hover highlights paragraph
 - **WHEN** user hovers over a paragraph in the plan viewer
@@ -42,32 +42,21 @@ The system SHALL highlight plan elements on hover with a dashed outline and a la
 #### Scenario: Pinpoint click opens toolbar
 - **WHEN** user clicks a highlighted element in pinpoint mode
 - **THEN** a floating toolbar SHALL appear with four actions: Comment, Replace, Delete, Insert
-- **AND** the element SHALL display a yellow dashed outline replacing the hover orange
-
-#### Scenario: Hover suppressed during active selection
-- **WHEN** a pinpoint element is active (yellow outline) OR text is selected (yellow highlight)
-- **THEN** hover outlines on other elements SHALL NOT appear
 
 ### Requirement: Selection mode text annotation
-The system SHALL allow free text selection within the plan. Selected text SHALL persist visually as a yellow highlight (`<mark>`) after the mouse is released. A popover with Comment and Replace options SHALL appear. Selection SHALL work across element boundaries.
+The system SHALL allow free text selection within the plan, showing an annotation popover with Comment and Replace options.
 
-#### Scenario: Text selection persists after mouseup
-- **WHEN** user selects text within the plan content and releases the mouse
-- **THEN** the selected text SHALL remain highlighted with a yellow background via DOM `<mark>` elements
-- **AND** the native browser selection SHALL be cleared (replaced by the mark)
-
-#### Scenario: Cross-element selection works
-- **WHEN** user selects text that spans across multiple DOM elements (e.g., bold + normal text)
-- **THEN** each text node within the range SHALL be individually wrapped in a `<mark>` element
-- **AND** no `InvalidStateError` SHALL be thrown
-
-#### Scenario: Selection replaces pinpoint
-- **WHEN** a pinpoint element is active (yellow outline) and user then selects text
-- **THEN** the pinpoint outline SHALL be removed and only the text selection highlight SHALL remain
-
-#### Scenario: Selection shows popover
-- **WHEN** text is selected and highlighted
+#### Scenario: Text selection shows popover
+- **WHEN** user selects text within the plan content
 - **THEN** a popover SHALL appear near the selection with Comment and Replace buttons
+
+#### Scenario: Comment annotation on selection
+- **WHEN** user clicks Comment in the selection popover
+- **THEN** a text input SHALL appear for entering the comment, attached to the selected text range
+
+#### Scenario: Replace annotation on selection
+- **WHEN** user clicks Replace in the selection popover
+- **THEN** a text input SHALL appear pre-filled with the selected text, allowing the user to write the replacement
 
 ### Requirement: Annotation types
 The system SHALL support four annotation types: Comment (note without modification), Replace (propose text substitution), Delete (mark for removal with reason), and Insert (add content at position).
@@ -96,33 +85,18 @@ The system SHALL maintain an annotation store (array of typed annotations) and d
 - **THEN** all annotations SHALL be removed from the store and visual markers cleared
 
 ### Requirement: Structured feedback export on Revise
-The system SHALL serialize annotations into structured instructions and inject them via the `UserPromptSubmit` hook (`inject-edits`) when the user clicks "Revise". Annotations SHALL NOT be embedded as HTML comments in the plan file.
+The system SHALL serialize annotations into structured instructions and deliver them via the `PermissionRequest[ExitPlanMode]` hook's deny message when the user clicks "Revise". The hook blocks Claude until the user approves or denies.
 
-#### Scenario: Revise injects feedback via hook
-- **WHEN** user clicks "Revise" with annotations
-- **THEN** the system SHALL serialize annotations via `serializeAnnotations()`, store the result in backend `HookState` as `pending_annotations`, and invoke `reject_plan`
-- **AND** the `inject-edits` hook SHALL read `pending_annotations` and append the feedback to Claude's next prompt
+#### Scenario: Revise exports structured feedback
+- **WHEN** user clicks "Revise" with 3 annotations
+- **THEN** the system SHALL deny the PermissionRequest with message: "YOUR PLAN WAS NOT APPROVED. You MUST revise the plan to address ALL of the feedback below... [1] DELETE section 'X' — reason: Y. [2] REPLACE 'A' with 'B' in section Z. [3] COMMENT on step N: feedback."
+- **AND** Claude SHALL automatically re-plan based on the deny message
 
-#### Scenario: Revise clears annotations after send
-- **WHEN** revise completes successfully
-- **THEN** all annotations SHALL be cleared from both Jotai state and SQLite
-
-#### Scenario: Approve clears annotations
-- **WHEN** user clicks "Approve" on a plan with annotations
-- **THEN** all annotations SHALL be cleared and the plan SHALL be accepted as-is
+#### Scenario: Approve allows Claude to proceed
+- **WHEN** user clicks "Approve" on a plan
+- **THEN** all annotations SHALL be cleared and the PermissionRequest SHALL be allowed, letting Claude proceed
 
 #### Scenario: Annotations disabled outside plan review
 - **WHEN** Claude is not awaiting plan approval (no pending PermissionRequest)
 - **THEN** the annotation toolbar, pinpoint mode, and selection highlighting SHALL be disabled
 - **AND** the plan SHALL be displayed in read-only mode
-
-### Requirement: Escape clears all interaction state
-The system SHALL clear all active interaction state (pinpoint selection, text selection marks, toolbar) when the user presses Escape.
-
-#### Scenario: Escape clears pinpoint
-- **WHEN** a pinpoint element is active and user presses Escape
-- **THEN** the yellow outline SHALL be removed and the toolbar SHALL close
-
-#### Scenario: Escape clears text selection
-- **WHEN** text selection marks exist and user presses Escape
-- **THEN** all `<mark class="pending-selection">` elements SHALL be unwrapped and the toolbar SHALL close

@@ -183,7 +183,7 @@ fn process_event(
                             PlanReady {
                                 path: path.display().to_string(),
                                 content: content.to_string(),
-                                session_id: session_id.clone(),
+                                session_id: cluihud_session_id.unwrap_or(session_id).to_string(),
                             },
                         );
                     }
@@ -229,7 +229,7 @@ fn process_event(
             let _ = app.emit(
                 "cost:update",
                 CostUpdate {
-                    session_id: session_id.clone(),
+                    session_id: cluihud_session_id.unwrap_or(session_id).to_string(),
                     input_tokens: cost.input_tokens,
                     output_tokens: cost.output_tokens,
                     cache_read: cost.cache_read_tokens,
@@ -305,7 +305,7 @@ fn process_event(
                             PlanReady {
                                 path: path.display().to_string(),
                                 content: content.to_string(),
-                                session_id: session_id.clone(),
+                                session_id: cluihud_session_id.unwrap_or(session_id).to_string(),
                                 decision_path: fifo_path.clone(),
                             },
                         );
@@ -329,7 +329,7 @@ fn process_event(
                 let _ = app.emit(
                     "cwd:changed",
                     CwdChangedPayload {
-                        session_id: session_id.clone(),
+                        session_id: cluihud_session_id.unwrap_or(session_id).to_string(),
                         cwd: dir.clone(),
                     },
                 );
@@ -353,7 +353,7 @@ fn process_event(
                 let _ = app.emit(
                     "file:changed",
                     FileChangedPayload {
-                        session_id: session_id.clone(),
+                        session_id: cluihud_session_id.unwrap_or(session_id).to_string(),
                         path: path.clone(),
                         change_type: event_type.clone().unwrap_or_default(),
                     },
@@ -378,7 +378,7 @@ fn process_event(
             let _ = app.emit(
                 "permission:denied",
                 PermissionDeniedPayload {
-                    session_id: session_id.clone(),
+                    session_id: cluihud_session_id.unwrap_or(session_id).to_string(),
                     tool_name: tool_name.clone(),
                     reason: reason.clone(),
                 },
@@ -421,7 +421,7 @@ fn process_event(
             let _ = app.emit(
                 "statusline:update",
                 StatusLinePayload {
-                    session_id: session_id.clone(),
+                    session_id: cluihud_session_id.unwrap_or(session_id).to_string(),
                     model_id: model_id.clone(),
                     model_name: model_name.clone(),
                     context_used_pct: *context_used_pct,
@@ -482,7 +482,7 @@ fn process_event(
             let _ = app.emit(
                 "ask:user",
                 AskUserPayload {
-                    session_id: session_id.clone(),
+                    session_id: cluihud_session_id.unwrap_or(session_id).to_string(),
                     questions,
                     decision_path: fifo_path.clone(),
                 },

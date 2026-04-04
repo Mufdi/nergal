@@ -42,12 +42,11 @@ function contextBarColor(pct: number | null): string {
   return "bg-primary";
 }
 
-const modeColors: Record<string, string> = {
-  idle: "bg-muted-foreground",
-  thinking: "bg-yellow-500",
-  tool: "bg-blue-500",
-  responding: "bg-green-500",
-};
+function modeDotColor(mode: string): string {
+  if (mode === "idle") return "bg-muted-foreground";
+  if (mode === "active") return "bg-sky-400";
+  return "bg-green-500";
+}
 
 export function StatusBar() {
   const sessionId = useAtomValue(activeSessionIdAtom);
@@ -67,7 +66,7 @@ export function StatusBar() {
     }
   }, [sessionId]);
 
-  const dotColor = modeColors[mode] ?? "bg-muted-foreground";
+  const dotColor = modeDotColor(mode);
   const ctxPct = sl.context_used_pct != null ? Math.round(sl.context_used_pct) : null;
 
   return (
@@ -110,7 +109,7 @@ export function StatusBar() {
           className="h-4 gap-1 px-1.5 text-[11px] leading-none"
         >
           <span
-            className={`inline-block size-1.5 shrink-0 rounded-full ${dotColor} ${mode !== "idle" ? "animate-dot-pulse" : ""}`}
+            className={`inline-block size-1.5 shrink-0 rounded-full ${dotColor}`}
             aria-hidden="true"
           />
           {mode}

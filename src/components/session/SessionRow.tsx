@@ -6,7 +6,6 @@ import {
   Trash2,
   Package,
   GitMerge,
-  Check,
 } from "lucide-react";
 import {
   Tooltip,
@@ -14,13 +13,7 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 import type { Session, Workspace } from "@/stores/workspace";
-
-const STATUS_DOT_COLORS: Record<Session["status"], string> = {
-  idle: "bg-muted-foreground/60",
-  running: "bg-green-500",
-  needs_attention: "bg-orange-500",
-  completed: "bg-muted-foreground/30",
-};
+import { SessionIndicator } from "./SessionIndicator";
 
 interface SessionRowProps {
   session: Session;
@@ -81,14 +74,7 @@ export function SessionRow({
           <TooltipContent side="top" className="text-[10px]">Ctrl+{shortcutNumber}</TooltipContent>
         </Tooltip>
       )}
-      {isCompleted ? (
-        <Check className="size-3 shrink-0 text-muted-foreground/50" />
-      ) : (
-        <span
-          className={`size-1.5 shrink-0 rounded-full ${STATUS_DOT_COLORS[session.status]} ${session.status === "running" ? "animate-dot-pulse" : ""}`}
-          aria-hidden="true"
-        />
-      )}
+      <SessionIndicator sessionId={session.id} sessionStatus={session.status} size="sm" />
 
       {editing ? (
         <input

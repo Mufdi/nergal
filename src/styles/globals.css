@@ -207,14 +207,64 @@ body,
   animation: zone-flash-ring 0.8s ease-out forwards;
 }
 
-/* ── Pulse animation for active sessions ── */
-@keyframes dot-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(1.8); }
+/* ── Session state indicator animations ── */
+.session-indicator {
+  position: relative;
+  border-radius: 50%;
+  transition: background-color 200ms ease;
 }
 
-.animate-dot-pulse {
-  animation: dot-pulse 1.5s ease-in-out infinite;
+/* Thinking: soft opacity pulse */
+@keyframes session-thinking {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.animate-session-thinking {
+  animation: session-thinking 1.6s ease-in-out infinite;
+}
+
+/* Working: orbital ring */
+.animate-session-working {
+  overflow: visible;
+}
+.animate-session-working::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1.5px solid transparent;
+  border-top-color: currentColor;
+  animation: session-working 0.8s linear infinite;
+}
+@keyframes session-working {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Attention: ripple ping */
+.animate-session-attention {
+  overflow: visible;
+}
+.animate-session-attention::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background-color: inherit;
+  animation: session-attention 1.2s ease-out infinite;
+}
+@keyframes session-attention {
+  0% { transform: scale(1); opacity: 0.7; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+/* Reduced motion: respect accessibility */
+@media (prefers-reduced-motion: reduce) {
+  .animate-session-thinking,
+  .animate-session-working::after,
+  .animate-session-attention::after {
+    animation: none;
+  }
 }
 
 /* ── Plan annotation ── */

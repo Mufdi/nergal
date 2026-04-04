@@ -1,7 +1,7 @@
 # cluihud
 
 Desktop app wrapper para Claude Code CLI (Plan Pro) en Linux.
-GPU-accelerated UI con GPUI Component (framework de Zed).
+Tauri v2 + React 19 hybrid architecture.
 
 ## Project Documentation
 
@@ -9,40 +9,74 @@ GPU-accelerated UI con GPUI Component (framework de Zed).
 
 ## Stack
 
-- **Language**: Rust (edition 2024)
-- **UI Framework**: GPUI + gpui-component (60+ components, GPU-accelerated)
+### Backend (Rust via Tauri)
+- **Runtime**: Tauri 2.10 (desktop runtime + IPC bridge)
 - **Async**: tokio (multi-threaded runtime)
-- **Terminal embed**: portable-pty
+- **Terminal**: portable-pty (PTY session management)
+- **Database**: rusqlite (SQLite, bundled)
+- **File watching**: notify + notify-debouncer-full (inotify backend)
 - **Markdown**: pulldown-cmark
-- **File watching**: notify (inotify backend)
 - **Diffing**: similar
+- **CLI**: clap (hook subcommands)
+- **Logging**: tracing + tracing-subscriber
 - **Serialization**: serde + serde_json
+
+### Frontend (React in Webview)
+- **UI**: React 19 + TypeScript 5.9
+- **Build**: Vite 7.3
+- **Package manager**: pnpm 10.28
+- **State**: Jotai (atomic state management)
+- **Styling**: TailwindCSS 4.2 + shadcn/ui + class-variance-authority
+- **Terminal**: xterm.js 6.0 + addon-fit
+- **Editor**: CodeMirror 6 (syntax highlighting) + MDXEditor (plan editing)
+- **Markdown**: react-markdown + remark-gfm
+- **Layout**: react-resizable-panels
+- **Flow diagrams**: @xyflow/react
+- **Icons**: lucide-react
+- **Components**: @base-ui/react (headless)
 
 ## Architecture
 
-GPUI Entity system: Entity<T> → Render trait → reactive updates via cx.notify()
+Tauri IPC bridge: Rust backend ↔ React frontend via `invoke()` / `listen()`
 
 ```
-src/
-├── main.rs              # Application::new(), gpui_component::init, open_window
-├── app.rs               # AppState, Root view wrapper
-├── workspace.rs         # Workspace con dock: terminal + plan + tasks
-├── ui/
-│   ├── mod.rs           # Re-exports
-│   ├── terminal_panel.rs # Terminal PTY panel (portable-pty + GPUI render)
-│   ├── plan_panel.rs    # Plan editor/viewer (markdown)
-│   ├── task_panel.rs    # Task list panel
-│   └── status_bar.rs    # Bottom status bar
-├── hooks/
-│   ├── mod.rs           # Re-exports
-│   ├── server.rs        # Unix socket listener
-│   └── events.rs        # HookEvent enum + serde
-├── claude/
-│   ├── mod.rs           # Re-exports
-│   ├── session.rs       # Claude CLI PTY session
-│   ├── transcript.rs    # .jsonl watcher + parser
-│   └── plan.rs          # Plan file manager
-└── config.rs            # Config, paths, defaults
+src/                              # React frontend (TypeScript)
+├── main.tsx                      # Entry point (StrictMode + Jotai Provider)
+├── App.tsx                       # Root (ErrorBoundary + Workspace)
+├── components/
+│   ├── layout/                   # Workspace, TopBar, Sidebar, RightPanel, StatusBar
+│   ├── terminal/                 # TerminalManager + terminalService (xterm.js)
+│   ├── editor/                   # CodeEditor (CodeMirror 6)
+│   ├── plan/                     # PlanPanel, PlanEditor, AnnotatableMarkdownView
+│   ├── spec/                     # SpecViewer (OpenSpec artifacts)
+│   ├── tasks/                    # TaskPanel
+│   ├── activity/                 # ActivityDrawer
+│   ├── session/                  # AskUserModal, SessionRow
+│   ├── git/                      # GitPanel
+│   ├── command/                  # CommandPalette (Cmd+K)
+│   ├── ui/                       # shadcn components (button, dialog, tabs, etc.)
+│   └── settings/
+├── stores/                       # Jotai atoms
+│   ├── workspace.ts              # Workspaces, sessions, costs
+│   ├── rightPanel.ts             # Tab state, active tab
+│   ├── hooks.ts                  # Hook event listeners
+│   ├── shortcuts.ts              # Keyboard shortcuts
+│   ├── plan.ts, tasks.ts, git.ts # Domain state
+│   └── ...
+├── hooks/                        # React hooks (useKeyboardShortcuts)
+└── lib/                          # tauri.ts, types.ts, utils.ts
+
+src-tauri/src/                    # Rust backend
+├── main.rs                       # CLI entry (hook subcommands)
+├── lib.rs                        # Tauri app init, plugins, commands
+├── commands.rs                   # 60+ Tauri invoke handlers
+├── pty.rs                        # PTY session management
+├── db.rs                         # SQLite wrapper
+├── hooks/                        # Unix socket server + events
+├── claude/                       # Transcript watcher, plan manager, OpenSpec
+├── tasks/                        # Task parsing from transcripts
+├── worktree.rs                   # Git worktree management
+└── config.rs                     # Config, paths, defaults
 ```
 
 ## Coding Standards
@@ -57,14 +91,13 @@ src/
 - Doc comments (`///`) on all public items (RFC 1574 style)
 - No inline comments explaining WHAT — only WHY
 
-### GPUI Patterns (enforced by gpui-component skills)
-- `Render` trait for stateful views with Entity<T>
-- `RenderOnce` for stateless consumable elements
-- `div().flex().flex_col()` / `h_flex()` / `v_flex()` for layout
-- `cx.listener(Self::method)` for event handlers
-- `cx.notify()` after state mutations to trigger re-render
-- `WeakEntity` in closures to avoid retain cycles
-- `cx.subscribe()` / `cx.observe()` for inter-entity communication
+### React/TypeScript Patterns
+- Jotai atoms for all state (primitive, composable)
+- `useAtomValue()` / `useSetAtom()` for subscriptions
+- Tauri `invoke<T>()` for frontend → backend calls
+- Tauri `listen()` for backend → frontend events
+- TailwindCSS utility classes, shadcn/ui components
+- Terminal managed outside React (terminalService.ts owns xterm instances)
 
 ### Project Conventions
 - No TODO/FIXME — track in issues
@@ -76,28 +109,36 @@ src/
 
 | Action | Command |
 |--------|---------|
-| Build | `cargo build` |
-| Test | `cargo test` |
-| Lint | `cargo clippy -- -D warnings` |
-| Format | `cargo fmt --check` |
-| Full check | `cargo clippy -- -D warnings && cargo test && cargo fmt --check` |
+| Dev | `pnpm dev` (Vite + Tauri) |
+| Build | `pnpm build` (TS check + Vite + Tauri bundle) |
+| Rust build | `cd src-tauri && cargo build` |
+| Rust test | `cd src-tauri && cargo test` |
+| Rust lint | `cd src-tauri && cargo clippy -- -D warnings` |
+| Rust format | `cd src-tauri && cargo fmt --check` |
+| Full check | `cd src-tauri && cargo clippy -- -D warnings && cargo test && cargo fmt --check` |
 
 Run full check after significant changes.
 
 ## Key Concepts
 
+### Communication Patterns
+1. **Frontend → Backend**: `invoke<T>(command, args)` via Tauri IPC
+2. **Backend → Frontend**: Tauri `emit()` events (async)
+3. **State sync**: Jotai atoms + `setupHookListeners()` updates atoms on events
+4. **Terminal**: xterm.js in DOM, receives `pty:output` events, sends via `invoke("pty_write")`
+
 ### Event Flow
 1. Claude CLI runs inside a PTY spawned by the app
 2. Hooks (async) write events to a Unix socket
 3. App listens on the socket + watches transcript files via inotify
-4. Events flow through tokio mpsc channels to update app state
-5. Entity state changes trigger GPUI re-renders via cx.notify()
+4. Events flow through tokio channels → Tauri emit → Jotai atom updates
+5. React components auto-re-render on atom changes
 
 ### Plan Editing Flow (bidirectional)
 1. Claude writes plan to `plansDirectory`
 2. `PreToolUse[ExitPlanMode]` hook notifies the app
-3. App loads plan in editor panel
-4. User edits + adds inline comments
+3. App loads plan in MDXEditor panel
+4. User edits + adds inline annotations
 5. On reject: `UserPromptSubmit` hook injects "re-read plan at <path>"
 6. Claude re-reads the edited file and re-plans
 
@@ -115,12 +156,6 @@ CLI uses `cluihud hook send <event>` for async event forwarding and `cluihud hoo
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "cluihud hook inject-edits" }] }]
   }
 }
-```
-
-## System Dependencies
-
-```bash
-sudo apt-get install -y libxkbcommon-x11-dev libxcb1-dev libxkbcommon-dev
 ```
 
 ## Release Profile

@@ -84,17 +84,17 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
   );
 
   unlisteners.push(
-    await listen<CostSummary & { session_id: string }>("cost:update", (_payload) => {
-      const sid = get(activeSessionIdAtom);
+    await listen<CostSummary & { session_id: string }>("cost:update", (payload) => {
+      const sid = payload.session_id;
       if (!sid) return;
-      const { session_id: _, ...cost } = _payload;
+      const { session_id: _, ...cost } = payload;
       set(costMapAtom, (prev) => ({ ...prev, [sid]: cost }));
     }),
   );
 
   unlisteners.push(
     await listen<{ session_id: string; tasks: Task[] }>("tasks:update", (payload) => {
-      const sid = get(activeSessionIdAtom);
+      const sid = payload.session_id;
       if (!sid) return;
       set(taskMapAtom, (prev) => ({
         ...prev,
@@ -126,7 +126,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
 
   unlisteners.push(
     await listen<{ path: string; content: string; session_id: string; decision_path?: string }>("plan:ready", (payload) => {
-      const sid = get(activeSessionIdAtom);
+      const sid = payload.session_id;
       if (!sid) return;
       const planData = {
         content: payload.content,
@@ -139,24 +139,30 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
       };
       set(planStateMapAtom, (prev) => ({ ...prev, [sid]: planData }));
       set(planDocumentsAtom, (prev) => ({ ...prev, [payload.path]: planData }));
-      const planName = payload.path.split("/").pop()?.replace(".md", "") ?? "Plan";
-      set(openTabAction, { tab: { id: `plan-${payload.path}`, type: "plan", label: planName, data: { path: payload.path } }, isPinned: true });
       set(registerPlanAtom, { sessionId: sid, path: payload.path });
-      set(activePanelViewAtom, "plan");
-      set(expandRightPanelAtom, (prev: number) => prev + 1);
       set(planReviewStatusMapAtom, (prev) => ({ ...prev, [sid]: "pending_review" }));
       set(addActivityAtom, { sessionId: sid, entry: createActivity("plan", "Plan ready for review") });
+
+      // Only open plan tab + expand panel if this is the active session
+      const activeId = get(activeSessionIdAtom);
+      if (activeId === sid) {
+        const planName = payload.path.split("/").pop()?.replace(".md", "") ?? "Plan";
+        set(openTabAction, { tab: { id: `plan-${payload.path}`, type: "plan", label: planName, data: { path: payload.path } }, isPinned: true });
+        set(activePanelViewAtom, "plan");
+        set(expandRightPanelAtom, (prev: number) => prev + 1);
+      }
+      notify("Plan ready", payload.path.split("/").pop() ?? "Plan");
     }),
   );
 
   unlisteners.push(
     await listen<{ session_id: string; questions: Array<{ question: string; header: string; options: string[]; multi_select: boolean }>; decision_path: string }>("ask:user", (payload) => {
-      const sid = get(activeSessionIdAtom);
+      const sid = payload.session_id;
       if (!sid) return;
       set(askUserAtom, {
         questions: payload.questions,
         decisionPath: payload.decision_path,
-        sessionId: payload.session_id,
+        sessionId: sid,
       });
       const firstQ = payload.questions[0]?.question ?? "Claude needs input";
       set(addActivityAtom, { sessionId: sid, entry: createActivity("session", "Claude is asking a question") });
@@ -166,7 +172,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
 
   unlisteners.push(
     await listen<{ session_id: string; cwd: string }>("cwd:changed", (payload) => {
-      const sid = get(activeSessionIdAtom);
+      const sid = payload.session_id;
       if (!sid) return;
       set(cwdMapAtom, (prev) => ({ ...prev, [sid]: payload.cwd }));
       set(addActivityAtom, { sessionId: sid, entry: createActivity("session", `cwd: ${payload.cwd}`) });
@@ -175,7 +181,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
 
   unlisteners.push(
     await listen<{ session_id: string; path: string; change_type: string }>("file:changed", (payload) => {
-      const sid = get(activeSessionIdAtom);
+      const sid = payload.session_id;
       if (!sid) return;
       const filename = payload.path.split("/").pop() ?? payload.path;
       set(addActivityAtom, { sessionId: sid, entry: createActivity("file_modified", `Changed: ${filename}`, payload.path) });
@@ -184,7 +190,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
 
   unlisteners.push(
     await listen<StatusLineData & { session_id: string }>("statusline:update", (payload) => {
-      const sid = get(activeSessionIdAtom);
+      const sid = payload.session_id;
       if (!sid) return;
       const { session_id: _, ...data } = payload;
       set(statusLineMapAtom, (prev) => ({ ...prev, [sid]: data }));
@@ -193,7 +199,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
 
   unlisteners.push(
     await listen<{ session_id: string; tool_name?: string; reason?: string }>("permission:denied", (payload) => {
-      const sid = get(activeSessionIdAtom);
+      const sid = payload.session_id;
       if (!sid) return;
       const tool = payload.tool_name ?? "unknown tool";
       const reason = payload.reason ?? "Auto-mode denied this action";

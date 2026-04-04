@@ -13,7 +13,7 @@ Define preset-driven panel layout modes with animated transitions, minimum size 
 
 ## Implementation Notes
 
-All requirements implemented. Presets: terminal-focus (12/88/0), doc-review (12/44/44), tool-workspace (12/44/44). Animated via requestAnimationFrame. Terminal min 25% enforced. Session-scoped via sessionLayoutMapAtom. Sidebar auto-collapse framework exists (sidebarAutoCollapse flag) but currently set to false. Collapsed sidebar width: 32px (updated from 20px for polymorphic session indicators).
+All requirements implemented. Presets: terminal-focus (12/88/0), doc-review (12/44/44), tool-workspace (12/44/44). Animated via requestAnimationFrame. Terminal min 25% enforced. Session-scoped via sessionLayoutMapAtom. Sidebar auto-collapse framework exists (sidebarAutoCollapse flag) but currently set to false.
 
 ## Requirements
 

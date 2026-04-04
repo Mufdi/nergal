@@ -9,8 +9,9 @@ import { TerminalManager } from "@/components/terminal/TerminalManager";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { ActivityDrawer } from "@/components/activity/ActivityDrawer";
 import { ZenMode } from "@/components/zen/ZenMode";
-import { expandRightPanelAtom, activePanelViewAtom, activeTabAtom } from "@/stores/rightPanel";
+import { expandRightPanelAtom, activePanelViewAtom, activeTabAtom, openTabAction } from "@/stores/rightPanel";
 import { activeSessionIdAtom } from "@/stores/workspace";
+import { planReviewStatusMapAtom, planStateMapAtom } from "@/stores/plan";
 import { toggleSidebarAtom, toggleRightPanelAtom, focusZoneAtom } from "@/stores/shortcuts";
 
 import { layoutPresetAtom, PRESET_SIZES, sessionLayoutPresetAtom, type LayoutPreset } from "@/stores/layout";
@@ -74,14 +75,38 @@ export function Workspace() {
     });
   }, [sidebarCollapsed, layoutPreset]);
 
-  // Clear global panel view on session switch if new session has no tabs
+  const planReviewMap = useAtomValue(planReviewStatusMapAtom);
+  const planStateMap = useAtomValue(planStateMapAtom);
+  const openTab = useSetAtom(openTabAction);
+
+  // Handle session switch: open pending plan review or clear panel view
+  const prevSwitchSessionRef = useRef<string | null>(null);
   useEffect(() => {
-    if (prevSessionRef.current !== null && prevSessionRef.current !== activeSessionId) {
-      if (!activeTab) {
-        setActivePanelView(null);
+    if (!activeSessionId || prevSwitchSessionRef.current === activeSessionId) return;
+    const isFirstMount = prevSwitchSessionRef.current === null;
+    prevSwitchSessionRef.current = activeSessionId;
+    if (isFirstMount) return;
+
+    // If new session has a pending plan review, open it
+    if (planReviewMap[activeSessionId] === "pending_review") {
+      const planState = planStateMap[activeSessionId];
+      if (planState) {
+        const planName = planState.path.split("/").pop()?.replace(".md", "") ?? "Plan";
+        openTab({ tab: { id: `plan-${planState.path}`, type: "plan", label: planName, data: { path: planState.path } }, isPinned: true });
+        setActivePanelView("plan");
+        requestAnimationFrame(() => {
+          const panel = rightPanelRef.current;
+          if (panel) panel.expand();
+        });
+        return;
       }
     }
-  }, [activeSessionId, activeTab, setActivePanelView]);
+
+    // Otherwise clear panel view if new session has no tabs
+    if (!activeTab) {
+      setActivePanelView(null);
+    }
+  }, [activeSessionId]);
 
   // Apply layout preset when it changes or session switches
   useEffect(() => {
@@ -185,9 +210,9 @@ export function Workspace() {
             minSize="6%"
             maxSize="18%"
             collapsible
-            collapsedSize={20}
+            collapsedSize={32}
             onResize={(size) => {
-              setSidebarCollapsed(size.inPixels <= 20);
+              setSidebarCollapsed(size.inPixels <= 32);
             }}
           >
             <Sidebar collapsed={sidebarCollapsed} />

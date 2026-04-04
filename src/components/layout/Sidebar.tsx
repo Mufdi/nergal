@@ -13,6 +13,7 @@ import {
 import { openTabAction } from "@/stores/rightPanel";
 import { toastsAtom } from "@/stores/toast";
 import { SessionRow } from "@/components/session/SessionRow";
+import { SessionIndicator } from "@/components/session/SessionIndicator";
 import { ResumeModal } from "@/components/session/ResumeModal";
 import { MergeModal } from "@/components/session/MergeModal";
 import { CommitModal } from "@/components/session/CommitModal";
@@ -114,13 +115,6 @@ export function Sidebar({ collapsed }: SidebarProps) {
   );
 }
 
-const STATUS_DOT: Record<string, string> = {
-  running: "bg-green-500",
-  idle: "bg-muted-foreground",
-  thinking: "bg-yellow-500",
-  completed: "bg-muted-foreground/40",
-};
-
 function CollapsedSidebar() {
   const workspaces = useAtomValue(workspacesAtom);
   const activeSessionId = useAtomValue(activeSessionIdAtom);
@@ -143,7 +137,7 @@ function CollapsedSidebar() {
               s.id === activeSessionId ? "bg-secondary" : "hover:bg-secondary/50"
             }`}
           >
-            <span className={`size-1.5 rounded-full ${STATUS_DOT[s.status] ?? "bg-muted-foreground"} ${s.status === "running" ? "animate-dot-pulse" : ""}`} />
+            <SessionIndicator sessionId={s.id} sessionStatus={s.status} size="md" />
           </TooltipTrigger>
           <TooltipContent side="right" className="p-0" sideOffset={4}>
             <div className="px-2.5 py-1.5">

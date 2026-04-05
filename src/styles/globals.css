@@ -268,7 +268,7 @@ body,
 }
 
 /* ── Plan annotation ── */
-.annotatable-plan {
+.annotatable-plan.annotation-mode-active {
   cursor: crosshair;
 }
 

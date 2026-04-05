@@ -111,6 +111,8 @@ const PlanMarkdown = memo(function PlanMarkdown({ content }: { content: string }
 export function AnnotatableMarkdownView({ content, annotationsEnabled = true, annotationMode = false }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const highlighterRef = useRef<Highlighter | null>(null);
+  const annotationModeRef = useRef(annotationMode);
+  annotationModeRef.current = annotationMode;
   const [toolbar, setToolbar] = useState<ToolbarState | null>(null);
   const toolbarOpenRef = useRef(false);
   const pendingSourceRef = useRef<HighlightSource | null>(null);
@@ -220,7 +222,7 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true, an
 
     highlighter.on(HighlightEvent.CREATE, ({ sources }) => {
       if (restoringRef.current) { cleanWhitespaceMarks(); return; }
-      if (!annotationsEnabled || !annotationMode) return;
+      if (!annotationsEnabled || !annotationModeRef.current) return;
 
       const source = sources[0];
       if (!source) return;
@@ -253,14 +255,14 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true, an
       });
     });
 
-    const stopAutoHighlight = (annotationsEnabled && annotationMode) ? highlighter.run() : undefined;
+    const stopAutoHighlight = annotationsEnabled ? highlighter.run() : undefined;
 
     return () => {
       stopAutoHighlight?.();
       highlighter.dispose();
       highlighterRef.current = null;
     };
-  }, [content, annotationsEnabled, annotationMode]);
+  }, [content, annotationsEnabled]);
 
   // Pinpoint click handler
   useEffect(() => {
@@ -269,7 +271,7 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true, an
 
     function handleClick(e: MouseEvent) {
       if (!container) return;
-      if (!annotationsEnabled || !annotationMode) return;
+      if (!annotationsEnabled || !annotationModeRef.current) return;
 
       // If toolbar just opened via CREATE (mouseup → CREATE → click), skip
       if (justCreatedRef.current) return;
@@ -301,7 +303,7 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true, an
     if (!container) return;
 
     function handleMouseMove(e: MouseEvent) {
-      if (toolbarOpenRef.current || !annotationsEnabled || !annotationMode) return;
+      if (toolbarOpenRef.current || !annotationsEnabled || !annotationModeRef.current) return;
 
       const target = resolvePinpointTarget(e.target, e);
       if (target === hoverTargetRef.current) return;

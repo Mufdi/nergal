@@ -574,7 +574,7 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true, an
   return (
     <div
       ref={containerRef}
-      className="annotatable-plan prose-invert max-w-none px-4 py-3 text-[12px] text-text"
+      className={`annotatable-plan prose-invert max-w-none px-4 py-3 text-[12px] text-text ${annotationMode ? "annotation-mode-active" : ""}`}
     >
       <PlanMarkdown content={content} />
 

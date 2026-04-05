@@ -60,8 +60,8 @@ export function SessionRow({
       onKeyDown={(e) => { if (e.key === "Enter") onSelect(); }}
       className={`group flex w-full items-center gap-1.5 ${shortcutNumber != null ? "pl-3" : "pl-7"} pr-3 py-1 text-left transition-colors cursor-pointer ${
         isActive
-          ? "bg-secondary/60 text-foreground border-l-2 border-l-primary"
-          : "hover:bg-secondary/40 text-foreground/70 border-l-2 border-l-transparent"
+          ? "bg-secondary/60 text-foreground shadow-[inset_2px_0_0_0_var(--color-primary)]"
+          : "hover:bg-secondary/40 text-foreground/70"
       } ${isCompleted ? "opacity-50" : ""}`}
     >
       {shortcutNumber != null && (

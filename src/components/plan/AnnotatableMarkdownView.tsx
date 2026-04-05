@@ -255,14 +255,21 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true, an
       });
     });
 
-    const stopAutoHighlight = annotationsEnabled ? highlighter.run() : undefined;
-
     return () => {
-      stopAutoHighlight?.();
       highlighter.dispose();
       highlighterRef.current = null;
     };
   }, [content, annotationsEnabled]);
+
+  // Toggle auto-highlight (text selection interception) based on annotation mode
+  useEffect(() => {
+    const highlighter = highlighterRef.current;
+    if (!highlighter || !annotationsEnabled) return;
+    if (!annotationMode) return;
+
+    const stop = highlighter.run();
+    return () => stop?.();
+  }, [annotationMode, annotationsEnabled]);
 
   // Pinpoint click handler
   useEffect(() => {

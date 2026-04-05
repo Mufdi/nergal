@@ -172,10 +172,13 @@ pub async fn start_claude_session(
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     {
+        // Leading space guards against first-byte loss from PTY race conditions
+        // (SIGWINCH during readline init). If lost, the space is sacrificed, not the "c".
+        // If not lost, zsh treats leading-space commands normally (just skips history).
         let cmd = match resume.as_deref() {
-            Some("continue") => "claude --continue\n".to_string(),
-            Some("resume_pick") => "claude --resume\n".to_string(),
-            _ => "claude\n".to_string(),
+            Some("continue") => " claude --continue\n".to_string(),
+            Some("resume_pick") => " claude --resume\n".to_string(),
+            _ => " claude\n".to_string(),
         };
 
         let mut instances = state.instances.lock().map_err(|e| e.to_string())?;

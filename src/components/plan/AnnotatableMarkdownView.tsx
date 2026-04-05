@@ -220,7 +220,7 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true, an
 
     highlighter.on(HighlightEvent.CREATE, ({ sources }) => {
       if (restoringRef.current) { cleanWhitespaceMarks(); return; }
-      if (!annotationsEnabled) return;
+      if (!annotationsEnabled || !annotationMode) return;
 
       const source = sources[0];
       if (!source) return;
@@ -253,14 +253,14 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true, an
       });
     });
 
-    const stopAutoHighlight = annotationsEnabled ? highlighter.run() : undefined;
+    const stopAutoHighlight = (annotationsEnabled && annotationMode) ? highlighter.run() : undefined;
 
     return () => {
       stopAutoHighlight?.();
       highlighter.dispose();
       highlighterRef.current = null;
     };
-  }, [content, annotationsEnabled]);
+  }, [content, annotationsEnabled, annotationMode]);
 
   // Pinpoint click handler
   useEffect(() => {
@@ -269,7 +269,7 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true, an
 
     function handleClick(e: MouseEvent) {
       if (!container) return;
-      if (!annotationsEnabled) return;
+      if (!annotationsEnabled || !annotationMode) return;
 
       // If toolbar just opened via CREATE (mouseup → CREATE → click), skip
       if (justCreatedRef.current) return;
@@ -301,7 +301,7 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true, an
     if (!container) return;
 
     function handleMouseMove(e: MouseEvent) {
-      if (toolbarOpenRef.current || !annotationsEnabled) return;
+      if (toolbarOpenRef.current || !annotationsEnabled || !annotationMode) return;
 
       const target = resolvePinpointTarget(e.target, e);
       if (target === hoverTargetRef.current) return;

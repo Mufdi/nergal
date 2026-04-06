@@ -164,6 +164,27 @@ export function Workspace() {
     }
   }, [expandSignal]);
 
+  // Auto-expand right panel when a plan review arrives for the active session
+  const prevPlanReviewRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!activeSessionId) return;
+    const status = planReviewMap[activeSessionId];
+    const prev = prevPlanReviewRef.current;
+    prevPlanReviewRef.current = status;
+    if (status === "pending_review" && prev !== "pending_review") {
+      const planState = planStateMap[activeSessionId];
+      if (planState) {
+        const planName = planState.path.split("/").pop()?.replace(".md", "") ?? "Plan";
+        openTab({ tab: { id: `plan-${planState.path}`, type: "plan", label: planName, data: { path: planState.path } }, isPinned: true });
+        setActivePanelView("plan");
+        requestAnimationFrame(() => {
+          const panel = rightPanelRef.current;
+          if (panel) panel.expand();
+        });
+      }
+    }
+  }, [activeSessionId, planReviewMap, planStateMap]);
+
   useEffect(() => {
     if (sidebarToggle > 0) handleToggleSidebar();
   }, [sidebarToggle]);
@@ -206,9 +227,9 @@ export function Workspace() {
           <ResizablePanel
             id="sidebar"
             panelRef={sidebarPanelRef}
-            defaultSize="12%"
+            defaultSize="15%"
             minSize="6%"
-            maxSize="18%"
+            maxSize="22%"
             collapsible
             collapsedSize={32}
             onResize={(size) => {

@@ -13,21 +13,21 @@ export interface PresetSizes {
 
 export const PRESET_SIZES: Record<LayoutPreset, PresetSizes> = {
   "terminal-focus": {
-    sidebar: 12,
-    center: 88,
+    sidebar: 15,
+    center: 85,
     right: 0,
     sidebarAutoCollapse: false,
   },
   "doc-review": {
-    sidebar: 12,
-    center: 44,
-    right: 44,
+    sidebar: 15,
+    center: 42,
+    right: 43,
     sidebarAutoCollapse: false,
   },
   "tool-workspace": {
-    sidebar: 12,
-    center: 44,
-    right: 44,
+    sidebar: 15,
+    center: 42,
+    right: 43,
     sidebarAutoCollapse: false,
   },
 };

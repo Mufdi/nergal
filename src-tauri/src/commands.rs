@@ -1203,6 +1203,8 @@ pub struct GitInfo {
     pub branch: String,
     pub dirty: bool,
     pub ahead: u32,
+    pub lines_added: u32,
+    pub lines_removed: u32,
 }
 
 /// Return branch name, dirty state, and commits-ahead count for a session.
@@ -1223,6 +1225,8 @@ pub fn get_session_git_info(
             .clone()
             .unwrap_or_else(|| "unknown".into());
         let dirty = crate::worktree::is_worktree_dirty(wt_path).unwrap_or(false);
+        let stat = crate::worktree::diff_shortstat(std::path::Path::new(wt_path))
+            .unwrap_or(crate::worktree::DiffShortstat { lines_added: 0, lines_removed: 0 });
 
         let repo_path = db
             .workspace_repo_path(&session.workspace_id)
@@ -1240,6 +1244,8 @@ pub fn get_session_git_info(
                 branch,
                 dirty,
                 ahead: 0,
+                lines_added: stat.lines_added,
+                lines_removed: stat.lines_removed,
             });
         };
 
@@ -1250,6 +1256,8 @@ pub fn get_session_git_info(
             branch,
             dirty,
             ahead,
+            lines_added: stat.lines_added,
+            lines_removed: stat.lines_removed,
         })
     } else {
         let repo_path = db
@@ -1260,11 +1268,15 @@ pub fn get_session_git_info(
         let branch =
             crate::worktree::current_branch(&repo_path).unwrap_or_else(|_| "unknown".into());
         let dirty = crate::worktree::is_worktree_dirty(&repo_path).unwrap_or(false);
+        let stat = crate::worktree::diff_shortstat(&repo_path)
+            .unwrap_or(crate::worktree::DiffShortstat { lines_added: 0, lines_removed: 0 });
 
         Ok(GitInfo {
             branch,
             dirty,
             ahead: 0,
+            lines_added: stat.lines_added,
+            lines_removed: stat.lines_removed,
         })
     }
 }

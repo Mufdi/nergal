@@ -313,6 +313,41 @@ pub fn file_diff(cwd: &Path, file_path: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// Lines added/removed stats from `git diff --shortstat`.
+pub struct DiffShortstat {
+    pub lines_added: u32,
+    pub lines_removed: u32,
+}
+
+/// Get total lines added/removed in the working tree compared to HEAD.
+pub fn diff_shortstat(cwd: &Path) -> Result<DiffShortstat> {
+    let output = Command::new("git")
+        .args(["diff", "HEAD", "--shortstat"])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git diff --shortstat")?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut added = 0u32;
+    let mut removed = 0u32;
+
+    // Format: " 5 files changed, 124 insertions(+), 13 deletions(-)"
+    for part in stdout.split(',') {
+        let part = part.trim();
+        if part.contains("insertion") {
+            if let Some(n) = part.split_whitespace().next().and_then(|s| s.parse().ok()) {
+                added = n;
+            }
+        } else if part.contains("deletion") {
+            if let Some(n) = part.split_whitespace().next().and_then(|s| s.parse().ok()) {
+                removed = n;
+            }
+        }
+    }
+
+    Ok(DiffShortstat { lines_added: added, lines_removed: removed })
+}
+
 /// A file changed in the working tree, as reported by `git status`.
 #[derive(Clone, serde::Serialize)]
 pub struct ChangedFile {

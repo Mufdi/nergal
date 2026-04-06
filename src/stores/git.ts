@@ -6,6 +6,8 @@ export interface GitInfo {
   branch: string;
   dirty: boolean;
   ahead: number;
+  lines_added: number;
+  lines_removed: number;
 }
 
 export const gitInfoMapAtom = atom<Record<string, GitInfo>>({});

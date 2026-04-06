@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useAtomValue } from "jotai";
 import {
   CircleDot,
   GitBranch,
@@ -13,6 +14,7 @@ import {
   TooltipContent,
 } from "@/components/ui/tooltip";
 import type { Session, Workspace } from "@/stores/workspace";
+import { gitInfoMapAtom } from "@/stores/git";
 import { SessionIndicator } from "./SessionIndicator";
 
 interface SessionRowProps {
@@ -40,6 +42,11 @@ export function SessionRow({
 }: SessionRowProps) {
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(session.name);
+  const gitInfoMap = useAtomValue(gitInfoMapAtom);
+  const gitInfo = gitInfoMap[session.id];
+  const linesAdded = gitInfo?.lines_added ?? 0;
+  const linesRemoved = gitInfo?.lines_removed ?? 0;
+  const hasLineChanges = linesAdded > 0 || linesRemoved > 0;
   const isCompleted = session.status === "completed";
   const isWorktree = session.worktree_path !== null;
 
@@ -95,8 +102,14 @@ export function SessionRow({
         <span className="flex-1 truncate text-[11px]">{session.name}</span>
       )}
 
-      <span className="shrink-0 text-[10px] text-muted-foreground/50 tabular-nums group-hover:hidden">
-        {formatAge(session.updated_at)}
+      <span className="shrink-0 flex items-center gap-1.5 text-[10px] tabular-nums group-hover:hidden">
+        {hasLineChanges && (
+          <span className="flex items-center gap-1">
+            <span className="text-green-500">+{linesAdded}</span>
+            <span className="text-red-500">-{linesRemoved}</span>
+          </span>
+        )}
+        <span className="text-muted-foreground/50">{formatAge(session.updated_at)}</span>
       </span>
 
       <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex">

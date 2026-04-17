@@ -3,7 +3,7 @@ import { invoke } from "@/lib/tauri";
 import { appStore } from "./jotaiStore";
 import { configAtom } from "./config";
 import { activeSessionIdAtom, activeWorkspaceAtom, workspacesAtom, freshSessionsAtom, sessionTabIdsAtom } from "./workspace";
-import * as terminalService from "@/components/terminal/terminalService";
+import * as terminalService from "@/components/terminal/activeTerminalService";
 import {
   activeTabsAtom,
   activeTabAtom,

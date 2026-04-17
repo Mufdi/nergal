@@ -286,13 +286,19 @@ function wireInput(entry: Entry): void {
     }
 
     // Terminal-scoped copy/paste wins over the global pass-through list.
+    // stopPropagation is essential: cluihud globally binds Ctrl+Shift+C to
+    // the commit-session modal, which steals focus and leaves the terminal
+    // unresponsive. stopPropagation keeps the event from reaching that
+    // global handler when we've handled the copy locally.
     if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyC" && entry.selection) {
       e.preventDefault();
+      e.stopPropagation();
       void copySelection(entry);
       return;
     }
     if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyV") {
       e.preventDefault();
+      e.stopPropagation();
       void pasteFromClipboard(entry);
       return;
     }

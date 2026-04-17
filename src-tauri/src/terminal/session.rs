@@ -361,24 +361,23 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_backspace_encodes_differently_from_plain_backspace() {
+    fn ctrl_backspace_emits_ctrl_w_for_word_delete() {
+        // The map_event layer remaps Ctrl+Backspace to Ctrl+W so it lands
+        // on every shell's default `backward-kill-word` binding without
+        // requiring user-side shell config. Wezterm's ctrl_mapping('w')
+        // yields `\x17` (ETB).
         let (mut s, w) = session_with_writer(80, 24);
 
         s.key_down(&evt("Backspace", "Backspace")).unwrap();
         let plain = w.drain();
-        assert!(!plain.is_empty(), "plain Backspace must emit something");
+        assert_eq!(plain, b"\x7f", "plain Backspace emits DEL");
         w.clear();
 
         let mut ctrl_bs = evt("Backspace", "Backspace");
         ctrl_bs.ctrl = true;
         s.key_down(&ctrl_bs).unwrap();
         let with_ctrl = w.drain();
-        assert!(!with_ctrl.is_empty(), "Ctrl+Backspace must emit something");
-
-        assert_ne!(
-            plain, with_ctrl,
-            "Kitty keyboard protocol should make Ctrl+Backspace distinct so shells can bind backward-kill-word"
-        );
+        assert_eq!(with_ctrl, b"\x17", "Ctrl+Backspace remaps to Ctrl+W (ETB)");
     }
 
     #[test]
@@ -441,26 +440,8 @@ mod tests {
         assert!(!bytes.is_empty());
     }
 
-    #[test]
-    fn kitty_disabled_falls_back_to_csi_u() {
-        // Regression guard: with kitty OFF we should still disambiguate
-        // Ctrl+Backspace from Backspace via CSI-u (our config flips csi_u on
-        // when kitty_keyboard is off). Verifies the CluihudTerminalConfig
-        // toggle does what the task claims.
-        let w = CapturedWriter::new();
-        let cfg = CluihudTerminalConfig::new().with_kitty_keyboard(false);
-        let mut s =
-            TerminalSession::with_config(80, 24, Box::new(w.clone()), cfg);
-
-        s.key_down(&evt("Backspace", "Backspace")).unwrap();
-        let plain = w.drain();
-        w.clear();
-
-        let mut ctrl_bs = evt("Backspace", "Backspace");
-        ctrl_bs.ctrl = true;
-        s.key_down(&ctrl_bs).unwrap();
-        let with_ctrl = w.drain();
-
-        assert_ne!(plain, with_ctrl);
-    }
+    // Note: the old `kitty_disabled_falls_back_to_csi_u` test became
+    // redundant once Ctrl+Backspace started remapping unconditionally to
+    // Ctrl+W. The CSI-u fallback is now exercised by
+    // `shift_enter_distinguishes_when_csi_u_fallback_active`.
 }

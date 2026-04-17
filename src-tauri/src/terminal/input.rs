@@ -45,6 +45,15 @@ pub fn map_event(event: &TerminalKeyEvent) -> Option<(KeyCode, Modifiers)> {
 
     let mods = modifiers_for(event);
 
+    // Ghostty-parity convenience remap: Ctrl+Backspace is universally
+    // expected to delete a word, but `\x08` (the byte wezterm encodes for
+    // that combo) is bound to `backward-delete-char` — a single char — on
+    // every default shell config we've seen. Synthesize Ctrl+W instead,
+    // whose byte `\x17` is universally bound to `backward-kill-word`.
+    if event.code == "Backspace" && event.ctrl && !event.alt && !event.shift {
+        return Some((KeyCode::Char('w'), Modifiers::CTRL));
+    }
+
     // Physical key mappings first — these must not be shadowed by `text`
     // because some of them (Backspace, Enter) carry no printable `key`.
     let key = match event.code.as_str() {

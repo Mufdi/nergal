@@ -373,6 +373,26 @@ pub fn pty_resize(
     Ok(())
 }
 
+/// Resize the PTY + wezterm emulator for a session, without needing the
+/// caller to know the opaque pty_id. Used by the canvas renderer since it
+/// holds a session_id, not the pty_id.
+#[tauri::command]
+pub fn resize_session_terminal(
+    state: State<'_, PtyManager>,
+    session_id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
+    let pty_id = {
+        let session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
+        session_ptys
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| "no PTY for session".to_string())?
+    };
+    pty_resize(state, pty_id, cols, rows)
+}
+
 #[tauri::command]
 pub fn pty_kill(state: State<'_, PtyManager>, id: String) -> Result<(), String> {
     let mut instances = state.instances.lock().map_err(|e| e.to_string())?;

@@ -1,27 +1,22 @@
-import { useRef, useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { workspacesAtom, activeSessionIdAtom, activeSessionAtom, activeWorkspaceAtom, sessionLaunchModeAtom, freshSessionsAtom } from "@/stores/workspace";
+import {
+  workspacesAtom,
+  activeSessionIdAtom,
+  activeSessionAtom,
+  activeWorkspaceAtom,
+  sessionLaunchModeAtom,
+  freshSessionsAtom,
+} from "@/stores/workspace";
 import { focusZoneAtom } from "@/stores/shortcuts";
-import { configAtom } from "@/stores/config";
-import * as terminalService from "./terminalService";
-import { WezTerminalManager } from "./wezterm/WezTerminalManager";
+import * as wezTerminalService from "./wezTerminalService";
 
-/// Thin React wrapper. Provides a host div and signals the service "show session X".
-/// Service owns all DOM containers and xterm instances — React never touches them.
-///
-/// Gated by `config.experimental_wezterm_terminal`: when enabled, mounts the
-/// [`WezTerminalManager`] instead so sessions render via the wezterm-term
-/// backed canvas. The switch is all-or-nothing to avoid two renderers fighting
-/// over the same DOM host.
-export function TerminalManager() {
-  const config = useAtomValue(configAtom);
-  if (config.experimental_wezterm_terminal) {
-    return <WezTerminalManager />;
-  }
-  return <LegacyTerminalManager />;
-}
-
-function LegacyTerminalManager() {
+/// Drop-in replacement for the legacy `TerminalManager` — same props/atoms,
+/// same React lifecycle; the rendering internals switch to the wezterm-term
+/// backed canvas renderer. Gated by `experimental_wezterm_terminal` in
+/// [`TerminalManager`]; this component is never mounted while the flag is
+/// off, so no canvas / keydown handlers leak into the legacy path.
+export function WezTerminalManager() {
   const workspaces = useAtomValue(workspacesAtom);
   const activeSessionId = useAtomValue(activeSessionIdAtom);
   const activeSession = useAtomValue(activeSessionAtom);
@@ -31,13 +26,11 @@ function LegacyTerminalManager() {
   const setFocusZone = useSetAtom(focusZoneAtom);
   const hostRef = useRef<HTMLDivElement>(null);
 
-  // Register host element once
   useEffect(() => {
-    terminalService.setHost(hostRef.current);
-    return () => terminalService.setHost(null);
+    wezTerminalService.setHost(hostRef.current);
+    return () => wezTerminalService.setHost(null);
   }, []);
 
-  // When active session changes → tell service to show it
   useEffect(() => {
     if (!activeSessionId || !activeSession || !activeWorkspace) return;
     if (activeSession.status === "completed") return;
@@ -52,16 +45,15 @@ function LegacyTerminalManager() {
     }
 
     const cwd = activeSession.worktree_path ?? activeWorkspace.repo_path;
-    terminalService.show(activeSessionId, cwd, mode);
+    void wezTerminalService.show(activeSessionId, cwd, mode);
   }, [activeSessionId, activeSession, activeWorkspace, launchModes, freshSessions]);
 
-  // ResizeObserver on host → fit active terminal
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
 
     const observer = new ResizeObserver(() => {
-      requestAnimationFrame(() => terminalService.fitActive());
+      requestAnimationFrame(() => wezTerminalService.fitActive());
     });
     observer.observe(host);
     return () => observer.disconnect();
@@ -70,7 +62,11 @@ function LegacyTerminalManager() {
   const hasAnySessions = workspaces.some((ws) => ws.sessions.length > 0);
 
   return (
-    <div ref={hostRef} className="relative h-full w-full" onMouseDown={() => setFocusZone("terminal")}>
+    <div
+      ref={hostRef}
+      className="relative h-full w-full"
+      onMouseDown={() => setFocusZone("terminal")}
+    >
       {(!hasAnySessions || !activeSessionId) && (
         <div className="flex h-full items-center justify-center">
           <span className="text-[11px] text-muted-foreground">Select or create a session</span>

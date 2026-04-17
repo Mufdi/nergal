@@ -28,12 +28,33 @@ interface EditorInfo {
   available: boolean;
 }
 
-const FIELDS: { key: keyof Config; label: string; placeholder: string }[] = [
+type StringConfigKey = {
+  [K in keyof Config]: Config[K] extends string ? K : never;
+}[keyof Config];
+
+type BooleanConfigKey = {
+  [K in keyof Config]: Config[K] extends boolean ? K : never;
+}[keyof Config];
+
+const TEXT_FIELDS: { key: StringConfigKey; label: string; placeholder: string }[] = [
   { key: "claude_binary", label: "Claude Binary", placeholder: "/usr/bin/claude" },
   { key: "plans_directory", label: "Plans Directory", placeholder: "~/.claude/plans" },
   { key: "transcripts_directory", label: "Transcripts Directory", placeholder: "~/.claude/transcripts" },
   { key: "default_shell", label: "Default Shell", placeholder: "/bin/bash" },
   { key: "theme_mode", label: "Theme", placeholder: "dark" },
+];
+
+const TOGGLE_FIELDS: { key: BooleanConfigKey; label: string; help: string }[] = [
+  {
+    key: "terminal_kitty_keyboard",
+    label: "Kitty keyboard protocol",
+    help: "Distinct encoding for Ctrl+Backspace, Shift+Enter, Alt+letter.",
+  },
+  {
+    key: "experimental_wezterm_terminal",
+    label: "Wezterm terminal (experimental)",
+    help: "Use the wezterm-term canvas renderer instead of xterm.js.",
+  },
 ];
 
 export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
@@ -46,7 +67,11 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
     }
   }, [open]);
 
-  function handleChange(key: keyof Config, value: string) {
+  function handleTextChange(key: StringConfigKey, value: string) {
+    setConfig((prev: Config) => ({ ...prev, [key]: value }));
+  }
+
+  function handleToggleChange(key: BooleanConfigKey, value: boolean) {
     setConfig((prev: Config) => ({ ...prev, [key]: value }));
   }
 
@@ -70,14 +95,14 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
         <Separator />
 
         <div className="space-y-4">
-          {FIELDS.map(({ key, label, placeholder }) => (
+          {TEXT_FIELDS.map(({ key, label, placeholder }) => (
             <div key={key} className="grid gap-2">
               <Label htmlFor={`setting-${key}`}>{label}</Label>
               <Input
                 id={`setting-${key}`}
                 type="text"
                 value={config[key]}
-                onChange={(e) => handleChange(key, e.target.value)}
+                onChange={(e) => handleTextChange(key, e.target.value)}
                 placeholder={placeholder}
               />
             </div>
@@ -88,7 +113,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
             <select
               id="setting-preferred_editor"
               value={config.preferred_editor}
-              onChange={(e) => handleChange("preferred_editor", e.target.value)}
+              onChange={(e) => handleTextChange("preferred_editor", e.target.value)}
               className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
               <option value="">Auto-detect</option>
@@ -99,6 +124,24 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
               ))}
             </select>
           </div>
+
+          <Separator />
+
+          {TOGGLE_FIELDS.map(({ key, label, help }) => (
+            <label key={key} className="flex items-start gap-3 text-sm">
+              <input
+                id={`setting-${key}`}
+                type="checkbox"
+                checked={config[key]}
+                onChange={(e) => handleToggleChange(key, e.target.checked)}
+                className="mt-0.5 h-4 w-4"
+              />
+              <span className="flex flex-col gap-0.5">
+                <span className="font-medium">{label}</span>
+                <span className="text-xs text-muted-foreground">{help}</span>
+              </span>
+            </label>
+          ))}
         </div>
 
         <DialogFooter>

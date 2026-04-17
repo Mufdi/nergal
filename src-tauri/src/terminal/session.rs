@@ -2,6 +2,8 @@ use std::io::Write;
 use std::sync::Arc;
 
 use anyhow::Result;
+use wezterm_term::TerminalConfiguration;
+use wezterm_term::color::ColorPalette;
 use wezterm_term::{Terminal, TerminalSize};
 
 use super::config::CluihudTerminalConfig;
@@ -17,6 +19,11 @@ pub struct TerminalSession {
     terminal: Terminal,
     cols: u16,
     rows: u16,
+    /// Snapshot of the palette at construction time. Used to resolve
+    /// `PaletteIndex(n)` cell attributes into concrete RGBA when building
+    /// a [`GridSnapshot`] — without this, the frontend would see `None`
+    /// for every ANSI-colored character and render the default foreground.
+    palette: ColorPalette,
 }
 
 impl TerminalSession {
@@ -41,6 +48,7 @@ impl TerminalSession {
             pixel_height: 0,
             dpi: 0,
         };
+        let palette = config.color_palette();
         let terminal = Terminal::new(
             size,
             Arc::new(config),
@@ -48,7 +56,12 @@ impl TerminalSession {
             env!("CARGO_PKG_VERSION"),
             writer,
         );
-        Self { terminal, cols, rows }
+        Self {
+            terminal,
+            cols,
+            rows,
+            palette,
+        }
     }
 
     /// Feed bytes from the PTY reader into the VT parser.
@@ -118,8 +131,8 @@ impl TerminalSession {
                 let attrs = cell.attrs();
                 let snap = CellSnapshot {
                     ch: cell.str().to_owned(),
-                    fg: color_to_rgba(attrs.foreground()),
-                    bg: color_to_rgba(attrs.background()),
+                    fg: color_to_rgba(attrs.foreground(), &self.palette),
+                    bg: color_to_rgba(attrs.background(), &self.palette),
                     bold: attrs.intensity() == termwiz::cell::Intensity::Bold,
                     italic: attrs.italic(),
                     underline: attrs.underline() != termwiz::cell::Underline::None,
@@ -152,17 +165,25 @@ impl TerminalSession {
     }
 }
 
-fn color_to_rgba(color: termwiz::color::ColorAttribute) -> Option<[u8; 4]> {
+fn color_to_rgba(
+    color: termwiz::color::ColorAttribute,
+    palette: &ColorPalette,
+) -> Option<[u8; 4]> {
     use termwiz::color::ColorAttribute;
     match color {
         ColorAttribute::Default => None,
         ColorAttribute::TrueColorWithDefaultFallback(srgb)
-        | ColorAttribute::TrueColorWithPaletteFallback(srgb, _) => {
-            let (r, g, b, a) = srgb.to_tuple_rgba();
-            Some([scale(r), scale(g), scale(b), scale(a)])
+        | ColorAttribute::TrueColorWithPaletteFallback(srgb, _) => Some(srgb_to_u8(srgb)),
+        ColorAttribute::PaletteIndex(idx) => {
+            let srgb = palette.colors.0[idx as usize];
+            Some(srgb_to_u8(srgb))
         }
-        ColorAttribute::PaletteIndex(_) => None,
     }
+}
+
+fn srgb_to_u8(srgb: termwiz::color::SrgbaTuple) -> [u8; 4] {
+    let (r, g, b, a) = srgb.to_tuple_rgba();
+    [scale(r), scale(g), scale(b), scale(a)]
 }
 
 fn scale(f: f32) -> u8 {
@@ -270,14 +291,25 @@ mod tests {
     #[test]
     fn sgr_red_sets_foreground() {
         let mut s = session(10, 3);
-        // ESC[31m = red fg; "X"; ESC[0m = reset
+        // ESC[31m = red fg (palette index 1 on default xterm palette = 0xcc5555);
+        // "X"; ESC[0m = reset.
         s.advance_bytes(b"\x1b[31mX\x1b[0m");
         let grid = s.grid_snapshot();
         let first = &grid.rows[0][0];
         assert_eq!(first.ch, "X");
-        // Palette-index red on a default palette is returned as None by the
-        // minimal snapshot. We still assert the cell character made it through.
-        // Full color assertion moves to Phase 2 once we ship the truecolor path.
+        let fg = first.fg.expect("palette index must resolve to an RGBA");
+        assert_eq!(&fg[0..3], &[0xcc, 0x55, 0x55], "should be xterm maroon");
+    }
+
+    #[test]
+    fn truecolor_sgr_is_preserved() {
+        let mut s = session(10, 3);
+        // 24-bit SGR: ESC[38;2;10;20;30m — fg = #0A141E.
+        s.advance_bytes(b"\x1b[38;2;10;20;30mZ\x1b[0m");
+        let fg = s.grid_snapshot().rows[0][0]
+            .fg
+            .expect("truecolor must survive");
+        assert_eq!(&fg[0..3], &[10, 20, 30]);
     }
 
     #[test]

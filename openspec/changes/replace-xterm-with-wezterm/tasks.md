@@ -28,19 +28,19 @@
 
 ## 4. Frontend: terminal renderer core
 
-- [ ] 4.1 Add `src/components/terminal/wezterm/TerminalRenderer.ts` — class managing canvas instances, one per session, fully outside React (mirrors the existing `terminalService.ts` pattern)
-- [ ] 4.2 Implement `mount(sessionId, container)`: creates `<canvas>`, attaches it, subscribes to `terminal:grid-update` for that session, requests initial full grid via `terminal_get_full_grid`
-- [ ] 4.3 Implement font atlas: on first render, rasterize ASCII printable + common Latin-1 into an `OffscreenCanvas`, indexed by `(codepoint, fg, bg, attrs)`. Regenerate on font/theme change.
-- [ ] 4.4 Implement render loop: apply incoming `GridUpdate`, blit changed cells from atlas to canvas, draw cursor
-- [ ] 4.5 Implement resize: ResizeObserver on container → compute new cols/rows from canvas size and font metrics → call `terminal_resize`
-- [ ] 4.6 Fallback path for non-atlased codepoints: direct `fillText` (slow path, acceptable for emoji/CJK until post-MVP)
+- [x] 4.1 `src/components/terminal/wezterm/wezTerminalService.ts` — module-scoped service (not a class; mirrors the existing `terminalService.ts` pattern). Owns the per-session `Entry` map, host div, and activeId.
+- [x] 4.2 `show(sessionId, cwd, mode)` creates the canvas + container, invokes `start_claude_session`, subscribes to `terminal:grid-update`, and seeds the shadow grid with `terminal_get_full_grid` if the backend already has state (resume case).
+- [x] 4.3 `FontAtlas` class backs `fontAtlas.ts` — lazy rasterization into a 128×128 cell glyph cache keyed by `(char, fg, bold, italic)`. Simpler than pre-rasterization; covers any codepoint on first use and evicts by round-robin row when full. `measureFont` computes DPR-aware cell metrics.
+- [x] 4.4 `applyUpdate` patches the shadow grid with only the changed rows + cursor + title, then `paintRow` redraws just those rows via the atlas. Cursor paints last so it overlays correctly.
+- [x] 4.5 Resize via `computeCols` (reads container getBoundingClientRect + font metrics) → new backend command `resize_session_terminal(session_id, cols, rows)` so the frontend doesn't need to know pty_ids.
+- [x] 4.6 No separate fallback path — the atlas's lazy rasterization path doubles as the fallback. Any codepoint the font can render goes through the same `drawGlyph`.
 
 ## 5. Frontend: input capture and encoding handoff
 
-- [ ] 5.1 Attach `keydown` handler to the canvas (or a focusable wrapper div) — build `TerminalKeyEvent` from `KeyboardEvent`
-- [ ] 5.2 Call `invoke("terminal_input", { sessionId, event })` — no local encoding
-- [ ] 5.3 Replicate IME composition pattern: `compositionstart/compositionend` on a hidden textarea overlaying the canvas; composed text goes via `terminal_input` with `text` field set and `code="IME"`
-- [ ] 5.4 Ensure global cluihud shortcuts (Ctrl+1/2/3, Ctrl+K, Ctrl+Tab, etc.) still work: keydown handler filters them before sending to backend (same list as today in `terminalService.ts:wireIMEFix`)
+- [x] 5.1 `keydown` handler attached to the focusable canvas in `wireInput`; builds `TerminalKeyEvent` from `KeyboardEvent`
+- [x] 5.2 `invoke("terminal_input", { sessionId, event })` — no local encoding
+- [ ] 5.3 IME composition — deferred. Phase 4 canvas lacks the hidden textarea overlay; CJK/dead-key composition needs Phase 5 follow-up
+- [x] 5.4 `shouldPassThrough` mirrors the global-shortcut filter from `terminalService.ts:wireIMEFix` so Ctrl+1/2/3, Ctrl+K, Ctrl+Tab, Ctrl+Shift+letter, Alt+arrows skip the terminal
 
 ## 6. Frontend: selection, copy/paste, scrollback
 
@@ -58,10 +58,10 @@
 
 ## 8. Migration flag and coexistence
 
-- [ ] 8.1 Add config flag `experimental.wezterm_terminal: bool` (default `false`) in `config.toml`
-- [ ] 8.2 `TerminalManager.tsx` reads the flag; mounts `TerminalCanvas` (new) or legacy `terminalService` host based on flag
-- [ ] 8.3 During Fase 2-3, backend emits BOTH `pty:output` (legacy) and `terminal:grid-update` (new) so switching is hot-reload safe
-- [ ] 8.4 Settings UI: simple toggle in `Settings` panel to flip the flag without editing the TOML
+- [x] 8.1 `Config::experimental_wezterm_terminal: bool` in the JSON config (default `false`, `#[serde(default)]` for existing configs)
+- [x] 8.2 `TerminalManager.tsx` reads `configAtom` and branches: flag-on mounts `WezTerminalManager`, flag-off keeps the legacy `LegacyTerminalManager` with `terminalService.ts`
+- [x] 8.3 Dual-emission implemented in Phase 2: backend always emits both `pty:output` and `terminal:grid-update`, so toggling the flag at runtime Just Works
+- [x] 8.4 SettingsPanel: refactored to split string-valued fields from boolean toggles (no union-typed inputs); "Wezterm terminal (experimental)" and "Kitty keyboard protocol" exposed as checkboxes
 
 ## 9. Testing
 

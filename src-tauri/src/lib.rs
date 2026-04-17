@@ -8,6 +8,7 @@ mod plan_state;
 mod pty;
 pub mod setup;
 mod tasks;
+mod terminal;
 mod worktree;
 
 use claude::openspec::OpenSpecWatcher;

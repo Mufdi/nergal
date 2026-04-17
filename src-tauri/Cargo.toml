@@ -26,6 +26,13 @@ tauri-plugin-dialog = "2.6.0"
 rusqlite = { version = "0.34", features = ["bundled"] }
 tauri-plugin-notification = "2"
 
+# Terminal VT emulation (Phase 1 of replace-xterm-with-wezterm).
+# wezterm-term / termwiz are not published on crates.io — they only live inside
+# the wezterm workspace. Pinned to the last stable tag (Feb 2024); the core VT
+# logic has been stable since. Update deliberately if upstream ships fixes.
+wezterm-term = { git = "https://github.com/wezterm/wezterm.git", tag = "20240203-110809-5046fc22" }
+termwiz = { git = "https://github.com/wezterm/wezterm.git", tag = "20240203-110809-5046fc22" }
+
 [profile.release]
 lto = true
 codegen-units = 1

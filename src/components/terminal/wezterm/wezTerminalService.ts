@@ -58,6 +58,11 @@ interface Entry {
   isDragging: boolean;
   hoveredHyperlink: string | null;
   composing: boolean;
+  /// Last composition result + timestamp. Some browsers fire a trailing
+  /// keydown with the composed char after `compositionend`; we suppress
+  /// that single ghost event instead of blanket-suppressing keydowns for
+  /// a long window (which is what dropped the user's fast-typing chars).
+  lastComposed: { text: string; at: number } | null;
 }
 
 // ── Module state ──
@@ -71,6 +76,17 @@ let activeId: string | null = null;
 
 export function setHost(el: HTMLDivElement | null): void {
   hostElement = el;
+  // React can re-mount the host (e.g. toggling the experimental flag swaps
+  // LegacyTerminalManager ⇄ WezTerminalManager). Existing session
+  // containers were attached to the previous host — re-parent them to the
+  // new one so the terminal remains visible.
+  if (el) {
+    for (const entry of entries.values()) {
+      if (entry.container.parentElement !== el) {
+        el.appendChild(entry.container);
+      }
+    }
+  }
 }
 
 export async function show(
@@ -107,9 +123,7 @@ export async function show(
       ";";
     hostElement.appendChild(container);
 
-    await new Promise<void>((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-    );
+    await waitForLayout(container);
 
     const canvas = document.createElement("canvas");
     canvas.style.cssText = "outline:none;display:block;";
@@ -170,6 +184,7 @@ export async function show(
       isDragging: false,
       hoveredHyperlink: null,
       composing: false,
+      lastComposed: null,
     };
 
     wireInput(entry);
@@ -257,6 +272,19 @@ function wireInput(entry: Entry): void {
     // accumulate; we'll forward the result via `compositionend`.
     if (e.isComposing || entry.composing) return;
 
+    // Ghost keydown trailing a composition: some browsers fire a final
+    // keydown with the composed character right after compositionend.
+    // Suppress exactly one, only when it matches, within a tight window.
+    if (
+      entry.lastComposed
+      && e.key === entry.lastComposed.text
+      && Date.now() - entry.lastComposed.at < 60
+    ) {
+      entry.lastComposed = null;
+      e.preventDefault();
+      return;
+    }
+
     // Terminal-scoped copy/paste wins over the global pass-through list.
     if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyC" && entry.selection) {
       e.preventDefault();
@@ -271,12 +299,6 @@ function wireInput(entry: Entry): void {
 
     if (shouldPassThrough(e)) return;
 
-    // Unmodified printable keys go through the `input` event instead so
-    // the textarea's composition state stays coherent with the browser —
-    // anything else (modified keys, arrows, Enter, etc.) bypasses the
-    // textarea and is encoded by the backend directly.
-    if (!isSpecialOrModified(e)) return;
-
     // Any typing implicitly commits the selection — matches every mainstream
     // terminal's "type to clear highlight" behavior.
     if (entry.selection) {
@@ -286,15 +308,9 @@ function wireInput(entry: Entry): void {
 
     e.preventDefault();
     sendKeyEvent(entry, e);
-  });
-
-  entry.textarea.addEventListener("input", (e) => {
-    const ie = e as InputEvent;
-    if (ie.isComposing || entry.composing) return;
-    const text = entry.textarea.value;
+    // Keep the textarea empty so the browser never paints a stray char
+    // under our canvas nor accumulates stale state.
     entry.textarea.value = "";
-    if (!text) return;
-    sendText(entry, text);
   });
 
   entry.textarea.addEventListener("compositionstart", () => {
@@ -306,6 +322,7 @@ function wireInput(entry: Entry): void {
     const composed = e.data ?? entry.textarea.value;
     entry.textarea.value = "";
     if (composed) {
+      entry.lastComposed = { text: composed, at: Date.now() };
       sendText(entry, composed);
     }
   });
@@ -458,17 +475,6 @@ function isPrintable(key: string): boolean {
   return code >= 0x20 && code !== 0x7f;
 }
 
-/// A keydown is "special or modified" when it can't be safely handed to the
-/// textarea's `input` event — either because it has a non-text meaning
-/// (arrows, Enter, Backspace, function keys) or because modifiers change
-/// what the shell should receive (Ctrl+A, Alt+letter, etc.). Those bypass
-/// the textarea and go straight to the wezterm encoder on the backend.
-function isSpecialOrModified(e: KeyboardEvent): boolean {
-  if (e.ctrlKey || e.altKey || e.metaKey) return true;
-  if (e.key.length !== 1) return true;
-  return false;
-}
-
 function sendKeyEvent(entry: Entry, e: KeyboardEvent): void {
   const payload: TerminalKeyEvent = {
     code: e.code,
@@ -585,9 +591,27 @@ function focusCanvas(entry: Entry): void {
 
 function computeCols(container: HTMLElement, metrics: FontMetrics): { cols: number; rows: number } {
   const rect = container.getBoundingClientRect();
-  const cols = Math.max(1, Math.floor(rect.width / metrics.cssWidth));
-  const rows = Math.max(1, Math.floor(rect.height / metrics.cssHeight));
+  const rawCols = Math.floor(rect.width / metrics.cssWidth);
+  const rawRows = Math.floor(rect.height / metrics.cssHeight);
+  // Guard against a not-yet-laid-out container. Launching a shell at 1x1
+  // is unrecoverable: many TUIs (including `claude`) cache dimensions at
+  // startup and never reflow properly even after SIGWINCH. Default to a
+  // conventional 80x24 when the measurement looks bogus.
+  const cols = rawCols >= 10 ? rawCols : 80;
+  const rows = rawRows >= 3 ? rawRows : 24;
   return { cols, rows };
+}
+
+/// Poll the container until it has real dimensions, capped at ~1s. A few
+/// RAFs are usually enough; in rare cases (pane animated in, React Suspense
+/// boundary just resolved) the extra budget prevents us from seeding the
+/// PTY with placeholder dimensions.
+async function waitForLayout(container: HTMLElement): Promise<void> {
+  for (let i = 0; i < 60; i += 1) {
+    const rect = container.getBoundingClientRect();
+    if (rect.width >= 100 && rect.height >= 50) return;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  }
 }
 
 function sizeCanvas(

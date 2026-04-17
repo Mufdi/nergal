@@ -5,3 +5,27 @@ node_modules/
 *.swo
 *~
 .DS_Store
+
+# Build artifacts
+dist/
+
+# Local runtime / tooling state
+.worktrees/
+.playwright-cli/
+
+# Claude Code local configuration (symlinks to external skills dir, per-session plans, local settings)
+.claude/plans/
+.claude/settings.local.json
+.claude/skills/
+.claude/commands/
+
+# External agent tooling symlinks (not part of this repo)
+.agent/
+.opencode/
+
+# External assets referenced only from docs outside this repo
+logos-ide/
+
+# Multi-session scratch docs
+cross-session.md
+cross-session-protocol.md

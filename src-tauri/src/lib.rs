@@ -47,6 +47,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(PtyManager::new(config.terminal_kitty_keyboard))
         .manage(db.clone())
         .manage(plan_state.clone())

@@ -5,14 +5,16 @@ use wezterm_term::color::ColorPalette;
 /// cluihud's [`TerminalConfiguration`] implementation.
 ///
 /// Differences from the wezterm-term defaults:
-/// - **CSI-u key encoding always on**. This makes Ctrl+Backspace,
-///   Shift+Enter, Alt+letter, and friends encode with unambiguous
-///   sequences without requiring the running shell to opt into anything.
-///   It is the lower-level knob that most directly gives us the "like
-///   Ghostty" keyboard behavior.
-/// - **Kitty keyboard protocol on by default**. Applications that want the
-///   richer protocol (typing-event granularity, modifier reports) can opt
-///   in via `CSI > 1 u`; if Kitty is off we still get CSI-u.
+/// - **CSI-u key encoding off** (same as wezterm default). We previously
+///   turned it on globally hoping to disambiguate Ctrl+Backspace, but that
+///   wraps the byte in `\x1b[8;5u` which breaks the shells' default
+///   `^H → backward-kill-word` binding. Leaving CSI-u off means
+///   Ctrl+Backspace emits plain `\x08` (BS) and Backspace emits `\x7f`
+///   (DEL) — same as Ghostty, and every mainstream shell already binds
+///   them correctly.
+/// - **Kitty keyboard protocol on by default**. Applications can still
+///   opt into the richer protocol via `CSI > 1 u`; Kitty supersedes CSI-u
+///   when the running app enables it.
 /// - Scrollback defaults to 10_000 rows (wezterm default is 3_500; cluihud
 ///   sessions tend to produce longer tool-output transcripts).
 #[derive(Debug)]
@@ -62,10 +64,11 @@ impl TerminalConfiguration for CluihudTerminalConfig {
     }
 
     fn enable_csi_u_key_encoding(&self) -> bool {
-        // Always on: gives us Ctrl+Backspace ≠ Backspace, Shift+Enter ≠
-        // Enter, Alt+letter with explicit encoding, regardless of whether
-        // the running application ever opts into Kitty.
-        true
+        // Default off so Ctrl+Backspace emits plain `\x08` (BS) and shells
+        // with the default `^H → backward-kill-word` binding Just Work.
+        // When the user disables Kitty, we flip CSI-u on instead so keys
+        // stay disambiguated via the CSI-u fallback.
+        !self.kitty_keyboard
     }
 
     fn enable_kitty_keyboard(&self) -> bool {

@@ -13,6 +13,36 @@ use super::types::TerminalKeyEvent;
 /// Returns `None` when the key cannot be meaningfully mapped (dead keys,
 /// OS-level hotkeys, etc.) — callers should just drop the event in that case.
 pub fn map_event(event: &TerminalKeyEvent) -> Option<(KeyCode, Modifiers)> {
+    // Drop events that carry no user intent for the PTY:
+    // - Lone modifier keydowns (`Control`, `Shift`, `Alt`, `Meta`) would
+    //   otherwise fall through to the `Char('C')` etc. branch because the
+    //   `key` string starts with those letters. That bug was letting a
+    //   solo Ctrl press reach the shell as Ctrl+C and wipe the line.
+    // - Dead keys (accent composition lead-ins) carry `key="Dead"`, which
+    //   would be interpreted as `Char('D')`.
+    // - Browser-placeholder keys like `Unidentified` and `Process`.
+    if matches!(
+        event.code.as_str(),
+        "ControlLeft"
+            | "ControlRight"
+            | "ShiftLeft"
+            | "ShiftRight"
+            | "AltLeft"
+            | "AltRight"
+            | "MetaLeft"
+            | "MetaRight"
+            | "OSLeft"
+            | "OSRight"
+    ) {
+        return None;
+    }
+    if matches!(
+        event.key.as_str(),
+        "Dead" | "Unidentified" | "Process" | "Control" | "Shift" | "Alt" | "Meta" | "Super"
+    ) {
+        return None;
+    }
+
     let mods = modifiers_for(event);
 
     // Physical key mappings first — these must not be shadowed by `text`
@@ -148,6 +178,41 @@ mod tests {
         // when a dead sequence resolves; drop them instead of forwarding
         // bogus `Char('\0')` to the shell.
         let e = evt("Unidentified", "\u{0}");
+        assert!(map_event(&e).is_none());
+    }
+
+    #[test]
+    fn lone_modifier_keydowns_are_rejected() {
+        // Pressing a bare Control / Shift / Alt / Meta key must not reach
+        // the PTY — if we let `key="Control"` fall into the Char fallback
+        // we end up sending Char('C') with CTRL mod, which wezterm encodes
+        // as `\x03` (SIGINT) and wipes the shell line.
+        for (code, key) in [
+            ("ControlLeft", "Control"),
+            ("ControlRight", "Control"),
+            ("ShiftLeft", "Shift"),
+            ("AltLeft", "Alt"),
+            ("MetaLeft", "Meta"),
+            ("OSLeft", "Meta"),
+        ] {
+            let mut e = evt(code, key);
+            e.ctrl = key == "Control";
+            e.shift = key == "Shift";
+            e.alt = key == "Alt";
+            e.meta = key == "Meta";
+            assert!(
+                map_event(&e).is_none(),
+                "bare {} must not map to any KeyCode",
+                key
+            );
+        }
+    }
+
+    #[test]
+    fn dead_keys_are_rejected() {
+        // The accent lead-in on Spanish / Latin layouts. Must not send
+        // `Char('D')` to the PTY.
+        let e = evt("BracketRight", "Dead");
         assert!(map_event(&e).is_none());
     }
 }

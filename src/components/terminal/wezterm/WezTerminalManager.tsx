@@ -11,6 +11,11 @@ import {
 import { focusZoneAtom } from "@/stores/shortcuts";
 import * as wezTerminalService from "./wezTerminalService";
 
+/// Trigger order on pane switch: the global shortcut handler sets
+/// `focusZoneAtom` to "terminal", which invalidates this effect; we then
+/// reach into the service to focus the active canvas. Without this, users
+/// had to click back into the terminal after every pane toggle.
+
 /// Drop-in replacement for the legacy `TerminalManager` — same props/atoms,
 /// same React lifecycle; the rendering internals switch to the wezterm-term
 /// backed canvas renderer. Gated by `experimental_wezterm_terminal` in
@@ -23,8 +28,15 @@ export function WezTerminalManager() {
   const activeWorkspace = useAtomValue(activeWorkspaceAtom);
   const launchModes = useAtomValue(sessionLaunchModeAtom);
   const freshSessions = useAtomValue(freshSessionsAtom);
+  const focusZone = useAtomValue(focusZoneAtom);
   const setFocusZone = useSetAtom(focusZoneAtom);
   const hostRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (focusZone === "terminal") {
+      wezTerminalService.focusActive();
+    }
+  }, [focusZone]);
 
   useEffect(() => {
     wezTerminalService.setHost(hostRef.current);

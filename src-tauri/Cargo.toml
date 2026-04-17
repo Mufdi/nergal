@@ -25,6 +25,7 @@ clap = { version = "4", features = ["derive"] }
 tauri-plugin-dialog = "2.6.0"
 rusqlite = { version = "0.34", features = ["bundled"] }
 tauri-plugin-notification = "2"
+tauri-plugin-clipboard-manager = "2"
 
 # Terminal VT emulation (Phase 1 of replace-xterm-with-wezterm).
 # wezterm-term / termwiz are not published on crates.io — they only live inside

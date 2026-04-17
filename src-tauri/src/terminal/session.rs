@@ -382,7 +382,11 @@ mod tests {
     }
 
     #[test]
-    fn shift_enter_encodes_differently_from_plain_enter() {
+    fn shift_enter_matches_plain_enter_by_default() {
+        // Default config keeps CSI-u off so shells see standard `\r` for
+        // both Enter and Shift+Enter. Applications that want a distinct
+        // sequence opt into Kitty (shell-side, via `CSI > 1 u`). This
+        // documents the "behave like Ghostty by default" contract.
         let (mut s, w) = session_with_writer(80, 24);
 
         s.key_down(&evt("Enter", "Enter")).unwrap();
@@ -394,7 +398,27 @@ mod tests {
         s.key_down(&shift_enter).unwrap();
         let with_shift = w.drain();
 
-        assert_ne!(plain, with_shift, "Shift+Enter must be distinguishable");
+        assert_eq!(plain, with_shift, "default config: Shift+Enter == Enter");
+    }
+
+    #[test]
+    fn shift_enter_distinguishes_when_csi_u_fallback_active() {
+        // With Kitty disabled, CSI-u kicks in as the fallback and now
+        // Shift+Enter encodes as a distinct CSI-u sequence.
+        let w = CapturedWriter::new();
+        let cfg = CluihudTerminalConfig::new().with_kitty_keyboard(false);
+        let mut s = TerminalSession::with_config(80, 24, Box::new(w.clone()), cfg);
+
+        s.key_down(&evt("Enter", "Enter")).unwrap();
+        let plain = w.drain();
+        w.clear();
+
+        let mut shift_enter = evt("Enter", "Enter");
+        shift_enter.shift = true;
+        s.key_down(&shift_enter).unwrap();
+        let with_shift = w.drain();
+
+        assert_ne!(plain, with_shift, "csi_u fallback: Shift+Enter distinct from Enter");
     }
 
     #[test]

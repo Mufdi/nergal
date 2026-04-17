@@ -14,6 +14,10 @@
 import { invoke, listen } from "@/lib/tauri";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { open as openShell } from "@tauri-apps/plugin-shell";
+import {
+  readText as readClipboard,
+  writeText as writeClipboard,
+} from "@tauri-apps/plugin-clipboard-manager";
 import type { CellSnapshot, GridUpdate, TerminalKeyEvent } from "@/lib/types";
 
 import { FontAtlas, measureFont, type FontMetrics } from "./fontAtlas";
@@ -35,6 +39,11 @@ interface Entry {
   sessionId: string;
   container: HTMLDivElement;
   canvas: HTMLCanvasElement;
+  /// Hidden 1x1 textarea overlay used exclusively as the keyboard focus
+  /// target so the browser gives us proper `compositionstart/end` events
+  /// for dead keys, IME, and accented-character composition. The canvas
+  /// itself only handles mouse events.
+  textarea: HTMLTextAreaElement;
   ctx: CanvasRenderingContext2D;
   atlas: FontAtlas;
   metrics: FontMetrics;
@@ -48,6 +57,7 @@ interface Entry {
   selection: Selection | null;
   isDragging: boolean;
   hoveredHyperlink: string | null;
+  composing: boolean;
 }
 
 // ── Module state ──
@@ -102,9 +112,34 @@ export async function show(
     );
 
     const canvas = document.createElement("canvas");
-    canvas.tabIndex = 0;
     canvas.style.cssText = "outline:none;display:block;";
     container.appendChild(canvas);
+
+    // Hidden focus target. 1×1 px positioned at origin keeps it unobtrusive
+    // but still a first-class input surface so IME popovers (if the OS
+    // shows them) appear near the top-left instead of floating offscreen.
+    const textarea = document.createElement("textarea");
+    textarea.setAttribute("aria-label", "Terminal input");
+    textarea.autocapitalize = "off";
+    textarea.autocomplete = "off";
+    textarea.spellcheck = false;
+    textarea.style.cssText = [
+      "position:absolute",
+      "top:0",
+      "left:0",
+      "width:1px",
+      "height:1px",
+      "opacity:0",
+      "resize:none",
+      "border:0",
+      "padding:0",
+      "margin:0",
+      "outline:none",
+      "overflow:hidden",
+      "z-index:1",
+      "pointer-events:none",
+    ].join(";") + ";";
+    container.appendChild(textarea);
 
     const dpr = window.devicePixelRatio || 1;
     const metrics = measureFont(WEZ_FONT.family, WEZ_FONT.size, WEZ_FONT.lineHeight, dpr);
@@ -120,6 +155,7 @@ export async function show(
       sessionId,
       container,
       canvas,
+      textarea,
       ctx,
       atlas,
       metrics,
@@ -133,6 +169,7 @@ export async function show(
       selection: null,
       isDragging: false,
       hoveredHyperlink: null,
+      composing: false,
     };
 
     wireInput(entry);
@@ -208,10 +245,19 @@ export function hasTerminal(sessionId: string): boolean {
 // ── Private: input wiring ──
 
 function wireInput(entry: Entry): void {
-  entry.canvas.addEventListener("keydown", (e) => {
+  // ── Keyboard: lives on the hidden textarea so we get composition events ──
+
+  entry.textarea.addEventListener("keydown", (e) => {
+    // Bare modifier / dead-key presses never reach the PTY. Without this,
+    // `key="Control"` would fall into the backend's Char fallback and send
+    // Ctrl+C to the shell on every Control keypress.
+    if (isModifierOrDead(e)) return;
+
+    // While the browser is composing an IME sequence, let the textarea
+    // accumulate; we'll forward the result via `compositionend`.
+    if (e.isComposing || entry.composing) return;
+
     // Terminal-scoped copy/paste wins over the global pass-through list.
-    // Copy only fires when there's a selection; otherwise Ctrl+Shift+C
-    // falls through to whatever cluihud bound it to globally.
     if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyC" && entry.selection) {
       e.preventDefault();
       void copySelection(entry);
@@ -225,6 +271,12 @@ function wireInput(entry: Entry): void {
 
     if (shouldPassThrough(e)) return;
 
+    // Unmodified printable keys go through the `input` event instead so
+    // the textarea's composition state stays coherent with the browser —
+    // anything else (modified keys, arrows, Enter, etc.) bypasses the
+    // textarea and is encoded by the backend directly.
+    if (!isSpecialOrModified(e)) return;
+
     // Any typing implicitly commits the selection — matches every mainstream
     // terminal's "type to clear highlight" behavior.
     if (entry.selection) {
@@ -233,21 +285,32 @@ function wireInput(entry: Entry): void {
     }
 
     e.preventDefault();
-
-    const payload: TerminalKeyEvent = {
-      code: e.code,
-      key: e.key,
-      text: isPrintable(e.key) ? e.key : undefined,
-      ctrl: e.ctrlKey,
-      shift: e.shiftKey,
-      alt: e.altKey,
-      meta: e.metaKey,
-    };
-
-    invoke("terminal_input", { sessionId: entry.sessionId, event: payload }).catch((err) =>
-      console.error("terminal_input failed", err),
-    );
+    sendKeyEvent(entry, e);
   });
+
+  entry.textarea.addEventListener("input", (e) => {
+    const ie = e as InputEvent;
+    if (ie.isComposing || entry.composing) return;
+    const text = entry.textarea.value;
+    entry.textarea.value = "";
+    if (!text) return;
+    sendText(entry, text);
+  });
+
+  entry.textarea.addEventListener("compositionstart", () => {
+    entry.composing = true;
+  });
+
+  entry.textarea.addEventListener("compositionend", (e) => {
+    entry.composing = false;
+    const composed = e.data ?? entry.textarea.value;
+    entry.textarea.value = "";
+    if (composed) {
+      sendText(entry, composed);
+    }
+  });
+
+  // ── Mouse: lives on the visible canvas ──
 
   entry.canvas.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
@@ -327,7 +390,10 @@ async function copySelection(entry: Entry): Promise<void> {
   const text = serializeSelection(entry);
   if (!text) return;
   try {
-    await navigator.clipboard.writeText(text);
+    // Tauri plugin routes through IPC, sidestepping WebKit's
+    // user-gesture-only clipboard policy that silently blocked
+    // `navigator.clipboard.writeText` for us.
+    await writeClipboard(text);
   } catch (err) {
     console.error("clipboard write failed", err);
   }
@@ -335,7 +401,7 @@ async function copySelection(entry: Entry): Promise<void> {
 
 async function pasteFromClipboard(entry: Entry): Promise<void> {
   try {
-    const text = await navigator.clipboard.readText();
+    const text = await readClipboard();
     if (!text) return;
     await invoke("terminal_paste", { sessionId: entry.sessionId, text });
   } catch (err) {
@@ -392,6 +458,90 @@ function isPrintable(key: string): boolean {
   return code >= 0x20 && code !== 0x7f;
 }
 
+/// A keydown is "special or modified" when it can't be safely handed to the
+/// textarea's `input` event — either because it has a non-text meaning
+/// (arrows, Enter, Backspace, function keys) or because modifiers change
+/// what the shell should receive (Ctrl+A, Alt+letter, etc.). Those bypass
+/// the textarea and go straight to the wezterm encoder on the backend.
+function isSpecialOrModified(e: KeyboardEvent): boolean {
+  if (e.ctrlKey || e.altKey || e.metaKey) return true;
+  if (e.key.length !== 1) return true;
+  return false;
+}
+
+function sendKeyEvent(entry: Entry, e: KeyboardEvent): void {
+  const payload: TerminalKeyEvent = {
+    code: e.code,
+    key: e.key,
+    text: isPrintable(e.key) ? e.key : undefined,
+    ctrl: e.ctrlKey,
+    shift: e.shiftKey,
+    alt: e.altKey,
+    meta: e.metaKey,
+  };
+  invoke("terminal_input", { sessionId: entry.sessionId, event: payload }).catch(
+    (err: unknown) => console.error("terminal_input failed", err),
+  );
+}
+
+/// Send a composed string of text (from an IME `input` event or
+/// `compositionend`). Encoded as a single-char-per-call stream so the
+/// backend's encoder sees each grapheme independently — matches how native
+/// keyboard input arrives.
+function sendText(entry: Entry, text: string): void {
+  for (const ch of text) {
+    const payload: TerminalKeyEvent = {
+      code: "IME",
+      key: ch,
+      text: ch,
+      ctrl: false,
+      shift: false,
+      alt: false,
+      meta: false,
+    };
+    invoke("terminal_input", { sessionId: entry.sessionId, event: payload }).catch(
+      (err: unknown) => console.error("terminal_input failed", err),
+    );
+  }
+  if (entry.selection) {
+    entry.selection = null;
+    paintAll(entry);
+  }
+}
+
+/// Keys that carry no user intent for the PTY and must be dropped before
+/// invoking `terminal_input`. Includes lone modifier keydowns (whose `key`
+/// is the modifier's name and would otherwise be letter-mapped — e.g.
+/// bare Ctrl as `Char('C')` which the backend encodes as Ctrl+C = SIGINT),
+/// dead keys (accent lead-ins), and browser placeholders.
+const DROPPED_CODES = new Set([
+  "ControlLeft",
+  "ControlRight",
+  "ShiftLeft",
+  "ShiftRight",
+  "AltLeft",
+  "AltRight",
+  "MetaLeft",
+  "MetaRight",
+  "OSLeft",
+  "OSRight",
+]);
+
+const DROPPED_KEYS = new Set([
+  "Dead",
+  "Unidentified",
+  "Process",
+  "Control",
+  "Shift",
+  "Alt",
+  "Meta",
+  "Super",
+]);
+
+function isModifierOrDead(e: KeyboardEvent): boolean {
+  return DROPPED_CODES.has(e.code) || DROPPED_KEYS.has(e.key);
+}
+
 function shouldPassThrough(e: KeyboardEvent): boolean {
   // Same shortcut set the legacy terminalService.wireIMEFix filters — these
   // are handled by cluihud globally, not by the terminal.
@@ -426,7 +576,9 @@ function shouldPassThrough(e: KeyboardEvent): boolean {
 }
 
 function focusCanvas(entry: Entry): void {
-  entry.canvas.focus({ preventScroll: true });
+  // Input focus lives on the hidden textarea so IME/composition events
+  // reach us; the canvas is purely visual + mouse.
+  entry.textarea.focus({ preventScroll: true });
 }
 
 // ── Private: resize + layout ──

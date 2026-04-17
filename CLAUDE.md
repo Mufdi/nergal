@@ -3,6 +3,16 @@
 Desktop app wrapper para Claude Code CLI (Plan Pro) en Linux.
 Tauri v2 + React 19 hybrid architecture.
 
+## What cluihud is NOT
+
+Prevent misframing in analysis, recommendations, and tool-driven suggestions:
+
+- **NOT a standalone terminal** — cluihud always runs `claude` underneath. It does not replace bash/zsh, tmux, or any general-purpose shell.
+- **NOT a Claude Code reimplementation** — it does not reimplement slash commands, skills, agents, hooks, or any Claude-native functionality. It **observes** the session via the hook pipeline and **augments** the UX around it.
+- **NOT an agent framework** — no training loops, no skill emergence, no multi-model orchestration. Those belong to Claude Code itself or to personal skills.
+
+**Useful recommendations** are those that improve the **experience of using Claude Code**: plan editing UX, task visibility, session navigation, hook-driven panels, keyboard shortcuts, workspace/worktree management. Recommendations that would replace Claude-native functionality or add terminal-level features should be redirected to the `personal` lane (personal CC workflow) or rejected.
+
 ## Project Documentation
 
 - Design doc completo: `/home/felipe/Documents/Obsidian23/Projects/cluihud/cluihud.md`

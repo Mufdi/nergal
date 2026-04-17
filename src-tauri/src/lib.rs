@@ -58,6 +58,7 @@ pub fn run() {
             pty::pty_kill,
             pty::start_claude_session,
             pty::kill_session_pty,
+            pty::terminal_get_full_grid,
             // Config commands
             commands::get_config,
             commands::save_config,

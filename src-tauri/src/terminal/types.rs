@@ -46,3 +46,51 @@ pub struct GridSnapshot {
     pub cursor: CursorSnapshot,
     pub title: Option<String>,
 }
+
+/// Delta-ish payload emitted over the `terminal:grid-update` Tauri event.
+///
+/// Only rows that changed since the last emission are included, each paired
+/// with their visible-row index. `cursor` and `title` always reflect the
+/// current state (they are cheap to send and the frontend needs them every
+/// tick to render the caret and the tab label).
+///
+/// `scroll_offset` is reserved for Phase 3 scrollback support; Phase 2 emits
+/// `0` since the viewport is always pinned to the bottom.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GridUpdate {
+    pub session_id: String,
+    pub cols: usize,
+    pub total_rows: usize,
+    pub rows: Vec<GridRow>,
+    pub cursor: CursorSnapshot,
+    pub title: Option<String>,
+    pub scroll_offset: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GridRow {
+    pub index: usize,
+    pub cells: Vec<CellSnapshot>,
+}
+
+/// A key event as delivered by the frontend. Phase 2 defines the shape so the
+/// emitter event contract and the input contract co-evolve; the backend
+/// handler lands in Phase 3 (task 3.x).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalKeyEvent {
+    pub code: String,
+    pub key: String,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub ctrl: bool,
+    #[serde(default)]
+    pub shift: bool,
+    #[serde(default)]
+    pub alt: bool,
+    #[serde(default)]
+    pub meta: bool,
+}

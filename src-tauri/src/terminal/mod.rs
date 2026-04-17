@@ -7,13 +7,21 @@
 //! and [`CluihudTerminalConfig`] (the [`TerminalConfiguration`] impl that
 //! enables Kitty keyboard protocol and sets cluihud-specific defaults).
 
-// Phase 1: nothing wires these into Tauri commands yet; Phase 2 will.
+// Phase 2: wired for dual-emission alongside the legacy `pty:output` path.
+// Until the frontend renderer lands (Phase 3) some of these re-exports have
+// no in-tree consumers; keep the warnings quiet while the module grows.
 #![allow(dead_code, unused_imports)]
 
 mod config;
+mod differ;
+mod emitter;
 mod session;
 mod types;
 
 pub use config::CluihudTerminalConfig;
+pub use differ::GridDiffer;
+pub use emitter::TerminalHandle;
 pub use session::TerminalSession;
-pub use types::{CellSnapshot, CursorSnapshot, GridSnapshot};
+pub use types::{
+    CellSnapshot, CursorSnapshot, GridRow, GridSnapshot, GridUpdate, TerminalKeyEvent,
+};

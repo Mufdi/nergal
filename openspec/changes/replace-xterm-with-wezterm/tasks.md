@@ -10,12 +10,12 @@
 
 ## 2. Backend: grid diffing and emission
 
-- [ ] 2.1 Define `Cell` and `GridUpdate` serde types in `src-tauri/src/terminal/types.rs` matching the design doc
-- [ ] 2.2 Implement `GridDiffer` that keeps the last emitted row hashes and returns only changed rows
-- [ ] 2.3 Spawn one tokio task per session that listens on a `Notify` and, when triggered, sleeps 8ms coalescing and then emits `terminal:grid-update` via `app.emit(...)`
-- [ ] 2.4 Hook the PTY reader thread (`pty.rs:spawn_pty`) so after `reader.read(...)` it does `session.advance_bytes(chunk)` + `notify.notify_one()` instead of (or in parallel with, during migration) emitting `pty:output`
-- [ ] 2.5 Add `terminal_get_full_grid` command for initial render on mount (client asks for the full state, backend returns a single `GridUpdate` with all rows)
-- [ ] 2.6 Add tests: rapid successive writes produce coalesced updates; stable terminal produces no updates
+- [x] 2.1 Define `GridUpdate`, `GridRow`, and `TerminalKeyEvent` serde types in `src-tauri/src/terminal/types.rs` (camelCase for JS consumption). `CellSnapshot` from Phase 1 is reused as the cell representation.
+- [x] 2.2 Implement `GridDiffer` in `differ.rs` that keeps per-row content hashes + last cursor + last title, returns only changed rows, and supports `invalidate()` for forced full resends
+- [x] 2.3 `TerminalHandle::spawn_emitter` launches a `tauri::async_runtime::spawn` task: awaits the `Notify`, sleeps 8ms to coalesce, snapshots the session, diffs, emits `terminal:grid-update` if there is a change
+- [x] 2.4 Reader thread in `pty.rs:spawn_pty` feeds chunks into `TerminalSession::advance_bytes` and calls `notify_one()` in parallel with the legacy `pty:output` emission (dual-emission per migration plan)
+- [x] 2.5 Add `terminal_get_full_grid` Tauri command that invalidates the differ and returns a complete `GridUpdate` for the session
+- [x] 2.6 Differ-level tests cover: first-call emits all rows, identical snapshot emits nothing, single-row change, cursor-only move, invalidate forces resend, row-count change. End-to-end coalescing behavior validated manually once the frontend consumer lands in Phase 4.
 
 ## 3. Backend: input encoding via wezterm
 

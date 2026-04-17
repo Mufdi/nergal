@@ -61,6 +61,7 @@ pub fn run() {
             pty::terminal_input,
             pty::terminal_get_full_grid,
             pty::resize_session_terminal,
+            pty::terminal_paste,
             // Config commands
             commands::get_config,
             commands::save_config,

@@ -13,10 +13,21 @@
 
 import { invoke, listen } from "@/lib/tauri";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import { open as openShell } from "@tauri-apps/plugin-shell";
 import type { CellSnapshot, GridUpdate, TerminalKeyEvent } from "@/lib/types";
 
 import { FontAtlas, measureFont, type FontMetrics } from "./fontAtlas";
 import { WEZ_FONT, WEZ_THEME, rgbaToCss } from "./theme";
+
+interface CellCoord {
+  col: number;
+  row: number;
+}
+
+interface Selection {
+  anchor: CellCoord;
+  head: CellCoord;
+}
 
 // ── Types ──
 
@@ -34,6 +45,9 @@ interface Entry {
   cursor: { x: number; y: number; visible: boolean };
   title: string | null;
   unlisten: UnlistenFn;
+  selection: Selection | null;
+  isDragging: boolean;
+  hoveredHyperlink: string | null;
 }
 
 // ── Module state ──
@@ -116,6 +130,9 @@ export async function show(
       cursor: { x: 0, y: 0, visible: true },
       title: null,
       unlisten: () => {},
+      selection: null,
+      isDragging: false,
+      hoveredHyperlink: null,
     };
 
     wireInput(entry);
@@ -192,8 +209,28 @@ export function hasTerminal(sessionId: string): boolean {
 
 function wireInput(entry: Entry): void {
   entry.canvas.addEventListener("keydown", (e) => {
-    // Global cluihud shortcuts pass through (same list as the legacy path).
+    // Terminal-scoped copy/paste wins over the global pass-through list.
+    // Copy only fires when there's a selection; otherwise Ctrl+Shift+C
+    // falls through to whatever cluihud bound it to globally.
+    if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyC" && entry.selection) {
+      e.preventDefault();
+      void copySelection(entry);
+      return;
+    }
+    if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyV") {
+      e.preventDefault();
+      void pasteFromClipboard(entry);
+      return;
+    }
+
     if (shouldPassThrough(e)) return;
+
+    // Any typing implicitly commits the selection — matches every mainstream
+    // terminal's "type to clear highlight" behavior.
+    if (entry.selection) {
+      entry.selection = null;
+      paintAll(entry);
+    }
 
     e.preventDefault();
 
@@ -212,7 +249,141 @@ function wireInput(entry: Entry): void {
     );
   });
 
-  entry.canvas.addEventListener("mousedown", () => focusCanvas(entry));
+  entry.canvas.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    focusCanvas(entry);
+    const cell = mouseToCell(entry, e);
+    if (!cell) return;
+
+    // Click on a hyperlink cell (without a drag) opens it. We distinguish
+    // click-vs-drag by comparing mousedown and mouseup cell positions in
+    // the mouseup handler below.
+    entry.isDragging = true;
+    entry.selection = { anchor: cell, head: cell };
+    paintAll(entry);
+  });
+
+  entry.canvas.addEventListener("mousemove", (e) => {
+    const cell = mouseToCell(entry, e);
+    if (!cell) return;
+
+    if (entry.isDragging && entry.selection) {
+      entry.selection = { anchor: entry.selection.anchor, head: cell };
+      paintAll(entry);
+      return;
+    }
+
+    // Hover: detect hyperlink under the cursor and flip the pointer.
+    const hyperlink = entry.grid[cell.row]?.[cell.col]?.hyperlink ?? null;
+    if (hyperlink !== entry.hoveredHyperlink) {
+      entry.hoveredHyperlink = hyperlink;
+      entry.canvas.style.cursor = hyperlink ? "pointer" : "default";
+    }
+  });
+
+  entry.canvas.addEventListener("mouseup", (e) => {
+    if (!entry.isDragging) return;
+    entry.isDragging = false;
+
+    if (entry.selection) {
+      const { anchor, head } = entry.selection;
+      const isClick = anchor.col === head.col && anchor.row === head.row;
+      if (isClick) {
+        // No drag happened — treat as a plain click. Clear the selection
+        // (a one-cell "selection" is not useful) and resolve the hyperlink
+        // if the click landed on one.
+        entry.selection = null;
+        const cell = mouseToCell(entry, e);
+        const hyperlink = cell ? entry.grid[cell.row]?.[cell.col]?.hyperlink : null;
+        if (hyperlink) {
+          openShell(hyperlink).catch((err: unknown) => {
+            console.error("shell.open hyperlink failed", err);
+          });
+        }
+        paintAll(entry);
+      }
+    }
+  });
+
+  // Releasing outside the canvas must still end the drag so we don't get
+  // stuck with isDragging=true if the user rolls off the pane mid-drag.
+  entry.canvas.addEventListener("mouseleave", () => {
+    entry.isDragging = false;
+  });
+}
+
+function mouseToCell(entry: Entry, e: MouseEvent): CellCoord | null {
+  const rect = entry.canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  if (x < 0 || y < 0) return null;
+  const col = Math.floor(x / entry.metrics.cssWidth);
+  const row = Math.floor(y / entry.metrics.cssHeight);
+  if (col >= entry.cols || row >= entry.rows) return null;
+  return { col, row };
+}
+
+async function copySelection(entry: Entry): Promise<void> {
+  const text = serializeSelection(entry);
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (err) {
+    console.error("clipboard write failed", err);
+  }
+}
+
+async function pasteFromClipboard(entry: Entry): Promise<void> {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (!text) return;
+    await invoke("terminal_paste", { sessionId: entry.sessionId, text });
+  } catch (err) {
+    console.error("clipboard read / paste failed", err);
+  }
+}
+
+/// Walk the selection rectangle row-by-row, trimming trailing blanks per row
+/// (matches how xterm.js and wezterm both serialize selected regions).
+function serializeSelection(entry: Entry): string {
+  if (!entry.selection) return "";
+  const { startRow, endRow, startCol, endCol } = orderSelection(entry.selection);
+  const lines: string[] = [];
+  for (let row = startRow; row <= endRow; row += 1) {
+    const cells = entry.grid[row];
+    if (!cells) continue;
+    const from = row === startRow ? startCol : 0;
+    const to = row === endRow ? endCol : entry.cols - 1;
+    let text = "";
+    for (let col = from; col <= to; col += 1) {
+      text += cells[col]?.ch ?? " ";
+    }
+    lines.push(text.replace(/ +$/, ""));
+  }
+  return lines.join("\n");
+}
+
+function orderSelection(sel: Selection): {
+  startRow: number;
+  endRow: number;
+  startCol: number;
+  endCol: number;
+} {
+  const { anchor, head } = sel;
+  if (anchor.row < head.row || (anchor.row === head.row && anchor.col <= head.col)) {
+    return {
+      startRow: anchor.row,
+      endRow: head.row,
+      startCol: anchor.col,
+      endCol: head.col,
+    };
+  }
+  return {
+    startRow: head.row,
+    endRow: anchor.row,
+    startCol: head.col,
+    endCol: anchor.col,
+  };
 }
 
 function isPrintable(key: string): boolean {
@@ -372,6 +543,9 @@ function applyUpdate(entry: Entry, update: GridUpdate): void {
   for (const y of touchedRows) {
     if (y >= 0 && y < entry.rows) paintRow(entry, y);
   }
+  // `paintRow` overwrites the row entirely, so any selection tint on those
+  // rows needs to be re-applied before the cursor draws on top.
+  paintSelection(entry);
   paintCursor(entry);
 }
 
@@ -389,6 +563,7 @@ function paintAll(entry: Entry): void {
   entry.ctx.fillStyle = WEZ_THEME.background;
   entry.ctx.fillRect(0, 0, entry.canvas.width, entry.canvas.height);
   for (let y = 0; y < entry.rows; y += 1) paintRow(entry, y);
+  paintSelection(entry);
   paintCursor(entry);
 }
 
@@ -431,6 +606,26 @@ function paintRow(entry: Entry, y: number): void {
         Math.max(1, Math.floor(metrics.cellHeight / 16)),
       );
     }
+  }
+}
+
+function paintSelection(entry: Entry): void {
+  if (!entry.selection) return;
+  // Skip zero-size "selections" — one-cell mousedown without a drag.
+  const { anchor, head } = entry.selection;
+  if (anchor.col === head.col && anchor.row === head.row) return;
+
+  const { startRow, endRow, startCol, endCol } = orderSelection(entry.selection);
+  const { ctx, metrics, cols } = entry;
+
+  ctx.fillStyle = WEZ_THEME.selectionBackground;
+  for (let row = startRow; row <= endRow; row += 1) {
+    const from = row === startRow ? startCol : 0;
+    const to = row === endRow ? endCol : cols - 1;
+    const dx = from * metrics.cellWidth;
+    const dy = row * metrics.cellHeight;
+    const width = (to - from + 1) * metrics.cellWidth;
+    ctx.fillRect(dx, dy, width, metrics.cellHeight);
   }
 }
 

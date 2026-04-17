@@ -44,17 +44,17 @@
 
 ## 6. Frontend: selection, copy/paste, scrollback
 
-- [ ] 6.1 Mouse-drag selection: `mousedown` → track start cell; `mousemove` → compute end cell and highlight range; `mouseup` → freeze selection
-- [ ] 6.2 Copy: Ctrl+C (when selection active and not passing through to shell via SIGINT concerns) → extract cells from selection range via `terminal_copy_selection` command → `navigator.clipboard.writeText`
-- [ ] 6.3 Paste: Ctrl+Shift+V → `navigator.clipboard.readText` → send as bracketed paste via `terminal_paste` command (backend wraps in `\x1b[200~...\x1b[201~`)
-- [ ] 6.4 Scrollback: wheel event → track scroll offset in frontend → include offset in subsequent render requests → backend provides scrollback rows via `terminal_get_scrollback(session_id, offset, lines)`
-- [ ] 6.5 Scroll-to-bottom on new input or when user types (match xterm.js behavior)
+- [x] 6.1 `mousedown/move/up` in `wireInput` — anchor-and-head selection with cell-accurate hit testing via `mouseToCell`. `paintSelection` overlays `WEZ_THEME.selectionBackground` on the selected rectangle; re-applied after per-row repaints so live updates don't wipe the tint.
+- [x] 6.2 Ctrl+Shift+C (only when a selection is active; otherwise falls through to cluihud global). `serializeSelection` walks rows, trimming trailing blanks per row, joined with `\n`, then `navigator.clipboard.writeText`.
+- [x] 6.3 Ctrl+Shift+V → `navigator.clipboard.readText` → new backend `terminal_paste` command wraps text in `\x1b[200~...\x1b[201~` and writes to the PTY.
+- [ ] 6.4 Scrollback — deferred. Needs a `terminal_get_scrollback` backend command and a scroll-offset render mode in the renderer. Not required for MVP; the backend already keeps 10k rows of scrollback, so the state exists, just not exposed to the frontend yet.
+- [x] 6.5 Typing clears any active selection before sending the key — matches every mainstream terminal's "type to dismiss highlight" behavior. Auto-scroll-to-bottom is implicit: the renderer is always pinned to the live viewport until 6.4 lands.
 
 ## 7. Frontend: OSC 8 hyperlinks
 
-- [ ] 7.1 Surface `hyperlink` field in the `Cell` type; renderer underlines cells with a hyperlink
-- [ ] 7.2 Track hover: mouseover a hyperlink cell → cursor changes to pointer
-- [ ] 7.3 Click a hyperlink cell → open in system browser via Tauri `shell.open` (for https/http) or file handler (for file://)
+- [x] 7.1 `CellSnapshot.hyperlink: string | null` already surfaces via `terminal:grid-update`. Phase 4's `paintRow` underlines cells (since `cell.underline` follows OSC 8 once wezterm sets it) — independently, the click target is computed from `hyperlink` so the visual and functional cues match.
+- [x] 7.2 `mousemove` (non-drag) inspects `entry.grid[row][col].hyperlink`; flips `canvas.style.cursor` to `pointer` on entry and back to `default` on exit.
+- [x] 7.3 `mouseup` distinguishes click vs drag: a mousedown+mouseup on the same cell with a hyperlink calls `open(hyperlink)` from `@tauri-apps/plugin-shell`. Drags resolve to selections instead.
 
 ## 8. Migration flag and coexistence
 

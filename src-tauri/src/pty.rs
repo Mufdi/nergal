@@ -373,6 +373,35 @@ pub fn pty_resize(
     Ok(())
 }
 
+/// Paste `text` into the session's PTY wrapped in bracketed-paste markers.
+/// Applications that understand bracketed paste (bash, zsh, vim, claude CLI,
+/// etc.) can then treat it as a single paste operation instead of a flurry
+/// of keystrokes — most importantly they skip autoindent / tab-expansion on
+/// the pasted body.
+#[tauri::command]
+pub fn terminal_paste(
+    state: State<'_, PtyManager>,
+    session_id: String,
+    text: String,
+) -> Result<(), String> {
+    let pty_id = {
+        let session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
+        session_ptys
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| "no PTY for session".to_string())?
+    };
+
+    let instances = state.instances.lock().map_err(|e| e.to_string())?;
+    let instance = instances.get(&pty_id).ok_or("PTY instance not found")?;
+    let mut w = instance.writer.lock().map_err(|e| e.to_string())?;
+    w.write_all(b"\x1b[200~").map_err(|e| e.to_string())?;
+    w.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+    w.write_all(b"\x1b[201~").map_err(|e| e.to_string())?;
+    w.flush().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Resize the PTY + wezterm emulator for a session, without needing the
 /// caller to know the opaque pty_id. Used by the canvas renderer since it
 /// holds a session_id, not the pty_id.

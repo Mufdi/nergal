@@ -47,7 +47,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .manage(PtyManager::new())
+        .manage(PtyManager::new(config.terminal_kitty_keyboard))
         .manage(db.clone())
         .manage(plan_state.clone())
         .invoke_handler(tauri::generate_handler![
@@ -58,6 +58,7 @@ pub fn run() {
             pty::pty_kill,
             pty::start_claude_session,
             pty::kill_session_pty,
+            pty::terminal_input,
             pty::terminal_get_full_grid,
             // Config commands
             commands::get_config,

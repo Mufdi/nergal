@@ -19,12 +19,12 @@
 
 ## 3. Backend: input encoding via wezterm
 
-- [ ] 3.1 Define `TerminalKeyEvent` serde type: `{ code, key, text?, ctrl, shift, alt, meta }`
-- [ ] 3.2 Implement a mapping `TerminalKeyEvent -> (wezterm_term::KeyCode, Modifiers)` covering: printable keys, arrows, function keys, Enter, Tab, Backspace, Delete, Home/End, PageUp/Down, Escape
-- [ ] 3.3 Implement new command `terminal_input(session_id, event)` that calls `session.key_down(code, mods)` — wezterm encodes and writes to its registered callback (wire the PTY writer as the sink)
-- [ ] 3.4 Enable Kitty keyboard protocol at terminal init: `Terminal::set_config(TerminalConfiguration { enable_kitty_keyboard: true, ... })`
-- [ ] 3.5 Expose config toggle `terminal.kitty_keyboard` in `config.toml` (default true); pass through to `TerminalSession::new`
-- [ ] 3.6 Tests: Ctrl+Backspace encodes to distinct bytes from Backspace; Shift+Enter encodes distinct from Enter; Alt+letter encodes via CSI-u
+- [x] 3.1 `TerminalKeyEvent` serde type (shipped in Phase 2 alongside GridUpdate)
+- [x] 3.2 `map_event` in `terminal/input.rs` maps code-first with text/key fallback. Covers Enter, Tab, Backspace, Escape, Delete, Insert, Home/End, PageUp/Down, arrows, F1–F24, Numpad Enter, NumLock/CapsLock/ScrollLock, ContextMenu, PrintScreen. Printable chars go through Char('c'); control chars are rejected.
+- [x] 3.3 `terminal_input(session_id, event)` Tauri command in `pty.rs`: locks the session, calls `TerminalSession::key_down` (which delegates to wezterm's encoder with the shared PTY writer as sink), wakes the emitter
+- [x] 3.4 Kitty keyboard protocol enabled via `CluihudTerminalConfig::enable_kitty_keyboard`. **Also**: `enable_csi_u_key_encoding` is unconditionally true so Ctrl+Backspace / Shift+Enter / Alt+letter are distinctive even when the shell never opts into Kitty.
+- [x] 3.5 `Config::terminal_kitty_keyboard` (JSON config, default true via `#[serde(default)]` for backwards compat). `PtyManager::new(kitty_keyboard)` takes the flag; each new session's `CluihudTerminalConfig` is built from it.
+- [x] 3.6 Tests (10 total across `input` and `session` modules): Ctrl+Backspace ≠ Backspace, Shift+Enter ≠ Enter, Alt+letter ≠ bare letter, plain 'a' → `b"a"`, CSI-u fallback still works when Kitty is off, modifier bitflag composition, F-key range parsing, physical-key precedence over text fallback, control-char rejection.
 
 ## 4. Frontend: terminal renderer core
 

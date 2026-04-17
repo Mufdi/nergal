@@ -1,10 +1,12 @@
 use std::io::Write;
 use std::sync::Arc;
 
+use anyhow::Result;
 use wezterm_term::{Terminal, TerminalSize};
 
 use super::config::CluihudTerminalConfig;
-use super::types::{CellSnapshot, CursorSnapshot, GridSnapshot};
+use super::input::map_event;
+use super::types::{CellSnapshot, CursorSnapshot, GridSnapshot, TerminalKeyEvent};
 
 /// A single terminal emulator instance owned by the backend.
 ///
@@ -75,6 +77,21 @@ impl TerminalSession {
 
     pub fn rows(&self) -> u16 {
         self.rows
+    }
+
+    /// Translate and encode a frontend key event. wezterm owns the actual
+    /// byte encoding (CSI-u, Kitty keyboard protocol, etc.) and writes the
+    /// result into the writer registered at construction time.
+    ///
+    /// Returns `Ok(false)` when the event carries no mappable key (e.g. a
+    /// dead key stroke or a browser-only synthetic event); callers can
+    /// treat that as a silent no-op.
+    pub fn key_down(&mut self, event: &TerminalKeyEvent) -> Result<bool> {
+        let Some((key, mods)) = map_event(event) else {
+            return Ok(false);
+        };
+        self.terminal.key_down(key, mods)?;
+        Ok(true)
     }
 
     /// Read-only access to the underlying wezterm terminal. Useful for tests
@@ -155,9 +172,70 @@ fn scale(f: f32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    #[derive(Clone, Default)]
+    struct CapturedWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl CapturedWriter {
+        fn new() -> Self {
+            Self::default()
+        }
+        fn bytes(&self) -> Vec<u8> {
+            self.0.lock().unwrap().clone()
+        }
+        fn clear(&self) {
+            self.0.lock().unwrap().clear();
+        }
+        /// wezterm wraps our writer behind a channel + background thread, so
+        /// bytes do not arrive synchronously. Poll for at least one byte with
+        /// a generous timeout; return whatever we have when time is up.
+        fn drain(&self) -> Vec<u8> {
+            let deadline = Instant::now() + Duration::from_millis(500);
+            loop {
+                let bytes = self.bytes();
+                if !bytes.is_empty() {
+                    return bytes;
+                }
+                if Instant::now() >= deadline {
+                    return bytes;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+    }
+
+    impl Write for CapturedWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     fn session(cols: u16, rows: u16) -> TerminalSession {
         TerminalSession::new(cols, rows, Box::new(Vec::<u8>::new()))
+    }
+
+    fn session_with_writer(cols: u16, rows: u16) -> (TerminalSession, CapturedWriter) {
+        let w = CapturedWriter::new();
+        let session = TerminalSession::new(cols, rows, Box::new(w.clone()));
+        (session, w)
+    }
+
+    fn evt(code: &str, key: &str) -> TerminalKeyEvent {
+        TerminalKeyEvent {
+            code: code.into(),
+            key: key.into(),
+            text: None,
+            ctrl: false,
+            shift: false,
+            alt: false,
+            meta: false,
+        }
     }
 
     fn plain_row(snapshot: &GridSnapshot, row: usize) -> String {
@@ -248,5 +326,85 @@ mod tests {
         s.advance_bytes(b"\x1b]0;cluihud test\x07");
         let grid = s.grid_snapshot();
         assert_eq!(grid.title.as_deref(), Some("cluihud test"));
+    }
+
+    #[test]
+    fn ctrl_backspace_encodes_differently_from_plain_backspace() {
+        let (mut s, w) = session_with_writer(80, 24);
+
+        s.key_down(&evt("Backspace", "Backspace")).unwrap();
+        let plain = w.drain();
+        assert!(!plain.is_empty(), "plain Backspace must emit something");
+        w.clear();
+
+        let mut ctrl_bs = evt("Backspace", "Backspace");
+        ctrl_bs.ctrl = true;
+        s.key_down(&ctrl_bs).unwrap();
+        let with_ctrl = w.drain();
+        assert!(!with_ctrl.is_empty(), "Ctrl+Backspace must emit something");
+
+        assert_ne!(
+            plain, with_ctrl,
+            "Kitty keyboard protocol should make Ctrl+Backspace distinct so shells can bind backward-kill-word"
+        );
+    }
+
+    #[test]
+    fn shift_enter_encodes_differently_from_plain_enter() {
+        let (mut s, w) = session_with_writer(80, 24);
+
+        s.key_down(&evt("Enter", "Enter")).unwrap();
+        let plain = w.drain();
+        w.clear();
+
+        let mut shift_enter = evt("Enter", "Enter");
+        shift_enter.shift = true;
+        s.key_down(&shift_enter).unwrap();
+        let with_shift = w.drain();
+
+        assert_ne!(plain, with_shift, "Shift+Enter must be distinguishable");
+    }
+
+    #[test]
+    fn plain_printable_is_written_verbatim() {
+        let (mut s, w) = session_with_writer(80, 24);
+        s.key_down(&evt("KeyA", "a")).unwrap();
+        assert_eq!(w.drain(), b"a");
+    }
+
+    #[test]
+    fn alt_letter_emits_escape_prefixed_sequence() {
+        let (mut s, w) = session_with_writer(80, 24);
+        let mut alt_a = evt("KeyA", "a");
+        alt_a.alt = true;
+        s.key_down(&alt_a).unwrap();
+        let bytes = w.drain();
+        // Alt+letter must not encode to bare "a" — historically ESC-prefixed
+        // in xterm, CSI-u in Kitty mode; either way it is not `b"a"`.
+        assert_ne!(bytes, b"a");
+        assert!(!bytes.is_empty());
+    }
+
+    #[test]
+    fn kitty_disabled_falls_back_to_csi_u() {
+        // Regression guard: with kitty OFF we should still disambiguate
+        // Ctrl+Backspace from Backspace via CSI-u (our config flips csi_u on
+        // when kitty_keyboard is off). Verifies the CluihudTerminalConfig
+        // toggle does what the task claims.
+        let w = CapturedWriter::new();
+        let cfg = CluihudTerminalConfig::new().with_kitty_keyboard(false);
+        let mut s =
+            TerminalSession::with_config(80, 24, Box::new(w.clone()), cfg);
+
+        s.key_down(&evt("Backspace", "Backspace")).unwrap();
+        let plain = w.drain();
+        w.clear();
+
+        let mut ctrl_bs = evt("Backspace", "Backspace");
+        ctrl_bs.ctrl = true;
+        s.key_down(&ctrl_bs).unwrap();
+        let with_ctrl = w.drain();
+
+        assert_ne!(plain, with_ctrl);
     }
 }

@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, State};
 
-use crate::terminal::{CluihudTerminalConfig, TerminalHandle, TerminalSession};
+use crate::terminal::{CluihudTerminalConfig, TerminalHandle, TerminalKeyEvent, TerminalSession};
 
 /// Shared PTY writer. Both wezterm-term (for answerbacks and key encoding,
 /// once Phase 3 lands) and the legacy `pty_write` path hand out bytes; a
@@ -43,13 +43,17 @@ pub struct PtyManager {
     instances: Mutex<HashMap<String, PtyInstance>>,
     /// Maps session_id -> pty_id for idempotency
     session_ptys: Mutex<HashMap<String, String>>,
+    /// Value of `config.terminal_kitty_keyboard` at startup. Applied to every
+    /// new `TerminalSession`; runtime toggling would require restarting PTYs.
+    kitty_keyboard: bool,
 }
 
 impl PtyManager {
-    pub fn new() -> Self {
+    pub fn new(kitty_keyboard: bool) -> Self {
         Self {
             instances: Mutex::new(HashMap::new()),
             session_ptys: Mutex::new(HashMap::new()),
+            kitty_keyboard,
         }
     }
 }
@@ -115,11 +119,12 @@ fn spawn_pty(
     let writer: SharedWriter = Arc::new(Mutex::new(raw_writer));
 
     let terminal = if let Some(sid) = session_id {
+        let config = CluihudTerminalConfig::new().with_kitty_keyboard(state.kitty_keyboard);
         let session = TerminalSession::with_config(
             cols,
             rows,
             Box::new(SharedWriterAdapter(Arc::clone(&writer))),
-            CluihudTerminalConfig::new(),
+            config,
         );
         let mut handle = TerminalHandle::new(session);
         handle.spawn_emitter(app.clone(), sid.to_owned());
@@ -372,6 +377,41 @@ pub fn pty_resize(
 pub fn pty_kill(state: State<'_, PtyManager>, id: String) -> Result<(), String> {
     let mut instances = state.instances.lock().map_err(|e| e.to_string())?;
     instances.remove(&id);
+    Ok(())
+}
+
+/// Encode a frontend key event via wezterm-term and write the resulting
+/// bytes to the PTY. The encoder owns Kitty keyboard protocol, CSI-u,
+/// cursor-mode translations, and everything else — the frontend only
+/// forwards the raw `KeyboardEvent` properties it captured.
+#[tauri::command]
+pub fn terminal_input(
+    state: State<'_, PtyManager>,
+    session_id: String,
+    event: TerminalKeyEvent,
+) -> Result<(), String> {
+    let pty_id = {
+        let session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
+        session_ptys
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| "no PTY for session".to_string())?
+    };
+
+    let instances = state.instances.lock().map_err(|e| e.to_string())?;
+    let instance = instances.get(&pty_id).ok_or("PTY instance not found")?;
+    let handle = instance
+        .terminal
+        .as_ref()
+        .ok_or("terminal handle not attached")?;
+
+    let mut session = handle.session.lock().map_err(|e| e.to_string())?;
+    session.key_down(&event).map_err(|e| e.to_string())?;
+
+    // Nudge the emitter: key events often trigger local echo / cursor moves
+    // before any PTY output comes back, and the diff should include them.
+    drop(session);
+    handle.wake();
     Ok(())
 }
 

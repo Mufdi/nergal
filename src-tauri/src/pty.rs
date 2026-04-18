@@ -373,6 +373,25 @@ pub fn pty_resize(
     Ok(())
 }
 
+/// Write `text` to the OS clipboard from a blocking worker thread. The
+/// clipboard plugin's own `write_text` is an `async fn` that invokes
+/// `arboard::Clipboard::set_text` synchronously, and on Wayland that call
+/// issues blocking I/O to `wl-clipboard`. When it stalls (e.g. compositor
+/// pressure), it holds a tokio worker and delays every other async task
+/// sharing that thread — including the user's next keydown-triggered
+/// IPC. `spawn_blocking` gives us a dedicated thread so nothing else is
+/// affected.
+#[tauri::command]
+pub async fn terminal_clipboard_write(text: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+        clipboard.set_text(text).map_err(|e| e.to_string())?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Paste `text` into the session's PTY wrapped in bracketed-paste markers.
 /// Applications that understand bracketed paste (bash, zsh, vim, claude CLI,
 /// etc.) can then treat it as a single paste operation instead of a flurry

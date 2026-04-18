@@ -14,10 +14,7 @@
 import { invoke, listen } from "@/lib/tauri";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { open as openShell } from "@tauri-apps/plugin-shell";
-import {
-  readText as readClipboard,
-  writeText as writeClipboard,
-} from "@tauri-apps/plugin-clipboard-manager";
+import { readText as readClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import type { CellSnapshot, GridUpdate, TerminalKeyEvent } from "@/lib/types";
 import { appStore } from "@/stores/jotaiStore";
 import { toastsAtom } from "@/stores/toast";
@@ -392,18 +389,32 @@ function wireInput(entry: Entry): void {
     // commit-session globally and which we can't intercept because the
     // shortcut dispatcher listens in capture phase).
     const text = serializeSelection(entry);
-    if (text) {
-      writeClipboard(text)
-        .then(() => {
-          appStore.set(toastsAtom, {
-            message: "Copied to clipboard",
-            type: "success",
-          });
-        })
-        .catch((err: unknown) => {
-          console.error("auto-copy failed", err);
-        });
-    }
+    if (!text) return;
+
+    // The toast mounts a focusable <button> at the viewport edge; in
+    // WebKitGTK that can steal focus away from our textarea when a
+    // layout-triggered paint moves the focused element momentarily
+    // outside the hit region. Fire the toast first and schedule a
+    // follow-up refocus on the next frame. Also clipboard-write is async
+    // so typing can continue in parallel.
+    appStore.set(toastsAtom, {
+      message: "Copied to clipboard",
+      type: "success",
+    });
+    // Own command (spawn_blocking) instead of plugin-clipboard-manager —
+    // avoids stalling the tokio runtime on Wayland systems where arboard's
+    // blocking wl-clipboard I/O would otherwise delay subsequent async
+    // commands like terminal_input.
+    invoke("terminal_clipboard_write", { text }).catch((err: unknown) => {
+      console.error("auto-copy failed", err);
+    });
+    // Two-phase refocus: one immediately, one after a RAF (post sileo's
+    // enter animation starts). Safe to call even if focus is already on
+    // the textarea — it's a no-op in that case.
+    entry.textarea.focus({ preventScroll: true });
+    requestAnimationFrame(() => {
+      entry.textarea.focus({ preventScroll: true });
+    });
   });
 
   // Releasing outside the canvas must still end the drag so we don't get

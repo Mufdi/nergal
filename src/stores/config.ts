@@ -10,5 +10,4 @@ export const configAtom = atom<Config>({
   theme_mode: "dark",
   preferred_editor: "",
   terminal_kitty_keyboard: true,
-  experimental_wezterm_terminal: false,
 });

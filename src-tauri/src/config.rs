@@ -21,12 +21,6 @@ pub struct Config {
     /// encode unambiguously so shells can bind them distinctively.
     #[serde(default = "default_true")]
     pub terminal_kitty_keyboard: bool,
-    /// Gate for the Phase 4+ wezterm-backed terminal renderer. False during
-    /// migration means the legacy xterm.js path keeps driving the visible
-    /// terminal; the backend still parses bytes into wezterm-term so the
-    /// dual-emission data is available for testing.
-    #[serde(default)]
-    pub experimental_wezterm_terminal: bool,
 }
 
 impl Default for Config {
@@ -44,7 +38,6 @@ impl Default for Config {
             theme_mode: "dark".into(),
             preferred_editor: String::new(),
             terminal_kitty_keyboard: true,
-            experimental_wezterm_terminal: false,
         }
     }
 }

@@ -39,7 +39,6 @@ export interface Config {
   theme_mode: string;
   preferred_editor: string;
   terminal_kitty_keyboard: boolean;
-  experimental_wezterm_terminal: boolean;
 }
 
 // ── wezterm-term renderer IPC types (Phase 4) ─────────────────────────

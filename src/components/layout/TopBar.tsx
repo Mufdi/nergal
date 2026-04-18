@@ -19,7 +19,7 @@ import { toggleRightPanelAtom } from "@/stores/shortcuts";
 import { configAtom } from "@/stores/config";
 import { appStore } from "@/stores/jotaiStore";
 import { invoke } from "@/lib/tauri";
-import * as terminalService from "@/components/terminal/activeTerminalService";
+import * as terminalService from "@/components/terminal/terminalService";
 import {
   FileText,
   Files,

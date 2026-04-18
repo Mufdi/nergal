@@ -1,8 +1,6 @@
-// Single source of truth for the wezterm canvas renderer's default colors.
-// Mirrors the values used by the legacy xterm.js terminalService so the visual
-// swap between the two paths is imperceptible.
+// Default colors and font settings for the canvas terminal renderer.
 
-export const WEZ_THEME = {
+export const TERM_THEME = {
   background: "#0a0a0b",
   foreground: "#ededef",
   cursor: "#f97316",
@@ -10,7 +8,7 @@ export const WEZ_THEME = {
   selectionBackground: "rgba(249, 115, 22, 0.2)",
 } as const;
 
-export const WEZ_FONT = {
+export const TERM_FONT = {
   family: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
   size: 13,
   /// Line-height multiplier applied to the base size. Gives a tiny bit of

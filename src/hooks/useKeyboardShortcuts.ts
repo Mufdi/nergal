@@ -70,11 +70,14 @@ export function useKeyboardShortcuts() {
         e.preventDefault();
         e.stopPropagation();
         const active = document.activeElement;
-        if (active?.closest(".xterm")) {
+        const terminalHost = document.querySelector(
+          "[data-focus-zone='terminal']",
+        ) as HTMLElement | null;
+        if (active && terminalHost?.contains(active)) {
           (active as HTMLElement).blur();
         } else {
-          const textarea = document.querySelector(".xterm-helper-textarea") as HTMLElement | null;
-          textarea?.focus();
+          const input = terminalHost?.querySelector("textarea") as HTMLElement | null;
+          input?.focus();
         }
         return;
       }

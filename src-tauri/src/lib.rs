@@ -53,15 +53,12 @@ pub fn run() {
         .manage(plan_state.clone())
         .invoke_handler(tauri::generate_handler![
             // PTY commands
-            pty::pty_create,
-            pty::pty_write,
-            pty::pty_resize,
-            pty::pty_kill,
             pty::start_claude_session,
             pty::kill_session_pty,
+            pty::write_to_session_pty,
+            pty::resize_session_terminal,
             pty::terminal_input,
             pty::terminal_get_full_grid,
-            pty::resize_session_terminal,
             pty::terminal_paste,
             pty::terminal_clipboard_write,
             // Config commands

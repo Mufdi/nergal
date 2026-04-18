@@ -50,11 +50,6 @@ const TOGGLE_FIELDS: { key: BooleanConfigKey; label: string; help: string }[] = 
     label: "Kitty keyboard protocol",
     help: "Distinct encoding for Ctrl+Backspace, Shift+Enter, Alt+letter.",
   },
-  {
-    key: "experimental_wezterm_terminal",
-    label: "Wezterm terminal (experimental)",
-    help: "Use the wezterm-term canvas renderer instead of xterm.js.",
-  },
 ];
 
 export function SettingsPanel({ open, onOpenChange }: SettingsProps) {

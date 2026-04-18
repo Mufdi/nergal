@@ -37,7 +37,7 @@ Prevent misframing in analysis, recommendations, and tool-driven suggestions:
 - **Package manager**: pnpm 10.28
 - **State**: Jotai (atomic state management)
 - **Styling**: TailwindCSS 4.2 + shadcn/ui + class-variance-authority
-- **Terminal**: xterm.js 6.0 + addon-fit
+- **Terminal**: canvas renderer + wezterm-term VT emulator (in Rust backend)
 - **Editor**: CodeMirror 6 (syntax highlighting) + MDXEditor (plan editing)
 - **Markdown**: react-markdown + remark-gfm
 - **Layout**: react-resizable-panels
@@ -55,7 +55,7 @@ src/                              # React frontend (TypeScript)
 ├── App.tsx                       # Root (ErrorBoundary + Workspace)
 ├── components/
 │   ├── layout/                   # Workspace, TopBar, Sidebar, RightPanel, StatusBar
-│   ├── terminal/                 # TerminalManager + terminalService (xterm.js)
+│   ├── terminal/                 # TerminalManager + terminalService (canvas + wezterm-term)
 │   ├── editor/                   # CodeEditor (CodeMirror 6)
 │   ├── plan/                     # PlanPanel, PlanEditor, AnnotatableMarkdownView
 │   ├── spec/                     # SpecViewer (OpenSpec artifacts)
@@ -135,7 +135,7 @@ Run full check after significant changes.
 1. **Frontend → Backend**: `invoke<T>(command, args)` via Tauri IPC
 2. **Backend → Frontend**: Tauri `emit()` events (async)
 3. **State sync**: Jotai atoms + `setupHookListeners()` updates atoms on events
-4. **Terminal**: xterm.js in DOM, receives `pty:output` events, sends via `invoke("pty_write")`
+4. **Terminal**: `wezterm-term` parses PTY bytes in Rust; an emitter task coalesces deltas and emits `terminal:grid-update` events; the frontend canvas renders changed rows via a glyph atlas and sends keystrokes back through `invoke("terminal_input")`
 
 ### Event Flow
 1. Claude CLI runs inside a PTY spawned by the app

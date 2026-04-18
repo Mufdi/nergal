@@ -2,13 +2,14 @@ use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, State};
 
 use crate::terminal::{CluihudTerminalConfig, TerminalHandle, TerminalKeyEvent, TerminalSession};
 
-/// Shared PTY writer. Both wezterm-term (for answerbacks and key encoding,
-/// once Phase 3 lands) and the legacy `pty_write` path hand out bytes; a
-/// single Mutex keeps writes serialized.
+/// Shared PTY writer. wezterm-term (for answerbacks + key encoding) and the
+/// small number of command-layer writers (`start_claude_session` boot
+/// command, `write_to_session_pty`, bracketed paste) all serialize writes
+/// through this mutex.
 type SharedWriter = Arc<Mutex<Box<dyn Write + Send>>>;
 
 /// Adapter that implements `std::io::Write` on top of a `SharedWriter`, so
@@ -34,9 +35,8 @@ impl Write for SharedWriterAdapter {
 struct PtyInstance {
     writer: SharedWriter,
     pair: portable_pty::PtyPair,
-    /// Present only while the dual-emission wezterm path is live (Phase 2+).
-    /// Dropping it shuts the emitter task down.
-    terminal: Option<TerminalHandle>,
+    /// Dropping this handle shuts down the emitter task.
+    terminal: TerminalHandle,
 }
 
 pub struct PtyManager {
@@ -59,23 +59,12 @@ impl PtyManager {
 }
 
 #[derive(Clone, serde::Serialize)]
-struct PtyOutput {
-    id: String,
-    data: Vec<u8>,
-}
-
-#[derive(Clone, serde::Serialize)]
 pub struct StartClaudeResult {
     pty_id: String,
 }
 
-/// Internal: spawn a PTY, wire up the reader thread, store the instance.
-/// Returns the pty_id on success.
-///
-/// When `session_id` is provided, a [`TerminalHandle`] is attached so that
-/// incoming PTY bytes are also parsed by wezterm-term and emitted as
-/// `terminal:grid-update` events — the legacy `pty:output` byte stream keeps
-/// flowing in parallel during the dual-emission migration window.
+/// Internal: spawn a PTY, attach a wezterm-term session, spawn the emitter
+/// task, wire up the reader thread, store the instance.
 fn spawn_pty(
     app: &AppHandle,
     state: &PtyManager,
@@ -83,7 +72,7 @@ fn spawn_pty(
     cols: u16,
     rows: u16,
     cwd: Option<&str>,
-    session_id: Option<&str>,
+    session_id: &str,
     shell_ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
 ) -> Result<(), String> {
     let pty_system = NativePtySystem::default();
@@ -108,9 +97,7 @@ fn spawn_pty(
 
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
-    if let Some(sid) = session_id {
-        cmd.env("CLUIHUD_SESSION_ID", sid);
-    }
+    cmd.env("CLUIHUD_SESSION_ID", session_id);
 
     let _child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
 
@@ -118,26 +105,18 @@ fn spawn_pty(
     let raw_writer = pair.master.take_writer().map_err(|e| e.to_string())?;
     let writer: SharedWriter = Arc::new(Mutex::new(raw_writer));
 
-    let terminal = if let Some(sid) = session_id {
-        let config = CluihudTerminalConfig::new().with_kitty_keyboard(state.kitty_keyboard);
-        let session = TerminalSession::with_config(
-            cols,
-            rows,
-            Box::new(SharedWriterAdapter(Arc::clone(&writer))),
-            config,
-        );
-        let mut handle = TerminalHandle::new(session);
-        handle.spawn_emitter(app.clone(), sid.to_owned());
-        Some(handle)
-    } else {
-        None
-    };
+    let config = CluihudTerminalConfig::new().with_kitty_keyboard(state.kitty_keyboard);
+    let session = TerminalSession::with_config(
+        cols,
+        rows,
+        Box::new(SharedWriterAdapter(Arc::clone(&writer))),
+        config,
+    );
+    let mut terminal = TerminalHandle::new(session);
+    terminal.spawn_emitter(app.clone(), session_id.to_owned());
 
-    let reader_session = terminal.as_ref().map(|h| Arc::clone(&h.session));
-    let reader_notify = terminal.as_ref().map(|h| Arc::clone(&h.notify));
-
-    let read_id = pty_id.clone();
-    let app_clone = app.clone();
+    let reader_session = Arc::clone(&terminal.session);
+    let reader_notify = Arc::clone(&terminal.notify);
     let ready_tx = Mutex::new(shell_ready_tx);
 
     std::thread::spawn(move || {
@@ -153,30 +132,13 @@ fn spawn_pty(
                         let _ = tx.send(());
                     }
 
-                    let chunk = &buf[..n];
-
-                    // Feed wezterm-term in parallel with the legacy byte stream.
-                    // This runs briefly; lock contention with the async emitter
-                    // task is minimal because the emitter also locks briefly.
-                    if let (Some(session), Some(notify)) =
-                        (reader_session.as_ref(), reader_notify.as_ref())
-                    {
-                        match session.lock() {
-                            Ok(mut guard) => guard.advance_bytes(chunk),
-                            Err(err) => {
-                                tracing::error!(error = %err, "session mutex poisoned; dropping chunk");
-                            }
+                    match reader_session.lock() {
+                        Ok(mut guard) => guard.advance_bytes(&buf[..n]),
+                        Err(err) => {
+                            tracing::error!(error = %err, "session mutex poisoned; dropping chunk");
                         }
-                        notify.notify_one();
                     }
-
-                    let _ = app_clone.emit(
-                        "pty:output",
-                        PtyOutput {
-                            id: read_id.clone(),
-                            data: chunk.to_vec(),
-                        },
-                    );
+                    reader_notify.notify_one();
                 }
                 Err(_) => break,
             }
@@ -189,6 +151,36 @@ fn spawn_pty(
         .lock()
         .map_err(|e| e.to_string())?
         .insert(pty_id, instance);
+
+    Ok(())
+}
+
+/// Internal: resize both the PTY ioctl and the wezterm emulator grid.
+fn resize_pty(state: &PtyManager, pty_id: &str, cols: u16, rows: u16) -> Result<(), String> {
+    let instances = state.instances.lock().map_err(|e| e.to_string())?;
+    let instance = instances.get(pty_id).ok_or("PTY not found")?;
+    instance
+        .pair
+        .master
+        .resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| e.to_string())?;
+
+    // Keep the wezterm emulator in sync with the PTY so its internal grid
+    // matches the shell's view.
+    match instance.terminal.session.lock() {
+        Ok(mut guard) => guard.resize(cols, rows),
+        Err(err) => tracing::error!(error = %err, "session mutex poisoned during resize"),
+    }
+    // Force a full resend on next emission — row count may have changed.
+    if let Ok(mut differ) = instance.terminal.differ.lock() {
+        differ.invalidate();
+    }
+    instance.terminal.wake();
 
     Ok(())
 }
@@ -233,7 +225,7 @@ pub async fn start_claude_session(
         cols,
         rows,
         cwd.as_deref(),
-        Some(session_id.as_str()),
+        session_id.as_str(),
         Some(ready_tx),
     )?;
 
@@ -271,7 +263,8 @@ pub async fn start_claude_session(
     Ok(StartClaudeResult { pty_id })
 }
 
-/// Write data to a session's PTY
+/// Write data to a session's PTY. Used for sending synthesized prompts
+/// from the sidebar ("/commit …", "/rename …", merge-conflict hints).
 #[tauri::command]
 pub fn write_to_session_pty(
     state: State<'_, PtyManager>,
@@ -295,7 +288,7 @@ pub fn write_to_session_pty(
     Ok(())
 }
 
-/// Kill a session's PTY and clean up mappings
+/// Kill a session's PTY and clean up mappings.
 #[tauri::command]
 pub fn kill_session_pty(
     state: State<'_, PtyManager>,
@@ -314,63 +307,24 @@ pub fn kill_session_pty(
     Ok(())
 }
 
+/// Resize the PTY + wezterm emulator for a session. The frontend holds the
+/// session_id but not the opaque pty_id, so this is the only resize entry
+/// point exposed over IPC.
 #[tauri::command]
-pub fn pty_create(
-    app: AppHandle,
+pub fn resize_session_terminal(
     state: State<'_, PtyManager>,
-    id: String,
-    cols: u16,
-    rows: u16,
-    cwd: Option<String>,
-) -> Result<(), String> {
-    spawn_pty(&app, &state, id, cols, rows, cwd.as_deref(), None, None)
-}
-
-#[tauri::command]
-pub fn pty_write(state: State<'_, PtyManager>, id: String, data: String) -> Result<(), String> {
-    let instances = state.instances.lock().map_err(|e| e.to_string())?;
-    let instance = instances.get(&id).ok_or("PTY not found")?;
-    let mut w = instance.writer.lock().map_err(|e| e.to_string())?;
-    w.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
-    w.flush().map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-#[tauri::command]
-pub fn pty_resize(
-    state: State<'_, PtyManager>,
-    id: String,
+    session_id: String,
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
-    let instances = state.instances.lock().map_err(|e| e.to_string())?;
-    let instance = instances.get(&id).ok_or("PTY not found")?;
-    instance
-        .pair
-        .master
-        .resize(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .map_err(|e| e.to_string())?;
-
-    // Keep the wezterm emulator in sync with the PTY ioctl resize so its
-    // internal grid matches the shell's view.
-    if let Some(handle) = instance.terminal.as_ref() {
-        match handle.session.lock() {
-            Ok(mut guard) => guard.resize(cols, rows),
-            Err(err) => tracing::error!(error = %err, "session mutex poisoned during resize"),
-        }
-        // Force a full resend on next emission — row count may have changed.
-        if let Ok(mut differ) = handle.differ.lock() {
-            differ.invalidate();
-        }
-        handle.wake();
-    }
-
-    Ok(())
+    let pty_id = {
+        let session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
+        session_ptys
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| "no PTY for session".to_string())?
+    };
+    resize_pty(&state, &pty_id, cols, rows)
 }
 
 /// Write `text` to the OS clipboard from a blocking worker thread. The
@@ -421,33 +375,6 @@ pub fn terminal_paste(
     Ok(())
 }
 
-/// Resize the PTY + wezterm emulator for a session, without needing the
-/// caller to know the opaque pty_id. Used by the canvas renderer since it
-/// holds a session_id, not the pty_id.
-#[tauri::command]
-pub fn resize_session_terminal(
-    state: State<'_, PtyManager>,
-    session_id: String,
-    cols: u16,
-    rows: u16,
-) -> Result<(), String> {
-    let pty_id = {
-        let session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
-        session_ptys
-            .get(&session_id)
-            .cloned()
-            .ok_or_else(|| "no PTY for session".to_string())?
-    };
-    pty_resize(state, pty_id, cols, rows)
-}
-
-#[tauri::command]
-pub fn pty_kill(state: State<'_, PtyManager>, id: String) -> Result<(), String> {
-    let mut instances = state.instances.lock().map_err(|e| e.to_string())?;
-    instances.remove(&id);
-    Ok(())
-}
-
 /// Encode a frontend key event via wezterm-term and write the resulting
 /// bytes to the PTY. The encoder owns Kitty keyboard protocol, CSI-u,
 /// cursor-mode translations, and everything else — the frontend only
@@ -468,10 +395,7 @@ pub fn terminal_input(
 
     let instances = state.instances.lock().map_err(|e| e.to_string())?;
     let instance = instances.get(&pty_id).ok_or("PTY instance not found")?;
-    let handle = instance
-        .terminal
-        .as_ref()
-        .ok_or("terminal handle not attached")?;
+    let handle = &instance.terminal;
 
     let mut session = handle.session.lock().map_err(|e| e.to_string())?;
     session.key_down(&event).map_err(|e| e.to_string())?;
@@ -501,10 +425,7 @@ pub fn terminal_get_full_grid(
 
     let instances = state.instances.lock().map_err(|e| e.to_string())?;
     let instance = instances.get(&pty_id).ok_or("PTY instance not found")?;
-    let handle = instance
-        .terminal
-        .as_ref()
-        .ok_or("terminal handle not attached")?;
+    let handle = &instance.terminal;
 
     let snapshot = handle
         .session

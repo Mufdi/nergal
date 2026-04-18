@@ -1,43 +1,36 @@
 import { useRef, useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { workspacesAtom, activeSessionIdAtom, activeSessionAtom, activeWorkspaceAtom, sessionLaunchModeAtom, freshSessionsAtom } from "@/stores/workspace";
+import {
+  workspacesAtom,
+  activeSessionIdAtom,
+  activeSessionAtom,
+  activeWorkspaceAtom,
+  sessionLaunchModeAtom,
+  freshSessionsAtom,
+} from "@/stores/workspace";
 import { focusZoneAtom } from "@/stores/shortcuts";
-import { configAtom } from "@/stores/config";
 import * as terminalService from "./terminalService";
-import { WezTerminalManager } from "./wezterm/WezTerminalManager";
 
-/// Thin React wrapper. Provides a host div and signals the service "show session X".
-/// Service owns all DOM containers and xterm instances — React never touches them.
-///
-/// Gated by `config.experimental_wezterm_terminal`: when enabled, mounts the
-/// [`WezTerminalManager`] instead so sessions render via the wezterm-term
-/// backed canvas. The switch is all-or-nothing to avoid two renderers fighting
-/// over the same DOM host.
+/// Thin React wrapper over the canvas terminal service. The service owns all
+/// DOM containers, PTY subscriptions, and render state outside React's
+/// lifecycle — this component only provides the host div and signals
+/// session visibility + focus intent via atoms.
 export function TerminalManager() {
-  const config = useAtomValue(configAtom);
-  if (config.experimental_wezterm_terminal) {
-    return <WezTerminalManager />;
-  }
-  return <LegacyTerminalManager />;
-}
-
-function LegacyTerminalManager() {
   const workspaces = useAtomValue(workspacesAtom);
   const activeSessionId = useAtomValue(activeSessionIdAtom);
   const activeSession = useAtomValue(activeSessionAtom);
   const activeWorkspace = useAtomValue(activeWorkspaceAtom);
   const launchModes = useAtomValue(sessionLaunchModeAtom);
   const freshSessions = useAtomValue(freshSessionsAtom);
+  const focusZone = useAtomValue(focusZoneAtom);
   const setFocusZone = useSetAtom(focusZoneAtom);
   const hostRef = useRef<HTMLDivElement>(null);
 
-  // Register host element once
   useEffect(() => {
     terminalService.setHost(hostRef.current);
     return () => terminalService.setHost(null);
   }, []);
 
-  // When active session changes → tell service to show it
   useEffect(() => {
     if (!activeSessionId || !activeSession || !activeWorkspace) return;
     if (activeSession.status === "completed") return;
@@ -52,10 +45,9 @@ function LegacyTerminalManager() {
     }
 
     const cwd = activeSession.worktree_path ?? activeWorkspace.repo_path;
-    terminalService.show(activeSessionId, cwd, mode);
+    void terminalService.show(activeSessionId, cwd, mode);
   }, [activeSessionId, activeSession, activeWorkspace, launchModes, freshSessions]);
 
-  // ResizeObserver on host → fit active terminal
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -67,10 +59,24 @@ function LegacyTerminalManager() {
     return () => observer.disconnect();
   }, []);
 
+  // When the global focus zone flips to "terminal" (e.g. Ctrl+Ñ toggle,
+  // pane cycle), snap focus back into the terminal's input surface so the
+  // user doesn't need to click to start typing.
+  useEffect(() => {
+    if (focusZone === "terminal") {
+      terminalService.focusActive();
+    }
+  }, [focusZone]);
+
   const hasAnySessions = workspaces.some((ws) => ws.sessions.length > 0);
 
   return (
-    <div ref={hostRef} className="relative h-full w-full" onMouseDown={() => setFocusZone("terminal")}>
+    <div
+      ref={hostRef}
+      data-focus-zone="terminal"
+      className="relative h-full w-full"
+      onMouseDown={() => setFocusZone("terminal")}
+    >
       {(!hasAnySessions || !activeSessionId) && (
         <div className="flex h-full items-center justify-center">
           <span className="text-[11px] text-muted-foreground">Select or create a session</span>

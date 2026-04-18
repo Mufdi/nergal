@@ -74,8 +74,8 @@
 
 ## 10. Cut-over and cleanup
 
-- [ ] 10.1 Flip default to `experimental.wezterm_terminal = true`
-- [ ] 10.2 Soak period: 1 week of daily use, log any regressions
-- [ ] 10.3 Remove `@xterm/xterm` and `@xterm/addon-fit` from `package.json`; delete legacy `terminalService.ts` and the dual-emission path in `pty.rs`
-- [ ] 10.4 Remove the flag and the coexistence code
-- [ ] 10.5 Update `CLAUDE.md` stack table: xterm.js → wezterm-term
+- [x] 10.1 Skipped formal flip — solo/personal project made the single-user rollback argument for dual paths moot. Cleanup done directly on the feature branch before merge.
+- [x] 10.2 Soak period: skipped for the same reason. `git revert` is the rollback.
+- [x] 10.3 `@xterm/xterm` and `@xterm/addon-fit` removed from `package.json`; legacy `terminalService.ts` deleted; `pty.rs` no longer emits `pty:output` and the `PtyOutput` struct is gone; `pty_create`, `pty_write`, and `pty_kill` commands removed (no external consumers).
+- [x] 10.4 Flag `experimental_wezterm_terminal` removed from `src-tauri/src/config.rs`, `src/lib/types.ts`, `src/stores/config.ts`, `src/components/settings/SettingsPanel.tsx`, `src/components/terminal/TerminalManager.tsx`; facade `activeTerminalService.ts` deleted (single renderer → no facade needed); `wezterm/` subdirectory flattened into `src/components/terminal/` and `WEZ_*` constants renamed to `TERM_*`; `.xterm*` DOM selectors replaced by `[data-focus-zone='terminal']`.
+- [x] 10.5 `CLAUDE.md` stack table, frontend module map, and communication patterns updated.

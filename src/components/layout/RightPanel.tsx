@@ -12,7 +12,6 @@ import {
 } from "@/stores/rightPanel";
 import { focusZoneAtom, previousNonTerminalZoneAtom } from "@/stores/shortcuts";
 import { activeSessionIdAtom } from "@/stores/workspace";
-import { planDocumentsAtom, defaultPlanState } from "@/stores/plan";
 import { AnnotationsDrawer } from "@/components/plan/AnnotationsDrawer";
 import { PlanPanel } from "@/components/plan/PlanPanel";
 import { TranscriptViewer } from "@/components/session/TranscriptViewer";
@@ -87,7 +86,7 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
 
   // Auto-open drawer when annotations appear
   useEffect(() => {
-    if (activeTab?.type === "plan") {
+    if (activeTab?.type === "plan" || activeTab?.type === "spec") {
       const handleAnnotationAdded = () => setAnnotationsDrawerOpen(true);
       document.addEventListener("cluihud:annotation-added", handleAnnotationAdded);
       return () => document.removeEventListener("cluihud:annotation-added", handleAnnotationAdded);
@@ -190,7 +189,7 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
   const hasPicker = activeTab && PICKER_TYPES.includes(activeTab.type);
 
   if (activeTab) {
-    const showAnnotationsDrawer = activeTab.type === "plan";
+    const showAnnotationsDrawer = activeTab.type === "plan" || activeTab.type === "spec";
     return (
       <div className="flex h-full flex-col gap-1 overflow-hidden">
         <div className="relative flex flex-1 flex-col overflow-hidden rounded bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus} onKeyDown={handlePanelKeyDown}>
@@ -468,17 +467,7 @@ function DocumentContent({ tab }: { tab: Tab }) {
   }
 }
 
-function PlanContentWrapper({ tabId, path }: { tabId: string; path: string }) {
-  const docs = useAtomValue(planDocumentsAtom);
-  const plan = path ? (docs[path] ?? defaultPlanState) : defaultPlanState;
-  const setDirty = useSetAtom(setDirtyAction);
-
-  const hasEdits = plan.content !== plan.original && plan.content.length > 0;
-
-  useEffect(() => {
-    setDirty({ tabId, dirty: hasEdits });
-  }, [hasEdits, tabId, setDirty]);
-
+function PlanContentWrapper({ path }: { tabId: string; path: string }) {
   return <PlanPanel path={path} />;
 }
 

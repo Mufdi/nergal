@@ -374,6 +374,56 @@ pub fn set_pending_annotations(feedback: String) -> Result<(), String> {
     HookState::set_pending_annotations(feedback).map_err(|e| e.to_string())
 }
 
+// -- Spec annotation commands --
+
+#[tauri::command]
+pub fn save_spec_annotation(
+    id: String,
+    spec_key: String,
+    ann_type: String,
+    target: String,
+    content: String,
+    start_meta: String,
+    end_meta: String,
+    db: State<'_, SharedDb>,
+) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    db.save_spec_annotation(&id, &spec_key, &ann_type, &target, &content, &start_meta, &end_meta)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_spec_annotations(
+    spec_key: String,
+    db: State<'_, SharedDb>,
+) -> Result<Vec<crate::db::SpecAnnotationRow>, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    db.get_spec_annotations(&spec_key).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_spec_annotation(id: String, db: State<'_, SharedDb>) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    db.delete_spec_annotation(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn clear_spec_annotations(spec_key: String, db: State<'_, SharedDb>) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    db.clear_spec_annotations(&spec_key).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn count_spec_annotations_by_prefix(
+    prefix: String,
+    db: State<'_, SharedDb>,
+) -> Result<Vec<(String, i64)>, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let like = format!("{}%", prefix.replace('%', "\\%"));
+    db.count_spec_annotations_by_prefix(&like)
+        .map_err(|e| e.to_string())
+}
+
 // -- Buddy commands --
 
 #[derive(Clone, serde::Serialize)]

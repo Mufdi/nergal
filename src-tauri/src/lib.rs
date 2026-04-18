@@ -83,6 +83,11 @@ pub fn run() {
             commands::delete_annotation,
             commands::clear_annotations,
             commands::set_pending_annotations,
+            commands::save_spec_annotation,
+            commands::get_spec_annotations,
+            commands::delete_spec_annotation,
+            commands::clear_spec_annotations,
+            commands::count_spec_annotations_by_prefix,
             // Buddy command
             commands::get_buddy,
             // Setup command

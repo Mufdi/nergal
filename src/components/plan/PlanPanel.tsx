@@ -1,14 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import { useAtomValue, useSetAtom, useAtom } from "jotai";
-import { planDocumentsAtom, defaultPlanState, setPlanDocModeAtom, activePlanReviewStatusAtom, planReviewStatusMapAtom } from "@/stores/plan";
+import { planDocumentsAtom, defaultPlanState, activePlanReviewStatusAtom, planReviewStatusMapAtom } from "@/stores/plan";
 import { activeSessionIdAtom } from "@/stores/workspace";
-import { activeAnnotationsAtom, clearAnnotationsAtom, addAnnotationAtom, serializeAnnotations, annotationModeAtom, canEnterAnnotationModeAtom } from "@/stores/annotations";
+import { activeAnnotationsAtom, clearAnnotationsAtom, addAnnotationAtom, serializeAnnotations, annotationModeAtom, annotationScopeAtom, canEnterAnnotationModeAtom } from "@/stores/annotations";
 import { toastsAtom } from "@/stores/toast";
 import { invoke } from "@/lib/tauri";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import type { PlanMode } from "@/lib/types";
 import { AnnotatableMarkdownView } from "./AnnotatableMarkdownView";
-import { PlanEditor } from "./PlanEditor";
 import { MessageSquare, Trash2, Highlighter } from "lucide-react";
 import {
   Tooltip,
@@ -23,7 +20,6 @@ interface PlanPanelProps {
 export function PlanPanel({ path }: PlanPanelProps) {
   const docs = useAtomValue(planDocumentsAtom);
   const plan = path ? (docs[path] ?? defaultPlanState) : defaultPlanState;
-  const setMode = useSetAtom(setPlanDocModeAtom);
   const addToast = useSetAtom(toastsAtom);
   const annotations = useAtomValue(activeAnnotationsAtom);
   const clearAnnotations = useSetAtom(clearAnnotationsAtom);
@@ -34,7 +30,16 @@ export function PlanPanel({ path }: PlanPanelProps) {
   const canAnnotate = reviewStatus === "pending_review";
   const isSubmitted = reviewStatus === "submitted";
   const [annotationMode, setAnnotationMode] = useAtom(annotationModeAtom);
+  const setScope = useSetAtom(annotationScopeAtom);
   const canEnterAnnotationMode = useAtomValue(canEnterAnnotationModeAtom);
+
+  // Claim plan scope while mounted; release on unmount so other panels' scope
+  // (null → plan fallback) isn't confused by a stale spec scope.
+  useEffect(() => {
+    if (!sessionId) return;
+    setScope({ kind: "plan", sessionId });
+    return () => setScope(null);
+  }, [sessionId, setScope]);
 
   // Auto-exit annotation mode when review status changes away from pending_review
   useEffect(() => {
@@ -46,7 +51,6 @@ export function PlanPanel({ path }: PlanPanelProps) {
   const globalInputRef = useRef<HTMLTextAreaElement>(null);
 
   const hasPlan = plan.content.length > 0;
-  const hasEdits = plan.content !== plan.original;
   const backendSessionId = plan.claudeSessionId;
   const decisionPath = plan.decisionPath;
 
@@ -62,22 +66,12 @@ export function PlanPanel({ path }: PlanPanelProps) {
 
   useEffect(() => {
     function handleToggleAnnotationMode() {
-      if (!canEnterAnnotationMode || plan.mode !== "view") return;
+      if (!canEnterAnnotationMode) return;
       setAnnotationMode((prev) => !prev);
     }
     document.addEventListener("cluihud:toggle-annotation-mode", handleToggleAnnotationMode);
     return () => document.removeEventListener("cluihud:toggle-annotation-mode", handleToggleAnnotationMode);
-  }, [canEnterAnnotationMode, plan.mode, setAnnotationMode]);
-
-  function handleSave() {
-    if (!plan.path || !backendSessionId) {
-      addToast({ message: "Error", description: "No plan path — cannot save", type: "error" });
-      return;
-    }
-    invoke("save_plan", { sessionId: backendSessionId, content: plan.content })
-      .then(() => addToast({ message: "Plan Saved", description: "Edits saved to disk", type: "success" }))
-      .catch((err: unknown) => addToast({ message: "Save Failed", description: String(err), type: "error" }));
-  }
+  }, [canEnterAnnotationMode, setAnnotationMode]);
 
   function handleRevise() {
     const feedback = serializeAnnotations(annotations, plan.path ?? path);
@@ -130,7 +124,7 @@ export function PlanPanel({ path }: PlanPanelProps) {
 
   // Plan review actions via custom events (dispatched from shortcuts registry)
   useEffect(() => {
-    if (!canAnnotate || plan.mode !== "view") return;
+    if (!canAnnotate) return;
 
     function onClear() {
       clearAnnotations();
@@ -147,7 +141,7 @@ export function PlanPanel({ path }: PlanPanelProps) {
       document.removeEventListener("cluihud:approve-plan", onApprove);
       document.removeEventListener("cluihud:revise-plan", onRevise);
     };
-  }, [canAnnotate, plan.mode, annotations.length, backendSessionId, decisionPath]);
+  }, [canAnnotate, annotations.length, backendSessionId, decisionPath]);
 
   if (!hasPlan) {
     return (
@@ -158,22 +152,11 @@ export function PlanPanel({ path }: PlanPanelProps) {
   }
 
   return (
-    <Tabs
-      value={plan.mode}
-      onValueChange={(value) => {
-        if (canAnnotate && value === "edit") return;
-        setMode({ path, mode: value as PlanMode });
-      }}
-      className="flex h-full flex-col gap-0"
-    >
-      {/* Header: View/Edit tabs + review actions */}
+    <div className="flex h-full flex-col">
+      {/* Header: annotation toggle + review actions */}
       <div className="flex h-8 shrink-0 items-center border-b border-border/50 px-2">
-        <TabsList variant="line" className="h-full">
-          <TabsTrigger value="view" className="text-[11px]">View</TabsTrigger>
-          <TabsTrigger value="edit" className="text-[11px]" disabled={canAnnotate}>Edit</TabsTrigger>
-        </TabsList>
         <div className="flex flex-1 items-center justify-end gap-1.5">
-          {plan.mode === "view" && canAnnotate && (
+          {canAnnotate && (
             <Tooltip>
               <TooltipTrigger>
                 <button
@@ -191,25 +174,12 @@ export function PlanPanel({ path }: PlanPanelProps) {
               <TooltipContent side="bottom" className="text-[10px]">Toggle annotation mode (Ctrl+Shift+H)</TooltipContent>
             </Tooltip>
           )}
-          {plan.mode === "edit" && (
-            <button
-              onClick={handleSave}
-              disabled={!hasEdits}
-              className={`h-5 rounded px-2 text-[10px] font-medium transition-colors ${
-                hasEdits
-                  ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                  : "bg-secondary text-muted-foreground cursor-not-allowed"
-              }`}
-            >
-              Save
-            </button>
-          )}
 
-          {plan.mode === "view" && isSubmitted && (
+          {isSubmitted && (
             <span className="text-[10px] text-muted-foreground">Waiting for revision...</span>
           )}
 
-          {plan.mode === "view" && canAnnotate && (
+          {canAnnotate && (
             <>
               <span className="text-[10px] text-muted-foreground tabular-nums">
                 {annotations.length}
@@ -287,17 +257,13 @@ export function PlanPanel({ path }: PlanPanelProps) {
         </div>
       )}
 
-      <TabsContent value="view" className="relative flex-1 overflow-y-auto">
+      <div className="relative flex-1 overflow-y-auto">
         <AnnotatableMarkdownView
           content={plan.content}
           annotationsEnabled={canAnnotate}
           annotationMode={annotationMode}
         />
-      </TabsContent>
-
-      <TabsContent value="edit" className="flex-1 overflow-hidden">
-        <PlanEditor path={path} />
-      </TabsContent>
-    </Tabs>
+      </div>
+    </div>
   );
 }

@@ -2,6 +2,10 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+fn default_true() -> bool {
+    true
+}
+
 /// Application configuration with persistence support.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -12,6 +16,11 @@ pub struct Config {
     pub default_shell: String,
     pub theme_mode: String,
     pub preferred_editor: String,
+    /// Enable Kitty keyboard protocol on the wezterm-term emulator. When
+    /// enabled (default), Ctrl+Backspace, Shift+Enter, Alt+letter, etc.
+    /// encode unambiguously so shells can bind them distinctively.
+    #[serde(default = "default_true")]
+    pub terminal_kitty_keyboard: bool,
 }
 
 impl Default for Config {
@@ -28,6 +37,7 @@ impl Default for Config {
             default_shell: shell,
             theme_mode: "dark".into(),
             preferred_editor: String::new(),
+            terminal_kitty_keyboard: true,
         }
     }
 }

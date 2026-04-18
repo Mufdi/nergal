@@ -38,6 +38,51 @@ export interface Config {
   default_shell: string;
   theme_mode: string;
   preferred_editor: string;
+  terminal_kitty_keyboard: boolean;
+}
+
+// ── wezterm-term renderer IPC types (Phase 4) ─────────────────────────
+
+export interface CellSnapshot {
+  ch: string;
+  fg: [number, number, number, number] | null;
+  bg: [number, number, number, number] | null;
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  reverse: boolean;
+  hyperlink: string | null;
+}
+
+export interface CursorSnapshot {
+  x: number;
+  y: number;
+  visible: boolean;
+}
+
+export interface GridRow {
+  index: number;
+  cells: CellSnapshot[];
+}
+
+export interface GridUpdate {
+  sessionId: string;
+  cols: number;
+  totalRows: number;
+  rows: GridRow[];
+  cursor: CursorSnapshot;
+  title: string | null;
+  scrollOffset: number;
+}
+
+export interface TerminalKeyEvent {
+  code: string;
+  key: string;
+  text?: string;
+  ctrl: boolean;
+  shift: boolean;
+  alt: boolean;
+  meta: boolean;
 }
 
 export interface SessionInfo {

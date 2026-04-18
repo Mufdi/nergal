@@ -9,4 +9,5 @@ export const configAtom = atom<Config>({
   default_shell: "/bin/bash",
   theme_mode: "dark",
   preferred_editor: "",
+  terminal_kitty_keyboard: true,
 });

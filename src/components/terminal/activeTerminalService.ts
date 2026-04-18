@@ -28,3 +28,11 @@ export async function writeToSession(sessionId: string, text: string): Promise<v
   }
   await legacy.writeToSession(sessionId, text);
 }
+
+export function destroy(sessionId: string): void {
+  if (wez.hasTerminal(sessionId)) {
+    wez.destroy(sessionId);
+    return;
+  }
+  legacy.destroy(sessionId);
+}

@@ -19,7 +19,7 @@ import { MergeModal } from "@/components/session/MergeModal";
 import { CommitModal } from "@/components/session/CommitModal";
 import { invoke } from "@/lib/tauri";
 import { open } from "@tauri-apps/plugin-dialog";
-import * as terminalService from "@/components/terminal/terminalService";
+import * as terminalService from "@/components/terminal/activeTerminalService";
 import { TasksIsland } from "@/components/tasks/TasksIsland";
 import { Eye, EyeOff } from "lucide-react";
 import {

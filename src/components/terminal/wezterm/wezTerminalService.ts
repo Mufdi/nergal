@@ -19,6 +19,8 @@ import {
   writeText as writeClipboard,
 } from "@tauri-apps/plugin-clipboard-manager";
 import type { CellSnapshot, GridUpdate, TerminalKeyEvent } from "@/lib/types";
+import { appStore } from "@/stores/jotaiStore";
+import { toastsAtom } from "@/stores/toast";
 
 import { FontAtlas, measureFont, type FontMetrics } from "./fontAtlas";
 import { WEZ_FONT, WEZ_THEME, rgbaToCss } from "./theme";
@@ -285,17 +287,10 @@ function wireInput(entry: Entry): void {
       return;
     }
 
-    // Terminal-scoped copy/paste wins over the global pass-through list.
-    // stopPropagation is essential: cluihud globally binds Ctrl+Shift+C to
-    // the commit-session modal, which steals focus and leaves the terminal
-    // unresponsive. stopPropagation keeps the event from reaching that
-    // global handler when we've handled the copy locally.
-    if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyC" && entry.selection) {
-      e.preventDefault();
-      e.stopPropagation();
-      void copySelection(entry);
-      return;
-    }
+    // Ctrl+Shift+C stays with cluihud's global `commit-session` binding —
+    // we cannot block it here anyway because `useKeyboardShortcuts` listens
+    // in capture phase, ahead of our bubble-phase listener. Instead, copy
+    // is triggered automatically on selection release (see mouseup).
     if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyV") {
       e.preventDefault();
       e.stopPropagation();
@@ -371,23 +366,43 @@ function wireInput(entry: Entry): void {
     if (!entry.isDragging) return;
     entry.isDragging = false;
 
-    if (entry.selection) {
-      const { anchor, head } = entry.selection;
-      const isClick = anchor.col === head.col && anchor.row === head.row;
-      if (isClick) {
-        // No drag happened — treat as a plain click. Clear the selection
-        // (a one-cell "selection" is not useful) and resolve the hyperlink
-        // if the click landed on one.
-        entry.selection = null;
-        const cell = mouseToCell(entry, e);
-        const hyperlink = cell ? entry.grid[cell.row]?.[cell.col]?.hyperlink : null;
-        if (hyperlink) {
-          openShell(hyperlink).catch((err: unknown) => {
-            console.error("shell.open hyperlink failed", err);
-          });
-        }
-        paintAll(entry);
+    if (!entry.selection) return;
+    const { anchor, head } = entry.selection;
+    const isClick = anchor.col === head.col && anchor.row === head.row;
+
+    if (isClick) {
+      // No drag happened — treat as a plain click. Clear the one-cell
+      // "selection" (not useful) and resolve the hyperlink if the click
+      // landed on one.
+      entry.selection = null;
+      const cell = mouseToCell(entry, e);
+      const hyperlink = cell ? entry.grid[cell.row]?.[cell.col]?.hyperlink : null;
+      if (hyperlink) {
+        openShell(hyperlink).catch((err: unknown) => {
+          console.error("shell.open hyperlink failed", err);
+        });
       }
+      paintAll(entry);
+      return;
+    }
+
+    // Real drag ended — Ghostty-style auto-copy: the selected text goes
+    // straight to the clipboard and a toast confirms. Sidesteps the
+    // Ctrl+Shift+C keyboard shortcut entirely (which cluihud binds to
+    // commit-session globally and which we can't intercept because the
+    // shortcut dispatcher listens in capture phase).
+    const text = serializeSelection(entry);
+    if (text) {
+      writeClipboard(text)
+        .then(() => {
+          appStore.set(toastsAtom, {
+            message: "Copied to clipboard",
+            type: "success",
+          });
+        })
+        .catch((err: unknown) => {
+          console.error("auto-copy failed", err);
+        });
     }
   });
 
@@ -407,19 +422,6 @@ function mouseToCell(entry: Entry, e: MouseEvent): CellCoord | null {
   const row = Math.floor(y / entry.metrics.cssHeight);
   if (col >= entry.cols || row >= entry.rows) return null;
   return { col, row };
-}
-
-async function copySelection(entry: Entry): Promise<void> {
-  const text = serializeSelection(entry);
-  if (!text) return;
-  try {
-    // Tauri plugin routes through IPC, sidestepping WebKit's
-    // user-gesture-only clipboard policy that silently blocked
-    // `navigator.clipboard.writeText` for us.
-    await writeClipboard(text);
-  } catch (err) {
-    console.error("clipboard write failed", err);
-  }
 }
 
 async function pasteFromClipboard(entry: Entry): Promise<void> {

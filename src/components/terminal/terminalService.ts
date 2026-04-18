@@ -1,147 +1,113 @@
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
+/// Canvas-based terminal renderer backed by the `wezterm-term` VT emulator
+/// running in the Rust backend. State lives outside React's lifecycle: a
+/// single host `<div>` is swapped via `show/destroy` and each session owns
+/// a canvas entry.
+///
+/// Flow per frame:
+///   1. Backend's emitter task coalesces PTY bytes and emits `terminal:grid-update`.
+///   2. We apply the changed rows into the local shadow grid.
+///   3. Changed rows are redrawn on the canvas using the [`FontAtlas`].
+///   4. Cursor is drawn on top (erase old cell, paint new).
+///
+/// No parsing happens here — all VT state lives in the backend.
+
 import { invoke, listen } from "@/lib/tauri";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import type { PtyOutput } from "@/lib/types";
-import "@xterm/xterm/css/xterm.css";
+import { open as openShell } from "@tauri-apps/plugin-shell";
+import { readText as readClipboard } from "@tauri-apps/plugin-clipboard-manager";
+import type { CellSnapshot, GridUpdate, TerminalKeyEvent } from "@/lib/types";
+import { appStore } from "@/stores/jotaiStore";
+import { toastsAtom } from "@/stores/toast";
+
+import { FontAtlas, measureFont, type FontMetrics } from "./fontAtlas";
+import { TERM_FONT, TERM_THEME, rgbaToCss } from "./theme";
+
+interface CellCoord {
+  col: number;
+  row: number;
+}
+
+interface Selection {
+  anchor: CellCoord;
+  head: CellCoord;
+}
 
 // ── Types ──
 
-interface TerminalEntry {
-  term: Terminal;
-  fitAddon: FitAddon;
-  ptyId: string;
+interface Entry {
+  sessionId: string;
   container: HTMLDivElement;
+  canvas: HTMLCanvasElement;
+  /// Hidden 1x1 textarea overlay used exclusively as the keyboard focus
+  /// target so the browser gives us proper `compositionstart/end` events
+  /// for dead keys, IME, and accented-character composition. The canvas
+  /// itself only handles mouse events.
+  textarea: HTMLTextAreaElement;
+  ctx: CanvasRenderingContext2D;
+  atlas: FontAtlas;
+  metrics: FontMetrics;
+  cols: number;
+  rows: number;
+  totalRows: number;
+  grid: CellSnapshot[][];
+  cursor: { x: number; y: number; visible: boolean };
+  title: string | null;
   unlisten: UnlistenFn;
-  dataDisposable: { dispose(): void };
-  resizeDisposable: { dispose(): void };
+  selection: Selection | null;
+  isDragging: boolean;
+  hoveredHyperlink: string | null;
+  composing: boolean;
+  /// Last composition result + timestamp. Some browsers fire a trailing
+  /// keydown with the composed char after `compositionend`; we suppress
+  /// that single ghost event instead of blanket-suppressing keydowns for
+  /// a long window (which is what dropped the user's fast-typing chars).
+  lastComposed: { text: string; at: number } | null;
 }
 
-// ── Module state — lives outside React lifecycle ──
+// ── Module state ──
 
-const terminals = new Map<string, TerminalEntry>();
+const entries = new Map<string, Entry>();
 const pending = new Set<string>();
 let hostElement: HTMLDivElement | null = null;
 let activeId: string | null = null;
-
-// ── Constants ──
-
-const TERM_OPTIONS: ConstructorParameters<typeof Terminal>[0] = {
-  cursorBlink: true,
-  fontSize: 13,
-  fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
-  theme: {
-    background: "#0a0a0b",
-    foreground: "#ededef",
-    cursor: "#f97316",
-    cursorAccent: "#0a0a0b",
-    selectionBackground: "#f9731633",
-    selectionForeground: "#ededef",
-    black: "#0a0a0b",
-    red: "#ef4444",
-    green: "#22c55e",
-    yellow: "#eab308",
-    blue: "#3b82f6",
-    magenta: "#a855f7",
-    cyan: "#06b6d4",
-    white: "#ededef",
-    brightBlack: "#5c5c5f",
-    brightRed: "#f87171",
-    brightGreen: "#4ade80",
-    brightYellow: "#facc15",
-    brightBlue: "#60a5fa",
-    brightMagenta: "#c084fc",
-    brightCyan: "#22d3ee",
-    brightWhite: "#ffffff",
-  },
-  allowProposedApi: true,
-};
-
-// ── Private helpers ──
-
-function afterLayout(): Promise<void> {
-  return new Promise((resolve) => {
-    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-  });
-}
-
-function wireIMEFix(term: Terminal, container: HTMLElement, ptyId: string) {
-  let composing = false;
-  let suppressUntil = 0;
-  const textarea = container.querySelector(".xterm-helper-textarea") as HTMLTextAreaElement | null;
-
-  if (textarea) {
-    textarea.addEventListener("compositionstart", () => { composing = true; });
-    textarea.addEventListener("compositionupdate", (e) => { e.stopPropagation(); });
-    textarea.addEventListener("compositionend", (e) => {
-      composing = false;
-      suppressUntil = Date.now() + 150;
-      const composed = (e as CompositionEvent).data;
-      if (composed) invoke("pty_write", { id: ptyId, data: composed }).catch(() => {});
-    });
-  }
-
-  term.attachCustomKeyEventHandler((event) => {
-    if (event.key === "Dead" || composing || Date.now() < suppressUntil) return false;
-
-    if (event.type !== "keydown") return true;
-
-    // Ctrl+Ñ / Ctrl+K / Ctrl+B / Ctrl+S
-    if (event.ctrlKey && !event.shiftKey && !event.altKey && (event.code === "Semicolon" || event.code === "KeyK" || event.code === "KeyB" || event.code === "KeyS")) return false;
-
-    // Ctrl+Shift+{letter}
-    if (event.ctrlKey && event.shiftKey && !event.altKey) {
-      if (["KeyB","KeyP","KeyF","KeyD","KeyS","KeyG","KeyK","KeyL","KeyT","KeyE","KeyM","KeyN","KeyC","KeyI","KeyJ","KeyO","KeyX","KeyA","KeyR","KeyU"].includes(event.code)) return false;
-    }
-
-    // Ctrl+{digit}
-    if (event.ctrlKey && !event.shiftKey && !event.altKey && event.code >= "Digit1" && event.code <= "Digit9") return false;
-
-    // Ctrl+Tab, Ctrl+W, Ctrl+N
-    if (event.ctrlKey && event.code === "Tab") return false;
-    if (event.ctrlKey && !event.shiftKey && event.code === "KeyW") return false;
-    if (event.ctrlKey && !event.shiftKey && event.code === "KeyN") return false;
-
-    // Alt+arrows (navigation between zones + items)
-    if (event.altKey && event.code.startsWith("Arrow")) return false;
-
-    return true;
-  });
-
-  return { isComposing: () => composing, isSuppressed: () => Date.now() < suppressUntil };
-}
 
 // ── Public API ──
 
 export function setHost(el: HTMLDivElement | null): void {
   hostElement = el;
-}
-
-/// Show the given session's terminal. Creates it if it doesn't exist.
-export async function show(sessionId: string, cwd: string, mode: "new" | "continue" | "resume_pick" = "new"): Promise<void> {
-  activeId = sessionId;
-
-  // Toggle visibility + force redraw on the shown terminal
-  for (const [id, entry] of terminals) {
-    if (id === sessionId) {
-      entry.container.style.display = "flex";
-    } else {
-      entry.container.style.display = "none";
+  // React can re-mount the host (e.g. after a layout swap). Existing
+  // session containers were attached to the previous host — re-parent them
+  // to the new one so the terminal remains visible.
+  if (el) {
+    for (const entry of entries.values()) {
+      if (entry.container.parentElement !== el) {
+        el.appendChild(entry.container);
+      }
     }
   }
+}
 
-  // Already attached — fit + refresh to redraw after display:none→flex
-  if (terminals.has(sessionId)) {
-    const entry = terminals.get(sessionId)!;
+export async function show(
+  sessionId: string,
+  cwd: string,
+  mode: "new" | "continue" | "resume_pick" = "new",
+): Promise<void> {
+  activeId = sessionId;
+
+  for (const [id, entry] of entries) {
+    entry.container.style.display = id === sessionId ? "flex" : "none";
+  }
+
+  if (entries.has(sessionId)) {
+    const entry = entries.get(sessionId)!;
     requestAnimationFrame(() => {
-      entry.fitAddon.fit();
-      entry.term.refresh(0, entry.term.rows - 1);
-      entry.term.focus();
+      fit(entry);
+      paintAll(entry);
+      focusCanvas(entry);
     });
     return;
   }
 
-  // Already being created
   if (pending.has(sessionId)) return;
   if (!hostElement) return;
 
@@ -149,91 +115,735 @@ export async function show(sessionId: string, cwd: string, mode: "new" | "contin
 
   try {
     const container = document.createElement("div");
-    container.style.cssText = "position:absolute;inset:0;display:flex;overflow:hidden;background:#0a0a0b;";
+    container.style.cssText =
+      "position:absolute;inset:0;display:flex;overflow:hidden;background:" +
+      TERM_THEME.background +
+      ";";
     hostElement.appendChild(container);
 
-    // Wait for browser layout so container has real dimensions
-    await afterLayout();
+    await waitForLayout(container);
 
-    const term = new Terminal(TERM_OPTIONS);
-    const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
-    term.open(container);
+    const canvas = document.createElement("canvas");
+    canvas.style.cssText = "outline:none;display:block;";
+    container.appendChild(canvas);
 
-    // No WebGL/Canvas addon — DOM renderer is sufficient and has no context limits
-    fitAddon.fit();
+    // Hidden focus target. 1×1 px positioned at origin keeps it unobtrusive
+    // but still a first-class input surface so IME popovers (if the OS
+    // shows them) appear near the top-left instead of floating offscreen.
+    const textarea = document.createElement("textarea");
+    textarea.setAttribute("aria-label", "Terminal input");
+    textarea.autocapitalize = "off";
+    textarea.autocomplete = "off";
+    textarea.spellcheck = false;
+    textarea.style.cssText = [
+      "position:absolute",
+      "top:0",
+      "left:0",
+      "width:1px",
+      "height:1px",
+      "opacity:0",
+      "resize:none",
+      "border:0",
+      "padding:0",
+      "margin:0",
+      "outline:none",
+      "overflow:hidden",
+      "z-index:1",
+      "pointer-events:none",
+    ].join(";") + ";";
+    container.appendChild(textarea);
 
-    const { pty_id: ptyId } = await invoke<{ pty_id: string }>("start_claude_session", {
+    const dpr = window.devicePixelRatio || 1;
+    const metrics = measureFont(TERM_FONT.family, TERM_FONT.size, TERM_FONT.lineHeight, dpr);
+    const atlas = new FontAtlas(metrics, TERM_FONT.family, TERM_FONT.size, dpr);
+
+    const { cols, rows } = computeCols(container, metrics);
+    sizeCanvas(canvas, cols, rows, metrics);
+
+    const ctx = canvas.getContext("2d", { alpha: false });
+    if (!ctx) throw new Error("terminal canvas 2d context unavailable");
+
+    const entry: Entry = {
+      sessionId,
+      container,
+      canvas,
+      textarea,
+      ctx,
+      atlas,
+      metrics,
+      cols,
+      rows,
+      totalRows: rows,
+      grid: emptyGrid(cols, rows),
+      cursor: { x: 0, y: 0, visible: true },
+      title: null,
+      unlisten: () => {},
+      selection: null,
+      isDragging: false,
+      hoveredHyperlink: null,
+      composing: false,
+      lastComposed: null,
+    };
+
+    wireInput(entry);
+
+    const { pty_id } = await invoke<{ pty_id: string }>("start_claude_session", {
       sessionId,
       cwd,
-      cols: term.cols,
-      rows: term.rows,
+      cols,
+      rows,
       resume: mode === "new" ? null : mode,
     });
+    void pty_id; // not used here — the session_id is what subsequent commands key off.
 
-    const ime = wireIMEFix(term, container, ptyId);
-
-    const unlisten = await listen<PtyOutput>("pty:output", (payload) => {
-      if (payload.id === ptyId) term.write(new Uint8Array(payload.data));
+    entry.unlisten = await listen<GridUpdate>("terminal:grid-update", (payload) => {
+      if (payload.sessionId !== sessionId) return;
+      applyUpdate(entry, payload);
     });
 
-    const dataDisposable = term.onData((data) => {
-      if (ime.isComposing() || ime.isSuppressed()) return;
-      invoke("pty_write", { id: ptyId, data }).catch((err: unknown) => console.error("pty_write:", err));
-    });
+    // Seed the shadow grid with whatever state the backend already holds
+    // (for resumed sessions or reopened windows).
+    try {
+      const initial = await invoke<GridUpdate>("terminal_get_full_grid", { sessionId });
+      applyUpdate(entry, initial);
+    } catch {
+      // No backend state yet — the first grid-update will paint the screen.
+    }
 
-    const resizeDisposable = term.onResize(({ cols, rows }) => {
-      invoke("pty_resize", { id: ptyId, cols, rows }).catch(() => {});
-    });
-
-    terminals.set(sessionId, { term, fitAddon, ptyId, container, unlisten, dataDisposable, resizeDisposable });
-    term.focus();
+    paintAll(entry);
+    entries.set(sessionId, entry);
+    focusCanvas(entry);
 
     if (activeId !== sessionId) {
       container.style.display = "none";
     }
   } catch (err) {
-    console.error("Failed to create terminal for session", sessionId, err);
+    console.error("wezterm: failed to create terminal for session", sessionId, err);
   } finally {
     pending.delete(sessionId);
   }
 }
 
 export function destroy(sessionId: string): void {
-  const entry = terminals.get(sessionId);
+  const entry = entries.get(sessionId);
   if (!entry) return;
-
-  entry.dataDisposable.dispose();
-  entry.resizeDisposable.dispose();
   entry.unlisten();
-  entry.term.dispose();
   entry.container.remove();
-  terminals.delete(sessionId);
-
+  entries.delete(sessionId);
   invoke("kill_session_pty", { sessionId }).catch(() => {});
-}
-
-export async function writeToSession(sessionId: string, text: string): Promise<void> {
-  const entry = terminals.get(sessionId);
-  if (!entry) return;
-  await invoke("write_to_session_pty", { sessionId, data: text });
-}
-
-export function hasTerminal(sessionId: string): boolean {
-  return terminals.has(sessionId);
 }
 
 export function fitActive(): void {
   if (!activeId) return;
-  const entry = terminals.get(activeId);
+  const entry = entries.get(activeId);
   if (!entry) return;
-  entry.fitAddon.fit();
-  entry.term.refresh(0, entry.term.rows - 1);
+  fit(entry);
+  paintAll(entry);
 }
 
 export function focusActive(): void {
   if (!activeId) return;
-  const entry = terminals.get(activeId);
-  if (!entry) return;
-  entry.term.focus();
+  const entry = entries.get(activeId);
+  if (entry) focusCanvas(entry);
+}
+
+export async function writeToSession(sessionId: string, text: string): Promise<void> {
+  await invoke("write_to_session_pty", { sessionId, data: text });
+}
+
+export function hasTerminal(sessionId: string): boolean {
+  return entries.has(sessionId);
+}
+
+// ── Private: input wiring ──
+
+function wireInput(entry: Entry): void {
+  // ── Keyboard: lives on the hidden textarea so we get composition events ──
+
+  entry.textarea.addEventListener("keydown", (e) => {
+    // Bare modifier / dead-key presses never reach the PTY. Without this,
+    // `key="Control"` would fall into the backend's Char fallback and send
+    // Ctrl+C to the shell on every Control keypress.
+    if (isModifierOrDead(e)) return;
+
+    // While the browser is composing an IME sequence, let the textarea
+    // accumulate; we'll forward the result via `compositionend`.
+    if (e.isComposing || entry.composing) return;
+
+    // Ghost keydown trailing a composition: some browsers fire a final
+    // keydown with the composed character right after compositionend.
+    // Suppress exactly one, only when it matches, within a tight window.
+    if (
+      entry.lastComposed
+      && e.key === entry.lastComposed.text
+      && Date.now() - entry.lastComposed.at < 60
+    ) {
+      entry.lastComposed = null;
+      e.preventDefault();
+      return;
+    }
+
+    // Ctrl+Shift+C stays with cluihud's global `commit-session` binding —
+    // we cannot block it here anyway because `useKeyboardShortcuts` listens
+    // in capture phase, ahead of our bubble-phase listener. Instead, copy
+    // is triggered automatically on selection release (see mouseup).
+    if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyV") {
+      e.preventDefault();
+      e.stopPropagation();
+      void pasteFromClipboard(entry);
+      return;
+    }
+
+    if (shouldPassThrough(e)) return;
+
+    // Any typing implicitly commits the selection — matches every mainstream
+    // terminal's "type to clear highlight" behavior.
+    if (entry.selection) {
+      entry.selection = null;
+      paintAll(entry);
+    }
+
+    e.preventDefault();
+    sendKeyEvent(entry, e);
+    // Keep the textarea empty so the browser never paints a stray char
+    // under our canvas nor accumulates stale state.
+    entry.textarea.value = "";
+  });
+
+  entry.textarea.addEventListener("compositionstart", () => {
+    entry.composing = true;
+  });
+
+  entry.textarea.addEventListener("compositionend", (e) => {
+    entry.composing = false;
+    const composed = e.data ?? entry.textarea.value;
+    entry.textarea.value = "";
+    if (composed) {
+      entry.lastComposed = { text: composed, at: Date.now() };
+      sendText(entry, composed);
+    }
+  });
+
+  // ── Mouse: lives on the visible canvas ──
+
+  entry.canvas.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    focusCanvas(entry);
+    const cell = mouseToCell(entry, e);
+    if (!cell) return;
+
+    // Click on a hyperlink cell (without a drag) opens it. We distinguish
+    // click-vs-drag by comparing mousedown and mouseup cell positions in
+    // the mouseup handler below.
+    entry.isDragging = true;
+    entry.selection = { anchor: cell, head: cell };
+    paintAll(entry);
+  });
+
+  entry.canvas.addEventListener("mousemove", (e) => {
+    const cell = mouseToCell(entry, e);
+    if (!cell) return;
+
+    if (entry.isDragging && entry.selection) {
+      entry.selection = { anchor: entry.selection.anchor, head: cell };
+      paintAll(entry);
+      return;
+    }
+
+    // Hover: detect hyperlink under the cursor and flip the pointer.
+    const hyperlink = entry.grid[cell.row]?.[cell.col]?.hyperlink ?? null;
+    if (hyperlink !== entry.hoveredHyperlink) {
+      entry.hoveredHyperlink = hyperlink;
+      entry.canvas.style.cursor = hyperlink ? "pointer" : "default";
+    }
+  });
+
+  entry.canvas.addEventListener("mouseup", (e) => {
+    if (!entry.isDragging) return;
+    entry.isDragging = false;
+
+    if (!entry.selection) return;
+    const { anchor, head } = entry.selection;
+    const isClick = anchor.col === head.col && anchor.row === head.row;
+
+    if (isClick) {
+      // No drag happened — treat as a plain click. Clear the one-cell
+      // "selection" (not useful) and resolve the hyperlink if the click
+      // landed on one.
+      entry.selection = null;
+      const cell = mouseToCell(entry, e);
+      const hyperlink = cell ? entry.grid[cell.row]?.[cell.col]?.hyperlink : null;
+      if (hyperlink) {
+        openShell(hyperlink).catch((err: unknown) => {
+          console.error("shell.open hyperlink failed", err);
+        });
+      }
+      paintAll(entry);
+      return;
+    }
+
+    // Real drag ended — Ghostty-style auto-copy: the selected text goes
+    // straight to the clipboard and a toast confirms. Sidesteps the
+    // Ctrl+Shift+C keyboard shortcut entirely (which cluihud binds to
+    // commit-session globally and which we can't intercept because the
+    // shortcut dispatcher listens in capture phase).
+    const text = serializeSelection(entry);
+    if (!text) return;
+
+    // The toast mounts a focusable <button> at the viewport edge; in
+    // WebKitGTK that can steal focus away from our textarea when a
+    // layout-triggered paint moves the focused element momentarily
+    // outside the hit region. Fire the toast first and schedule a
+    // follow-up refocus on the next frame. Also clipboard-write is async
+    // so typing can continue in parallel.
+    appStore.set(toastsAtom, {
+      message: "Copied to clipboard",
+      type: "success",
+    });
+    // Own command (spawn_blocking) instead of plugin-clipboard-manager —
+    // avoids stalling the tokio runtime on Wayland systems where arboard's
+    // blocking wl-clipboard I/O would otherwise delay subsequent async
+    // commands like terminal_input.
+    invoke("terminal_clipboard_write", { text }).catch((err: unknown) => {
+      console.error("auto-copy failed", err);
+    });
+    // Two-phase refocus: one immediately, one after a RAF (post sileo's
+    // enter animation starts). Safe to call even if focus is already on
+    // the textarea — it's a no-op in that case.
+    entry.textarea.focus({ preventScroll: true });
+    requestAnimationFrame(() => {
+      entry.textarea.focus({ preventScroll: true });
+    });
+  });
+
+  // Releasing outside the canvas must still end the drag so we don't get
+  // stuck with isDragging=true if the user rolls off the pane mid-drag.
+  entry.canvas.addEventListener("mouseleave", () => {
+    entry.isDragging = false;
+  });
+}
+
+function mouseToCell(entry: Entry, e: MouseEvent): CellCoord | null {
+  const rect = entry.canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  if (x < 0 || y < 0) return null;
+  const col = Math.floor(x / entry.metrics.cssWidth);
+  const row = Math.floor(y / entry.metrics.cssHeight);
+  if (col >= entry.cols || row >= entry.rows) return null;
+  return { col, row };
+}
+
+async function pasteFromClipboard(entry: Entry): Promise<void> {
+  try {
+    const text = await readClipboard();
+    if (!text) return;
+    await invoke("terminal_paste", { sessionId: entry.sessionId, text });
+  } catch (err) {
+    console.error("clipboard read / paste failed", err);
+  }
+}
+
+/// Walk the selection rectangle row-by-row, trimming trailing blanks per row
+/// (matches how xterm.js and wezterm both serialize selected regions).
+function serializeSelection(entry: Entry): string {
+  if (!entry.selection) return "";
+  const { startRow, endRow, startCol, endCol } = orderSelection(entry.selection);
+  const lines: string[] = [];
+  for (let row = startRow; row <= endRow; row += 1) {
+    const cells = entry.grid[row];
+    if (!cells) continue;
+    const from = row === startRow ? startCol : 0;
+    const to = row === endRow ? endCol : entry.cols - 1;
+    let text = "";
+    for (let col = from; col <= to; col += 1) {
+      text += cells[col]?.ch ?? " ";
+    }
+    lines.push(text.replace(/ +$/, ""));
+  }
+  return lines.join("\n");
+}
+
+function orderSelection(sel: Selection): {
+  startRow: number;
+  endRow: number;
+  startCol: number;
+  endCol: number;
+} {
+  const { anchor, head } = sel;
+  if (anchor.row < head.row || (anchor.row === head.row && anchor.col <= head.col)) {
+    return {
+      startRow: anchor.row,
+      endRow: head.row,
+      startCol: anchor.col,
+      endCol: head.col,
+    };
+  }
+  return {
+    startRow: head.row,
+    endRow: anchor.row,
+    startCol: head.col,
+    endCol: anchor.col,
+  };
+}
+
+function isPrintable(key: string): boolean {
+  if (key.length !== 1) return false;
+  const code = key.charCodeAt(0);
+  return code >= 0x20 && code !== 0x7f;
+}
+
+function sendKeyEvent(entry: Entry, e: KeyboardEvent): void {
+  const payload: TerminalKeyEvent = {
+    code: e.code,
+    key: e.key,
+    text: isPrintable(e.key) ? e.key : undefined,
+    ctrl: e.ctrlKey,
+    shift: e.shiftKey,
+    alt: e.altKey,
+    meta: e.metaKey,
+  };
+  invoke("terminal_input", { sessionId: entry.sessionId, event: payload }).catch(
+    (err: unknown) => console.error("terminal_input failed", err),
+  );
+}
+
+/// Send a composed string of text (from an IME `input` event or
+/// `compositionend`). Encoded as a single-char-per-call stream so the
+/// backend's encoder sees each grapheme independently — matches how native
+/// keyboard input arrives.
+function sendText(entry: Entry, text: string): void {
+  for (const ch of text) {
+    const payload: TerminalKeyEvent = {
+      code: "IME",
+      key: ch,
+      text: ch,
+      ctrl: false,
+      shift: false,
+      alt: false,
+      meta: false,
+    };
+    invoke("terminal_input", { sessionId: entry.sessionId, event: payload }).catch(
+      (err: unknown) => console.error("terminal_input failed", err),
+    );
+  }
+  if (entry.selection) {
+    entry.selection = null;
+    paintAll(entry);
+  }
+}
+
+/// Keys that carry no user intent for the PTY and must be dropped before
+/// invoking `terminal_input`. Includes lone modifier keydowns (whose `key`
+/// is the modifier's name and would otherwise be letter-mapped — e.g.
+/// bare Ctrl as `Char('C')` which the backend encodes as Ctrl+C = SIGINT),
+/// dead keys (accent lead-ins), and browser placeholders.
+const DROPPED_CODES = new Set([
+  "ControlLeft",
+  "ControlRight",
+  "ShiftLeft",
+  "ShiftRight",
+  "AltLeft",
+  "AltRight",
+  "MetaLeft",
+  "MetaRight",
+  "OSLeft",
+  "OSRight",
+]);
+
+const DROPPED_KEYS = new Set([
+  "Dead",
+  "Unidentified",
+  "Process",
+  "Control",
+  "Shift",
+  "Alt",
+  "Meta",
+  "Super",
+]);
+
+function isModifierOrDead(e: KeyboardEvent): boolean {
+  return DROPPED_CODES.has(e.code) || DROPPED_KEYS.has(e.key);
+}
+
+function shouldPassThrough(e: KeyboardEvent): boolean {
+  // Same shortcut set the legacy terminalService.wireIMEFix filters — these
+  // are handled by cluihud globally, not by the terminal.
+  if (e.type !== "keydown") return true;
+  if (e.ctrlKey && !e.shiftKey && !e.altKey) {
+    if (
+      e.code === "Semicolon" ||
+      e.code === "KeyK" ||
+      e.code === "KeyB" ||
+      e.code === "KeyS" ||
+      e.code === "KeyW" ||
+      e.code === "KeyN" ||
+      e.code === "Tab"
+    ) {
+      return true;
+    }
+    if (e.code >= "Digit1" && e.code <= "Digit9") return true;
+  }
+  if (e.ctrlKey && e.shiftKey && !e.altKey) {
+    if (
+      [
+        "KeyB","KeyP","KeyF","KeyD","KeyS","KeyG","KeyK","KeyL","KeyT",
+        "KeyE","KeyM","KeyN","KeyC","KeyI","KeyJ","KeyO","KeyX","KeyA",
+        "KeyR","KeyU",
+      ].includes(e.code)
+    ) {
+      return true;
+    }
+  }
+  if (e.altKey && e.code.startsWith("Arrow")) return true;
+  return false;
+}
+
+function focusCanvas(entry: Entry): void {
+  // Input focus lives on the hidden textarea so IME/composition events
+  // reach us; the canvas is purely visual + mouse.
+  entry.textarea.focus({ preventScroll: true });
+}
+
+// ── Private: resize + layout ──
+
+function computeCols(container: HTMLElement, metrics: FontMetrics): { cols: number; rows: number } {
+  const rect = container.getBoundingClientRect();
+  const rawCols = Math.floor(rect.width / metrics.cssWidth);
+  const rawRows = Math.floor(rect.height / metrics.cssHeight);
+  // Guard against a not-yet-laid-out container. Launching a shell at 1x1
+  // is unrecoverable: many TUIs (including `claude`) cache dimensions at
+  // startup and never reflow properly even after SIGWINCH. Default to a
+  // conventional 80x24 when the measurement looks bogus.
+  const cols = rawCols >= 10 ? rawCols : 80;
+  const rows = rawRows >= 3 ? rawRows : 24;
+  return { cols, rows };
+}
+
+/// Poll the container until it has real dimensions, capped at ~1s. A few
+/// RAFs are usually enough; in rare cases (pane animated in, React Suspense
+/// boundary just resolved) the extra budget prevents us from seeding the
+/// PTY with placeholder dimensions.
+async function waitForLayout(container: HTMLElement): Promise<void> {
+  for (let i = 0; i < 60; i += 1) {
+    const rect = container.getBoundingClientRect();
+    if (rect.width >= 100 && rect.height >= 50) return;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  }
+}
+
+function sizeCanvas(
+  canvas: HTMLCanvasElement,
+  cols: number,
+  rows: number,
+  metrics: FontMetrics,
+): void {
+  canvas.width = cols * metrics.cellWidth;
+  canvas.height = rows * metrics.cellHeight;
+  canvas.style.width = `${cols * metrics.cssWidth}px`;
+  canvas.style.height = `${rows * metrics.cssHeight}px`;
+}
+
+function fit(entry: Entry): void {
+  const { cols, rows } = computeCols(entry.container, entry.metrics);
+  if (cols === entry.cols && rows === entry.rows) return;
+  entry.cols = cols;
+  entry.rows = rows;
+  entry.grid = reshapeGrid(entry.grid, cols, rows);
+  sizeCanvas(entry.canvas, cols, rows, entry.metrics);
+  invoke("resize_session_terminal", {
+    sessionId: entry.sessionId,
+    cols,
+    rows,
+  }).catch((err: unknown) => {
+    console.error("resize_session_terminal failed", err);
+  });
+}
+
+// ── Private: grid maintenance ──
+
+function emptyCell(): CellSnapshot {
+  return {
+    ch: " ",
+    fg: null,
+    bg: null,
+    bold: false,
+    italic: false,
+    underline: false,
+    reverse: false,
+    hyperlink: null,
+  };
+}
+
+function emptyGrid(cols: number, rows: number): CellSnapshot[][] {
+  const grid: CellSnapshot[][] = new Array(rows);
+  for (let r = 0; r < rows; r += 1) {
+    const row: CellSnapshot[] = new Array(cols);
+    for (let c = 0; c < cols; c += 1) row[c] = emptyCell();
+    grid[r] = row;
+  }
+  return grid;
+}
+
+function reshapeGrid(
+  prev: CellSnapshot[][],
+  cols: number,
+  rows: number,
+): CellSnapshot[][] {
+  const next = emptyGrid(cols, rows);
+  const copyRows = Math.min(prev.length, rows);
+  for (let r = 0; r < copyRows; r += 1) {
+    const copyCols = Math.min(prev[r].length, cols);
+    for (let c = 0; c < copyCols; c += 1) next[r][c] = prev[r][c];
+  }
+  return next;
+}
+
+function applyUpdate(entry: Entry, update: GridUpdate): void {
+  if (update.totalRows !== entry.totalRows) {
+    entry.totalRows = update.totalRows;
+    entry.grid = reshapeGrid(entry.grid, entry.cols, update.totalRows);
+  }
+  if (update.cols !== entry.cols) {
+    // The backend's cols won the race; we rely on the next fit() cycle.
+    entry.cols = update.cols;
+    entry.grid = reshapeGrid(entry.grid, update.cols, entry.totalRows);
+    sizeCanvas(entry.canvas, entry.cols, entry.totalRows, entry.metrics);
+  }
+
+  const previousCursor = entry.cursor;
+  const touchedRows = new Set<number>();
+
+  for (const row of update.rows) {
+    if (row.index >= entry.grid.length) continue;
+    entry.grid[row.index] = normalizeRow(row.cells, entry.cols);
+    touchedRows.add(row.index);
+  }
+
+  entry.cursor = update.cursor;
+  entry.title = update.title;
+
+  // The cursor area needs repainting whenever the cursor moves, even if the
+  // underlying row did not otherwise change.
+  if (
+    previousCursor.x !== update.cursor.x ||
+    previousCursor.y !== update.cursor.y ||
+    previousCursor.visible !== update.cursor.visible
+  ) {
+    touchedRows.add(previousCursor.y);
+    touchedRows.add(update.cursor.y);
+  }
+
+  for (const y of touchedRows) {
+    if (y >= 0 && y < entry.rows) paintRow(entry, y);
+  }
+  // `paintRow` overwrites the row entirely, so any selection tint on those
+  // rows needs to be re-applied before the cursor draws on top.
+  paintSelection(entry);
+  paintCursor(entry);
+}
+
+function normalizeRow(cells: CellSnapshot[], cols: number): CellSnapshot[] {
+  if (cells.length === cols) return cells;
+  if (cells.length > cols) return cells.slice(0, cols);
+  const extended = cells.slice();
+  while (extended.length < cols) extended.push(emptyCell());
+  return extended;
+}
+
+// ── Private: painting ──
+
+function paintAll(entry: Entry): void {
+  entry.ctx.fillStyle = TERM_THEME.background;
+  entry.ctx.fillRect(0, 0, entry.canvas.width, entry.canvas.height);
+  for (let y = 0; y < entry.rows; y += 1) paintRow(entry, y);
+  paintSelection(entry);
+  paintCursor(entry);
+}
+
+function paintRow(entry: Entry, y: number): void {
+  const { ctx, metrics, atlas, cols } = entry;
+  const row = entry.grid[y];
+  const dyCell = y * metrics.cellHeight;
+
+  // Clear the row background first.
+  ctx.fillStyle = TERM_THEME.background;
+  ctx.fillRect(0, dyCell, cols * metrics.cellWidth, metrics.cellHeight);
+
+  for (let x = 0; x < cols; x += 1) {
+    const cell = row[x];
+    const dxCell = x * metrics.cellWidth;
+
+    let fg = rgbaToCss(cell.fg, TERM_THEME.foreground);
+    let bg = rgbaToCss(cell.bg, TERM_THEME.background);
+    if (cell.reverse) {
+      const swap = fg;
+      fg = bg;
+      bg = swap;
+    }
+
+    if (bg !== TERM_THEME.background) {
+      ctx.fillStyle = bg;
+      ctx.fillRect(dxCell, dyCell, metrics.cellWidth, metrics.cellHeight);
+    }
+
+    if (cell.ch && cell.ch !== " ") {
+      atlas.drawGlyph(ctx, dxCell, dyCell, cell.ch, fg, cell.bold, cell.italic);
+    }
+
+    if (cell.underline) {
+      ctx.fillStyle = fg;
+      ctx.fillRect(
+        dxCell,
+        dyCell + metrics.baseline + 1,
+        metrics.cellWidth,
+        Math.max(1, Math.floor(metrics.cellHeight / 16)),
+      );
+    }
+  }
+}
+
+function paintSelection(entry: Entry): void {
+  if (!entry.selection) return;
+  // Skip zero-size "selections" — one-cell mousedown without a drag.
+  const { anchor, head } = entry.selection;
+  if (anchor.col === head.col && anchor.row === head.row) return;
+
+  const { startRow, endRow, startCol, endCol } = orderSelection(entry.selection);
+  const { ctx, metrics, cols } = entry;
+
+  ctx.fillStyle = TERM_THEME.selectionBackground;
+  for (let row = startRow; row <= endRow; row += 1) {
+    const from = row === startRow ? startCol : 0;
+    const to = row === endRow ? endCol : cols - 1;
+    const dx = from * metrics.cellWidth;
+    const dy = row * metrics.cellHeight;
+    const width = (to - from + 1) * metrics.cellWidth;
+    ctx.fillRect(dx, dy, width, metrics.cellHeight);
+  }
+}
+
+function paintCursor(entry: Entry): void {
+  if (!entry.cursor.visible) return;
+  const { ctx, metrics, cursor, cols, rows } = entry;
+  if (cursor.x < 0 || cursor.x >= cols || cursor.y < 0 || cursor.y >= rows) return;
+
+  const dx = cursor.x * metrics.cellWidth;
+  const dy = cursor.y * metrics.cellHeight;
+
+  ctx.fillStyle = TERM_THEME.cursor;
+  ctx.fillRect(dx, dy, metrics.cellWidth, metrics.cellHeight);
+
+  const cell = entry.grid[cursor.y]?.[cursor.x];
+  if (cell?.ch && cell.ch !== " ") {
+    entry.atlas.drawGlyph(
+      ctx,
+      dx,
+      dy,
+      cell.ch,
+      TERM_THEME.cursorAccent,
+      cell.bold,
+      cell.italic,
+    );
+  }
 }

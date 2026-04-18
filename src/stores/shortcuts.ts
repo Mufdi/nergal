@@ -109,7 +109,7 @@ function detectCurrentZone(): FocusZone {
   const active = document.activeElement;
   if (active?.closest("[data-focus-zone='panel']")) return "panel";
   if (active?.closest("[data-focus-zone='sidebar']")) return "sidebar";
-  if (active?.closest(".xterm")) return "terminal";
+  if (active?.closest("[data-focus-zone='terminal']")) return "terminal";
   // Fallback to stored zone
   return store().get(focusZoneAtom);
 }
@@ -123,9 +123,12 @@ function focusZone(zone: FocusZone) {
   if (zone === "terminal") {
     terminalService.focusActive();
   } else {
-    // Blur terminal first to prevent it from recapturing focus
-    const xtermTextarea = document.querySelector(".xterm-helper-textarea") as HTMLElement | null;
-    if (xtermTextarea) xtermTextarea.blur();
+    // Blur the terminal's input textarea first so it doesn't immediately
+    // recapture focus after we move it to the target zone.
+    const terminalInput = document.querySelector(
+      "[data-focus-zone='terminal'] textarea",
+    ) as HTMLElement | null;
+    terminalInput?.blur();
     // Focus the deepest focusable container (e.g. file picker inside panel)
     const focusTarget = el.querySelector<HTMLElement>("[data-nav-container]") ?? el;
     focusTarget.focus();

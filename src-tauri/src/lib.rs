@@ -8,6 +8,7 @@ mod plan_state;
 mod pty;
 pub mod setup;
 mod tasks;
+mod terminal;
 mod worktree;
 
 use claude::openspec::OpenSpecWatcher;
@@ -46,17 +47,20 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .manage(PtyManager::new())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .manage(PtyManager::new(config.terminal_kitty_keyboard))
         .manage(db.clone())
         .manage(plan_state.clone())
         .invoke_handler(tauri::generate_handler![
             // PTY commands
-            pty::pty_create,
-            pty::pty_write,
-            pty::pty_resize,
-            pty::pty_kill,
             pty::start_claude_session,
             pty::kill_session_pty,
+            pty::write_to_session_pty,
+            pty::resize_session_terminal,
+            pty::terminal_input,
+            pty::terminal_get_full_grid,
+            pty::terminal_paste,
+            pty::terminal_clipboard_write,
             // Config commands
             commands::get_config,
             commands::save_config,

@@ -1,10 +1,22 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useAtomValue, useSetAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
 import { currentSpecArtifactAtom, specSubTabMapAtom } from "@/stores/rightPanel";
+import {
+  activeAnnotationsAtom,
+  addAnnotationAtom,
+  annotationModeAtom,
+  annotationScopeAtom,
+  clearAnnotationsAtom,
+  serializeSpecAnnotations,
+  specAnnotationMapAtom,
+  type AnnotationType,
+} from "@/stores/annotations";
+import { toastsAtom } from "@/stores/toast";
 import { MarkdownView } from "@/components/plan/MarkdownView";
-import { RichMarkdownEditor } from "@/components/editor/RichMarkdownEditor";
-import { FileText, Pencil, CheckSquare, ClipboardList, Wrench, Cog, ArrowLeft } from "lucide-react";
+import { AnnotatableMarkdownView } from "@/components/plan/AnnotatableMarkdownView";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { FileText, Pencil, CheckSquare, ClipboardList, Wrench, Cog, ArrowLeft, Highlighter, MessageSquare, Trash2 } from "lucide-react";
 
 interface SpecEntry {
   name: string;
@@ -59,21 +71,31 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
     setSpecSubTabMap((prev) => ({ ...prev, [changeName]: tab }));
   }, [changeName, setSpecSubTabMap]);
   const [content, setContent] = useState("");
-  const [editContent, setEditContent] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [change, setChange] = useState<OpenSpecChange | null>(null);
   const [activeSpec, setActiveSpec] = useState<string | null>(initialSpecPath ?? null);
-  const [mode, setMode] = useState<"view" | "edit">("view");
-  const [saving, setSaving] = useState(false);
 
   const setCurrentSpecArtifact = useSetAtom(currentSpecArtifactAtom);
-  const isEditable = change?.status === "active";
-  const dirty = mode === "edit" && editContent !== content;
+
+  // Annotation state
+  const [annotationMode, setAnnotationMode] = useAtom(annotationModeAtom);
+  const [scope, setScope] = useAtom(annotationScopeAtom);
+  const annotations = useAtomValue(activeAnnotationsAtom);
+  const clearAnnotations = useSetAtom(clearAnnotationsAtom);
+  const addAnnotation = useSetAtom(addAnnotationAtom);
+  const setSpecAnnotationMap = useSetAtom(specAnnotationMapAtom);
+  const addToast = useSetAtom(toastsAtom);
+  const [showGlobalInput, setShowGlobalInput] = useState(false);
+  const [globalComment, setGlobalComment] = useState("");
+  const globalInputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Annotation counts per spec_key across the whole change (or master)
+  const [fileCounts, setFileCounts] = useState<Record<string, number>>({});
 
   useEffect(() => {
-    onDirtyChange?.(dirty);
-  }, [dirty, onDirtyChange]);
+    onDirtyChange?.(false);
+  }, [onDirtyChange]);
 
   useEffect(() => {
     invoke<OpenSpecChange[]>("list_openspec_changes", { sessionId })
@@ -94,12 +116,194 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
     ? activeSpec
     : `${activeTab}.md`;
 
+  const specScopeKey = currentArtifactPath ? `${changeName}/${currentArtifactPath}` : null;
+  const isAnnotatingThis =
+    annotationMode && scope?.kind === "spec" && scope.specPath === specScopeKey;
+  const isEditable = change?.status === "active";
+
+  const countPrefix = isMaster ? "" : `${changeName}/`;
+  const refreshCounts = useCallback(() => {
+    if (isMaster) {
+      setFileCounts({});
+      return;
+    }
+    invoke<Array<[string, number]>>("count_spec_annotations_by_prefix", { prefix: countPrefix })
+      .then((pairs) => {
+        const map: Record<string, number> = {};
+        for (const [key, count] of pairs) map[key] = count;
+        setFileCounts(map);
+      })
+      .catch(() => {});
+  }, [countPrefix, isMaster]);
+
+  useEffect(() => { refreshCounts(); }, [refreshCounts]);
+
+  // Keep the current file's count in sync with the local annotation list
+  useEffect(() => {
+    if (!specScopeKey) return;
+    setFileCounts((prev) =>
+      prev[specScopeKey] === annotations.length
+        ? prev
+        : { ...prev, [specScopeKey]: annotations.length },
+    );
+  }, [annotations.length, specScopeKey]);
+
+  const totalAnnotations = Object.values(fileCounts).reduce((a, b) => a + b, 0);
+
+  // Count for a given artifact tab key (proposal/design/tasks/…)
+  const countForArtifactTab = (key: string) => fileCounts[`${changeName}/${key}.md`] ?? 0;
+  // Aggregate counts for anything under specs/
+  const countForSpecsTab = Object.entries(fileCounts)
+    .filter(([k]) => k.startsWith(`${changeName}/specs/`))
+    .reduce((acc, [, n]) => acc + n, 0);
+
   useEffect(() => {
     if (currentArtifactPath) {
       setCurrentSpecArtifact({ changeName, artifactPath: currentArtifactPath });
     }
     return () => setCurrentSpecArtifact(null);
   }, [changeName, currentArtifactPath, setCurrentSpecArtifact]);
+
+  // Bind annotation scope to the current spec artifact so the drawer and
+  // activeAnnotationsAtom always reflect this spec's annotations.
+  useEffect(() => {
+    if (!specScopeKey) return;
+    setScope({ kind: "spec", specPath: specScopeKey });
+    // Load persisted annotations for this spec
+    invoke<Array<{
+      id: string;
+      ann_type: string;
+      target: string;
+      content: string;
+      start_meta: string;
+      end_meta: string;
+    }>>("get_spec_annotations", { specKey: specScopeKey })
+      .then((rows) => {
+        const loaded = rows.map((r) => ({
+          id: r.id,
+          type: r.ann_type as AnnotationType,
+          target: r.target,
+          content: r.content,
+          startMeta: JSON.parse(r.start_meta || "{}"),
+          endMeta: JSON.parse(r.end_meta || "{}"),
+        }));
+        setSpecAnnotationMap((prev) => ({ ...prev, [specScopeKey]: loaded }));
+      })
+      .catch(console.error);
+  }, [specScopeKey, setScope, setSpecAnnotationMap]);
+
+  // Release spec scope + annotation mode on unmount so plan panels don't
+  // inherit a stale spec scope or mode flag.
+  useEffect(() => {
+    return () => {
+      setScope(null);
+      setAnnotationMode(false);
+    };
+  }, [setScope, setAnnotationMode]);
+
+  // Reset annotation mode when the artifact changes (user must re-enter per artifact)
+  useEffect(() => {
+    setAnnotationMode(false);
+    setShowGlobalInput(false);
+  }, [specScopeKey, setAnnotationMode]);
+
+  useEffect(() => {
+    if (showGlobalInput) globalInputRef.current?.focus();
+  }, [showGlobalInput]);
+
+  // Listen for global shortcut events — dispatched by stores/shortcuts.ts
+  useEffect(() => {
+    function handleToggleAnnotation() {
+      if (!isEditable || !specScopeKey) return;
+      if (isAnnotatingThis) {
+        setAnnotationMode(false);
+        setScope(null);
+        setShowGlobalInput(false);
+      } else {
+        setScope({ kind: "spec", specPath: specScopeKey });
+        setAnnotationMode(true);
+      }
+    }
+    function handleToggleGlobal() {
+      if (isAnnotatingThis) setShowGlobalInput((prev) => !prev);
+    }
+    function handleClear() {
+      if (isAnnotatingThis) handleClearAnnotations();
+    }
+    function handleRevise() {
+      if (isAnnotatingThis && annotations.length > 0) handleSendToClaude();
+    }
+
+    document.addEventListener("cluihud:toggle-annotation-mode", handleToggleAnnotation);
+    document.addEventListener("cluihud:toggle-global-comment", handleToggleGlobal);
+    document.addEventListener("cluihud:clear-annotations", handleClear);
+    document.addEventListener("cluihud:revise-plan", handleRevise);
+    return () => {
+      document.removeEventListener("cluihud:toggle-annotation-mode", handleToggleAnnotation);
+      document.removeEventListener("cluihud:toggle-global-comment", handleToggleGlobal);
+      document.removeEventListener("cluihud:clear-annotations", handleClear);
+      document.removeEventListener("cluihud:revise-plan", handleRevise);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEditable, specScopeKey, isAnnotatingThis, annotations.length]);
+
+  function toggleAnnotationMode() {
+    if (!isEditable || !specScopeKey) return;
+    if (isAnnotatingThis) {
+      setAnnotationMode(false);
+      setScope(null);
+      setShowGlobalInput(false);
+      return;
+    }
+    setScope({ kind: "spec", specPath: specScopeKey });
+    setAnnotationMode(true);
+  }
+
+  function handleGlobalComment() {
+    if (showGlobalInput) {
+      if (globalComment.trim()) {
+        addAnnotation({
+          type: "comment",
+          target: "[global]",
+          content: globalComment.trim(),
+          startMeta: { parentTagName: "", parentIndex: 0, textOffset: 0 },
+          endMeta: { parentTagName: "", parentIndex: 0, textOffset: 0 },
+        });
+        setGlobalComment("");
+      }
+      setShowGlobalInput(false);
+    } else {
+      setShowGlobalInput(true);
+    }
+  }
+
+  function handleSendToClaude() {
+    if (!specScopeKey || !currentArtifactPath || annotations.length === 0) return;
+    const feedback = serializeSpecAnnotations(annotations, {
+      changeName,
+      artifactPath: currentArtifactPath,
+      isMaster,
+    });
+    invoke<void>("set_pending_annotations", { feedback })
+      .then(() => {
+        clearAnnotations();
+        setAnnotationMode(false);
+        setScope(null);
+        addToast({
+          message: "Feedback queued",
+          description: "Will be sent in your next prompt",
+          type: "success",
+        });
+      })
+      .catch((err: unknown) =>
+        addToast({ message: "Send failed", description: String(err), type: "error" }),
+      );
+  }
+
+  function handleClearAnnotations() {
+    clearAnnotations();
+    addToast({ message: "Cleared", description: "All annotations removed", type: "info" });
+  }
 
   const loadArtifact = useCallback((path: string) => {
     setLoading(true);
@@ -111,7 +315,6 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
     })
       .then((text) => {
         setContent(text);
-        setEditContent(text);
       })
       .catch((err: unknown) => setError(String(err)))
       .finally(() => setLoading(false));
@@ -123,34 +326,12 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
         loadArtifact(activeSpec);
       } else {
         setContent("");
-        setEditContent("");
         setLoading(false);
       }
     } else {
       loadArtifact(`${activeTab}.md`);
     }
-    setMode("view");
   }, [activeTab, activeSpec, loadArtifact]);
-
-  function handleSave() {
-    if (!currentArtifactPath || !dirty) return;
-    setSaving(true);
-    invoke("write_openspec_artifact", {
-      sessionId,
-      changeName,
-      artifactPath: currentArtifactPath,
-      content: editContent,
-    })
-      .then(() => {
-        setContent(editContent);
-      })
-      .catch((err: unknown) => setError(String(err)))
-      .finally(() => setSaving(false));
-  }
-
-  const handleSaveCallback = useCallback(() => {
-    handleSave();
-  }, [currentArtifactPath, editContent, changeName, sessionId]);
 
   function handleSpecClick(specPath: string) {
     setActiveSpec(specPath);
@@ -160,9 +341,7 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
   function handleBackToSpecs() {
     setActiveSpec(null);
     setContent("");
-    setEditContent("");
     setLoading(false);
-    setMode("view");
   }
 
   function handleTabSwitch(key: string) {
@@ -192,7 +371,7 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
       const active = document.activeElement;
       if (active?.tagName === "INPUT" || active?.tagName === "TEXTAREA") return;
 
-      if (e.key === "Backspace" && !e.ctrlKey && !e.altKey && activeSpec && mode !== "edit") {
+      if (e.key === "Backspace" && !e.ctrlKey && !e.altKey && activeSpec) {
         e.preventDefault();
         handleBackToSpecs();
         return;
@@ -211,11 +390,11 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeSpec, mode, activeTab, tabs.length]);
+  }, [activeSpec, activeTab, tabs.length]);
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {/* Change header */}
+      {/* Change header: metadata (left) + annotation toolbar (right) */}
       <div className="flex shrink-0 items-center gap-2 border-b border-border/50 px-3 py-1">
         <span className="text-[11px] font-medium text-foreground/80 font-mono truncate">{displayName}</span>
         {change && !isMaster && (
@@ -228,74 +407,176 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
           </span>
         )}
         {change?.created && (
-          <span className="text-[10px] text-muted-foreground ml-auto shrink-0">{formatDate(change.created)}</span>
+          <span className="text-[10px] text-muted-foreground shrink-0">{formatDate(change.created)}</span>
+        )}
+
+        {isEditable && showingContent && (
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            {totalAnnotations > 0 && (
+              <Tooltip>
+                <TooltipTrigger>
+                  <span className="flex h-5 items-center gap-1 rounded bg-secondary/60 px-1.5 text-[10px] text-muted-foreground">
+                    <MessageSquare size={10} />
+                    <span className="tabular-nums">{totalAnnotations}</span>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-[10px]">
+                  {totalAnnotations} annotation{totalAnnotations !== 1 ? "s" : ""} across this change
+                </TooltipContent>
+              </Tooltip>
+            )}
+            <Tooltip>
+              <TooltipTrigger>
+                <button
+                  onClick={toggleAnnotationMode}
+                  className={`flex h-5 items-center gap-1 rounded px-1.5 text-[10px] transition-colors ${
+                    isAnnotatingThis
+                      ? "bg-primary/15 text-primary"
+                      : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  }`}
+                >
+                  <Highlighter size={11} className={isAnnotatingThis ? "animate-pulse" : ""} />
+                  {isAnnotatingThis && (
+                    <span className="text-[9px] font-medium uppercase tracking-wider">Annotate</span>
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-[10px]">
+                Toggle annotation mode (Ctrl+Shift+H)
+              </TooltipContent>
+            </Tooltip>
+
+            {isAnnotatingThis && (
+              <>
+                <span className="text-[10px] text-muted-foreground tabular-nums">
+                  {annotations.length}
+                </span>
+                <Tooltip>
+                  <TooltipTrigger>
+                    <button
+                      onClick={handleGlobalComment}
+                      className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                    >
+                      <MessageSquare size={11} />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="text-[10px]">
+                    Global comment (Ctrl+Shift+O)
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger>
+                    <button
+                      onClick={handleClearAnnotations}
+                      className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="text-[10px]">
+                    Clear all (Ctrl+Shift+X)
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger>
+                    <button
+                      onClick={handleSendToClaude}
+                      disabled={annotations.length === 0}
+                      className={`h-5 rounded px-2 text-[10px] font-medium transition-colors ${
+                        annotations.length > 0
+                          ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                          : "bg-secondary text-muted-foreground cursor-not-allowed"
+                      }`}
+                    >
+                      Send to Claude
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="text-[10px]">
+                    Queue feedback for next prompt (Ctrl+Shift+R)
+                  </TooltipContent>
+                </Tooltip>
+              </>
+            )}
+          </div>
         )}
       </div>
 
-      {/* Artifact tab bar + View/Edit toggle */}
-      {(tabs.length > 1 || isEditable) && (
+      {/* Artifact tab bar */}
+      {tabs.length > 1 && (
         <div className="flex shrink-0 items-center border-b border-border/50">
-          {tabs.length > 1 && (
-            <div className="flex flex-1 items-center gap-1 overflow-x-auto scrollbar-none px-2 py-1.5">
-              {tabs.map((tab) => {
-                const Icon = tab.icon;
-                const isActive = activeTab === tab.key;
-                return (
-                  <button
-                    key={tab.key}
-                    onClick={() => handleTabSwitch(tab.key)}
-                    className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] whitespace-nowrap transition-colors ${
-                      isActive
-                        ? "bg-secondary text-foreground"
-                        : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground/80"
-                    }`}
-                  >
-                    <Icon size={11} />
-                    {tab.label}
-                    {tab.key === "specs" && change && (
-                      <span className="text-[10px] text-muted-foreground/60">{change.specs.length}</span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-          {tabs.length <= 1 && <div className="flex-1" />}
-
-          {/* View/Edit toggle — only for active changes when showing content */}
-          {isEditable && showingContent && (
-            <div className="flex shrink-0 items-center gap-1 pr-2">
-              {mode === "edit" && (
+          <div className="flex flex-1 items-center gap-1 overflow-x-auto scrollbar-none px-2 py-1.5">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.key;
+              const annCount = tab.key === "specs" ? countForSpecsTab : countForArtifactTab(tab.key);
+              return (
                 <button
-                  onClick={handleSave}
-                  disabled={!dirty || saving}
-                  className={`h-5 rounded px-2 text-[10px] font-medium transition-colors ${
-                    dirty && !saving
-                      ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                      : "bg-secondary text-muted-foreground cursor-not-allowed"
+                  key={tab.key}
+                  onClick={() => handleTabSwitch(tab.key)}
+                  className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] whitespace-nowrap transition-colors ${
+                    isActive
+                      ? "bg-secondary text-foreground"
+                      : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground/80"
                   }`}
                 >
-                  {saving ? "Saving..." : "Save"}
+                  <Icon size={11} />
+                  {tab.label}
+                  {tab.key === "specs" && change && (
+                    <span className="text-[10px] text-muted-foreground/60">{change.specs.length}</span>
+                  )}
+                  {annCount > 0 && (
+                    <span
+                      className="flex h-3.5 items-center justify-center rounded-full bg-primary/15 px-1 text-[9px] font-medium text-primary tabular-nums"
+                      title={`${annCount} annotation${annCount !== 1 ? "s" : ""}`}
+                    >
+                      {annCount}
+                    </span>
+                  )}
                 </button>
-              )}
-              <button
-                onClick={() => setMode("view")}
-                className={`h-5 rounded px-1.5 text-[10px] transition-colors ${
-                  mode === "view" ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                View
-              </button>
-              <button
-                onClick={() => setMode("edit")}
-                className={`h-5 rounded px-1.5 text-[10px] transition-colors ${
-                  mode === "edit" ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                Edit
-              </button>
-            </div>
-          )}
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Global comment input */}
+      {isAnnotatingThis && showGlobalInput && (
+        <div className="border-b border-border/50 p-2">
+          <textarea
+            ref={globalInputRef}
+            value={globalComment}
+            onChange={(e) => setGlobalComment(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && e.ctrlKey) {
+                e.preventDefault();
+                handleGlobalComment();
+              }
+              if (e.key === "Escape") {
+                setShowGlobalInput(false);
+                setGlobalComment("");
+              }
+            }}
+            placeholder="General comment about this spec..."
+            className="mb-1.5 h-14 w-full resize-none rounded border border-border bg-background p-2 text-xs focus:ring-1 focus:ring-ring outline-none"
+          />
+          <div className="flex items-center justify-end gap-1">
+            <button
+              onClick={() => {
+                setShowGlobalInput(false);
+                setGlobalComment("");
+              }}
+              className="rounded px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleGlobalComment}
+              disabled={!globalComment.trim()}
+              className="rounded bg-primary px-2 py-0.5 text-[10px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            >
+              Add (Ctrl+Enter)
+            </button>
+          </div>
         </div>
       )}
 
@@ -314,16 +595,9 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
             <span className="text-[11px] text-red-400">File not found</span>
             <span className="text-[10px] text-muted-foreground">This change may have been moved or archived.</span>
           </div>
-        ) : mode === "edit" && isEditable ? (
-          <RichMarkdownEditor
-            markdown={editContent}
-            onChange={setEditContent}
-            onSave={handleSaveCallback}
-            placeholder="Edit artifact..."
-          />
         ) : (
           <div className="h-full overflow-y-auto">
-            {activeTab === "specs" && activeSpec && (
+            {activeTab === "specs" && activeSpec && showingContent && (
               <button
                 onClick={handleBackToSpecs}
                 className="flex items-center gap-1 px-4 pt-2 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
@@ -332,7 +606,15 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
                 All specs
               </button>
             )}
-            <MarkdownView content={content} />
+            {isAnnotatingThis ? (
+              <AnnotatableMarkdownView
+                content={content}
+                annotationsEnabled
+                annotationMode
+              />
+            ) : (
+              <MarkdownView content={content} />
+            )}
           </div>
         )}
       </div>

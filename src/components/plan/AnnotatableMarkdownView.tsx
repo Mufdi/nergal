@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, memo, type ComponentPropsWithoutRef } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { activeAnnotationsAtom, annotationMapAtom, type AnnotationType } from "@/stores/annotations";
+import { activeAnnotationsAtom, annotationMapAtom, annotationScopeAtom, specAnnotationMapAtom, type AnnotationType } from "@/stores/annotations";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { toastsAtom } from "@/stores/toast";
 import { PlanAnnotationToolbar } from "./PlanAnnotationToolbar";
@@ -133,7 +133,9 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true, an
     });
   }
   const sessionId = useAtomValue(activeSessionIdAtom);
+  const scope = useAtomValue(annotationScopeAtom);
   const setAnnotationMap = useSetAtom(annotationMapAtom);
+  const setSpecAnnotationMap = useSetAtom(specAnnotationMapAtom);
   const addToast = useSetAtom(toastsAtom);
   const loadedRef = useRef<string | null>(null);
   const prevContentRef = useRef(content);
@@ -368,6 +370,9 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true, an
       // Only capture when focus is in the right panel (not sidebar/terminal)
       const active = document.activeElement;
       if (active && !active.closest("[data-focus-zone='panel']") && active !== document.body) return;
+      // Don't intercept when typing in an editable field (global comment textarea, etc.)
+      const tag = (active as HTMLElement | null)?.tagName;
+      if (tag === "TEXTAREA" || tag === "INPUT" || (active as HTMLElement | null)?.isContentEditable) return;
 
       const elements = Array.from(container.querySelectorAll<HTMLElement>("[data-annotatable]"));
       if (elements.length === 0) return;
@@ -534,13 +539,11 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true, an
     return () => { cancelled = true; cancelAnimationFrame(frame); };
   }, [annotations, content]);
 
-  // Load annotations from SQLite on mount / session change
+  // Load annotations from SQLite. Separate keys per scope so switching
+  // plan↔spec re-loads the right set.
   useEffect(() => {
-    if (!sessionId || loadedRef.current === sessionId) return;
-    loadedRef.current = sessionId;
-
-    invoke("get_annotations", { sessionId }).then((rows: unknown) => {
-      const loaded = (rows as Array<{
+    const parseRows = (rows: unknown) =>
+      (rows as Array<{
         id: string;
         ann_type: string;
         target: string;
@@ -555,9 +558,25 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true, an
         startMeta: JSON.parse(r.start_meta || "{}"),
         endMeta: JSON.parse(r.end_meta || "{}"),
       }));
-      setAnnotationMap((prev) => ({ ...prev, [sessionId]: loaded }));
+
+    if (scope?.kind === "spec") {
+      const key = `spec:${scope.specPath}`;
+      if (loadedRef.current === key) return;
+      loadedRef.current = key;
+      invoke("get_spec_annotations", { specKey: scope.specPath }).then((rows) => {
+        setSpecAnnotationMap((prev) => ({ ...prev, [scope.specPath]: parseRows(rows) }));
+      }).catch(console.error);
+      return;
+    }
+
+    if (!sessionId) return;
+    const key = `plan:${sessionId}`;
+    if (loadedRef.current === key) return;
+    loadedRef.current = key;
+    invoke("get_annotations", { sessionId }).then((rows) => {
+      setAnnotationMap((prev) => ({ ...prev, [sessionId]: parseRows(rows) }));
     }).catch(console.error);
-  }, [sessionId, setAnnotationMap]);
+  }, [sessionId, scope, setAnnotationMap, setSpecAnnotationMap]);
 
   // Stale annotations toast
   useEffect(() => {

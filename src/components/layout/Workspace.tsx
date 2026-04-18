@@ -180,6 +180,15 @@ export function Workspace() {
         requestAnimationFrame(() => {
           const panel = rightPanelRef.current;
           if (panel) panel.expand();
+          setFocusZone("panel");
+          const terminalInput = document.querySelector(
+            "[data-focus-zone='terminal'] textarea",
+          ) as HTMLElement | null;
+          terminalInput?.blur();
+          const panelEl = document.querySelector(
+            "[data-focus-zone='panel']",
+          ) as HTMLElement | null;
+          panelEl?.focus();
         });
       }
     }

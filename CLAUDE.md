@@ -1,4 +1,4 @@
-# cluihud
+# cluihuds
 
 Desktop app wrapper para Claude Code CLI (Plan Pro) en Linux.
 GPU-accelerated UI con GPUI Component (framework de Zed).

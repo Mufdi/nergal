@@ -4,22 +4,30 @@
 
 Plan sencillo de test para validar el flujo completo de plan mode → aprobación → ejecución en cluihud.
 
+> Nota (anotación global): feedback de test recibido y registrado.
+
 ## Tasks
 
+> Nota: feedback de test recibido sobre la sección de tasks.
+
 ### Task 1: Crear archivo de configuración dummy
-- Crear `test_config.yaml` con estructura `version: 1`, `theme: light`, `panels: [terminal, tasks]`
-- Verificar que el YAML es válido con `yq`
+- eeee
+- Verificar que el archivo es válido
 
 ### Task 2: Validar estructura del JSON
-- Leer `test_config.json` y verificar que contiene las keys esperadas (`version`, `theme`, `panels`)
+- Leer `test_config.json` y verificar que contiene las keys esperadas (`version`, `theme`, `panels`).
+  Ejemplo de validación con `jq`:
+  ```bash
+  jq 'has("version") and has("theme") and has("panels")' test_config.json
+  # → true
+  ```
 - Confirmar que `panels` es un array con exactamente 2 elementos
 
-### Task 3: Generar backup y comparar checksums
+### Task 3: Generar backup
 - Copiar `test_config.json` a `test_config.backup.json`
-- Calcular checksum MD5 de ambos archivos
-- Confirmar que los checksums son idénticos
+- Confirmar que el backup existe
 
 ## Verification
-- `test_config.yaml` se crea con YAML válido
+- Archivo de configuración se crea válido
 - Validación de estructura pasa correctamente
-- Backup tiene checksum idéntico al original
+- Backup se genera correctamente

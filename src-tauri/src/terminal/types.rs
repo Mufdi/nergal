@@ -39,12 +39,16 @@ pub struct CursorSnapshot {
 
 /// Full grid snapshot used by Phase 1 tests and by the `terminal_get_full_grid`
 /// command introduced in Phase 2. `rows[0]` is the top visible row.
+///
+/// `scroll_offset` is the number of lines the visible window is scrolled above
+/// the live bottom; `0` means pinned to the bottom (live PTY output).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GridSnapshot {
     pub cols: usize,
     pub rows: Vec<Vec<CellSnapshot>>,
     pub cursor: CursorSnapshot,
     pub title: Option<String>,
+    pub scroll_offset: usize,
 }
 
 /// Delta-ish payload emitted over the `terminal:grid-update` Tauri event.

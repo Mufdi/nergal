@@ -24,6 +24,15 @@ pub struct TerminalSession {
     /// a [`GridSnapshot`] — without this, the frontend would see `None`
     /// for every ANSI-colored character and render the default foreground.
     palette: ColorPalette,
+    /// How many lines above the live bottom the visible window is currently
+    /// scrolled. `0` means pinned to the bottom; positive values reveal
+    /// scrollback history.
+    scroll_offset: usize,
+    /// `screen.scrollback_rows()` observed during the previous
+    /// `grid_snapshot` call. Used to keep the user's view anchored on the
+    /// same content when new PTY output pushes lines into scrollback while
+    /// the user is scrolled up.
+    last_scrollback_rows: usize,
 }
 
 impl TerminalSession {
@@ -61,6 +70,8 @@ impl TerminalSession {
             cols,
             rows,
             palette,
+            scroll_offset: 0,
+            last_scrollback_rows: 0,
         }
     }
 
@@ -114,15 +125,116 @@ impl TerminalSession {
         &self.terminal
     }
 
+    /// Current scroll position, in lines above the live bottom. `0` means the
+    /// viewport is pinned to the live PTY output.
+    pub fn scroll_offset(&self) -> usize {
+        self.scroll_offset
+    }
+
+    /// Maximum offset reachable right now: how many full extra screens of
+    /// history are available above the visible window.
+    pub fn max_scroll_offset(&self) -> usize {
+        let screen = self.terminal.screen();
+        screen
+            .scrollback_rows()
+            .saturating_sub(screen.physical_rows)
+    }
+
+    /// Set the scroll offset directly, clamped to `[0, max_scroll_offset]`.
+    pub fn set_scroll_offset(&mut self, offset: usize) {
+        let max = self.max_scroll_offset();
+        self.scroll_offset = offset.min(max);
+    }
+
+    /// Adjust the scroll offset by `delta` lines. Positive = up (more
+    /// history); negative = down (toward live bottom). Returns the new
+    /// offset after clamping.
+    pub fn scroll_by(&mut self, delta: i32) -> usize {
+        let max = self.max_scroll_offset();
+        let current = self.scroll_offset as i64;
+        let next = (current + delta as i64).clamp(0, max as i64);
+        self.scroll_offset = next as usize;
+        self.scroll_offset
+    }
+
+    /// Snap the viewport back to the live bottom.
+    pub fn scroll_to_bottom(&mut self) {
+        self.scroll_offset = 0;
+    }
+
+    /// True when the underlying terminal is rendering on the alternate
+    /// screen (TUI apps like vim, less, claude in fullscreen). Local
+    /// scrollback is unavailable there, so wheel events should be
+    /// forwarded to the app via [`Self::mouse_wheel`] instead.
+    pub fn is_alt_screen_active(&self) -> bool {
+        self.terminal.is_alt_screen_active()
+    }
+
+    /// Hand a wheel tick to wezterm-term's mouse pipeline. wezterm picks
+    /// the encoding based on what the running app requested:
+    /// SGR mouse report, X10/UTF-8 mouse report, or — when no mouse mode
+    /// is enabled but the alt screen is active — synthetic arrow-key
+    /// presses (xterm's "alternateScroll" emulation). When neither
+    /// applies it's a no-op.
+    ///
+    /// `delta_lines` follows the rest of the scroll API: positive = up,
+    /// negative = down. `col`/`row` are cell coordinates of the cursor
+    /// at the time of the wheel event; many apps ignore them but mouse
+    /// reports need them for correctness.
+    pub fn mouse_wheel(&mut self, delta_lines: i32, col: u16, row: u16) -> Result<()> {
+        use wezterm_term::input::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let count = delta_lines.unsigned_abs() as usize;
+        if count == 0 {
+            return Ok(());
+        }
+        let button = if delta_lines > 0 {
+            MouseButton::WheelUp(count)
+        } else {
+            MouseButton::WheelDown(count)
+        };
+        self.terminal.mouse_event(MouseEvent {
+            kind: MouseEventKind::Press,
+            button,
+            x: col as usize,
+            y: row as i64,
+            x_pixel_offset: 0,
+            y_pixel_offset: 0,
+            modifiers: KeyModifiers::default(),
+        })
+    }
+
     /// Extract a renderable snapshot of the visible screen. Phase 2 replaces
     /// the ad-hoc "only changed rows" diffing on top of this. For Phase 1
     /// tests, the caller can compare two snapshots directly.
-    pub fn grid_snapshot(&self) -> GridSnapshot {
+    pub fn grid_snapshot(&mut self) -> GridSnapshot {
+        let (cols, total_rows, physical_rows) = {
+            let screen = self.terminal.screen();
+            (
+                screen.physical_cols,
+                screen.scrollback_rows(),
+                screen.physical_rows,
+            )
+        };
+
+        // Anchor: when the user is scrolled up and new content pushed
+        // additional lines into scrollback, advance the offset by the same
+        // amount so the visible content stays put under their eyes.
+        if self.scroll_offset > 0 && total_rows > self.last_scrollback_rows {
+            let growth = total_rows - self.last_scrollback_rows;
+            let max = total_rows.saturating_sub(physical_rows);
+            self.scroll_offset = (self.scroll_offset + growth).min(max);
+        } else {
+            let max = total_rows.saturating_sub(physical_rows);
+            if self.scroll_offset > max {
+                self.scroll_offset = max;
+            }
+        }
+        self.last_scrollback_rows = total_rows;
+
+        let end = total_rows.saturating_sub(self.scroll_offset);
+        let start = end.saturating_sub(physical_rows);
         let screen = self.terminal.screen();
-        let cols = screen.physical_cols;
-        let total_rows = screen.scrollback_rows();
-        let start = total_rows.saturating_sub(screen.physical_rows);
-        let visible = screen.lines_in_phys_range(start..total_rows);
+        let visible = screen.lines_in_phys_range(start..end);
         let mut rows: Vec<Vec<CellSnapshot>> = Vec::with_capacity(visible.len());
 
         for line in &visible {
@@ -148,10 +260,16 @@ impl TerminalSession {
         }
 
         let cursor_pos = self.terminal.cursor_pos();
+        // The cursor lives at the bottom of the live screen; when the user
+        // scrolls back through history its physical row falls outside the
+        // window. Hide it instead of rendering a phantom caret on the wrong
+        // line.
+        let cursor_visible = self.scroll_offset == 0
+            && cursor_pos.visibility == termwiz::surface::CursorVisibility::Visible;
         let cursor = CursorSnapshot {
             x: cursor_pos.x,
             y: cursor_pos.y.max(0) as usize,
-            visible: cursor_pos.visibility == termwiz::surface::CursorVisibility::Visible,
+            visible: cursor_visible,
         };
 
         let raw_title = self.terminal.get_title();
@@ -166,6 +284,7 @@ impl TerminalSession {
             rows,
             cursor,
             title,
+            scroll_offset: self.scroll_offset,
         }
     }
 }
@@ -447,4 +566,106 @@ mod tests {
     // redundant once Ctrl+Backspace started remapping unconditionally to
     // Ctrl+W. The CSI-u fallback is now exercised by
     // `shift_enter_distinguishes_when_csi_u_fallback_active`.
+
+    #[test]
+    fn scroll_offset_clamped_when_no_history_available() {
+        let mut s = session(20, 5);
+        s.advance_bytes(b"hello");
+        // Nothing has been pushed into scrollback; max offset should be 0
+        // and any scroll request must clamp.
+        assert_eq!(s.scroll_by(10), 0);
+        assert_eq!(s.scroll_offset(), 0);
+        let grid = s.grid_snapshot();
+        assert_eq!(grid.scroll_offset, 0);
+        assert!(grid.cursor.visible, "no scroll → cursor visible");
+    }
+
+    #[test]
+    fn scroll_back_reveals_history_pushed_off_top() {
+        // Build a session with 3 visible rows, fill it past capacity so the
+        // earliest lines move into scrollback, then verify scroll_by exposes
+        // them.
+        let mut s = session(20, 3);
+        for n in 0..6u8 {
+            s.advance_bytes(format!("line{n}\r\n").as_bytes());
+        }
+        // After 6 lines + cursor newline, the 3 latest lines fill the
+        // visible area. Bottom-pinned snapshot should not contain "line0".
+        let live = s.grid_snapshot();
+        let live_text: String = live
+            .rows
+            .iter()
+            .map(|r| plain_text(r))
+            .collect::<Vec<_>>()
+            .join("|");
+        assert!(
+            !live_text.contains("line0"),
+            "live view excludes scrollback"
+        );
+
+        // Now scroll back enough to expose line0.
+        s.scroll_by(10);
+        assert!(s.scroll_offset() > 0, "scroll up should leave bottom");
+        let history = s.grid_snapshot();
+        let history_text: String = history
+            .rows
+            .iter()
+            .map(|r| plain_text(r))
+            .collect::<Vec<_>>()
+            .join("|");
+        assert!(
+            history_text.contains("line0"),
+            "scrolled view should reveal line0; got '{history_text}'"
+        );
+        assert!(
+            !history.cursor.visible,
+            "cursor must be hidden while scrolled back"
+        );
+        assert!(history.scroll_offset > 0);
+    }
+
+    #[test]
+    fn anchor_keeps_view_stable_when_new_lines_arrive() {
+        // While the user is reading history, new PTY output must not yank
+        // the visible content out from under them.
+        let mut s = session(20, 3);
+        for n in 0..6u8 {
+            s.advance_bytes(format!("line{n}\r\n").as_bytes());
+        }
+        s.scroll_by(2);
+        let before = s.grid_snapshot();
+        let before_text = plain_text(&before.rows[0]);
+
+        // Simulate new output landing while the user is scrolled up.
+        s.advance_bytes(b"newone\r\nnewtwo\r\n");
+        let after = s.grid_snapshot();
+        let after_text = plain_text(&after.rows[0]);
+
+        assert_eq!(
+            before_text, after_text,
+            "anchor: scrolled view should remain pinned to the same row"
+        );
+    }
+
+    #[test]
+    fn scroll_to_bottom_resets_offset() {
+        let mut s = session(20, 3);
+        for n in 0..6u8 {
+            s.advance_bytes(format!("line{n}\r\n").as_bytes());
+        }
+        s.scroll_by(5);
+        assert!(s.scroll_offset() > 0);
+        s.scroll_to_bottom();
+        assert_eq!(s.scroll_offset(), 0);
+        let grid = s.grid_snapshot();
+        assert!(grid.cursor.visible, "back at bottom → cursor visible again");
+    }
+
+    fn plain_text(row: &[CellSnapshot]) -> String {
+        row.iter()
+            .map(|c| c.ch.as_str())
+            .collect::<String>()
+            .trim_end()
+            .to_owned()
+    }
 }

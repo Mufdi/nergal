@@ -72,7 +72,7 @@ impl GridDiffer {
                 rows: changed_rows,
                 cursor: snapshot.cursor,
                 title: snapshot.title.clone(),
-                scroll_offset: 0,
+                scroll_offset: snapshot.scroll_offset,
             })
         } else {
             None
@@ -119,6 +119,7 @@ mod tests {
                 visible: true,
             },
             title: None,
+            scroll_offset: 0,
         }
     }
 

@@ -705,10 +705,7 @@ pub fn merge_session(
 /// Removes the session's worktree + branch and marks the session completed.
 /// Called explicitly after the user confirms cleanup (not auto after merge).
 #[tauri::command]
-pub fn cleanup_merged_session(
-    db: State<'_, SharedDb>,
-    session_id: String,
-) -> Result<(), String> {
+pub fn cleanup_merged_session(db: State<'_, SharedDb>, session_id: String) -> Result<(), String> {
     let db = db.lock().map_err(|e| e.to_string())?;
     let Some(session) = db.find_session(&session_id).map_err(|e| e.to_string())? else {
         return Err("session not found".into());

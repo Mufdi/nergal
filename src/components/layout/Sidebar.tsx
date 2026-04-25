@@ -1,22 +1,27 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { focusZoneAtom, previousNonTerminalZoneAtom, triggerResumeSessionAtom, triggerNewSessionAtom, triggerAddWorkspaceAtom } from "@/stores/shortcuts";
+import { focusZoneAtom, previousNonTerminalZoneAtom, triggerResumeSessionAtom, triggerNewSessionAtom, triggerAddWorkspaceAtom, triggerCommitAtom, triggerMergeAtom, triggerJumpToProjectAtom, sidebarSelectedIdxAtom, focusedWorkspaceIdAtom } from "@/stores/shortcuts";
 import {
   workspacesAtom,
   activeSessionIdAtom,
   showCompletedAtom,
   sessionLaunchModeAtom,
   freshSessionsAtom,
+  activeSessionAtom,
   type Workspace,
   type Session,
 } from "@/stores/workspace";
 import { openTabAction } from "@/stores/rightPanel";
 import { toastsAtom } from "@/stores/toast";
+import { refreshConflictedFilesAtom } from "@/stores/git";
+import { openConflictsTabAction } from "@/stores/conflict";
 import { SessionRow } from "@/components/session/SessionRow";
 import { SessionIndicator } from "@/components/session/SessionIndicator";
 import { ResumeModal } from "@/components/session/ResumeModal";
 import { MergeModal } from "@/components/session/MergeModal";
 import { CommitModal } from "@/components/session/CommitModal";
+import { ProjectPickerModal } from "@/components/session/ProjectPickerModal";
+import Swal from "sweetalert2";
 import { invoke } from "@/lib/tauri";
 import { open } from "@tauri-apps/plugin-dialog";
 import * as terminalService from "@/components/terminal/terminalService";
@@ -36,14 +41,14 @@ interface SidebarProps {
 export function Sidebar({ collapsed }: SidebarProps) {
   const setFocusZone = useSetAtom(focusZoneAtom);
   const setPreviousZone = useSetAtom(previousNonTerminalZoneAtom);
+  const sidebarSelectedIdx = useAtomValue(sidebarSelectedIdxAtom);
+  const setSidebarSelectedIdx = useSetAtom(sidebarSelectedIdxAtom);
 
   function handleSidebarFocus() {
     setFocusZone("sidebar");
     setPreviousZone("sidebar");
-    sidebarSelectedIdx.current = 0;
+    if (sidebarSelectedIdx < 0) setSidebarSelectedIdx(0);
   }
-
-  const sidebarSelectedIdx = useRef(-1);
 
   function updateSidebarSelection(container: HTMLElement, idx: number) {
     const items = Array.from(container.querySelectorAll<HTMLElement>("[data-nav-item]"));
@@ -52,7 +57,7 @@ export function Sidebar({ collapsed }: SidebarProps) {
       items[idx].setAttribute("data-nav-selected", "true");
       items[idx].scrollIntoView({ block: "nearest" });
     }
-    sidebarSelectedIdx.current = idx;
+    setSidebarSelectedIdx(idx);
   }
 
   function handleSidebarKeyDown(e: React.KeyboardEvent) {
@@ -62,7 +67,7 @@ export function Sidebar({ collapsed }: SidebarProps) {
     const items = Array.from(container.querySelectorAll<HTMLElement>("[data-nav-item]"));
     if (items.length === 0) return;
 
-    const idx = sidebarSelectedIdx.current;
+    const idx = sidebarSelectedIdx;
     const selectedItem = idx >= 0 && idx < items.length ? items[idx] : null;
 
     if (e.key === "ArrowDown") {
@@ -164,6 +169,10 @@ function WorkspacesView() {
   const setFreshSessions = useSetAtom(freshSessionsAtom);
   const openTab = useSetAtom(openTabAction);
   const addToast = useSetAtom(toastsAtom);
+  const refreshConflicts = useSetAtom(refreshConflictedFilesAtom);
+  const openConflictsTab = useSetAtom(openConflictsTabAction);
+  const triggerCommitSignal = useAtomValue(triggerCommitAtom);
+  const triggerMergeSignal = useAtomValue(triggerMergeAtom);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [addingSessionFor, setAddingSessionFor] = useState<string | null>(null);
   const [newSessionName, setNewSessionName] = useState("");
@@ -171,10 +180,25 @@ function WorkspacesView() {
   const [resumeModal, setResumeModal] = useState<{ session: Session } | null>(null);
   const [mergeModal, setMergeModal] = useState<{ session: Session; workspaceId: string } | null>(null);
   const [commitModal, setCommitModal] = useState<{ session: Session } | null>(null);
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const triggerResumeId = useAtomValue(triggerResumeSessionAtom);
   const setTriggerResume = useSetAtom(triggerResumeSessionAtom);
   const triggerNewSession = useAtomValue(triggerNewSessionAtom);
   const triggerAddWorkspace = useAtomValue(triggerAddWorkspaceAtom);
+  const jumpToProject = useAtomValue(triggerJumpToProjectAtom);
+  const setFocusZoneDirect = useSetAtom(focusZoneAtom);
+  const setSidebarIdxDirect = useSetAtom(sidebarSelectedIdxAtom);
+  const focusedWorkspaceId = useAtomValue(focusedWorkspaceIdAtom);
+  const setFocusedWorkspaceId = useSetAtom(focusedWorkspaceIdAtom);
+  const focusZone = useAtomValue(focusZoneAtom);
+
+  // Numbers follow focus: clear the focused-workspace override as soon as the
+  // user leaves the sidebar without picking anything.
+  useEffect(() => {
+    if (focusZone !== "sidebar" && focusedWorkspaceId) {
+      setFocusedWorkspaceId(null);
+    }
+  }, [focusZone, focusedWorkspaceId, setFocusedWorkspaceId]);
 
   useEffect(() => {
     if (!triggerResumeId) return;
@@ -191,13 +215,46 @@ function WorkspacesView() {
 
   useEffect(() => {
     if (triggerNewSession > 0 && workspaces.length > 0) {
-      setAddingSessionFor(workspaces[0].id);
+      if (workspaces.length === 1) {
+        setAddingSessionFor(workspaces[0].id);
+      } else {
+        setProjectPickerOpen(true);
+      }
     }
   }, [triggerNewSession]);
 
   useEffect(() => {
     if (triggerAddWorkspace > 0) handleAddWorkspace();
   }, [triggerAddWorkspace]);
+
+  useEffect(() => {
+    if (triggerCommitSignal === 0 || !activeSessionId) return;
+    const session = workspaces.flatMap((w) => w.sessions).find((s) => s.id === activeSessionId);
+    if (!session) return;
+    invoke<{ dirty: boolean; commits_ahead: boolean }>("check_session_has_commits", { sessionId: activeSessionId })
+      .then((status) => {
+        if (status.dirty) setCommitModal({ session });
+        else addToast({ message: "Commit", description: "Nothing to commit", type: "info" });
+      })
+      .catch(() => {});
+  }, [triggerCommitSignal]);
+
+  useEffect(() => {
+    if (triggerMergeSignal === 0 || !activeSessionId) return;
+    const ws = workspaces.find((w) => w.sessions.some((s) => s.id === activeSessionId));
+    const session = ws?.sessions.find((s) => s.id === activeSessionId);
+    if (!ws || !session) return;
+    invoke<{ dirty: boolean; commits_ahead: boolean }>("check_session_has_commits", { sessionId: activeSessionId })
+      .then((status) => {
+        if (status.dirty) addToast({ message: "Merge", description: "Commit your changes first", type: "info" });
+        else if (status.commits_ahead) setMergeModal({ session, workspaceId: ws.id });
+        else addToast({ message: "Merge", description: "Nothing to merge", type: "info" });
+      })
+      .catch(() => {});
+  }, [triggerMergeSignal]);
+
+  const activeSession = useAtomValue(activeSessionAtom);
+  void activeSession;
 
   useEffect(() => {
     invoke<Workspace[]>("get_workspaces")
@@ -208,7 +265,35 @@ function WorkspacesView() {
         }
       })
       .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (jumpToProject.tick === 0) return;
+    const ws = workspaces[jumpToProject.index];
+    if (!ws) return;
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      next.add(ws.id);
+      return next;
+    });
+    setFocusZoneDirect("sidebar");
+    // Move shortcut numbers onto this workspace until the user picks a session
+    // or leaves the sidebar (handled by the focus-zone effect above).
+    setFocusedWorkspaceId(ws.id);
+    requestAnimationFrame(() => {
+      const zone = document.querySelector("[data-focus-zone='sidebar']") as HTMLElement | null;
+      const el = document.querySelector(`[data-workspace-id="${ws.id}"]`) as HTMLElement | null;
+      if (!zone || !el) return;
+      const items = Array.from(zone.querySelectorAll<HTMLElement>("[data-nav-item]"));
+      for (const item of items) item.removeAttribute("data-nav-selected");
+      el.setAttribute("data-nav-selected", "true");
+      el.scrollIntoView({ block: "nearest" });
+      setSidebarIdxDirect(items.indexOf(el));
+      // Focus the sidebar zone (not the button) so arrow keys are handled by handleSidebarKeyDown
+      zone.focus();
+    });
+  }, [jumpToProject.tick]);
 
   function toggleWorkspace(id: string) {
     setExpandedIds((prev) => {
@@ -318,19 +403,26 @@ function WorkspacesView() {
         </div>
       </div>
 
-      {workspaces.map((ws) => {
-        const isExpanded = expandedIds.has(ws.id);
-        const filteredSessions = showCompleted
-          ? ws.sessions
-          : ws.sessions.filter((s) => s.status !== "completed");
-        // Shortcut numbers: non-completed sessions of the active workspace (or first with sessions)
-        const activeWs = workspaces.find((w) => w.sessions.some((s) => s.id === activeSessionId)) ?? workspaces.find((w) => w.sessions.length > 0);
-        const isShortcutWorkspace = ws.id === activeWs?.id;
-        const nonCompletedSessions = ws.sessions.filter((s) => s.status !== "completed");
+      {(() => {
+        // Numbers follow the sidebar-focused workspace first, then fall back
+        // to the workspace owning the active session, then the first populated.
+        const activeWs = workspaces.find((w) => w.sessions.some((s) => s.id === activeSessionId))
+          ?? workspaces.find((w) => w.sessions.length > 0);
+        const shortcutWsId = focusZone === "sidebar" && focusedWorkspaceId
+          ? focusedWorkspaceId
+          : activeWs?.id;
+        return workspaces.map((ws) => {
+          const isExpanded = expandedIds.has(ws.id);
+          const filteredSessions = showCompleted
+            ? ws.sessions
+            : ws.sessions.filter((s) => s.status !== "completed");
+          const isShortcutWorkspace = ws.id === shortcutWsId;
+          const nonCompletedSessions = ws.sessions.filter((s) => s.status !== "completed");
         return (
           <div key={ws.id}>
             <button
               data-nav-item
+              data-workspace-id={ws.id}
               data-nav-expanded={isExpanded ? "true" : "false"}
               onClick={() => toggleWorkspace(ws.id)}
               className="flex w-full items-center gap-1.5 px-3 py-1 text-left hover:bg-secondary/40 transition-colors"
@@ -392,30 +484,6 @@ function WorkspacesView() {
                         })
                         .catch(() => {});
                     }}
-                    onCommit={() => {
-                      invoke<{ dirty: boolean; commits_ahead: boolean }>("check_session_has_commits", { sessionId: s.id })
-                        .then((status) => {
-                          if (status.dirty) {
-                            setCommitModal({ session: s });
-                          } else {
-                            addToast({ message: "Info", description: "Nothing to commit", type: "info" });
-                          }
-                        })
-                        .catch(() => addToast({ message: "Error", description: "Failed to check status", type: "error" }));
-                    }}
-                    onMerge={() => {
-                      invoke<{ dirty: boolean; commits_ahead: boolean }>("check_session_has_commits", { sessionId: s.id })
-                        .then((status) => {
-                          if (status.dirty) {
-                            addToast({ message: "Info", description: "Commit your changes first", type: "info" });
-                          } else if (status.commits_ahead) {
-                            setMergeModal({ session: s, workspaceId: ws.id });
-                          } else {
-                            addToast({ message: "Info", description: "Nothing to merge", type: "info" });
-                          }
-                        })
-                        .catch(() => addToast({ message: "Error", description: "Failed to check status", type: "error" }));
-                    }}
                   />
                   );
                 })}
@@ -450,7 +518,8 @@ function WorkspacesView() {
             )}
           </div>
         );
-      })}
+        });
+      })()}
 
       {workspaces.length === 0 && (
         <div className="flex items-center justify-center py-8">
@@ -473,21 +542,46 @@ function WorkspacesView() {
           session={mergeModal.session}
           workspaceId={mergeModal.workspaceId}
           onMerged={() => {
-            invoke<Workspace[]>("get_workspaces")
-              .then(setWorkspaces)
-              .catch(() => {});
+            const merged = mergeModal?.session;
+            Swal.fire({
+              title: "Merge complete",
+              text: merged ? `Delete the worktree for "${merged.name}"?` : "Delete the worktree?",
+              icon: "question",
+              showCancelButton: true,
+              confirmButtonText: "Delete worktree",
+              cancelButtonText: "Keep worktree",
+              background: "#171717",
+              color: "#ededef",
+              confirmButtonColor: "#ef4444",
+              cancelButtonColor: "#3f3f46",
+            }).then((result) => {
+              if (result.isConfirmed && merged) {
+                invoke("cleanup_merged_session", { sessionId: merged.id })
+                  .catch(() => {})
+                  .finally(() => {
+                    invoke<Workspace[]>("get_workspaces").then(setWorkspaces).catch(() => {});
+                  });
+              } else {
+                invoke<Workspace[]>("get_workspaces").then(setWorkspaces).catch(() => {});
+              }
+            });
           }}
-          onConflict={(targetBranch, detail) => {
+          onConflict={(targetBranch) => {
             if (!mergeModal) return;
             const sid = mergeModal.session.id;
-            const branch = mergeModal.session.worktree_branch ?? "this branch";
             setActiveSessionId(sid);
             setMergeModal(null);
-            setTimeout(() => {
-              terminalService.writeToSession(sid,
-                `I need to merge ${branch} into ${targetBranch} but there are conflicts. Run these commands in this worktree to reproduce and resolve:\n1. git merge ${targetBranch}\n2. Resolve the conflicts in the affected files\n3. git add the resolved files\n4. git commit\n\nThe conflicting files from a prior attempt:\n${detail}\r`
-              ).then(() => terminalService.focusActive()).catch(() => {});
-            }, 500);
+            invoke<string[]>("pull_target_into_session", { sessionId: sid, target: targetBranch })
+              .then((files) => {
+                if (files.length === 0) {
+                  addToast({ message: "Merge", description: "No conflicts after pull — ready to commit", type: "info" });
+                  return;
+                }
+                refreshConflicts(sid);
+                openConflictsTab({ sessionId: sid, path: files[0] });
+                addToast({ message: "Conflicts", description: `${files.length} file(s) — resolve via the Conflicts tab`, type: "info" });
+              })
+              .catch((e: unknown) => addToast({ message: "Pull failed", description: String(e), type: "error" }));
           }}
         />
       )}
@@ -498,6 +592,21 @@ function WorkspacesView() {
           onConfirm={handleCommitConfirm}
         />
       )}
+      <ProjectPickerModal
+        open={projectPickerOpen}
+        onOpenChange={setProjectPickerOpen}
+        workspaces={workspaces}
+        preselectedId={activeSession?.workspace_id ?? null}
+        onPick={(wsId) => {
+          setExpandedIds((prev) => { const next = new Set(prev); next.add(wsId); return next; });
+          setAddingSessionFor(wsId);
+          // Dialog unmount steals focus — re-focus the new-session input after the next paint.
+          setTimeout(() => {
+            const input = document.querySelector(`input[placeholder="Session name..."]`) as HTMLInputElement | null;
+            input?.focus();
+          }, 50);
+        }}
+      />
     </div>
   );
 }

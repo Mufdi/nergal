@@ -187,9 +187,9 @@ impl Database {
 
     /// Get all workspaces with their sessions pre-joined.
     pub fn get_workspaces(&self) -> Result<Vec<Workspace>> {
-        let mut ws_stmt = self
-            .conn
-            .prepare("SELECT id, name, repo_path, created_at FROM workspaces ORDER BY created_at")?;
+        let mut ws_stmt = self.conn.prepare(
+            "SELECT id, name, repo_path, created_at FROM workspaces ORDER BY created_at",
+        )?;
         let mut sess_stmt = self
             .conn
             .prepare("SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at FROM sessions WHERE workspace_id = ?1 ORDER BY created_at")?;
@@ -333,13 +333,11 @@ impl Database {
 
     /// Get all sessions with worktree paths for reconciliation.
     pub fn sessions_with_worktrees(&self) -> Result<Vec<(String, PathBuf)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, worktree_path FROM sessions WHERE worktree_path IS NOT NULL",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, worktree_path FROM sessions WHERE worktree_path IS NOT NULL")?;
         let rows = stmt
-            .query_map([], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-            })?
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
             .filter_map(|r| r.ok())
             .map(|(id, path)| (id, PathBuf::from(path)))
             .collect();
@@ -492,8 +490,10 @@ impl Database {
     }
 
     pub fn clear_annotations(&self, session_id: &str) -> Result<()> {
-        self.conn
-            .execute("DELETE FROM annotations WHERE session_id = ?1", [session_id])?;
+        self.conn.execute(
+            "DELETE FROM annotations WHERE session_id = ?1",
+            [session_id],
+        )?;
         Ok(())
     }
 
@@ -545,8 +545,10 @@ impl Database {
     }
 
     pub fn clear_spec_annotations(&self, spec_key: &str) -> Result<()> {
-        self.conn
-            .execute("DELETE FROM spec_annotations WHERE spec_key = ?1", [spec_key])?;
+        self.conn.execute(
+            "DELETE FROM spec_annotations WHERE spec_key = ?1",
+            [spec_key],
+        )?;
         Ok(())
     }
 
@@ -559,7 +561,9 @@ impl Database {
             "SELECT spec_key, COUNT(*) FROM spec_annotations WHERE spec_key LIKE ?1 GROUP BY spec_key",
         )?;
         let rows = stmt
-            .query_map([prefix_like], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?
+            .query_map([prefix_like], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
             .filter_map(|r| r.ok())
             .collect();
         Ok(rows)

@@ -52,10 +52,14 @@ impl TaskStore {
             .and_then(|v| v.as_str())
             .map(String::from);
 
-        let id = format!("{}-{}", self.next_id, std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis());
+        let id = format!(
+            "{}-{}",
+            self.next_id,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+        );
         self.next_id += 1;
 
         self.tasks.push(Task {
@@ -76,9 +80,11 @@ impl TaskStore {
             return;
         };
 
-        let Some(task) = self.tasks.iter_mut().find(|t| {
-            t.id == task_id || t.id.starts_with(&format!("{task_id}-"))
-        }) else {
+        let Some(task) = self
+            .tasks
+            .iter_mut()
+            .find(|t| t.id == task_id || t.id.starts_with(&format!("{task_id}-")))
+        else {
             return;
         };
 

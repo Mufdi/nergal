@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useAtomValue } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
 import { activeSessionFilesAtom } from "@/stores/files";
-import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft } from "lucide-react";
+import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, Maximize2 } from "lucide-react";
 import {
   Tooltip,
   TooltipTrigger,
@@ -391,9 +391,10 @@ interface DiffViewProps {
   filePath: string;
   sessionId: string;
   sideBySide?: boolean;
+  onOpenZen?: () => void;
 }
 
-export function DiffView({ filePath, sessionId, sideBySide = false }: DiffViewProps) {
+export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen }: DiffViewProps) {
   const [lines, setLines] = useState<DiffLine[]>([]);
   const [hunks, setHunks] = useState<Hunk[]>([]);
   const [loading, setLoading] = useState(true);
@@ -569,6 +570,16 @@ export function DiffView({ filePath, sessionId, sideBySide = false }: DiffViewPr
                 <ChevronDown size={12} />
               </button>
             </div>
+          )}
+          {onOpenZen && (
+            <button
+              onClick={onOpenZen}
+              className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+              aria-label="Expand to Zen Mode"
+              title="Expand (Ctrl+Shift+0)"
+            >
+              <Maximize2 size={11} />
+            </button>
           )}
         </div>
       </div>

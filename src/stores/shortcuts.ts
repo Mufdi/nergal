@@ -18,6 +18,11 @@ import {
 } from "./rightPanel";
 import { layoutPresetAtom, sessionLayoutPresetAtom, applyPresetSignalAtom, type LayoutPreset } from "./layout";
 import { activityDrawerOpenAtom } from "./activity";
+import { activeConflictedFilesAtom, refreshGitInfoAtom } from "./git";
+import { openConflictsTabAction, conflictsZenOpenAtom } from "./conflict";
+import { triggerShipAtom } from "./ship";
+import { toastsAtom } from "./toast";
+import { invoke as invokeCmd } from "@/lib/tauri";
 
 export type FocusZone = "sidebar" | "terminal" | "panel";
 
@@ -44,19 +49,40 @@ export const triggerNewSessionAtom = atom(0);
 export const triggerAddWorkspaceAtom = atom(0);
 export const triggerMergeAtom = atom(0);
 export const triggerCommitAtom = atom(0);
+export const triggerPushAtom = atom(0);
+export const triggerJumpToProjectAtom = atom<{ tick: number; index: number }>({ tick: 0, index: -1 });
+export const sidebarSelectedIdxAtom = atom<number>(-1);
 export const triggerResumeSessionAtom = atom<string | null>(null);
+/// Workspace that owns the session-numbers (1..9) currently displayed in the
+/// sidebar. Set by Ctrl+Alt+N to the jumped-to workspace; cleared when focus
+/// leaves the sidebar, at which point the numbers fall back to the workspace
+/// that owns the active session.
+export const focusedWorkspaceIdAtom = atom<string | null>(null);
 
 function store() {
   return appStore;
 }
 
+/// Workspace whose sessions currently show shortcut numbers. Prefers the
+/// Ctrl+Alt+N-focused workspace while the sidebar still owns focus, otherwise
+/// falls back to the workspace containing the active session.
+function numericTargetWorkspace() {
+  const s = store();
+  const workspaces = s.get(workspacesAtom);
+  const focusedId = s.get(focusedWorkspaceIdAtom);
+  const zone = s.get(focusZoneAtom);
+  if (zone === "sidebar" && focusedId) {
+    const ws = workspaces.find((w) => w.id === focusedId);
+    if (ws) return ws;
+  }
+  const active = s.get(activeWorkspaceAtom);
+  if (active) return active;
+  return workspaces.find((w) => w.sessions.length > 0) ?? null;
+}
+
 function switchToSession(index: number) {
   const s = store();
-  let workspace = s.get(activeWorkspaceAtom);
-  if (!workspace) {
-    const workspaces = s.get(workspacesAtom);
-    workspace = workspaces.find((w) => w.sessions.length > 0) ?? null;
-  }
+  const workspace = numericTargetWorkspace();
   if (!workspace) return;
   const sessions = workspace.sessions.filter((ses) => ses.status !== "completed");
   if (index >= sessions.length) return;
@@ -67,6 +93,28 @@ function switchToSession(index: number) {
     return;
   }
   s.set(activeSessionIdAtom, session.id);
+  // Selecting clears the "I'm browsing another workspace" state.
+  s.set(focusedWorkspaceIdAtom, null);
+}
+
+function switchToSessionInFocused(index: number) {
+  const s = store();
+  const focusedId = s.get(focusedWorkspaceIdAtom);
+  const workspaces = s.get(workspacesAtom);
+  const workspace = focusedId
+    ? workspaces.find((w) => w.id === focusedId) ?? null
+    : s.get(activeWorkspaceAtom);
+  if (!workspace) return;
+  const sessions = workspace.sessions.filter((ses) => ses.status !== "completed");
+  if (index >= sessions.length) return;
+  const session = sessions[index];
+  const fresh = s.get(freshSessionsAtom);
+  if (!fresh.has(session.id) && !terminalService.hasTerminal(session.id)) {
+    s.set(triggerResumeSessionAtom, session.id);
+    return;
+  }
+  s.set(activeSessionIdAtom, session.id);
+  s.set(focusedWorkspaceIdAtom, null);
 }
 
 function togglePanel(type: Tab["type"], _label: string) {
@@ -201,9 +249,12 @@ function nextSessionTab() {
   const s = store();
   const tabIds = s.get(sessionTabIdsAtom);
   const activeId = s.get(activeSessionIdAtom);
-  if (tabIds.length <= 1) return;
+  if (tabIds.length === 0) return;
   const idx = tabIds.indexOf(activeId ?? "");
-  const next = (idx + 1) % tabIds.length;
+  // When the active session isn't in the tab bar (e.g. user jumped workspaces
+  // without opening a tab), landing on the first tab is the least surprising
+  // behavior rather than staying on a non-tab session.
+  const next = idx < 0 ? 0 : (idx + 1) % tabIds.length;
   s.set(activeSessionIdAtom, tabIds[next]);
 }
 
@@ -211,9 +262,9 @@ function prevSessionTab() {
   const s = store();
   const tabIds = s.get(sessionTabIdsAtom);
   const activeId = s.get(activeSessionIdAtom);
-  if (tabIds.length <= 1) return;
+  if (tabIds.length === 0) return;
   const idx = tabIds.indexOf(activeId ?? "");
-  const prev = idx <= 0 ? tabIds.length - 1 : idx - 1;
+  const prev = idx < 0 ? tabIds.length - 1 : (idx <= 0 ? tabIds.length - 1 : idx - 1);
   s.set(activeSessionIdAtom, tabIds[prev]);
 }
 
@@ -279,7 +330,25 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   { id: "session-7", label: "Switch to Session 7", keys: "ctrl+7", category: "session", keywords: ["session", "switch"], handler: () => switchToSession(6) },
   { id: "session-8", label: "Switch to Session 8", keys: "ctrl+8", category: "session", keywords: ["session", "switch"], handler: () => switchToSession(7) },
   { id: "session-9", label: "Switch to Session 9", keys: "ctrl+9", category: "session", keywords: ["session", "switch"], handler: () => switchToSession(8) },
+  { id: "focused-session-1", label: "Select Session 1 in Focused Workspace", keys: "ctrl+shift+1", category: "session", keywords: ["session", "switch", "focused"], handler: () => switchToSessionInFocused(0) },
+  { id: "focused-session-2", label: "Select Session 2 in Focused Workspace", keys: "ctrl+shift+2", category: "session", keywords: ["session", "switch", "focused"], handler: () => switchToSessionInFocused(1) },
+  { id: "focused-session-3", label: "Select Session 3 in Focused Workspace", keys: "ctrl+shift+3", category: "session", keywords: ["session", "switch", "focused"], handler: () => switchToSessionInFocused(2) },
+  { id: "focused-session-4", label: "Select Session 4 in Focused Workspace", keys: "ctrl+shift+4", category: "session", keywords: ["session", "switch", "focused"], handler: () => switchToSessionInFocused(3) },
+  { id: "focused-session-5", label: "Select Session 5 in Focused Workspace", keys: "ctrl+shift+5", category: "session", keywords: ["session", "switch", "focused"], handler: () => switchToSessionInFocused(4) },
+  { id: "focused-session-6", label: "Select Session 6 in Focused Workspace", keys: "ctrl+shift+6", category: "session", keywords: ["session", "switch", "focused"], handler: () => switchToSessionInFocused(5) },
+  { id: "focused-session-7", label: "Select Session 7 in Focused Workspace", keys: "ctrl+shift+7", category: "session", keywords: ["session", "switch", "focused"], handler: () => switchToSessionInFocused(6) },
+  { id: "focused-session-8", label: "Select Session 8 in Focused Workspace", keys: "ctrl+shift+8", category: "session", keywords: ["session", "switch", "focused"], handler: () => switchToSessionInFocused(7) },
+  { id: "focused-session-9", label: "Select Session 9 in Focused Workspace", keys: "ctrl+shift+9", category: "session", keywords: ["session", "switch", "focused"], handler: () => switchToSessionInFocused(8) },
   { id: "new-session", label: "New Session", keys: "ctrl+n", category: "session", keywords: ["create", "session", "new"], handler: () => store().set(triggerNewSessionAtom, (p: number) => p + 1) },
+  { id: "project-1", label: "Jump to Project 1", keys: "ctrl+alt+1", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 0 }) },
+  { id: "project-2", label: "Jump to Project 2", keys: "ctrl+alt+2", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 1 }) },
+  { id: "project-3", label: "Jump to Project 3", keys: "ctrl+alt+3", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 2 }) },
+  { id: "project-4", label: "Jump to Project 4", keys: "ctrl+alt+4", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 3 }) },
+  { id: "project-5", label: "Jump to Project 5", keys: "ctrl+alt+5", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 4 }) },
+  { id: "project-6", label: "Jump to Project 6", keys: "ctrl+alt+6", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 5 }) },
+  { id: "project-7", label: "Jump to Project 7", keys: "ctrl+alt+7", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 6 }) },
+  { id: "project-8", label: "Jump to Project 8", keys: "ctrl+alt+8", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 7 }) },
+  { id: "project-9", label: "Jump to Project 9", keys: "ctrl+alt+9", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 8 }) },
   { id: "add-workspace", label: "Add Workspace", keys: "ctrl+shift+n", category: "session", keywords: ["workspace", "add", "folder"], handler: () => store().set(triggerAddWorkspaceAtom, (p: number) => p + 1) },
 
   // -- Panel (tabs) --
@@ -313,13 +382,55 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   { id: "approve-plan", label: "Approve Plan", keys: "ctrl+shift+a", category: "action", keywords: ["approve", "plan", "review", "accept"], handler: () => {
     document.dispatchEvent(new CustomEvent("cluihud:approve-plan"));
   }},
-  { id: "revise-plan", label: "Revise Plan", keys: "ctrl+shift+r", category: "action", keywords: ["revise", "plan", "review", "reject", "feedback"], handler: () => {
-    document.dispatchEvent(new CustomEvent("cluihud:revise-plan"));
+  { id: "revise-or-resolve", label: "Revise Plan / Resolve Conflict (contextual)", keys: "ctrl+shift+r", category: "action", keywords: ["revise", "plan", "review", "reject", "feedback", "resolve", "conflict"], handler: () => {
+    const s = store();
+    const activeTab = s.get(activeTabAtom);
+    const conflicted = s.get(activeConflictedFilesAtom);
+    if (activeTab?.type === "conflicts") {
+      document.dispatchEvent(new CustomEvent("cluihud:resolve-conflict-active-tab"));
+      return;
+    }
+    if (conflicted.length > 0) {
+      const sid = s.get(activeSessionIdAtom);
+      if (sid) s.set(openConflictsTabAction, { sessionId: sid, path: conflicted[0] });
+      return;
+    }
+    if (activeTab?.type === "plan" || activeTab?.type === "spec") {
+      document.dispatchEvent(new CustomEvent("cluihud:revise-plan"));
+    }
   }},
   { id: "toggle-annotation-mode", label: "Toggle Annotation Mode", keys: "ctrl+shift+h", category: "action", keywords: ["annotate", "annotation", "keyboard", "plan", "review", "highlight"], handler: () => {
     document.dispatchEvent(new CustomEvent("cluihud:toggle-annotation-mode"));
   }},
 
+  { id: "expand-zen", label: "Expand active panel to Zen", keys: "ctrl+shift+0", category: "navigation", keywords: ["zen", "expand", "maximize", "fullscreen"], handler: () => {
+    const s = store();
+    const tab = s.get(activeTabAtom);
+    if (!tab) return;
+    const sessionId = s.get(activeSessionIdAtom);
+    if (!sessionId) return;
+    if (tab.type === "conflicts") {
+      s.set(conflictsZenOpenAtom, (v) => !v);
+    } else if (tab.type === "diff" || tab.type === "file") {
+      const filePath = tab.data?.path as string | undefined;
+      if (filePath) document.dispatchEvent(new CustomEvent("cluihud:expand-zen", { detail: { filePath, sessionId } }));
+    } else if (tab.type === "git") {
+      document.dispatchEvent(new CustomEvent("cluihud:expand-zen-git", { detail: { sessionId } }));
+    }
+  }},
+  { id: "open-conflicts", label: "Toggle Conflicts Panel", keys: "ctrl+alt+q", category: "panel", keywords: ["conflicts", "merge", "resolve", "panel"], handler: () => {
+    const s = store();
+    const sid = s.get(activeSessionIdAtom);
+    if (!sid) return;
+    // Toggle behavior parity with the other panel shortcuts: if the conflicts
+    // tab is already the active one, collapse the right panel.
+    const activeTab = s.get(activeTabAtom);
+    if (activeTab?.type === "conflicts") {
+      s.set(toggleRightPanelAtom, (p: number) => p + 1);
+      return;
+    }
+    s.set(openConflictsTabAction, { sessionId: sid });
+  }},
   { id: "cycle-layout", label: "Cycle Layout Preset", keys: "ctrl+shift+i", category: "navigation", keywords: ["layout", "preset", "cycle", "resize"], handler: () => {
     const s = store();
     const presets: LayoutPreset[] = ["terminal-focus", "doc-review", "tool-workspace"];
@@ -355,5 +466,47 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   }},
   { id: "merge-session", label: "Merge Session", keys: "ctrl+shift+m", category: "action", keywords: ["merge", "git", "branch"], handler: () => store().set(triggerMergeAtom, (p: number) => p + 1) },
   { id: "commit-session", label: "Commit Session", keys: "ctrl+shift+c", category: "action", keywords: ["commit", "git"], handler: () => store().set(triggerCommitAtom, (p: number) => p + 1) },
+  { id: "ship-session", label: "Ship (commit + push + PR)", keys: "ctrl+shift+y", category: "action", keywords: ["ship", "pr", "push", "commit", "deploy", "yeet"], handler: () => {
+    const s = store();
+    const sid = s.get(activeSessionIdAtom);
+    if (!sid) {
+      s.set(toastsAtom, { message: "Ship", description: "No active session", type: "info" });
+      return;
+    }
+    s.set(triggerShipAtom, { tick: Date.now(), sessionId: sid, inlineMessage: null });
+  }},
+  { id: "complete-merge", label: "Complete Merge", keys: "ctrl+alt+enter", category: "action", keywords: ["merge", "complete", "finish"], handler: () => {
+    const s = store();
+    const sid = s.get(activeSessionIdAtom);
+    if (!sid) return;
+    invokeCmd<boolean>("has_pending_merge", { sessionId: sid })
+      .then((pending) => {
+        if (!pending) {
+          s.set(toastsAtom, { message: "Merge", description: "No pending merge", type: "info" });
+          return;
+        }
+        return invokeCmd<string>("complete_pending_merge", { sessionId: sid })
+          .then(() => s.set(toastsAtom, { message: "Merge", description: "Merge commit created", type: "success" }))
+          .catch((e: unknown) => s.set(toastsAtom, { message: "Complete merge failed", description: String(e), type: "error" }));
+      });
+  }},
+  { id: "push-session", label: "Push Session", keys: "ctrl+alt+p", category: "action", keywords: ["push", "upload", "remote"], handler: () => {
+    const s = store();
+    const sid = s.get(activeSessionIdAtom);
+    if (!sid) {
+      s.set(toastsAtom, { message: "Push", description: "No active session", type: "info" });
+      return;
+    }
+    invokeCmd<boolean>("git_push", { sessionId: sid })
+      .then((pushed) => {
+        s.set(toastsAtom, {
+          message: "Push",
+          description: pushed ? "Pushed to remote" : "Nothing to push",
+          type: pushed ? "success" : "info",
+        });
+        s.set(refreshGitInfoAtom, sid);
+      })
+      .catch((err: unknown) => s.set(toastsAtom, { message: "Push failed", description: String(err), type: "error" }));
+  }},
   { id: "command-palette", label: "Command Palette", keys: "ctrl+k", category: "navigation", keywords: ["command", "palette", "search", "find"], handler: () => {} },
 ]);

@@ -23,22 +23,141 @@ struct FrontendHookEvent {
 
 impl FrontendHookEvent {
     fn from_hook(event: &HookEvent) -> Self {
-        let (session_id, event_type, tool_name, tool_input, stop_reason, transcript_path) = match event {
-            HookEvent::SessionStart { session_id } => (session_id.clone(), "session_start", None, None, None, None),
-            HookEvent::SessionEnd { session_id } => (session_id.clone(), "session_end", None, None, None, None),
-            HookEvent::PreToolUse { session_id, tool_name, tool_input } => (session_id.clone(), "pre_tool_use", Some(tool_name.clone()), Some(tool_input.clone()), None, None),
-            HookEvent::PostToolUse { session_id, tool_name, tool_input, .. } => (session_id.clone(), "post_tool_use", Some(tool_name.clone()), Some(tool_input.clone()), None, None),
-            HookEvent::Stop { session_id, stop_reason, transcript_path } => (session_id.clone(), "stop", None, None, stop_reason.clone(), transcript_path.clone()),
-            HookEvent::TaskCompleted { session_id, task_subject, .. } => (session_id.clone(), "task_completed", task_subject.clone(), None, None, None),
-            HookEvent::UserPromptSubmit { session_id } => (session_id.clone(), "user_prompt_submit", None, None, None, None),
-            HookEvent::TaskCreated { session_id, task_subject, tool_input, .. } => (session_id.clone(), "task_created", task_subject.clone(), Some(tool_input.clone()), None, None),
-            HookEvent::PlanReview { session_id, tool_name, tool_input, .. } => (session_id.clone(), "plan_review", Some(tool_name.clone()), Some(tool_input.clone()), None, None),
-            HookEvent::AskUser { session_id, tool_input, .. } => (session_id.clone(), "ask_user", None, Some(tool_input.clone()), None, None),
-            HookEvent::CwdChanged { session_id, .. } => (session_id.clone(), "cwd_changed", None, None, None, None),
-            HookEvent::FileChanged { session_id, file_path, .. } => (session_id.clone(), "file_changed", file_path.clone(), None, None, None),
-            HookEvent::PermissionDenied { session_id, tool_name, tool_input, reason } => (session_id.clone(), "permission_denied", tool_name.clone(), Some(tool_input.clone()), reason.clone(), None),
-            HookEvent::StatusLine { session_id, .. } => (session_id.clone(), "statusline", None, None, None, None),
-        };
+        let (session_id, event_type, tool_name, tool_input, stop_reason, transcript_path) =
+            match event {
+                HookEvent::SessionStart { session_id } => {
+                    (session_id.clone(), "session_start", None, None, None, None)
+                }
+                HookEvent::SessionEnd { session_id } => {
+                    (session_id.clone(), "session_end", None, None, None, None)
+                }
+                HookEvent::PreToolUse {
+                    session_id,
+                    tool_name,
+                    tool_input,
+                } => (
+                    session_id.clone(),
+                    "pre_tool_use",
+                    Some(tool_name.clone()),
+                    Some(tool_input.clone()),
+                    None,
+                    None,
+                ),
+                HookEvent::PostToolUse {
+                    session_id,
+                    tool_name,
+                    tool_input,
+                    ..
+                } => (
+                    session_id.clone(),
+                    "post_tool_use",
+                    Some(tool_name.clone()),
+                    Some(tool_input.clone()),
+                    None,
+                    None,
+                ),
+                HookEvent::Stop {
+                    session_id,
+                    stop_reason,
+                    transcript_path,
+                } => (
+                    session_id.clone(),
+                    "stop",
+                    None,
+                    None,
+                    stop_reason.clone(),
+                    transcript_path.clone(),
+                ),
+                HookEvent::TaskCompleted {
+                    session_id,
+                    task_subject,
+                    ..
+                } => (
+                    session_id.clone(),
+                    "task_completed",
+                    task_subject.clone(),
+                    None,
+                    None,
+                    None,
+                ),
+                HookEvent::UserPromptSubmit { session_id } => (
+                    session_id.clone(),
+                    "user_prompt_submit",
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+                HookEvent::TaskCreated {
+                    session_id,
+                    task_subject,
+                    tool_input,
+                    ..
+                } => (
+                    session_id.clone(),
+                    "task_created",
+                    task_subject.clone(),
+                    Some(tool_input.clone()),
+                    None,
+                    None,
+                ),
+                HookEvent::PlanReview {
+                    session_id,
+                    tool_name,
+                    tool_input,
+                    ..
+                } => (
+                    session_id.clone(),
+                    "plan_review",
+                    Some(tool_name.clone()),
+                    Some(tool_input.clone()),
+                    None,
+                    None,
+                ),
+                HookEvent::AskUser {
+                    session_id,
+                    tool_input,
+                    ..
+                } => (
+                    session_id.clone(),
+                    "ask_user",
+                    None,
+                    Some(tool_input.clone()),
+                    None,
+                    None,
+                ),
+                HookEvent::CwdChanged { session_id, .. } => {
+                    (session_id.clone(), "cwd_changed", None, None, None, None)
+                }
+                HookEvent::FileChanged {
+                    session_id,
+                    file_path,
+                    ..
+                } => (
+                    session_id.clone(),
+                    "file_changed",
+                    file_path.clone(),
+                    None,
+                    None,
+                    None,
+                ),
+                HookEvent::PermissionDenied {
+                    session_id,
+                    tool_name,
+                    tool_input,
+                    reason,
+                } => (
+                    session_id.clone(),
+                    "permission_denied",
+                    tool_name.clone(),
+                    Some(tool_input.clone()),
+                    reason.clone(),
+                    None,
+                ),
+                HookEvent::StatusLine { session_id, .. } => {
+                    (session_id.clone(), "statusline", None, None, None, None)
+                }
+            };
         Self {
             session_id,
             cluihud_session_id: None,
@@ -78,7 +197,11 @@ pub async fn start_hook_server(
             while let Ok(Some(line)) = lines.next_line().await {
                 let cluihud_sid = serde_json::from_str::<serde_json::Value>(&line)
                     .ok()
-                    .and_then(|v| v.get("cluihud_session_id").and_then(|s| s.as_str()).map(String::from));
+                    .and_then(|v| {
+                        v.get("cluihud_session_id")
+                            .and_then(|s| s.as_str())
+                            .map(String::from)
+                    });
 
                 match serde_json::from_str::<HookEvent>(&line) {
                     Ok(event) => {
@@ -154,12 +277,17 @@ fn process_event(
                             && let Ok(db_guard) = db.lock()
                             && let Ok(Some(session)) = db_guard.find_session(csid)
                         {
-                            let cwd = session.worktree_path
-                                .or_else(|| db_guard.workspace_repo_path(&session.workspace_id).ok().flatten());
+                            let cwd = session.worktree_path.or_else(|| {
+                                db_guard
+                                    .workspace_repo_path(&session.workspace_id)
+                                    .ok()
+                                    .flatten()
+                            });
                             if let Some(cwd) = cwd {
                                 let local_plans = cwd.join(".claude").join("plans");
                                 if local_plans.exists() {
-                                    let local_mgr = crate::claude::plan::PlanManager::new(local_plans);
+                                    let local_mgr =
+                                        crate::claude::plan::PlanManager::new(local_plans);
                                     return local_mgr.find_latest_plan().ok().flatten();
                                 }
                             }
@@ -189,7 +317,6 @@ fn process_event(
                     }
                 }
             }
-
         }
 
         HookEvent::PostToolUse {
@@ -276,12 +403,17 @@ fn process_event(
                             && let Ok(db_guard) = db.lock()
                             && let Ok(Some(session)) = db_guard.find_session(csid)
                         {
-                            let cwd = session.worktree_path
-                                .or_else(|| db_guard.workspace_repo_path(&session.workspace_id).ok().flatten());
+                            let cwd = session.worktree_path.or_else(|| {
+                                db_guard
+                                    .workspace_repo_path(&session.workspace_id)
+                                    .ok()
+                                    .flatten()
+                            });
                             if let Some(cwd) = cwd {
                                 let local_plans = cwd.join(".claude").join("plans");
                                 if local_plans.exists() {
-                                    let local_mgr = crate::claude::plan::PlanManager::new(local_plans);
+                                    let local_mgr =
+                                        crate::claude::plan::PlanManager::new(local_plans);
                                     return local_mgr.find_latest_plan().ok().flatten();
                                 }
                             }
@@ -314,10 +446,7 @@ fn process_event(
             }
         }
 
-        HookEvent::CwdChanged {
-            session_id,
-            cwd,
-        } => {
+        HookEvent::CwdChanged { session_id, cwd } => {
             tracing::debug!("CwdChanged: cwd={cwd:?}");
 
             #[derive(Clone, serde::Serialize)]
@@ -464,18 +593,37 @@ fn process_event(
             let mut questions = Vec::new();
             if let Some(arr) = tool_input.get("questions").and_then(|v| v.as_array()) {
                 for q in arr {
-                    let question = q.get("question").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let header = q.get("header").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let multi_select = q.get("multiSelect").and_then(|v| v.as_bool()).unwrap_or(false);
-                    let options = q.get("options")
+                    let question = q
+                        .get("question")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let header = q
+                        .get("header")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let multi_select = q
+                        .get("multiSelect")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let options = q
+                        .get("options")
                         .and_then(|v| v.as_array())
                         .map(|opts| {
                             opts.iter()
-                                .filter_map(|o| o.get("label").and_then(|l| l.as_str()).map(String::from))
+                                .filter_map(|o| {
+                                    o.get("label").and_then(|l| l.as_str()).map(String::from)
+                                })
                                 .collect()
                         })
                         .unwrap_or_default();
-                    questions.push(AskUserQuestion { question, header, options, multi_select });
+                    questions.push(AskUserQuestion {
+                        question,
+                        header,
+                        options,
+                        multi_select,
+                    });
                 }
             }
 
@@ -565,7 +713,6 @@ fn process_task_event(
     if !is_task_create && !is_task_update {
         return;
     }
-
 
     // Use in-memory TaskStore for event processing, then persist to DB
     let mut store = crate::tasks::TaskStore::new();

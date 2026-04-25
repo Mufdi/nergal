@@ -145,7 +145,11 @@ fn spawn_pty(
         }
     });
 
-    let instance = PtyInstance { writer, pair, terminal };
+    let instance = PtyInstance {
+        writer,
+        pair,
+        terminal,
+    };
     state
         .instances
         .lock()
@@ -290,10 +294,7 @@ pub fn write_to_session_pty(
 
 /// Kill a session's PTY and clean up mappings.
 #[tauri::command]
-pub fn kill_session_pty(
-    state: State<'_, PtyManager>,
-    session_id: String,
-) -> Result<(), String> {
+pub fn kill_session_pty(state: State<'_, PtyManager>, session_id: String) -> Result<(), String> {
     let pty_id = {
         let mut session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
         session_ptys.remove(&session_id)

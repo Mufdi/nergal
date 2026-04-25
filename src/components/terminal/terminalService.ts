@@ -255,6 +255,28 @@ export function hasTerminal(sessionId: string): boolean {
   return entries.has(sessionId);
 }
 
+/// Forward a synthesized special key (e.g. Tab, Shift+Tab) to the active
+/// PTY without requiring the textarea to own DOM focus. Used by the global
+/// shortcut dispatcher when a terminal-reserved key fires while focus lives
+/// in a different zone.
+export function sendSpecialKeyToActive(code: string, key: string, modifiers: { ctrl?: boolean; shift?: boolean; alt?: boolean } = {}): void {
+  if (!activeId) return;
+  const entry = entries.get(activeId);
+  if (!entry) return;
+  const payload: TerminalKeyEvent = {
+    code,
+    key,
+    text: undefined,
+    ctrl: modifiers.ctrl ?? false,
+    shift: modifiers.shift ?? false,
+    alt: modifiers.alt ?? false,
+    meta: false,
+  };
+  invoke("terminal_input", { sessionId: entry.sessionId, event: payload }).catch(
+    (err: unknown) => console.error("terminal_input failed", err),
+  );
+}
+
 // ── Private: input wiring ──
 
 function wireInput(entry: Entry): void {
@@ -328,6 +350,12 @@ function wireInput(entry: Entry): void {
 
   entry.canvas.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
+    // Block the browser's default focus shift so our explicit textarea.focus()
+    // call below sticks — otherwise Chromium/WebKit would blur the textarea
+    // immediately after the handler returns, since the canvas itself isn't a
+    // focusable element. Native selection isn't used here (we track selection
+    // via grid cells manually), so suppressing the default is harmless.
+    e.preventDefault();
     focusCanvas(entry);
     const cell = mouseToCell(entry, e);
     if (!cell) return;

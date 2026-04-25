@@ -161,19 +161,23 @@ pub fn plan_review(socket_path: &Path) -> Result<()> {
     let payload = serde_json::to_string(&socket_msg).context("serializing socket message")?;
     let mut stream = UnixStream::connect(socket_path)
         .with_context(|| format!("connecting to {}", socket_path.display()))?;
-    stream.write_all(payload.as_bytes()).context("writing to socket")?;
+    stream
+        .write_all(payload.as_bytes())
+        .context("writing to socket")?;
     stream.write_all(b"\n").context("writing newline")?;
     stream.flush().context("flushing socket")?;
     drop(stream);
 
     // Block reading from FIFO until the GUI writes a decision
-    let decision_str = std::fs::read_to_string(&fifo_path)
-        .context("reading decision from FIFO")?;
+    let decision_str = std::fs::read_to_string(&fifo_path).context("reading decision from FIFO")?;
 
     let decision: serde_json::Value =
         serde_json::from_str(decision_str.trim()).context("parsing decision JSON")?;
 
-    let approved = decision.get("approved").and_then(|v| v.as_bool()).unwrap_or(true);
+    let approved = decision
+        .get("approved")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
 
     if approved {
         output_allow()?;
@@ -239,14 +243,15 @@ pub fn ask_user(socket_path: &Path) -> Result<()> {
     let payload = serde_json::to_string(&socket_msg).context("serializing socket message")?;
     let mut stream = UnixStream::connect(socket_path)
         .with_context(|| format!("connecting to {}", socket_path.display()))?;
-    stream.write_all(payload.as_bytes()).context("writing to socket")?;
+    stream
+        .write_all(payload.as_bytes())
+        .context("writing to socket")?;
     stream.write_all(b"\n").context("writing newline")?;
     stream.flush().context("flushing socket")?;
     drop(stream);
 
     // Block reading from FIFO until the GUI writes the answers
-    let answer_str = std::fs::read_to_string(&fifo_path)
-        .context("reading answers from FIFO")?;
+    let answer_str = std::fs::read_to_string(&fifo_path).context("reading answers from FIFO")?;
 
     let answer_json: serde_json::Value =
         serde_json::from_str(answer_str.trim()).context("parsing answer JSON")?;

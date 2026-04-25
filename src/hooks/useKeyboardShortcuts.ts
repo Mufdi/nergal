@@ -4,6 +4,7 @@ import {
   shortcutRegistryAtom,
   commandPaletteOpenAtom,
 } from "@/stores/shortcuts";
+import * as terminalService from "@/components/terminal/terminalService";
 
 const KEY_TO_CODE: Record<string, string> = {
   a: "KeyA", b: "KeyB", c: "KeyC", d: "KeyD", e: "KeyE",
@@ -17,6 +18,7 @@ const KEY_TO_CODE: Record<string, string> = {
   "7": "Digit7", "8": "Digit8", "9": "Digit9",
   "0": "Digit0",
   tab: "Tab",
+  enter: "Enter",
   backspace: "Backspace",
   arrowleft: "ArrowLeft", arrowright: "ArrowRight",
   arrowup: "ArrowUp", arrowdown: "ArrowDown",
@@ -52,8 +54,34 @@ export function useKeyboardShortcuts() {
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.ctrlKey || e.altKey || e.shiftKey) {
-        console.log("[cluihud-shortcut]", e.code, { ctrl: e.ctrlKey, shift: e.shiftKey, alt: e.altKey, key: e.key });
+      // Tab / Shift+Tab routing (single source of truth in capture phase).
+      // - Target inside the terminal zone → forward to Claude via the active
+      //   PTY directly. We do NOT defer to the textarea's bubble handler
+      //   because the bubble route was failing intermittently (focus would
+      //   leak / keymap wouldn't fire). Re-focus the textarea on the way
+      //   out so the terminal cursor stays visible.
+      // - Target in another text input / CodeMirror → native Tab behavior.
+      // - Anywhere else → consume silently (no browser focus traversal).
+      if (e.code === "Tab" && !e.ctrlKey && !e.altKey) {
+        const target = e.target as HTMLElement | null;
+        const terminalZone = target?.closest("[data-focus-zone='terminal']");
+        if (terminalZone) {
+          e.preventDefault();
+          e.stopPropagation();
+          terminalService.sendSpecialKeyToActive("Tab", "Tab", { shift: e.shiftKey });
+          terminalService.focusActive();
+          return;
+        }
+        const inTextInput = target?.tagName === "INPUT"
+          || target?.tagName === "TEXTAREA"
+          || !!target?.closest(".cm-editor")
+          || target?.getAttribute("contenteditable") === "true";
+        if (inTextInput) {
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        return;
       }
       // Ctrl+K toggle
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === "KeyK") {

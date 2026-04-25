@@ -18,6 +18,7 @@ import {
   FileCode,
   ScrollText,
   MoreHorizontal,
+  AlertTriangle,
   X,
 } from "lucide-react";
 
@@ -29,10 +30,16 @@ const TAB_ICONS: Record<TabType, typeof FileText> = {
   tasks: CheckSquare,
   git: GitBranch,
   transcript: ScrollText,
+  conflicts: AlertTriangle,
 };
 
 export function TabBar() {
-  const tabs = useAtomValue(activeTabsAtom);
+  const rawTabs = useAtomValue(activeTabsAtom);
+  // Conflicts tab is always pinned at leftmost position for discoverability.
+  const tabs = [
+    ...rawTabs.filter((t) => t.type === "conflicts"),
+    ...rawTabs.filter((t) => t.type !== "conflicts"),
+  ];
   const activeTab = useAtomValue(activeTabAtom);
   const setActiveTabId = useSetAtom(activeTabIdAtom);
   const closeTab = useSetAtom(closeTabAction);

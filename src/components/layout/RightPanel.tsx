@@ -22,6 +22,8 @@ import { FileListView } from "@/components/panel/FileListView";
 import { SpecListView } from "@/components/panel/SpecListView";
 import { SpecPanel } from "@/components/spec/SpecPanel";
 import { GitPanel } from "@/components/git/GitPanel";
+import { ConflictsPanel, ConflictsFilesDrawer } from "@/components/git/ConflictsPanel";
+import { conflictsZenOpenAtom } from "@/stores/conflict";
 import { FileBrowser } from "@/components/files/FileBrowser";
 import { CodeEditor } from "@/components/editor/CodeEditor";
 import { DagGraph } from "@/components/activity/DagGraph";
@@ -37,7 +39,7 @@ import {
   GitBranch,
   ScrollText,
   FolderOpen,
-  Maximize2,
+  AlertTriangle,
 } from "lucide-react";
 import {
   Tooltip,
@@ -54,6 +56,7 @@ const TAB_ICONS: Record<TabType, typeof FileText> = {
   tasks: CheckSquare,
   git: GitBranch,
   transcript: ScrollText,
+  conflicts: AlertTriangle,
 };
 
 const PICKER_TYPES: TabType[] = ["plan", "file", "diff", "spec"];
@@ -190,6 +193,7 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
 
   if (activeTab) {
     const showAnnotationsDrawer = activeTab.type === "plan" || activeTab.type === "spec";
+    const showConflictsDrawer = activeTab.type === "conflicts";
     return (
       <div className="flex h-full flex-col gap-1 overflow-hidden">
         <div className="relative flex flex-1 flex-col overflow-hidden rounded bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus} onKeyDown={handlePanelKeyDown}>
@@ -228,6 +232,12 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
 
         {showAnnotationsDrawer && (
           <AnnotationsDrawer
+            open={annotationsDrawerOpen}
+            onToggle={() => setAnnotationsDrawerOpen(!annotationsDrawerOpen)}
+          />
+        )}
+        {showConflictsDrawer && (
+          <ConflictsFilesDrawerWrapper
             open={annotationsDrawerOpen}
             onToggle={() => setAnnotationsDrawerOpen(!annotationsDrawerOpen)}
           />
@@ -402,6 +412,7 @@ function viewPanelLabel(view: TabType): string {
     tasks: "Tasks",
     git: "Git",
     transcript: "Transcript",
+    conflicts: "Conflicts",
   };
   return labels[view];
 }
@@ -455,6 +466,8 @@ function DocumentContent({ tab }: { tab: Tab }) {
     }
     case "git":
       return <GitPanelWrapper />;
+    case "conflicts":
+      return <ConflictsPanelWrapper />;
     case "file": {
       const filePath = tab.data?.path as string | undefined;
       const fileSession = tab.data?.sessionId as string | undefined;
@@ -471,6 +484,7 @@ function PlanContentWrapper({ path }: { tabId: string; path: string }) {
   return <PlanPanel path={path} />;
 }
 
+
 function SpecContentWrapper({ tabId, changeName, sessionId, initialSpecPath }: { tabId: string; changeName: string; sessionId: string; initialSpecPath?: string }) {
   const setDirty = useSetAtom(setDirtyAction);
   const handleDirtyChange = useCallback((dirty: boolean) => {
@@ -479,8 +493,33 @@ function SpecContentWrapper({ tabId, changeName, sessionId, initialSpecPath }: {
   return <SpecPanel changeName={changeName} sessionId={sessionId} initialSpecPath={initialSpecPath} onDirtyChange={handleDirtyChange} />;
 }
 
+function ConflictsPanelWrapper() {
+  const sessionId = useAtomValue(activeSessionIdAtom);
+  const setZen = useSetAtom(conflictsZenOpenAtom);
+  return sessionId ? <ConflictsPanel sessionId={sessionId} onToggleZen={() => setZen(true)} /> : null;
+}
+
+function ConflictsFilesDrawerWrapper({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  const sessionId = useAtomValue(activeSessionIdAtom);
+  if (!sessionId) return null;
+  return <ConflictsFilesDrawer sessionId={sessionId} open={open} onToggle={onToggle} />;
+}
+
 function GitPanelWrapper() {
   const sessionId = useAtomValue(activeSessionIdAtom);
+  const setZenMode = useSetAtom(openZenModeAtom);
+  const files = useAtomValue(activeSessionFilesAtom);
+  useEffect(() => {
+    function onExpandGit(ev: Event) {
+      const detail = (ev as CustomEvent<{ sessionId: string }>).detail;
+      if (!sessionId || detail?.sessionId !== sessionId) return;
+      const paths = files.map((f) => f.path);
+      if (paths.length === 0) return;
+      setZenMode({ filePath: paths[0], sessionId, files: paths });
+    }
+    document.addEventListener("cluihud:expand-zen-git", onExpandGit);
+    return () => document.removeEventListener("cluihud:expand-zen-git", onExpandGit);
+  }, [sessionId, files, setZenMode]);
   return sessionId ? <GitPanel sessionId={sessionId} /> : null;
 }
 
@@ -488,16 +527,33 @@ function DiffWithExpand({ filePath, sessionId }: { filePath: string; sessionId: 
   const setZenMode = useSetAtom(openZenModeAtom);
   const files = useAtomValue(activeSessionFilesAtom);
   const filePaths = files.map((f) => f.path);
+  useEffect(() => {
+    function onExpand(ev: Event) {
+      const detail = (ev as CustomEvent<{ filePath: string; sessionId: string }>).detail;
+      if (detail?.filePath === filePath && detail?.sessionId === sessionId) {
+        setZenMode({ filePath, sessionId, files: filePaths });
+      }
+    }
+    function onExpandGit(ev: Event) {
+      const detail = (ev as CustomEvent<{ sessionId: string }>).detail;
+      if (detail?.sessionId === sessionId && filePaths.length > 0) {
+        setZenMode({ filePath: filePaths[0], sessionId, files: filePaths });
+      }
+    }
+    document.addEventListener("cluihud:expand-zen", onExpand);
+    document.addEventListener("cluihud:expand-zen-git", onExpandGit);
+    return () => {
+      document.removeEventListener("cluihud:expand-zen", onExpand);
+      document.removeEventListener("cluihud:expand-zen-git", onExpandGit);
+    };
+  }, [filePath, sessionId, filePaths, setZenMode]);
   return (
-    <div className="relative h-full">
-      <DiffView filePath={filePath} sessionId={sessionId} />
-      <button
-        onClick={() => setZenMode({ filePath, sessionId, files: filePaths })}
-        className="absolute right-2 top-2 z-10 flex size-6 items-center justify-center rounded bg-card/80 border border-border/50 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-        aria-label="Expand to zen mode"
-      >
-        <Maximize2 size={11} />
-      </button>
+    <div className="h-full">
+      <DiffView
+        filePath={filePath}
+        sessionId={sessionId}
+        onOpenZen={() => setZenMode({ filePath, sessionId, files: filePaths })}
+      />
     </div>
   );
 }

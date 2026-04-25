@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useSetAtom } from "jotai";
 import { toastsAtom } from "@/stores/toast";
 import { invoke } from "@/lib/tauri";
@@ -34,6 +34,7 @@ export function MergeModal({
   const [targetBranch, setTargetBranch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [merging, setMerging] = useState(false);
+  const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -47,9 +48,27 @@ export function MergeModal({
         if (filtered.length > 0 && !targetBranch) {
           setTargetBranch(filtered[0]);
         }
+        requestAnimationFrame(() => listRef.current?.focus());
       })
       .catch(() => setBranches([]));
   }, [open, workspaceId]);
+
+  function handleListKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (branches.length === 0) return;
+    const idx = branches.indexOf(targetBranch);
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      const next = idx < 0 ? 0 : (idx + 1) % branches.length;
+      setTargetBranch(branches[next]);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      const prev = idx < 0 ? branches.length - 1 : (idx - 1 + branches.length) % branches.length;
+      setTargetBranch(branches[prev]);
+    } else if (e.key === "Enter" && targetBranch && !merging) {
+      e.preventDefault();
+      handleMerge();
+    }
+  }
 
   async function handleMerge() {
     if (!targetBranch) return;
@@ -92,7 +111,12 @@ export function MergeModal({
           <label className="text-[11px] text-muted-foreground">
             Merge into:
           </label>
-          <div className="flex flex-col gap-1 max-h-48 overflow-y-auto">
+          <div
+            ref={listRef}
+            tabIndex={0}
+            onKeyDown={handleListKeyDown}
+            className="flex flex-col gap-1 max-h-48 overflow-y-auto outline-none rounded focus:ring-1 focus:ring-orange-500/50"
+          >
             {branches.map((b) => (
               <button
                 key={b}
@@ -107,6 +131,7 @@ export function MergeModal({
               </button>
             ))}
           </div>
+          <p className="text-[10px] text-muted-foreground/60">↑↓ navigate • Enter to merge • Esc to cancel</p>
 
           {error && (
             <p className="text-[11px] text-red-400">{error}</p>

@@ -161,14 +161,16 @@ impl TerminalSession {
             Some(raw_title.to_owned())
         };
 
-        GridSnapshot { cols, rows, cursor, title }
+        GridSnapshot {
+            cols,
+            rows,
+            cursor,
+            title,
+        }
     }
 }
 
-fn color_to_rgba(
-    color: termwiz::color::ColorAttribute,
-    palette: &ColorPalette,
-) -> Option<[u8; 4]> {
+fn color_to_rgba(color: termwiz::color::ColorAttribute, palette: &ColorPalette) -> Option<[u8; 4]> {
     use termwiz::color::ColorAttribute;
     match color {
         ColorAttribute::Default => None,
@@ -329,9 +331,7 @@ mod tests {
     fn osc_8_hyperlink_is_captured() {
         let mut s = session(40, 3);
         // OSC 8 ; ; URL ST  "text"  OSC 8 ; ; ST
-        s.advance_bytes(
-            b"\x1b]8;;https://example.com\x07link\x1b]8;;\x07",
-        );
+        s.advance_bytes(b"\x1b]8;;https://example.com\x07link\x1b]8;;\x07");
         let grid = s.grid_snapshot();
         let first = &grid.rows[0][0];
         assert_eq!(first.ch, "l");
@@ -417,7 +417,10 @@ mod tests {
         s.key_down(&shift_enter).unwrap();
         let with_shift = w.drain();
 
-        assert_ne!(plain, with_shift, "csi_u fallback: Shift+Enter distinct from Enter");
+        assert_ne!(
+            plain, with_shift,
+            "csi_u fallback: Shift+Enter distinct from Enter"
+        );
     }
 
     #[test]

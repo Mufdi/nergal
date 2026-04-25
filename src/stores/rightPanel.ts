@@ -2,7 +2,7 @@ import { atom } from "jotai";
 import { activeSessionIdAtom } from "./workspace";
 import { closedTabsStackAtom } from "./shortcuts";
 
-export type TabType = "plan" | "diff" | "spec" | "tasks" | "git" | "transcript" | "file";
+export type TabType = "plan" | "diff" | "spec" | "tasks" | "git" | "transcript" | "file" | "conflicts";
 
 export type PanelCategory = "document" | "tool";
 
@@ -14,6 +14,7 @@ export const PANEL_CATEGORY_MAP: Record<TabType, PanelCategory> = {
   git: "tool",
   diff: "tool",
   tasks: "document",
+  conflicts: "tool",
 };
 
 export interface Tab {
@@ -32,7 +33,7 @@ export interface TabState {
   previewTabId: string | null;
 }
 
-const SINGLETON_TYPES: TabType[] = ["tasks", "git"];
+const SINGLETON_TYPES: TabType[] = ["tasks", "git", "conflicts"];
 const defaultTabState: TabState = { tabs: [], activeTabId: null, previewTabId: null };
 
 export const expandRightPanelAtom = atom(0);

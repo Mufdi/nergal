@@ -101,7 +101,7 @@ async fn run_emitter(
         }
 
         let snapshot = match session.lock() {
-            Ok(guard) => guard.grid_snapshot(),
+            Ok(mut guard) => guard.grid_snapshot(),
             Err(err) => {
                 tracing::error!(error = %err, "terminal session mutex poisoned");
                 break;

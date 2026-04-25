@@ -43,6 +43,8 @@ interface Entry {
   /// for dead keys, IME, and accented-character composition. The canvas
   /// itself only handles mouse events.
   textarea: HTMLTextAreaElement;
+  /// Floating "you're scrolled up" pill, shown only when scrollOffset > 0.
+  scrollIndicator: HTMLDivElement;
   ctx: CanvasRenderingContext2D;
   atlas: FontAtlas;
   metrics: FontMetrics;
@@ -52,6 +54,7 @@ interface Entry {
   grid: CellSnapshot[][];
   cursor: { x: number; y: number; visible: boolean };
   title: string | null;
+  scrollOffset: number;
   unlisten: UnlistenFn;
   selection: Selection | null;
   isDragging: boolean;
@@ -153,6 +156,26 @@ export async function show(
     ].join(";") + ";";
     container.appendChild(textarea);
 
+    const scrollIndicator = document.createElement("div");
+    scrollIndicator.textContent = "Scrolled — type or press End to return";
+    scrollIndicator.style.cssText = [
+      "position:absolute",
+      "top:8px",
+      "right:12px",
+      "padding:4px 10px",
+      "border-radius:9999px",
+      "font-family:" + TERM_FONT.family,
+      "font-size:11px",
+      "color:#fff",
+      "background:rgba(20,20,20,0.85)",
+      "border:1px solid rgba(255,255,255,0.15)",
+      "pointer-events:none",
+      "z-index:2",
+      "display:none",
+      "user-select:none",
+    ].join(";") + ";";
+    container.appendChild(scrollIndicator);
+
     const dpr = window.devicePixelRatio || 1;
     const metrics = measureFont(TERM_FONT.family, TERM_FONT.size, TERM_FONT.lineHeight, dpr);
     const atlas = new FontAtlas(metrics, TERM_FONT.family, TERM_FONT.size, dpr);
@@ -168,6 +191,7 @@ export async function show(
       container,
       canvas,
       textarea,
+      scrollIndicator,
       ctx,
       atlas,
       metrics,
@@ -177,6 +201,7 @@ export async function show(
       grid: emptyGrid(cols, rows),
       cursor: { x: 0, y: 0, visible: true },
       title: null,
+      scrollOffset: 0,
       unlisten: () => {},
       selection: null,
       isDragging: false,
@@ -316,6 +341,20 @@ function wireInput(entry: Entry): void {
       return;
     }
 
+    // Shift+End and Escape (while scrolled) snap the viewport back to the
+    // live bottom without sending any byte to the PTY. Plain End is left
+    // alone so shells still treat it as "move cursor to end of line".
+    if (
+      (e.code === "End" && e.shiftKey)
+      || (e.code === "Escape" && entry.scrollOffset > 0)
+    ) {
+      e.preventDefault();
+      invoke("terminal_scroll_to_bottom", { sessionId: entry.sessionId }).catch(
+        (err: unknown) => console.error("terminal_scroll_to_bottom failed", err),
+      );
+      return;
+    }
+
     if (shouldPassThrough(e)) return;
 
     // Any typing implicitly commits the selection — matches every mainstream
@@ -449,6 +488,41 @@ function wireInput(entry: Entry): void {
   entry.canvas.addEventListener("mouseleave", () => {
     entry.isDragging = false;
   });
+
+  // ── Wheel: scrollback (primary screen) or PTY forward (alt screen) ──
+  // The viewport is canvas-only — the browser has no native scroll. We
+  // translate wheel pixels into terminal lines and let the backend route:
+  // primary screen → local scrollback navigation, alt screen → mouse
+  // report or arrow-key fallback to the running TUI app (claude, vim, …).
+  entry.canvas.addEventListener(
+    "wheel",
+    (e) => {
+      e.preventDefault();
+      let lines: number;
+      switch (e.deltaMode) {
+        case WheelEvent.DOM_DELTA_LINE:
+          lines = Math.round(e.deltaY);
+          break;
+        case WheelEvent.DOM_DELTA_PAGE:
+          lines = Math.round(e.deltaY * entry.rows);
+          break;
+        default:
+          lines = Math.round(e.deltaY / entry.metrics.cssHeight);
+          break;
+      }
+      if (lines === 0) return;
+      const cell = mouseToCell(entry, e) ?? { col: 0, row: 0 };
+      // Wheel deltaY > 0 = scroll page down = reveal newer content =
+      // backend offset DECREASES.
+      invoke("terminal_scroll", {
+        sessionId: entry.sessionId,
+        delta: -lines,
+        col: cell.col,
+        row: cell.row,
+      }).catch((err: unknown) => console.error("terminal_scroll failed", err));
+    },
+    { passive: false },
+  );
 }
 
 function mouseToCell(entry: Entry, e: MouseEvent): CellCoord | null {
@@ -750,6 +824,10 @@ function applyUpdate(entry: Entry, update: GridUpdate): void {
 
   entry.cursor = update.cursor;
   entry.title = update.title;
+  if (entry.scrollOffset !== update.scrollOffset) {
+    entry.scrollOffset = update.scrollOffset;
+    entry.scrollIndicator.style.display = update.scrollOffset > 0 ? "block" : "none";
+  }
 
   // The cursor area needs repainting whenever the cursor moves, even if the
   // underlying row did not otherwise change.

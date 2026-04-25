@@ -59,6 +59,8 @@ pub fn run() {
             pty::resize_session_terminal,
             pty::terminal_input,
             pty::terminal_get_full_grid,
+            pty::terminal_scroll,
+            pty::terminal_scroll_to_bottom,
             pty::terminal_paste,
             pty::terminal_clipboard_write,
             // Config commands

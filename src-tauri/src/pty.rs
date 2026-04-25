@@ -403,7 +403,93 @@ pub fn terminal_input(
 
     // Nudge the emitter: key events often trigger local echo / cursor moves
     // before any PTY output comes back, and the diff should include them.
+    // Note: we deliberately do NOT auto-snap to the live bottom on input —
+    // the user often wants to read history while typing (e.g. annotating
+    // an old command, replying to a question while reviewing scrollback).
+    // Snap-to-bottom is opt-in via Shift+End / Escape.
     drop(session);
+    handle.wake();
+    Ok(())
+}
+
+/// Handle a wheel tick. In alt screen (claude TUI, vim, less, …) we
+/// hand the event to wezterm-term so the running app receives a proper
+/// mouse report or, for apps without mouse mode, the equivalent
+/// arrow-key presses (xterm "alternateScroll" emulation). In the
+/// primary screen we navigate our local scrollback — the alt screen
+/// has none of its own.
+///
+/// `delta` follows the same sign convention everywhere: positive = up
+/// (older content), negative = down (toward the live bottom). `col`
+/// and `row` are the cell coords of the cursor at the time of the
+/// event; only used by mouse-mode apps.
+#[tauri::command]
+pub fn terminal_scroll(
+    state: State<'_, PtyManager>,
+    session_id: String,
+    delta: i32,
+    col: u16,
+    row: u16,
+) -> Result<(), String> {
+    let pty_id = {
+        let session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
+        session_ptys
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| "no PTY for session".to_string())?
+    };
+
+    let instances = state.instances.lock().map_err(|e| e.to_string())?;
+    let instance = instances.get(&pty_id).ok_or("PTY instance not found")?;
+    let handle = &instance.terminal;
+
+    let mut session = handle.session.lock().map_err(|e| e.to_string())?;
+    if session.is_alt_screen_active() {
+        session
+            .mouse_wheel(delta, col, row)
+            .map_err(|e| e.to_string())?;
+        drop(session);
+    } else {
+        session.scroll_by(delta);
+        drop(session);
+        handle
+            .differ
+            .lock()
+            .map_err(|e| e.to_string())?
+            .invalidate();
+    }
+    handle.wake();
+    Ok(())
+}
+
+/// Snap the scrollback viewport back to the live bottom. Idempotent.
+#[tauri::command]
+pub fn terminal_scroll_to_bottom(
+    state: State<'_, PtyManager>,
+    session_id: String,
+) -> Result<(), String> {
+    let pty_id = {
+        let session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
+        session_ptys
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| "no PTY for session".to_string())?
+    };
+
+    let instances = state.instances.lock().map_err(|e| e.to_string())?;
+    let instance = instances.get(&pty_id).ok_or("PTY instance not found")?;
+    let handle = &instance.terminal;
+
+    handle
+        .session
+        .lock()
+        .map_err(|e| e.to_string())?
+        .scroll_to_bottom();
+    handle
+        .differ
+        .lock()
+        .map_err(|e| e.to_string())?
+        .invalidate();
     handle.wake();
     Ok(())
 }

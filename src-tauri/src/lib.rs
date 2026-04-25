@@ -105,6 +105,7 @@ pub fn run() {
             commands::rename_session,
             commands::list_branches,
             commands::merge_session,
+            commands::cleanup_merged_session,
             commands::get_transcript,
             commands::check_session_has_commits,
             commands::get_session_git_info,
@@ -123,6 +124,20 @@ pub fn run() {
             commands::get_recent_commits,
             commands::get_pr_status,
             commands::create_pr,
+            commands::git_push,
+            commands::git_ship,
+            commands::get_pr_preview_data,
+            commands::poll_pr_checks,
+            commands::gh_available,
+            commands::get_conflicted_files,
+            commands::get_file_conflict_versions,
+            commands::save_conflict_resolution,
+            commands::enqueue_conflict_context,
+            commands::build_conflict_prompt,
+            commands::pull_target_into_session,
+            commands::complete_pending_merge,
+            commands::has_pending_merge,
+            commands::enable_pr_auto_merge,
             commands::get_session_changed_files,
             commands::get_commit_files,
             commands::list_directory,
@@ -140,8 +155,7 @@ pub fn run() {
             let hook_db = db.clone();
             let hook_plan = plan_state.clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(e) =
-                    start_hook_server(&socket_path, hook_app, hook_db, hook_plan).await
+                if let Err(e) = start_hook_server(&socket_path, hook_app, hook_db, hook_plan).await
                 {
                     tracing::error!("hook server error: {e}");
                 }
@@ -194,10 +208,7 @@ pub fn run() {
                 match OpenSpecWatcher::new(&openspec_dir, app_handle.clone()) {
                     Ok(watcher) => {
                         Box::leak(Box::new(watcher));
-                        tracing::info!(
-                            "openspec watcher started on {}",
-                            openspec_dir.display()
-                        );
+                        tracing::info!("openspec watcher started on {}", openspec_dir.display());
                     }
                     Err(e) => tracing::warn!("failed to start openspec watcher: {e}"),
                 }

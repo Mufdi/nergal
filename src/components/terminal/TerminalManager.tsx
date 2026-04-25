@@ -75,7 +75,14 @@ export function TerminalManager() {
       ref={hostRef}
       data-focus-zone="terminal"
       className="relative h-full w-full"
-      onMouseDown={() => setFocusZone("terminal")}
+      onMouseDown={() => {
+        setFocusZone("terminal");
+        // Setting the atom is a no-op when the zone was already "terminal",
+        // so the focus-restoring effect wouldn't re-fire. Force a focus pass
+        // here so a click on a non-canvas region (padding/gap/empty state)
+        // still drags the hidden textarea back as the active element.
+        terminalService.focusActive();
+      }}
     >
       {(!hasAnySessions || !activeSessionId) && (
         <div className="flex h-full items-center justify-center">

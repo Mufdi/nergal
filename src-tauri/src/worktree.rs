@@ -31,7 +31,10 @@ pub fn list_branches(repo_path: &Path) -> Result<Vec<String>> {
 /// Uses a temporary detached worktree so the main repo directory is NEVER touched.
 /// This prevents disrupting Vite/HMR or the running app.
 pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str) -> Result<()> {
-    let tmp_dir = repo_path.join(".worktrees").join("cluihud").join("_merge_tmp");
+    let tmp_dir = repo_path
+        .join(".worktrees")
+        .join("cluihud")
+        .join("_merge_tmp");
 
     // Clean up any leftover temp worktree
     if tmp_dir.exists() {
@@ -66,9 +69,20 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
     if !merge.status.success() {
         let stderr = String::from_utf8_lossy(&merge.stderr);
         let stdout = String::from_utf8_lossy(&merge.stdout);
-        let detail = if stderr.trim().is_empty() { stdout } else { stderr };
-        let _ = Command::new("git").args(["merge", "--abort"]).current_dir(&tmp_dir).output();
-        let _ = Command::new("git").args(["worktree", "remove", "--force"]).arg(&tmp_dir).current_dir(repo_path).output();
+        let detail = if stderr.trim().is_empty() {
+            stdout
+        } else {
+            stderr
+        };
+        let _ = Command::new("git")
+            .args(["merge", "--abort"])
+            .current_dir(&tmp_dir)
+            .output();
+        let _ = Command::new("git")
+            .args(["worktree", "remove", "--force"])
+            .arg(&tmp_dir)
+            .current_dir(repo_path)
+            .output();
         anyhow::bail!("conflict:{detail}");
     }
 
@@ -84,11 +98,23 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
         let stdout = String::from_utf8_lossy(&commit.stdout);
         // "nothing to commit" can appear in stdout or stderr
         if stderr.contains("nothing to commit") || stdout.contains("nothing to commit") {
-            let _ = Command::new("git").args(["worktree", "remove", "--force"]).arg(&tmp_dir).current_dir(repo_path).output();
+            let _ = Command::new("git")
+                .args(["worktree", "remove", "--force"])
+                .arg(&tmp_dir)
+                .current_dir(repo_path)
+                .output();
             return Ok(());
         }
-        let detail = if stderr.trim().is_empty() { stdout } else { stderr };
-        let _ = Command::new("git").args(["worktree", "remove", "--force"]).arg(&tmp_dir).current_dir(repo_path).output();
+        let detail = if stderr.trim().is_empty() {
+            stdout
+        } else {
+            stderr
+        };
+        let _ = Command::new("git")
+            .args(["worktree", "remove", "--force"])
+            .arg(&tmp_dir)
+            .current_dir(repo_path)
+            .output();
         anyhow::bail!("commit failed: {detail}");
     }
 
@@ -109,7 +135,11 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
 
     if !update.status.success() {
         let stderr = String::from_utf8_lossy(&update.stderr);
-        let _ = Command::new("git").args(["worktree", "remove", "--force"]).arg(&tmp_dir).current_dir(repo_path).output();
+        let _ = Command::new("git")
+            .args(["worktree", "remove", "--force"])
+            .arg(&tmp_dir)
+            .current_dir(repo_path)
+            .output();
         anyhow::bail!("failed to update {target} ref: {stderr}");
     }
 
@@ -345,7 +375,10 @@ pub fn diff_shortstat(cwd: &Path) -> Result<DiffShortstat> {
         }
     }
 
-    Ok(DiffShortstat { lines_added: added, lines_removed: removed })
+    Ok(DiffShortstat {
+        lines_added: added,
+        lines_removed: removed,
+    })
 }
 
 /// A file changed in the working tree, as reported by `git status`.
@@ -411,7 +444,9 @@ pub fn staged_files(cwd: &Path) -> Result<Vec<ChangedFile>> {
     let mut files = Vec::new();
     for line in stdout.lines() {
         let mut parts = line.splitn(2, '\t');
-        let Some(status_char) = parts.next() else { continue };
+        let Some(status_char) = parts.next() else {
+            continue;
+        };
         let Some(path) = parts.next() else { continue };
         let status = match status_char.trim() {
             "A" => "Create",
@@ -420,7 +455,10 @@ pub fn staged_files(cwd: &Path) -> Result<Vec<ChangedFile>> {
             "R" => "Rename",
             _ => "Edit",
         };
-        files.push(ChangedFile { path: path.to_string(), status: status.to_string() });
+        files.push(ChangedFile {
+            path: path.to_string(),
+            status: status.to_string(),
+        });
     }
     Ok(files)
 }
@@ -437,14 +475,19 @@ pub fn unstaged_files(cwd: &Path) -> Result<Vec<ChangedFile>> {
     let mut files = Vec::new();
     for line in stdout.lines() {
         let mut parts = line.splitn(2, '\t');
-        let Some(status_char) = parts.next() else { continue };
+        let Some(status_char) = parts.next() else {
+            continue;
+        };
         let Some(path) = parts.next() else { continue };
         let status = match status_char.trim() {
             "M" => "Edit",
             "D" => "Delete",
             _ => "Edit",
         };
-        files.push(ChangedFile { path: path.to_string(), status: status.to_string() });
+        files.push(ChangedFile {
+            path: path.to_string(),
+            status: status.to_string(),
+        });
     }
     Ok(files)
 }
@@ -458,7 +501,11 @@ pub fn untracked_files(cwd: &Path) -> Result<Vec<String>> {
         .context("failed to execute git ls-files")?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout.lines().filter(|l| !l.is_empty()).map(String::from).collect())
+    Ok(stdout
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(String::from)
+        .collect())
 }
 
 /// Stage a single file.
@@ -527,7 +574,11 @@ pub fn commit(cwd: &Path, message: &str) -> Result<String> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout_str = String::from_utf8_lossy(&output.stdout);
-        let detail = if stderr.trim().is_empty() { stdout_str } else { stderr };
+        let detail = if stderr.trim().is_empty() {
+            stdout_str
+        } else {
+            stderr
+        };
         anyhow::bail!("{detail}");
     }
     // Extract short hash from output
@@ -568,7 +619,10 @@ pub fn recent_commits(cwd: &Path, count: u32, range: Option<&str>) -> Result<Vec
     let mut entries = Vec::new();
     for line in stdout.lines() {
         if let Some((hash, message)) = line.split_once(' ') {
-            entries.push(CommitEntry { hash: hash.to_string(), message: message.to_string() });
+            entries.push(CommitEntry {
+                hash: hash.to_string(),
+                message: message.to_string(),
+            });
         }
     }
     Ok(entries)
@@ -599,27 +653,39 @@ pub fn pr_status(cwd: &Path, branch: &str) -> Result<Option<PrInfo>> {
     let val: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_default();
 
     let number = val.get("number").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-    let title = val.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let state = val.get("state").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let url = val.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let title = val
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let state = val
+        .get("state")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let url = val
+        .get("url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
 
     if number == 0 {
         return Ok(None);
     }
 
-    Ok(Some(PrInfo { number, title, state, url }))
+    Ok(Some(PrInfo {
+        number,
+        title,
+        state,
+        url,
+    }))
 }
 
 /// Create a PR via `gh pr create`.
 pub fn create_pr(cwd: &Path, branch: &str, base: &str, title: &str, body: &str) -> Result<PrInfo> {
     let output = Command::new("gh")
         .args([
-            "pr", "create",
-            "--head", branch,
-            "--base", base,
-            "--title", title,
-            "--body", body,
-            "--json", "number,title,state,url",
+            "pr", "create", "--head", branch, "--base", base, "--title", title, "--body", body,
         ])
         .current_dir(cwd)
         .output()
@@ -631,14 +697,422 @@ pub fn create_pr(cwd: &Path, branch: &str, base: &str, title: &str, body: &str) 
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let val: serde_json::Value = serde_json::from_str(&stdout)
-        .context("failed to parse gh pr create output")?;
+    let url = stdout
+        .lines()
+        .rev()
+        .find(|l| l.starts_with("https://"))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    if let Some(info) = pr_status(cwd, branch)? {
+        return Ok(info);
+    }
 
     Ok(PrInfo {
-        number: val.get("number").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-        title: val.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-        state: val.get("state").and_then(|v| v.as_str()).unwrap_or("OPEN").to_string(),
-        url: val.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        number: 0,
+        title: title.to_string(),
+        state: "OPEN".into(),
+        url,
+    })
+}
+
+/// Push the current branch to `origin` with upstream tracking.
+/// Returns `true` if new commits were pushed, `false` if already up-to-date.
+pub fn push(cwd: &Path, branch: &str) -> Result<bool> {
+    let output = Command::new("git")
+        .args(["push", "-u", "origin", branch])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git push")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git push failed: {stderr}");
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let up_to_date = stderr.contains("Everything up-to-date");
+    Ok(!up_to_date)
+}
+
+/// Commit shown in a PR preview.
+#[derive(Clone, serde::Serialize)]
+pub struct PrCommit {
+    pub hash: String,
+    pub subject: String,
+}
+
+/// Diffstat aggregate for a PR preview.
+#[derive(Clone, serde::Serialize)]
+pub struct PrDiffstat {
+    pub added: u32,
+    pub removed: u32,
+    pub files: u32,
+}
+
+/// Data needed to prefill the Ship/PR preview dialog.
+#[derive(Clone, serde::Serialize)]
+pub struct PrPreviewData {
+    pub base: String,
+    pub commits: Vec<PrCommit>,
+    pub diffstat: PrDiffstat,
+    pub template: Option<String>,
+    pub staged_count: u32,
+    pub has_staged_diffstat: bool,
+}
+
+/// Build preview data for a PR: commits in `base..head`, diffstat, optional template.
+pub fn pr_preview_data(cwd: &Path, base: &str, head: &str) -> Result<PrPreviewData> {
+    let range = format!("{base}..{head}");
+
+    let log_out = Command::new("git")
+        .args(["log", &range, "--format=%h%x00%s"])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git log for pr preview")?;
+    if !log_out.status.success() {
+        let stderr = String::from_utf8_lossy(&log_out.stderr);
+        anyhow::bail!("git log {range} failed: {stderr}");
+    }
+
+    let log_stdout = String::from_utf8_lossy(&log_out.stdout);
+    let mut seen_subjects: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut commits: Vec<PrCommit> = Vec::new();
+    for line in log_stdout.lines() {
+        let mut parts = line.splitn(2, '\0');
+        let Some(hash) = parts.next() else { continue };
+        let Some(subject) = parts.next() else {
+            continue;
+        };
+        if !seen_subjects.insert(subject.to_string()) {
+            continue;
+        }
+        commits.push(PrCommit {
+            hash: hash.to_string(),
+            subject: subject.to_string(),
+        });
+    }
+
+    let diff_out = Command::new("git")
+        .args(["diff", "--shortstat", &range])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git diff --shortstat for pr preview")?;
+    let diff_stdout = String::from_utf8_lossy(&diff_out.stdout);
+
+    let mut added = 0u32;
+    let mut removed = 0u32;
+    let mut files = 0u32;
+    for part in diff_stdout.split(',') {
+        let part = part.trim();
+        let parsed: Option<u32> = part.split_whitespace().next().and_then(|s| s.parse().ok());
+        if let Some(n) = parsed {
+            if part.contains("insertion") {
+                added = n;
+            } else if part.contains("deletion") {
+                removed = n;
+            } else if part.contains("file") {
+                files = n;
+            }
+        }
+    }
+
+    let template_path = cwd.join(".cluihud").join("pr-template.md");
+    let template = std::fs::read_to_string(&template_path).ok();
+
+    let staged = staged_files(cwd).unwrap_or_default();
+    let staged_count = staged.len() as u32;
+    let mut has_staged_diffstat = false;
+    if staged_count > 0 {
+        let staged_diff = Command::new("git")
+            .args(["diff", "--cached", "--shortstat"])
+            .current_dir(cwd)
+            .output();
+        if let Ok(out) = staged_diff {
+            has_staged_diffstat = !String::from_utf8_lossy(&out.stdout).trim().is_empty();
+        }
+    }
+
+    Ok(PrPreviewData {
+        base: base.to_string(),
+        commits,
+        diffstat: PrDiffstat {
+            added,
+            removed,
+            files,
+        },
+        template,
+        staged_count,
+        has_staged_diffstat,
+    })
+}
+
+/// CI checks aggregate from `gh pr checks`.
+#[derive(Clone, serde::Serialize)]
+pub struct PrChecks {
+    pub passing: u32,
+    pub failing: u32,
+    pub pending: u32,
+    pub total: u32,
+}
+
+/// Query CI checks for a PR via `gh pr checks <n> --json state,conclusion`.
+pub fn pr_checks(cwd: &Path, pr_number: u32) -> Result<PrChecks> {
+    let pr_arg = pr_number.to_string();
+    let output = Command::new("gh")
+        .args(["pr", "checks", &pr_arg, "--json", "state,conclusion"])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute gh pr checks")?;
+
+    // gh exits non-zero when any check is failing; the JSON is still valid on stdout.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let val: serde_json::Value = match serde_json::from_str(&stdout) {
+        Ok(v) => v,
+        Err(_) => {
+            return Ok(PrChecks {
+                passing: 0,
+                failing: 0,
+                pending: 0,
+                total: 0,
+            });
+        }
+    };
+
+    let arr = val.as_array().cloned().unwrap_or_default();
+    let mut passing = 0u32;
+    let mut failing = 0u32;
+    let mut pending = 0u32;
+    for item in &arr {
+        let state = item.get("state").and_then(|v| v.as_str()).unwrap_or("");
+        let conclusion = item
+            .get("conclusion")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        match state {
+            "COMPLETED" => match conclusion {
+                "SUCCESS" | "NEUTRAL" | "SKIPPED" => passing += 1,
+                "" => pending += 1,
+                _ => failing += 1,
+            },
+            "IN_PROGRESS" | "QUEUED" | "PENDING" | "WAITING" => pending += 1,
+            "" => pending += 1,
+            _ => failing += 1,
+        }
+    }
+
+    Ok(PrChecks {
+        passing,
+        failing,
+        pending,
+        total: arr.len() as u32,
+    })
+}
+
+/// Whether `gh` is installed and authenticated.
+pub fn gh_available() -> bool {
+    let Ok(output) = Command::new("gh").args(["auth", "status"]).output() else {
+        return false;
+    };
+    output.status.success()
+}
+
+/// Pull `target` branch into the current worktree via `git merge --no-ff --no-commit`,
+/// leaving conflict markers on disk so the conflict tab can surface them.
+/// Returns the list of conflicted files.
+pub fn pull_target_into_worktree(cwd: &Path, target: &str) -> Result<Vec<String>> {
+    let output = Command::new("git")
+        .args(["merge", "--no-ff", "--no-commit", target])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git merge")?;
+    // Merge with conflicts exits non-zero but leaves markers; that's what we want.
+    let _ = output;
+    conflicted_files(cwd)
+}
+
+/// Finish a pending merge by committing staged resolutions.
+pub fn complete_pending_merge(cwd: &Path) -> Result<String> {
+    let output = Command::new("git")
+        .args(["commit", "--no-edit"])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git commit --no-edit")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git commit --no-edit failed: {stderr}");
+    }
+    let rev = Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(cwd)
+        .output()
+        .context("failed to get merge commit hash")?;
+    Ok(String::from_utf8_lossy(&rev.stdout).trim().to_string())
+}
+
+/// Whether the working tree is in the middle of a merge (MERGE_HEAD exists).
+pub fn has_pending_merge(cwd: &Path) -> bool {
+    let output = Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", "MERGE_HEAD"])
+        .current_dir(cwd)
+        .output();
+    matches!(output, Ok(o) if o.status.success())
+}
+
+/// List files with merge conflicts.
+pub fn conflicted_files(cwd: &Path) -> Result<Vec<String>> {
+    let output = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git status for conflicts")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git status failed: {stderr}");
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut files = Vec::new();
+    for line in stdout.lines() {
+        if line.len() < 4 {
+            continue;
+        }
+        let xy = &line[..2];
+        let rel_path = &line[3..];
+        let is_conflict = matches!(xy, "UU" | "AA" | "DD" | "AU" | "UA" | "UD" | "DU");
+        if is_conflict {
+            files.push(rel_path.to_string());
+        }
+    }
+    Ok(files)
+}
+
+/// Ours/theirs/merged content for a conflicted file.
+#[derive(Clone, serde::Serialize)]
+pub struct ConflictVersions {
+    pub ours: String,
+    pub theirs: String,
+    pub merged: String,
+}
+
+fn git_show_stage(cwd: &Path, stage: u8, path: &str) -> String {
+    let spec = format!(":{stage}:{path}");
+    let output = Command::new("git")
+        .args(["show", &spec])
+        .current_dir(cwd)
+        .output();
+    match output {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+        _ => String::new(),
+    }
+}
+
+/// Read ours/theirs/merged versions of a conflicted file.
+pub fn file_conflict_versions(cwd: &Path, path: &str) -> Result<ConflictVersions> {
+    let ours = git_show_stage(cwd, 2, path);
+    let theirs = git_show_stage(cwd, 3, path);
+    let merged_path = cwd.join(path);
+    let merged = std::fs::read_to_string(&merged_path).unwrap_or_default();
+    Ok(ConflictVersions {
+        ours,
+        theirs,
+        merged,
+    })
+}
+
+/// Stage of the Ship pipeline, reported via progress callbacks.
+#[derive(Clone, Copy, Debug)]
+pub enum ShipStage {
+    Commit,
+    Push,
+    Pr,
+}
+
+impl ShipStage {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ShipStage::Commit => "commit",
+            ShipStage::Push => "push",
+            ShipStage::Pr => "pr",
+        }
+    }
+}
+
+/// Result of a successful Ship pipeline.
+#[derive(Clone, serde::Serialize)]
+pub struct ShipResult {
+    pub commit_hash: Option<String>,
+    pub pr_info: PrInfo,
+}
+
+/// Enable auto-merge on an existing PR via `gh pr merge --auto --squash`.
+pub fn enable_pr_auto_merge(cwd: &Path, pr_number: u32) -> Result<()> {
+    let pr_arg = pr_number.to_string();
+    let output = Command::new("gh")
+        .args(["pr", "merge", &pr_arg, "--auto", "--squash"])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute gh pr merge --auto")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("gh pr merge --auto failed: {stderr}");
+    }
+    Ok(())
+}
+
+/// Compose commit (optional) + push + create PR. Invokes `on_stage` callback
+/// with `(ShipStage, Ok)` as each stage completes so the caller can emit events.
+pub fn ship<F: Fn(ShipStage, bool)>(
+    cwd: &Path,
+    branch: &str,
+    base: &str,
+    commit_message: Option<&str>,
+    pr_title: &str,
+    pr_body: &str,
+    on_stage: F,
+) -> Result<ShipResult> {
+    let commit_hash = if let Some(message) = commit_message.filter(|m| !m.trim().is_empty()) {
+        let staged = staged_files(cwd).unwrap_or_default();
+        if staged.is_empty() {
+            None
+        } else {
+            match commit(cwd, message) {
+                Ok(h) => {
+                    on_stage(ShipStage::Commit, true);
+                    Some(h)
+                }
+                Err(e) => {
+                    on_stage(ShipStage::Commit, false);
+                    return Err(e);
+                }
+            }
+        }
+    } else {
+        None
+    };
+
+    match push(cwd, branch) {
+        Ok(_) => on_stage(ShipStage::Push, true),
+        Err(e) => {
+            on_stage(ShipStage::Push, false);
+            return Err(e);
+        }
+    }
+
+    let pr_info = match create_pr(cwd, branch, base, pr_title, pr_body) {
+        Ok(p) => {
+            on_stage(ShipStage::Pr, true);
+            p
+        }
+        Err(e) => {
+            on_stage(ShipStage::Pr, false);
+            return Err(e);
+        }
+    };
+
+    Ok(ShipResult {
+        commit_hash,
+        pr_info,
     })
 }
 

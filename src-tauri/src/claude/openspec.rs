@@ -19,10 +19,7 @@ impl OpenSpecWatcher {
         let mut watcher =
             notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
                 let Ok(event) = res else { return };
-                if event.kind.is_modify()
-                    || event.kind.is_create()
-                    || event.kind.is_remove()
-                {
+                if event.kind.is_modify() || event.kind.is_create() || event.kind.is_remove() {
                     // Debounce: skip if less than 500ms since last emit
                     let now = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)

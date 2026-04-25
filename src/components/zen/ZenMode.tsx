@@ -1,8 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { zenModeAtom, closeZenModeAtom, zenModeNavigateAtom } from "@/stores/zenMode";
+import { conflictsZenOpenAtom } from "@/stores/conflict";
+import { activeSessionIdAtom } from "@/stores/workspace";
 import { DiffView } from "@/components/plan/DiffView";
 import { GitPanel } from "@/components/git/GitPanel";
+import { ConflictsPanel } from "@/components/git/ConflictsPanel";
 import { X, ChevronLeft, ChevronRight } from "lucide-react";
 
 type SidebarTab = "changes" | "history";
@@ -10,28 +13,47 @@ type SidebarTab = "changes" | "history";
 /// Full-screen diff review overlay with git sidebar.
 export function GitFullView() {
   const state = useAtomValue(zenModeAtom);
+  const conflictsZen = useAtomValue(conflictsZenOpenAtom);
+  const setConflictsZen = useSetAtom(conflictsZenOpenAtom);
+  const sessionId = useAtomValue(activeSessionIdAtom);
   const close = useSetAtom(closeZenModeAtom);
   const navigate = useSetAtom(zenModeNavigateAtom);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("changes");
 
+  const closeAll = useCallback(() => {
+    if (conflictsZen) setConflictsZen(false);
+    else close();
+  }, [conflictsZen, setConflictsZen, close]);
+
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (!state.open) return;
+    if (!state.open && !conflictsZen) return;
     if (e.key === "Escape") {
       e.preventDefault();
-      close();
-    } else if (e.key === "ArrowRight" && e.altKey) {
+      closeAll();
+    } else if (e.key === "ArrowRight" && e.altKey && state.open) {
       e.preventDefault();
       navigate("next");
-    } else if (e.key === "ArrowLeft" && e.altKey) {
+    } else if (e.key === "ArrowLeft" && e.altKey && state.open) {
       e.preventDefault();
       navigate("prev");
     }
-  }, [state.open, close, navigate]);
+  }, [state.open, conflictsZen, closeAll, navigate]);
 
   useEffect(() => {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
+
+  if (conflictsZen && sessionId) {
+    return (
+      <div className="fixed inset-0 z-40 flex overflow-hidden" role="dialog" aria-label="Conflict resolution full view">
+        <div className="absolute inset-0 bg-background/60 backdrop-blur-md" onClick={closeAll} />
+        <div className="relative z-10 flex min-w-0 flex-1 flex-col m-3 overflow-hidden rounded-lg bg-card/95 border border-border">
+          <ConflictsPanel sessionId={sessionId} inZen onToggleZen={closeAll} />
+        </div>
+      </div>
+    );
+  }
 
   if (!state.open || !state.filePath || !state.sessionId) return null;
 

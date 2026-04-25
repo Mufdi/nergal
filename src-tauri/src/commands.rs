@@ -111,10 +111,7 @@ pub fn diff_plan(
 }
 
 #[tauri::command]
-pub fn approve_plan(
-    session_id: String,
-    state: State<'_, SharedPlanState>,
-) -> Result<(), String> {
+pub fn approve_plan(session_id: String, state: State<'_, SharedPlanState>) -> Result<(), String> {
     let mut mgr = state.lock().map_err(|e| e.to_string())?;
     let runtime = mgr.get_or_create(&session_id);
     if let Some(plan) = &mut runtime.current_plan {
@@ -124,10 +121,7 @@ pub fn approve_plan(
 }
 
 #[tauri::command]
-pub fn reject_plan(
-    session_id: String,
-    state: State<'_, SharedPlanState>,
-) -> Result<(), String> {
+pub fn reject_plan(session_id: String, state: State<'_, SharedPlanState>) -> Result<(), String> {
     let mut mgr = state.lock().map_err(|e| e.to_string())?;
     let runtime = mgr.get_or_create(&session_id);
     let Some(plan) = &runtime.current_plan else {
@@ -143,15 +137,15 @@ pub fn reject_plan(
 /// Writes user answers to the FIFO, unblocking the ask-user CLI.
 /// `answers` is a JSON string mapping question text to selected answer.
 #[tauri::command]
-pub fn submit_ask_answer(
-    decision_path: String,
-    answers: String,
-) -> Result<(), String> {
-    let answers_value: serde_json::Value = serde_json::from_str(&answers)
-        .map_err(|e| format!("parsing answers JSON: {e}"))?;
+pub fn submit_ask_answer(decision_path: String, answers: String) -> Result<(), String> {
+    let answers_value: serde_json::Value =
+        serde_json::from_str(&answers).map_err(|e| format!("parsing answers JSON: {e}"))?;
     let response = serde_json::json!({ "answers": answers_value });
-    std::fs::write(&decision_path, serde_json::to_string(&response).map_err(|e| e.to_string())?)
-        .map_err(|e| format!("writing answers to FIFO: {e}"))?;
+    std::fs::write(
+        &decision_path,
+        serde_json::to_string(&response).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("writing answers to FIFO: {e}"))?;
     Ok(())
 }
 
@@ -189,8 +183,11 @@ pub fn submit_plan_decision(
         serde_json::json!({ "approved": false, "message": deny_msg })
     };
 
-    std::fs::write(&decision_path, serde_json::to_string(&decision).map_err(|e| e.to_string())?)
-        .map_err(|e| format!("writing decision to FIFO: {e}"))?;
+    std::fs::write(
+        &decision_path,
+        serde_json::to_string(&decision).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("writing decision to FIFO: {e}"))?;
 
     Ok(())
 }
@@ -285,10 +282,7 @@ pub fn load_plan(
     let runtime = mgr.get_or_create(&session_id);
     let plan_path = PathBuf::from(path);
     runtime.load_plan(&plan_path).map_err(|e| e.to_string())?;
-    let plan = runtime
-        .current_plan
-        .as_ref()
-        .ok_or("plan was not loaded")?;
+    let plan = runtime.current_plan.as_ref().ok_or("plan was not loaded")?;
     Ok(PlanResponse {
         path: plan.path.clone(),
         content: plan.content.clone(),
@@ -341,8 +335,16 @@ pub fn save_annotation(
     db: State<'_, SharedDb>,
 ) -> Result<(), String> {
     let db = db.lock().map_err(|e| e.to_string())?;
-    db.save_annotation(&id, &session_id, &ann_type, &target, &content, &start_meta, &end_meta)
-        .map_err(|e| e.to_string())
+    db.save_annotation(
+        &id,
+        &session_id,
+        &ann_type,
+        &target,
+        &content,
+        &start_meta,
+        &end_meta,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -388,8 +390,16 @@ pub fn save_spec_annotation(
     db: State<'_, SharedDb>,
 ) -> Result<(), String> {
     let db = db.lock().map_err(|e| e.to_string())?;
-    db.save_spec_annotation(&id, &spec_key, &ann_type, &target, &content, &start_meta, &end_meta)
-        .map_err(|e| e.to_string())
+    db.save_spec_annotation(
+        &id,
+        &spec_key,
+        &ann_type,
+        &target,
+        &content,
+        &start_meta,
+        &end_meta,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -398,7 +408,8 @@ pub fn get_spec_annotations(
     db: State<'_, SharedDb>,
 ) -> Result<Vec<crate::db::SpecAnnotationRow>, String> {
     let db = db.lock().map_err(|e| e.to_string())?;
-    db.get_spec_annotations(&spec_key).map_err(|e| e.to_string())
+    db.get_spec_annotations(&spec_key)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -410,7 +421,8 @@ pub fn delete_spec_annotation(id: String, db: State<'_, SharedDb>) -> Result<(),
 #[tauri::command]
 pub fn clear_spec_annotations(spec_key: String, db: State<'_, SharedDb>) -> Result<(), String> {
     let db = db.lock().map_err(|e| e.to_string())?;
-    db.clear_spec_annotations(&spec_key).map_err(|e| e.to_string())
+    db.clear_spec_annotations(&spec_key)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -444,7 +456,10 @@ pub fn get_buddy() -> Result<BuddyData, String> {
             let json: serde_json::Value =
                 serde_json::from_str(&contents).map_err(|e| e.to_string())?;
             let soul = json.get("companion").cloned();
-            let user_id = json.get("userID").and_then(|v| v.as_str()).map(String::from);
+            let user_id = json
+                .get("userID")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             (soul, user_id)
         }
         Err(_) => (None, None),
@@ -664,34 +679,54 @@ pub fn merge_session(
 
     // Squash merge (stays on target after success)
     let commit_message = format!("squash merge {} into {}", branch, target_branch);
-    if let Err(e) = crate::worktree::squash_merge(&repo_path, branch, &target_branch, &commit_message) {
+    if let Err(e) =
+        crate::worktree::squash_merge(&repo_path, branch, &target_branch, &commit_message)
+    {
         let msg = e.to_string();
         let is_conflict = msg.starts_with("conflict:");
         return Ok(MergeResult {
             success: false,
             conflict: is_conflict,
-            message: if is_conflict { msg.strip_prefix("conflict:").unwrap_or(&msg).to_string() } else { msg },
+            message: if is_conflict {
+                msg.strip_prefix("conflict:").unwrap_or(&msg).to_string()
+            } else {
+                msg
+            },
         });
     }
-
-    // Remove worktree
-    if let Some(ref wt_path) = session.worktree_path {
-        let _ = crate::worktree::remove_worktree(&repo_path, wt_path);
-    }
-
-    // Delete branch
-    let _ = crate::worktree::delete_branch(&repo_path, branch);
-
-    // Update session status
-    let _ = db.update_session_status(&session_id, "completed");
-    let _ = db.clear_session_worktree(&session_id);
-    let _ = db.clear_merge_target(&session_id);
 
     Ok(MergeResult {
         success: true,
         conflict: false,
         message: format!("Squash-merged into {target_branch}"),
     })
+}
+
+/// Removes the session's worktree + branch and marks the session completed.
+/// Called explicitly after the user confirms cleanup (not auto after merge).
+#[tauri::command]
+pub fn cleanup_merged_session(
+    db: State<'_, SharedDb>,
+    session_id: String,
+) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let Some(session) = db.find_session(&session_id).map_err(|e| e.to_string())? else {
+        return Err("session not found".into());
+    };
+    let repo_path = db
+        .workspace_repo_path(&session.workspace_id)
+        .map_err(|e| e.to_string())?
+        .ok_or("workspace not found")?;
+    if let Some(ref wt_path) = session.worktree_path {
+        let _ = crate::worktree::remove_worktree(&repo_path, wt_path);
+    }
+    if let Some(ref branch) = session.worktree_branch {
+        let _ = crate::worktree::delete_branch(&repo_path, branch);
+    }
+    let _ = db.update_session_status(&session_id, "completed");
+    let _ = db.clear_session_worktree(&session_id);
+    let _ = db.clear_merge_target(&session_id);
+    Ok(())
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -811,8 +846,7 @@ pub fn get_file_diff(
             .ok_or("workspace not found")?
     };
 
-    let diff_text =
-        crate::worktree::file_diff(&cwd, &file_path).map_err(|e| e.to_string())?;
+    let diff_text = crate::worktree::file_diff(&cwd, &file_path).map_err(|e| e.to_string())?;
 
     let is_new = diff_text.contains("new file mode") || diff_text.contains("/dev/null");
 
@@ -869,13 +903,17 @@ pub struct OpenSpecChange {
 
 /// Resolve session working directory.
 fn resolve_session_cwd(db: &crate::db::Database, session_id: &str) -> Result<PathBuf, String> {
-    let Some(session) = db.find_session(session_id).map_err(|e: anyhow::Error| e.to_string())? else {
+    let Some(session) = db
+        .find_session(session_id)
+        .map_err(|e: anyhow::Error| e.to_string())?
+    else {
         return Err("session not found".into());
     };
     if let Some(ref wt) = session.worktree_path {
         Ok(wt.clone())
     } else {
-        let path: Option<PathBuf> = db.workspace_repo_path(&session.workspace_id)
+        let path: Option<PathBuf> = db
+            .workspace_repo_path(&session.workspace_id)
             .map_err(|e: anyhow::Error| e.to_string())?;
         path.ok_or_else(|| "workspace not found".into())
     }
@@ -1074,7 +1112,10 @@ pub fn read_openspec_artifact(
         if change_dir.exists() {
             change_dir.join(&artifact_path)
         } else {
-            changes_dir.join("archive").join(&change_name).join(&artifact_path)
+            changes_dir
+                .join("archive")
+                .join(&change_name)
+                .join(&artifact_path)
         }
     };
 
@@ -1108,8 +1149,7 @@ pub fn write_openspec_artifact(
 
     // Ensure parent directory exists (for new spec files)
     if let Some(parent) = file_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create directory: {e}"))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("failed to create directory: {e}"))?;
     }
 
     std::fs::write(&file_path, &content)
@@ -1128,8 +1168,16 @@ const KNOWN_EDITORS: &[(&str, &str, &[&str])] = &[
     ("antigravity", "Antigravity", &["antigravity"]),
     ("webstorm", "WebStorm", &["webstorm"]),
     ("phpstorm", "PhpStorm", &["phpstorm"]),
-    ("pycharm", "PyCharm", &["pycharm", "pycharm-professional", "pycharm-community"]),
-    ("idea", "IntelliJ IDEA", &["idea", "intellij-idea-ultimate", "intellij-idea-community"]),
+    (
+        "pycharm",
+        "PyCharm",
+        &["pycharm", "pycharm-professional", "pycharm-community"],
+    ),
+    (
+        "idea",
+        "IntelliJ IDEA",
+        &["idea", "intellij-idea-ultimate", "intellij-idea-community"],
+    ),
     ("clion", "CLion", &["clion"]),
     ("goland", "GoLand", &["goland"]),
     ("rustrover", "RustRover", &["rustrover", "rust-rover"]),
@@ -1275,16 +1323,19 @@ pub fn get_session_git_info(
             .clone()
             .unwrap_or_else(|| "unknown".into());
         let dirty = crate::worktree::is_worktree_dirty(wt_path).unwrap_or(false);
-        let stat = crate::worktree::diff_shortstat(std::path::Path::new(wt_path))
-            .unwrap_or(crate::worktree::DiffShortstat { lines_added: 0, lines_removed: 0 });
+        let stat = crate::worktree::diff_shortstat(std::path::Path::new(wt_path)).unwrap_or(
+            crate::worktree::DiffShortstat {
+                lines_added: 0,
+                lines_removed: 0,
+            },
+        );
 
         let repo_path = db
             .workspace_repo_path(&session.workspace_id)
             .map_err(|e| e.to_string())?
             .ok_or("workspace not found")?;
 
-        let branches =
-            crate::worktree::list_branches(&repo_path).map_err(|e| e.to_string())?;
+        let branches = crate::worktree::list_branches(&repo_path).map_err(|e| e.to_string())?;
         let main_branch = if branches.iter().any(|b| b == "main") {
             "main"
         } else if branches.iter().any(|b| b == "master") {
@@ -1299,8 +1350,7 @@ pub fn get_session_git_info(
             });
         };
 
-        let ahead =
-            crate::worktree::commits_ahead_count(wt_path, main_branch).unwrap_or(0);
+        let ahead = crate::worktree::commits_ahead_count(wt_path, main_branch).unwrap_or(0);
 
         Ok(GitInfo {
             branch,
@@ -1318,8 +1368,11 @@ pub fn get_session_git_info(
         let branch =
             crate::worktree::current_branch(&repo_path).unwrap_or_else(|_| "unknown".into());
         let dirty = crate::worktree::is_worktree_dirty(&repo_path).unwrap_or(false);
-        let stat = crate::worktree::diff_shortstat(&repo_path)
-            .unwrap_or(crate::worktree::DiffShortstat { lines_added: 0, lines_removed: 0 });
+        let stat =
+            crate::worktree::diff_shortstat(&repo_path).unwrap_or(crate::worktree::DiffShortstat {
+                lines_added: 0,
+                lines_removed: 0,
+            });
 
         Ok(GitInfo {
             branch,
@@ -1353,7 +1406,10 @@ pub fn check_session_has_commits(
     };
 
     let Some(ref wt_path) = session.worktree_path else {
-        return Ok(WorktreeStatus { dirty: false, commits_ahead: false });
+        return Ok(WorktreeStatus {
+            dirty: false,
+            commits_ahead: false,
+        });
     };
 
     let dirty = crate::worktree::is_worktree_dirty(wt_path).unwrap_or(false);
@@ -1369,12 +1425,18 @@ pub fn check_session_has_commits(
     } else if branches.iter().any(|b| b == "master") {
         "master"
     } else {
-        return Ok(WorktreeStatus { dirty, commits_ahead: false });
+        return Ok(WorktreeStatus {
+            dirty,
+            commits_ahead: false,
+        });
     };
 
     let commits_ahead = crate::worktree::has_commits_ahead(wt_path, main_branch).unwrap_or(false);
 
-    Ok(WorktreeStatus { dirty, commits_ahead })
+    Ok(WorktreeStatus {
+        dirty,
+        commits_ahead,
+    })
 }
 
 // -- Git panel commands --
@@ -1399,7 +1461,11 @@ pub fn get_git_status(
     let unstaged = crate::worktree::unstaged_files(&cwd).map_err(|e| e.to_string())?;
     let untracked = crate::worktree::untracked_files(&cwd).map_err(|e| e.to_string())?;
 
-    Ok(GitFullStatus { staged, unstaged, untracked })
+    Ok(GitFullStatus {
+        staged,
+        unstaged,
+        untracked,
+    })
 }
 
 #[tauri::command]
@@ -1425,20 +1491,14 @@ pub fn git_unstage_file(
 }
 
 #[tauri::command]
-pub fn git_stage_all(
-    db: State<'_, SharedDb>,
-    session_id: String,
-) -> Result<(), String> {
+pub fn git_stage_all(db: State<'_, SharedDb>, session_id: String) -> Result<(), String> {
     let db = db.lock().map_err(|e| e.to_string())?;
     let cwd = resolve_session_cwd(&db, &session_id)?;
     crate::worktree::stage_all(&cwd).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn git_unstage_all(
-    db: State<'_, SharedDb>,
-    session_id: String,
-) -> Result<(), String> {
+pub fn git_unstage_all(db: State<'_, SharedDb>, session_id: String) -> Result<(), String> {
     let db = db.lock().map_err(|e| e.to_string())?;
     let cwd = resolve_session_cwd(&db, &session_id)?;
     crate::worktree::unstage_all(&cwd).map_err(|e| e.to_string())
@@ -1463,7 +1523,10 @@ pub fn get_recent_commits(
 ) -> Result<Vec<crate::worktree::CommitEntry>, String> {
     let db = db.lock().map_err(|e| e.to_string())?;
 
-    let Some(session) = db.find_session(&session_id).map_err(|e: anyhow::Error| e.to_string())? else {
+    let Some(session) = db
+        .find_session(&session_id)
+        .map_err(|e: anyhow::Error| e.to_string())?
+    else {
         return Err("session not found".into());
     };
 
@@ -1497,7 +1560,10 @@ pub fn get_pr_status(
 ) -> Result<Option<crate::worktree::PrInfo>, String> {
     let db = db.lock().map_err(|e| e.to_string())?;
 
-    let Some(session) = db.find_session(&session_id).map_err(|e: anyhow::Error| e.to_string())? else {
+    let Some(session) = db
+        .find_session(&session_id)
+        .map_err(|e: anyhow::Error| e.to_string())?
+    else {
         return Err("session not found".into());
     };
 
@@ -1518,7 +1584,10 @@ pub fn create_pr(
 ) -> Result<crate::worktree::PrInfo, String> {
     let db = db.lock().map_err(|e| e.to_string())?;
 
-    let Some(session) = db.find_session(&session_id).map_err(|e: anyhow::Error| e.to_string())? else {
+    let Some(session) = db
+        .find_session(&session_id)
+        .map_err(|e: anyhow::Error| e.to_string())?
+    else {
         return Err("session not found".into());
     };
 
@@ -1541,6 +1610,307 @@ pub fn create_pr(
     };
 
     crate::worktree::create_pr(&cwd, branch, base, &title, &body).map_err(|e| e.to_string())
+}
+
+// ── Ship flow: push, ship, PR preview, CI checks, conflicts ──
+
+fn resolve_session_base(db: &crate::db::Database, session_id: &str) -> Result<String, String> {
+    let Some(session) = db
+        .find_session(session_id)
+        .map_err(|e: anyhow::Error| e.to_string())?
+    else {
+        return Err("session not found".into());
+    };
+    let repo_path = db
+        .workspace_repo_path(&session.workspace_id)
+        .map_err(|e: anyhow::Error| e.to_string())?
+        .ok_or("workspace not found")?;
+    let branches = crate::worktree::list_branches(&repo_path).map_err(|e| e.to_string())?;
+    Ok(if branches.iter().any(|b| b == "main") {
+        "main".into()
+    } else {
+        "master".into()
+    })
+}
+
+fn resolve_session_branch(db: &crate::db::Database, session_id: &str) -> Result<String, String> {
+    let Some(session) = db
+        .find_session(session_id)
+        .map_err(|e: anyhow::Error| e.to_string())?
+    else {
+        return Err("session not found".into());
+    };
+    if let Some(ref b) = session.worktree_branch {
+        Ok(b.clone())
+    } else {
+        let cwd = resolve_session_cwd(db, session_id)?;
+        crate::worktree::current_branch(&cwd).map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command]
+pub fn pull_target_into_session(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    target: String,
+) -> Result<Vec<String>, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    crate::worktree::pull_target_into_worktree(&cwd, &target).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn complete_pending_merge(
+    db: State<'_, SharedDb>,
+    session_id: String,
+) -> Result<String, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    crate::worktree::complete_pending_merge(&cwd).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn has_pending_merge(db: State<'_, SharedDb>, session_id: String) -> Result<bool, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    Ok(crate::worktree::has_pending_merge(&cwd))
+}
+
+#[tauri::command]
+pub fn enable_pr_auto_merge(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    pr_number: u32,
+) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    crate::worktree::enable_pr_auto_merge(&cwd, pr_number).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn git_push(db: State<'_, SharedDb>, session_id: String) -> Result<bool, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let branch = resolve_session_branch(&db, &session_id)?;
+    crate::worktree::push(&cwd, &branch).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn gh_available() -> bool {
+    crate::worktree::gh_available()
+}
+
+#[tauri::command]
+pub fn get_pr_preview_data(
+    db: State<'_, SharedDb>,
+    session_id: String,
+) -> Result<crate::worktree::PrPreviewData, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let base = resolve_session_base(&db, &session_id)?;
+    crate::worktree::pr_preview_data(&cwd, &base, "HEAD").map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn poll_pr_checks(
+    db: State<'_, SharedDb>,
+    session_id: String,
+) -> Result<Option<crate::worktree::PrChecks>, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let branch = resolve_session_branch(&db, &session_id)?;
+    let Some(pr) = crate::worktree::pr_status(&cwd, &branch).map_err(|e| e.to_string())? else {
+        return Ok(None);
+    };
+    if pr.state != "OPEN" {
+        return Ok(None);
+    }
+    crate::worktree::pr_checks(&cwd, pr.number)
+        .map(Some)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_conflicted_files(
+    db: State<'_, SharedDb>,
+    session_id: String,
+) -> Result<Vec<String>, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    crate::worktree::conflicted_files(&cwd).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_file_conflict_versions(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    path: String,
+) -> Result<crate::worktree::ConflictVersions, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    crate::worktree::file_conflict_versions(&cwd, &path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn save_conflict_resolution(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    path: String,
+    merged: String,
+) -> Result<Vec<String>, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let abs = cwd.join(&path);
+    std::fs::write(&abs, merged).map_err(|e| format!("failed to write: {e}"))?;
+    crate::worktree::stage_file(&cwd, &path).map_err(|e| e.to_string())?;
+    crate::worktree::conflicted_files(&cwd).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn build_conflict_prompt(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    path: String,
+    ours: String,
+    theirs: String,
+    original_merged: String,
+    intent: Option<String>,
+) -> Result<String, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let branch = crate::worktree::current_branch(&cwd).unwrap_or_else(|_| "HEAD".into());
+
+    let status_out = std::process::Command::new("git")
+        .args(["status", "--short"])
+        .current_dir(&cwd)
+        .output();
+    let status = status_out
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+
+    let intent_section = intent
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| format!("\n\nMy intent for this resolution:\n{s}\n"))
+        .unwrap_or_default();
+
+    let prompt = format!(
+        "Resolve the merge conflict in `{path}` (worktree: `{cwd}`, branch: `{branch}`).\n\n\
+         We ran `git merge --no-ff --no-commit <target>` which left MERGE_HEAD pending.\n\n\
+         `git status --short`:\n```\n{status}```\n\n\
+         --- ours (HEAD version) ---\n```\n{ours}\n```\n\n\
+         --- theirs (incoming version) ---\n```\n{theirs}\n```\n\n\
+         --- original working copy with conflict markers ---\n```\n{original_merged}\n```\
+         {intent_section}\n\n\
+         Steps:\n\
+         1. Decide on the correct resolution, honoring my intent if stated.\n\
+         2. Write the resolved contents back to `{path}` via the Edit tool.\n\
+         3. Stage it with `git add {path}`.\n\
+         4. If no other conflicts remain, finish the merge with `git commit --no-edit`.\n",
+        cwd = cwd.display(),
+    );
+    Ok(prompt)
+}
+
+#[tauri::command]
+pub fn enqueue_conflict_context(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    path: String,
+    ours: String,
+    theirs: String,
+    merged: String,
+    instruction: String,
+) -> Result<String, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let branch = crate::worktree::current_branch(&cwd).unwrap_or_else(|_| "HEAD".into());
+
+    let status_out = std::process::Command::new("git")
+        .args(["status", "--short"])
+        .current_dir(&cwd)
+        .output();
+    let status = status_out
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+
+    let feedback = format!(
+        "You are resolving a merge conflict in `{path}` inside the worktree at `{cwd}`.\n\
+         Current branch: `{branch}`. We ran `git merge --no-ff --no-commit <target>` which left MERGE_HEAD pending.\n\
+         {instruction}\n\n\
+         `git status --short`:\n```\n{status}```\n\n\
+         --- ours (HEAD version) ---\n```\n{ours}\n```\n\n\
+         --- theirs (incoming version) ---\n```\n{theirs}\n```\n\n\
+         --- current working copy with conflict markers ---\n```\n{merged}\n```\n\n\
+         Next steps:\n\
+         1. Decide on the correct resolution.\n\
+         2. Write the resolved contents back to `{path}` via the Edit tool.\n\
+         3. Stage it with `git add {path}`.\n\
+         4. If no other conflicts remain, finish the merge with `git commit --no-edit`.\n",
+        cwd = cwd.display(),
+    );
+    HookState::set_pending_annotations(feedback).map_err(|e| e.to_string())?;
+
+    // Return a short seed prompt the frontend will write to the terminal.
+    Ok(format!("Resolve the merge conflict in {path}"))
+}
+
+#[tauri::command]
+pub fn git_ship(
+    app: tauri::AppHandle,
+    db: State<'_, SharedDb>,
+    session_id: String,
+    message: Option<String>,
+    pr_title: String,
+    pr_body: String,
+    auto_merge: Option<bool>,
+) -> Result<crate::worktree::ShipResult, String> {
+    use tauri::Emitter;
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let branch = resolve_session_branch(&db, &session_id)?;
+    let base = resolve_session_base(&db, &session_id)?;
+    let sid = session_id.clone();
+    let app_clone = app.clone();
+    let on_stage = move |stage: crate::worktree::ShipStage, ok: bool| {
+        let _ = app_clone.emit(
+            "ship:progress",
+            serde_json::json!({
+                "session_id": sid,
+                "stage": stage.as_str(),
+                "ok": ok,
+            }),
+        );
+    };
+    let result = crate::worktree::ship(
+        &cwd,
+        &branch,
+        &base,
+        message.as_deref(),
+        &pr_title,
+        &pr_body,
+        on_stage,
+    )
+    .map_err(|e| e.to_string())?;
+
+    if auto_merge.unwrap_or(false) && result.pr_info.number > 0 {
+        let _ = app.emit(
+            "ship:progress",
+            serde_json::json!({ "session_id": session_id, "stage": "auto-merge", "ok": true }),
+        );
+        if let Err(e) = crate::worktree::enable_pr_auto_merge(&cwd, result.pr_info.number) {
+            let _ = app.emit(
+                "ship:progress",
+                serde_json::json!({ "session_id": session_id, "stage": "auto-merge", "ok": false, "error": e.to_string() }),
+            );
+            return Err(format!("PR created but auto-merge failed: {e}"));
+        }
+    }
+
+    Ok(result)
 }
 
 // ── Git: commit files ──
@@ -1593,7 +1963,11 @@ pub fn list_directory(
 ) -> Result<Vec<DirEntry>, String> {
     let db = db.lock().map_err(|e| e.to_string())?;
     let cwd = resolve_session_cwd(&db, &session_id)?;
-    let target = if path == "." { cwd.clone() } else { cwd.join(&path) };
+    let target = if path == "." {
+        cwd.clone()
+    } else {
+        cwd.join(&path)
+    };
 
     let mut entries = Vec::new();
     let read_dir = std::fs::read_dir(&target).map_err(|e| e.to_string())?;
@@ -1618,7 +1992,9 @@ pub fn list_directory(
     }
 
     entries.sort_by(|a, b| {
-        b.is_dir.cmp(&a.is_dir).then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
 
     Ok(entries)

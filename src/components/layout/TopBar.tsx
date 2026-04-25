@@ -15,7 +15,11 @@ import {
   currentSpecArtifactAtom,
   type TabType,
 } from "@/stores/rightPanel";
-import { toggleRightPanelAtom } from "@/stores/shortcuts";
+import { toggleRightPanelAtom, triggerCommitAtom, triggerMergeAtom } from "@/stores/shortcuts";
+import { triggerShipAtom } from "@/stores/ship";
+import { activeGitInfoAtom, refreshGitInfoAtom, conflictedFilesMapAtom, refreshConflictedFilesAtom, activeConflictedFilesAtom } from "@/stores/git";
+import { openConflictsTabAction } from "@/stores/conflict";
+import { toastsAtom } from "@/stores/toast";
 import { configAtom } from "@/stores/config";
 import { appStore } from "@/stores/jotaiStore";
 import { invoke } from "@/lib/tauri";
@@ -32,6 +36,12 @@ import {
   Maximize2,
   Minimize2,
   X,
+  Package,
+  Upload,
+  Rocket,
+  GitMerge,
+  Loader2,
+  AlertTriangle,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
@@ -94,6 +104,7 @@ const PANEL_BUTTONS: { type: TabType; label: string; shortcut: string; icon: typ
   { type: "diff", label: "Diff", shortcut: "Ctrl+Shift+D", icon: GitCompareArrows },
   { type: "spec", label: "Spec", shortcut: "Ctrl+Shift+S", icon: ClipboardList },
   { type: "git", label: "Git", shortcut: "Ctrl+Shift+G", icon: GitBranch },
+  { type: "conflicts", label: "Conflicts", shortcut: "Ctrl+Alt+Q", icon: AlertTriangle },
 ];
 
 
@@ -112,10 +123,24 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   const setActivePanelView = useSetAtom(activePanelViewAtom);
   const setExpand = useSetAtom(expandRightPanelAtom);
   const setToggleRight = useSetAtom(toggleRightPanelAtom);
+  const setTriggerCommit = useSetAtom(triggerCommitAtom);
+  const setTriggerMerge = useSetAtom(triggerMergeAtom);
+  const setTriggerShip = useSetAtom(triggerShipAtom);
+  const refreshGit = useSetAtom(refreshGitInfoAtom);
+  const refreshConflicts = useSetAtom(refreshConflictedFilesAtom);
+  const activeGitInfo = useAtomValue(activeGitInfoAtom);
+  const conflictedFilesMap = useAtomValue(conflictedFilesMapAtom);
+  const activeConflictedFiles = useAtomValue(activeConflictedFilesAtom);
+  const openConflictsTab = useSetAtom(openConflictsTabAction);
+  const addToast = useSetAtom(toastsAtom);
+  const activeSession = workspace?.sessions.find((s) => s.id === sessionId) ?? null;
+  const isWorktreeSession = activeSession?.worktree_path != null;
 
   const [editors, setEditors] = useState<EditorInfo[]>([]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
+  const [commitBusy, setCommitBusy] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
   const tabsContainerRef = useRef<HTMLDivElement>(null);
   const dragIdRef = useRef<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -129,6 +154,15 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
       return [...prev, sessionId];
     });
   }, [sessionId, setSessionTabIds]);
+
+  // Periodically refresh conflicts for all session tabs so the badge stays accurate.
+  useEffect(() => {
+    for (const id of sessionTabIds) refreshConflicts(id);
+    const t = setInterval(() => {
+      for (const id of sessionTabIds) refreshConflicts(id);
+    }, 15000);
+    return () => clearInterval(t);
+  }, [sessionTabIds, refreshConflicts]);
 
   useEffect(() => {
     invoke<EditorInfo[]>("detect_editors").then(setEditors).catch(() => {});
@@ -311,6 +345,11 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
               {/* Session name */}
               <span className="truncate">{entry.session.name}</span>
 
+              {/* Conflict dot */}
+              {(conflictedFilesMap[tabId]?.length ?? 0) > 0 && (
+                <span title={`${conflictedFilesMap[tabId].length} conflicted file(s)`} className="flex size-1.5 shrink-0 rounded-full bg-red-500 animate-pulse" />
+              )}
+
               {/* Close button */}
               <span
                 role="button"
@@ -379,6 +418,127 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
                     </button>
                   ))}
                 </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Conflict badge */}
+        {sessionId && activeConflictedFiles.length > 0 && (
+          <button
+            onClick={() => {
+              if (!sessionId) return;
+              const first = activeConflictedFiles[0];
+              openConflictsTab({ sessionId, path: first });
+            }}
+            className="mr-1 flex h-6 items-center gap-1 rounded bg-red-500/20 px-2 text-[10px] font-medium text-red-300 hover:bg-red-500/30 transition-colors animate-pulse"
+            title="Open conflict tab"
+          >
+            <AlertTriangle size={11} />
+            CONFLICT · {activeConflictedFiles.length}
+          </button>
+        )}
+
+        {/* Git session actions */}
+        {sessionId && (
+          <div className="flex items-center mr-1 gap-0.5 border-r border-border/30 pr-1.5">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <div
+                    role="button"
+                    onClick={async () => {
+                      if (commitBusy) return;
+                      setCommitBusy(true);
+                      try {
+                        const status = await invoke<{ dirty: boolean; commits_ahead: boolean }>("check_session_has_commits", { sessionId });
+                        if (status.dirty) setTriggerCommit((p) => p + 1);
+                        else addToast({ message: "Commit", description: "Nothing to commit", type: "info" });
+                      } catch {
+                        // silent
+                      } finally {
+                        setCommitBusy(false);
+                      }
+                    }}
+                    className="flex size-7 items-center justify-center rounded text-muted-foreground hover:bg-card/50 hover:text-foreground transition-colors cursor-pointer"
+                    aria-label="Commit"
+                  />
+                }
+              >
+                {commitBusy ? <Loader2 size={14} className="animate-spin" /> : <Package size={14} />}
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Commit (Ctrl+Shift+C)</TooltipContent>
+            </Tooltip>
+
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <div
+                    role="button"
+                    onClick={async () => {
+                      if (pushBusy) return;
+                      setPushBusy(true);
+                      try {
+                        const pushed = await invoke<boolean>("git_push", { sessionId });
+                        addToast({
+                          message: "Push",
+                          description: pushed ? "Pushed to remote" : "Nothing to push",
+                          type: pushed ? "success" : "info",
+                        });
+                        refreshGit(sessionId);
+                      } catch (err) {
+                        addToast({ message: "Push failed", description: String(err), type: "error" });
+                      } finally {
+                        setPushBusy(false);
+                      }
+                    }}
+                    className={`flex size-7 items-center justify-center rounded transition-colors cursor-pointer ${
+                      activeGitInfo && activeGitInfo.ahead > 0
+                        ? "text-foreground hover:bg-card/50"
+                        : "text-muted-foreground/50 hover:bg-card/50 hover:text-foreground"
+                    }`}
+                    aria-label="Push"
+                  />
+                }
+              >
+                {pushBusy ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Push (Ctrl+Alt+P){activeGitInfo && activeGitInfo.ahead > 0 ? ` — +${activeGitInfo.ahead}` : ""}</TooltipContent>
+            </Tooltip>
+
+            {isWorktreeSession && (
+              <>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <div
+                        role="button"
+                        onClick={() => setTriggerShip({ tick: Date.now(), sessionId, inlineMessage: null })}
+                        className="flex size-7 items-center justify-center rounded text-green-500/80 hover:bg-green-500/10 hover:text-green-400 transition-colors cursor-pointer"
+                        aria-label="Ship"
+                      />
+                    }
+                  >
+                    <Rocket size={14} />
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Ship: commit + push + PR (Ctrl+Shift+Y)</TooltipContent>
+                </Tooltip>
+
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <div
+                        role="button"
+                        onClick={() => setTriggerMerge((p) => p + 1)}
+                        className="flex size-7 items-center justify-center rounded text-muted-foreground hover:bg-card/50 hover:text-foreground transition-colors cursor-pointer"
+                        aria-label="Merge"
+                      />
+                    }
+                  >
+                    <GitMerge size={14} />
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Merge (Ctrl+Shift+M)</TooltipContent>
+                </Tooltip>
               </>
             )}
           </div>

@@ -1,8 +1,11 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke, listen } from "@/lib/tauri";
-import { refreshGitInfoAtom } from "@/stores/git";
+import { refreshGitInfoAtom, refreshConflictedFilesAtom, activeConflictedFilesAtom, prChecksMapAtom, type PrChecks } from "@/stores/git";
 import { openZenModeAtom } from "@/stores/zenMode";
-import { useSetAtom } from "jotai";
+import { triggerShipAtom } from "@/stores/ship";
+import { toastsAtom } from "@/stores/toast";
+import { openConflictsTabAction } from "@/stores/conflict";
+import { useSetAtom, useAtomValue } from "jotai";
 import { Textarea } from "@/components/ui/textarea";
 import { DiffView } from "@/components/plan/DiffView";
 import {
@@ -16,7 +19,11 @@ import {
   Loader2,
   GitCommitHorizontal,
   List,
-  Maximize2,
+  Rocket,
+  Upload,
+  AlertTriangle,
+  Check,
+  CircleDashed,
 } from "lucide-react";
 
 interface ChangedFile {
@@ -71,14 +78,24 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
   const [commitMsg, setCommitMsg] = useState("");
   const [loading, setLoading] = useState(true);
   const [committing, setCommitting] = useState(false);
-  const [creatingPr, setCreatingPr] = useState(false);
+  const [creatingPr] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedFile, setExpandedFile] = useState<string | null>(null);
   const [expandedCommit, setExpandedCommit] = useState<string | null>(null);
   const [commitFiles, setCommitFiles] = useState<Record<string, string[]>>({});
   const [historyView, setHistoryView] = useState<"list" | "graph">("list");
   const refreshGit = useSetAtom(refreshGitInfoAtom);
+  const refreshConflicts = useSetAtom(refreshConflictedFilesAtom);
+  const conflictedFiles = useAtomValue(activeConflictedFilesAtom);
+  const setPrChecksMap = useSetAtom(prChecksMapAtom);
   const openZenMode = useSetAtom(openZenModeAtom);
+  const triggerShip = useSetAtom(triggerShipAtom);
+  const addToast = useSetAtom(toastsAtom);
+  const openConflictsTab = useSetAtom(openConflictsTabAction);
+  const [ciChecks, setCiChecks] = useState<PrChecks | null>(null);
+  const [pendingMerge, setPendingMerge] = useState(false);
+  const [completing, setCompleting] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const allFiles = [
     ...status.staged.map((f) => f.path),
@@ -131,13 +148,40 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
       .catch(() => setPrInfo(null));
   }, [sessionId]);
 
+  const refreshPendingMerge = useCallback(() => {
+    invoke<boolean>("has_pending_merge", { sessionId })
+      .then(setPendingMerge)
+      .catch(() => setPendingMerge(false));
+  }, [sessionId]);
+
   useEffect(() => {
     refreshCore();
     refreshPr();
+    refreshConflicts(sessionId);
+    refreshPendingMerge();
     const unlisteners: (() => void)[] = [];
-    listen("files:modified", () => refreshCore()).then((fn) => unlisteners.push(fn));
-    return () => { for (const fn of unlisteners) fn(); };
-  }, [refreshCore, refreshPr]);
+    listen("files:modified", () => { refreshCore(); refreshConflicts(sessionId); refreshPendingMerge(); }).then((fn) => unlisteners.push(fn));
+    const id = setInterval(() => {
+      if (!committing) { refreshCore(); refreshPr(); refreshPendingMerge(); }
+    }, 10000);
+    return () => { for (const fn of unlisteners) fn(); clearInterval(id); };
+  }, [refreshCore, refreshPr, refreshConflicts, refreshPendingMerge, sessionId, committing]);
+
+  useEffect(() => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    if (!prInfo || prInfo.state !== "OPEN") { setCiChecks(null); return; }
+    const tick = () => {
+      invoke<PrChecks | null>("poll_pr_checks", { sessionId })
+        .then((result) => {
+          setCiChecks(result);
+          setPrChecksMap((prev) => ({ ...prev, [sessionId]: result }));
+        })
+        .catch(() => {});
+    };
+    tick();
+    pollRef.current = setInterval(tick, 20000);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [prInfo, sessionId, setPrChecksMap]);
 
   function handleStageFile(path: string) {
     invoke("git_stage_file", { sessionId, path }).then(refreshCore).catch(() => {});
@@ -168,13 +212,38 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
       .finally(() => setCommitting(false));
   }
 
-  function handleCreatePr() {
-    const title = commitMsg.trim() || branch;
-    setCreatingPr(true);
-    invoke<PrInfo>("create_pr", { sessionId, title, body: "" })
-      .then((pr) => setPrInfo(pr))
-      .catch((err: unknown) => setError(String(err)))
-      .finally(() => setCreatingPr(false));
+  function handleShip(inlineMessage?: string | null) {
+    triggerShip({ tick: Date.now(), sessionId, inlineMessage: inlineMessage ?? null });
+  }
+
+  function handlePush() {
+    if (ahead === 0) {
+      addToast({ message: "Push", description: "Nothing to push", type: "info" });
+      return;
+    }
+    invoke("git_push", { sessionId })
+      .then(() => { addToast({ message: "Push", description: "Pushed to remote", type: "success" }); refreshGit(sessionId); refreshCore(); })
+      .catch((err: unknown) => addToast({ message: "Push failed", description: String(err), type: "error" }));
+  }
+
+  function handleOpenConflictTab(path: string) {
+    openConflictsTab({ sessionId, path });
+  }
+
+  async function handleCompleteMerge() {
+    if (completing) return;
+    setCompleting(true);
+    try {
+      await invoke<string>("complete_pending_merge", { sessionId });
+      addToast({ message: "Merge", description: "Merge commit created", type: "success" });
+      refreshPendingMerge();
+      refreshCore();
+      refreshGit(sessionId);
+    } catch (e) {
+      addToast({ message: "Merge failed", description: String(e), type: "error" });
+    } finally {
+      setCompleting(false);
+    }
   }
 
   function toggleFileDiff(path: string) {
@@ -182,11 +251,32 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && e.shiftKey && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      const msg = commitMsg.trim();
+      if (msg && status.staged.length > 0) {
+        handleShip(msg);
+      } else {
+        handleShip(null);
+      }
+      return;
+    }
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       handleCommit();
     }
   }
+
+  useEffect(() => {
+    function onOpenFirst(ev: Event) {
+      const detail = (ev as CustomEvent<{ path: string }>).detail;
+      if (detail?.path) handleOpenConflictTab(detail.path);
+      else if (conflictedFiles[0]) handleOpenConflictTab(conflictedFiles[0]);
+    }
+    document.addEventListener("cluihud:open-first-conflict", onOpenFirst);
+    return () => document.removeEventListener("cluihud:open-first-conflict", onOpenFirst);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conflictedFiles]);
 
   if (loading) {
     return (
@@ -199,6 +289,7 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
 
   const canCommit = status.staged.length > 0 && commitMsg.trim().length > 0 && !committing;
   const canCreatePr = ahead > 0 && !prInfo && !creatingPr;
+  const showShipBadge = ahead > 0 && !prInfo && !committing;
 
   return (
     <div className="flex h-full flex-col">
@@ -216,12 +307,73 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
             }`}>
               PR #{prInfo.number}
             </span>
+            {ciChecks && ciChecks.total > 0 && <CiBadge checks={ciChecks} />}
             <a href={prInfo.url} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground">
               <ExternalLink size={10} />
             </a>
           </>
         )}
+        {showShipBadge && (
+          <div className="ml-auto flex items-center gap-1">
+            <button
+              onClick={() => handleShip(null)}
+              className="flex h-5 items-center gap-1 rounded bg-green-500/15 px-2 text-[10px] font-medium text-green-400 hover:bg-green-500/25 transition-colors"
+              title="Ship (Ctrl+Shift+Y)"
+            >
+              <Rocket size={10} />
+              Ship it
+            </button>
+            <button
+              onClick={handlePush}
+              className="flex h-5 items-center gap-1 rounded border border-border/50 px-2 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+              title="Push (Ctrl+Shift+U)"
+            >
+              <Upload size={10} />
+              Push
+            </button>
+          </div>
+        )}
       </div>
+
+      {pendingMerge && conflictedFiles.length === 0 && (
+        <div className="shrink-0 flex items-center gap-2 border-b border-border/50 bg-green-500/10 px-3 py-1.5">
+          <Check size={12} className="text-green-400" />
+          <span className="text-[11px] text-green-300">All conflicts resolved — ready to finish merge.</span>
+          <button
+            onClick={handleCompleteMerge}
+            disabled={completing}
+            className="ml-auto flex h-6 items-center gap-1 rounded bg-green-500/20 px-2 text-[10px] font-medium text-green-300 hover:bg-green-500/30 transition-colors disabled:opacity-50"
+          >
+            {completing ? <Loader2 size={10} className="animate-spin" /> : null}
+            Complete merge
+          </button>
+        </div>
+      )}
+
+      {conflictedFiles.length > 0 && (
+        <div className="shrink-0 border-b border-border/50">
+          <div className="flex items-center justify-between px-3 py-1">
+            <span className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-yellow-400">
+              <AlertTriangle size={10} /> Conflicts ({conflictedFiles.length})
+            </span>
+          </div>
+          {conflictedFiles.map((path) => {
+            const name = path.split("/").pop() ?? path;
+            return (
+              <div key={path} className="group flex items-center gap-1 px-3 py-0.5 hover:bg-secondary/30 transition-colors">
+                <span className="shrink-0 font-mono text-[10px] font-bold w-3 text-yellow-400">C</span>
+                <span className="min-w-0 flex-1 truncate text-[11px] text-foreground/80" title={path}>{name}</span>
+                <button
+                  onClick={() => handleOpenConflictTab(path)}
+                  className="flex h-5 shrink-0 items-center rounded bg-yellow-500/15 px-2 text-[10px] text-yellow-400 hover:bg-yellow-500/25 transition-colors"
+                >
+                  Resolve
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {error && (
         <div className="shrink-0 border-b border-border/50 px-3 py-1">
@@ -394,7 +546,7 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
           value={commitMsg}
           onChange={(e) => setCommitMsg(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Commit message... (Ctrl+Enter)"
+          placeholder="Commit message... (Ctrl+Enter = commit, Ctrl+Shift+Enter = ship)"
           className="mb-2 h-16 resize-none rounded border-border/50 bg-background font-mono text-[11px] leading-relaxed focus-visible:ring-1"
           spellCheck={false}
         />
@@ -410,13 +562,23 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
           >
             {committing ? "Committing..." : `Commit (${status.staged.length})`}
           </button>
+          {canCreatePr && (
+            <button
+              onClick={handlePush}
+              className="flex h-6 items-center gap-1 rounded border border-border/50 px-2 text-[10px] text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+              title="Push only (Ctrl+Shift+U)"
+            >
+              <Upload size={10} /> Push
+            </button>
+          )}
           {(canCreatePr || creatingPr) && (
             <button
-              onClick={handleCreatePr}
+              onClick={() => handleShip(commitMsg.trim() || null)}
               disabled={creatingPr}
-              className="flex h-6 items-center gap-1 rounded border border-border/50 px-2 text-[10px] text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+              className="flex h-6 items-center gap-1 rounded bg-green-500/15 px-2 text-[10px] font-medium text-green-400 hover:bg-green-500/25 transition-colors"
+              title="Ship: commit + push + PR (Ctrl+Shift+Y)"
             >
-              {creatingPr ? "Creating..." : "Create PR"}
+              <Rocket size={10} /> Ship
             </button>
           )}
         </div>
@@ -424,6 +586,31 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
       )}
     </div>
   );
+}
+
+function CiBadge({ checks }: { checks: PrChecks }) {
+  if (checks.failing > 0) {
+    return (
+      <span title={`${checks.failing} failing / ${checks.total} total`} className="flex items-center gap-0.5 text-[10px] text-red-400">
+        <AlertTriangle size={10} /> {checks.failing}/{checks.total}
+      </span>
+    );
+  }
+  if (checks.pending > 0) {
+    return (
+      <span title={`${checks.pending} pending`} className="flex items-center gap-0.5 text-[10px] text-yellow-400">
+        <CircleDashed size={10} className="animate-spin" /> {checks.pending}
+      </span>
+    );
+  }
+  if (checks.passing > 0) {
+    return (
+      <span title={`${checks.passing} checks passing`} className="flex items-center gap-0.5 text-[10px] text-green-400">
+        <Check size={10} /> {checks.passing}
+      </span>
+    );
+  }
+  return null;
 }
 
 function FileSection({
@@ -509,15 +696,8 @@ function FileRow({
         </button>
       </div>
       {expanded && (
-        <div className="relative mx-2 mb-1 max-h-64 overflow-hidden rounded border border-border/30">
-          <DiffView filePath={path} sessionId={sessionId} />
-          <button
-            onClick={onOpenZen}
-            className="absolute right-1 top-1 flex size-5 items-center justify-center rounded bg-card/80 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-            aria-label="Expand to Zen Mode"
-          >
-            <Maximize2 size={10} />
-          </button>
+        <div className="mx-2 mb-1 max-h-64 overflow-hidden rounded border border-border/30">
+          <DiffView filePath={path} sessionId={sessionId} onOpenZen={onOpenZen} />
         </div>
       )}
     </div>

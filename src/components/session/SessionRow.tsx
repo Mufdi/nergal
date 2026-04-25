@@ -5,8 +5,6 @@ import {
   GitBranch,
   Pencil,
   Trash2,
-  Package,
-  GitMerge,
 } from "lucide-react";
 import {
   Tooltip,
@@ -25,8 +23,6 @@ interface SessionRowProps {
   onSelect: () => void;
   onRename: (newName: string) => void;
   onDelete: () => void;
-  onCommit: () => void;
-  onMerge: () => void;
 }
 
 export function SessionRow({
@@ -37,8 +33,6 @@ export function SessionRow({
   onSelect,
   onRename,
   onDelete,
-  onCommit,
-  onMerge,
 }: SessionRowProps) {
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(session.name);
@@ -48,7 +42,6 @@ export function SessionRow({
   const linesRemoved = gitInfo?.lines_removed ?? 0;
   const hasLineChanges = linesAdded > 0 || linesRemoved > 0;
   const isCompleted = session.status === "completed";
-  const isWorktree = session.worktree_path !== null;
 
   function handleRenameSubmit() {
     const trimmed = editName.trim();
@@ -141,41 +134,9 @@ export function SessionRow({
           </TooltipTrigger>
           <TooltipContent side="top" className="text-[10px]">Delete</TooltipContent>
         </Tooltip>
-        {isWorktree && (
-          <>
-            <Tooltip>
-              <TooltipTrigger>
-                <span
-                  role="button"
-                  tabIndex={0}
-                  aria-label="Commit"
-                  onClick={(e) => { e.stopPropagation(); onCommit(); }}
-                  className="flex size-4 items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <Package className="size-2.5" />
-                </span>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="text-[10px]">Commit</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger>
-                <span
-                  role="button"
-                  tabIndex={0}
-                  aria-label="Merge"
-                  onClick={(e) => { e.stopPropagation(); onMerge(); }}
-                  className="flex size-4 items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <GitMerge className="size-2.5" />
-                </span>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="text-[10px]">Merge</TooltipContent>
-            </Tooltip>
-          </>
-        )}
       </span>
 
-      {isWorktree ? (
+      {session.worktree_path !== null ? (
         <GitBranch className="size-3 shrink-0 text-muted-foreground/40" />
       ) : (
         <CircleDot className="size-3 shrink-0 text-muted-foreground/40" />

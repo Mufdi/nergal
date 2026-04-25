@@ -6,6 +6,7 @@ import { RightPanel } from "./RightPanel";
 import { StatusBar } from "./StatusBar";
 import { Toaster } from "sileo";
 import { TerminalManager } from "@/components/terminal/TerminalManager";
+import * as terminalService from "@/components/terminal/terminalService";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { ActivityDrawer } from "@/components/activity/ActivityDrawer";
 import { ZenMode } from "@/components/zen/ZenMode";
@@ -17,6 +18,9 @@ import { toggleSidebarAtom, toggleRightPanelAtom, focusZoneAtom } from "@/stores
 import { layoutPresetAtom, PRESET_SIZES, sessionLayoutPresetAtom, type LayoutPreset } from "@/stores/layout";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { CommandPalette } from "@/components/command/CommandPalette";
+import { ShipDialog } from "@/components/git/ShipDialog";
+import { activeConflictedFilesAtom } from "@/stores/git";
+import { openConflictsTabAction } from "@/stores/conflict";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -52,6 +56,8 @@ export function Workspace() {
 
   const setActivePanelView = useSetAtom(activePanelViewAtom);
   const activeTab = useAtomValue(activeTabAtom);
+  const activeConflictedFiles = useAtomValue(activeConflictedFilesAtom);
+  const openConflictsTab = useSetAtom(openConflictsTabAction);
 
   // Redistribute space when sidebar collapses/expands manually
   const prevSidebarCollapsed = useRef(sidebarCollapsed);
@@ -106,6 +112,12 @@ export function Workspace() {
     if (!activeTab) {
       setActivePanelView(null);
     }
+
+    // Focus terminal on session switch so the user can type immediately.
+    requestAnimationFrame(() => {
+      setFocusZone("terminal");
+      terminalService.focusActive();
+    });
   }, [activeSessionId]);
 
   // Apply layout preset when it changes or session switches
@@ -148,11 +160,19 @@ export function Workspace() {
     });
   }, [layoutPreset, sidebarCollapsed, setSessionPreset]);
 
-  // Collapse right panel on mount
+  // Collapse right panel on mount and send focus to sidebar
   useEffect(() => {
     requestAnimationFrame(() => {
       const panel = rightPanelRef.current;
       if (panel) panel.collapse();
+      setFocusZone("sidebar");
+      const zone = document.querySelector("[data-focus-zone='sidebar']") as HTMLElement | null;
+      if (zone) {
+        const items = Array.from(zone.querySelectorAll<HTMLElement>("[data-nav-item]"));
+        for (const item of items) item.removeAttribute("data-nav-selected");
+        if (items[0]) items[0].setAttribute("data-nav-selected", "true");
+        zone.focus();
+      }
     });
   }, []);
 
@@ -163,6 +183,21 @@ export function Workspace() {
       if (panel) panel.expand();
     }
   }, [expandSignal]);
+
+  // Auto-open the Conflicts tab when conflicts appear in the active session.
+  const prevConflictCountRef = useRef(0);
+  useEffect(() => {
+    if (!activeSessionId) return;
+    const count = activeConflictedFiles.length;
+    if (count > 0 && prevConflictCountRef.current === 0) {
+      openConflictsTab({ sessionId: activeSessionId, path: activeConflictedFiles[0] });
+      requestAnimationFrame(() => {
+        const panel = rightPanelRef.current;
+        if (panel) panel.expand();
+      });
+    }
+    prevConflictCountRef.current = count;
+  }, [activeSessionId, activeConflictedFiles, openConflictsTab]);
 
   // Auto-expand right panel when a plan review arrives for the active session
   const prevPlanReviewRef = useRef<string | undefined>(undefined);
@@ -258,7 +293,15 @@ export function Workspace() {
             minSize="25%"
           >
             <div className="flex h-full flex-col gap-1 overflow-hidden">
-              <div className="flex-1 overflow-hidden rounded" style={{ background: "#0a0a0b" }} data-focus-zone="terminal" onMouseDown={() => setFocusZone("terminal")}>
+              <div
+                className="flex-1 overflow-hidden rounded"
+                style={{ background: "#0a0a0b" }}
+                data-focus-zone="terminal"
+                onMouseDown={() => {
+                  setFocusZone("terminal");
+                  terminalService.focusActive();
+                }}
+              >
                 <TerminalManager />
               </div>
               <ActivityDrawer />
@@ -294,6 +337,7 @@ export function Workspace() {
       <Toaster position="bottom-right" />
       <SettingsPanel open={settingsOpen} onOpenChange={setSettingsOpen} />
       <CommandPalette />
+      <ShipDialog />
     </div>
   );
 }

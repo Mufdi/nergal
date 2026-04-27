@@ -17,14 +17,14 @@
 
 ## 3. Frontend: ShipDialog single-pane rewrite
 
-- [ ] 3.1 Rewrite `src/components/git/ShipDialog.tsx` as a single-pane modal with three primary action buttons (Commit, Commit + Push, Commit + Push + PR); remove `step` state, Stepper, Step1Stage, Step2CommitPr subcomponents; keep BranchPicker as conditional sub-component
-- [ ] 3.2 Add the colored warning banner above the form: "Ship leads to: commit → push → PR → review → merge. Once merged, this session is deleted (worktree, branch, plan files archived first)."
-- [ ] 3.3 Wire `Ctrl+1`/`Ctrl+2`/`Ctrl+3` capture inside the modal (capture phase) to dispatch the corresponding action; ensure they bypass global session-switching shortcuts
-- [ ] 3.4 Show the BranchPicker inline (next to the Body label) only when the focused or last-hovered action is Commit + Push + PR; hide for the other two
-- [ ] 3.5 Update `git_ship` invocation: pass `target_branch` only for the PR variant; pass `null` for Commit and Commit + Push
-- [ ] 3.6 Add a small "Action: <Commit | Commit + Push | Commit + Push + PR>" indicator next to the action buttons that updates on hover/focus so the user always knows which action is "armed" (helps with the conditional UI)
-- [ ] 3.7 Remove the auto-merge checkbox; remove the Stepper indicator overlap with the Dialog X
-- [ ] 3.8 Remove `autoFocus` from action buttons (already done in v2 — verify it stays)
+- [x] 3.1 Rewrote ShipDialog: single pane, 3 action buttons (Commit / Commit + Push / Commit + Push + PR). Removed Step1Stage, Step2CommitPr, Stepper subcomponents. BranchPicker kept as conditional sub-component
+- [x] 3.2 Orange warning banner above form: "Ship leads to: commit → push → PR → review → merge. Once the PR is merged, this session is deleted (worktree, branch). Plans archived first to .claude/plans/archive/"
+- [x] 3.3 Modal-scoped Ctrl+1/2/3 capture in `onKey` (capture phase); each fires `dispatchAction(<variant>)`; Esc closes; Ctrl+Enter fires the armed action
+- [x] 3.4 BranchPicker rendered inline next to Body label only when `armedAction === "commit-push-pr"`; hidden for Commit and Commit+Push
+- [x] 3.5 `git_ship` invoked only by `runCommitPushPr`; `runCommit` uses `git_commit`, `runCommitPush` uses `git_commit` + `git_push`. `targetBranch` is passed only in the PR variant
+- [x] 3.6 "About to: <action>" indicator above footer; updates via onMouseEnter/onFocus on each button; default armed = `commit-push-pr` (or `commit-push` when an OPEN PR exists)
+- [x] 3.7 Removed auto-merge checkbox entirely; Stepper subcomponent gone (no overlap with Dialog X)
+- [x] 3.8 No `autoFocus` on action buttons; user must explicitly click or press Ctrl+1/2/3
 
 ## 4. Frontend: PR Viewer tab
 

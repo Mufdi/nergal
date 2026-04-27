@@ -702,10 +702,29 @@ pub fn merge_session(
     })
 }
 
-/// Removes the session's worktree + branch and marks the session completed.
-/// Called explicitly after the user confirms cleanup (not auto after merge).
+/// Result of total session cleanup, surfaced to the frontend so the UI can
+/// distinguish "all artifacts wiped" from "wiped most, kept the branch
+/// because it was checked out elsewhere" without losing the warning thread.
+#[derive(Clone, serde::Serialize)]
+pub struct CleanupResult {
+    pub deleted: bool,
+    pub warnings: Vec<String>,
+}
+
+/// Total deletion of a session's persisted state. Removes worktree, branch,
+/// per-project plan files, and the DB row. Each step is independently
+/// best-effort: failure of one artifact is logged as a warning and does
+/// NOT block deletion of the others. Returns aggregated warnings so the
+/// frontend can decide whether to show a non-blocking toast.
+///
+/// Transcript files (`~/.claude/projects/<encoded-cwd>/*.jsonl`) are owned
+/// by the Claude Code CLI itself, not cluihud. We do not delete them — the
+/// CLI manages its own transcript lifecycle and we'd be overstepping.
 #[tauri::command]
-pub fn cleanup_merged_session(db: State<'_, SharedDb>, session_id: String) -> Result<(), String> {
+pub fn cleanup_merged_session(
+    db: State<'_, SharedDb>,
+    session_id: String,
+) -> Result<CleanupResult, String> {
     let db = db.lock().map_err(|e| e.to_string())?;
     let Some(session) = db.find_session(&session_id).map_err(|e| e.to_string())? else {
         return Err("session not found".into());
@@ -714,16 +733,44 @@ pub fn cleanup_merged_session(db: State<'_, SharedDb>, session_id: String) -> Re
         .workspace_repo_path(&session.workspace_id)
         .map_err(|e| e.to_string())?
         .ok_or("workspace not found")?;
-    if let Some(ref wt_path) = session.worktree_path {
-        let _ = crate::worktree::remove_worktree(&repo_path, wt_path);
+
+    let mut warnings: Vec<String> = Vec::new();
+
+    if let Some(ref wt_path) = session.worktree_path
+        && let Err(e) = crate::worktree::remove_worktree(&repo_path, wt_path)
+    {
+        let msg = format!("worktree remove: {e}");
+        tracing::warn!("{msg}");
+        warnings.push(msg);
     }
-    if let Some(ref branch) = session.worktree_branch {
-        let _ = crate::worktree::delete_branch(&repo_path, branch);
+
+    if let Some(ref branch) = session.worktree_branch
+        && let Err(e) = crate::worktree::delete_branch(&repo_path, branch)
+    {
+        let msg = format!("branch delete: {e}");
+        tracing::warn!("{msg}");
+        warnings.push(msg);
     }
-    let _ = db.update_session_status(&session_id, "completed");
-    let _ = db.clear_session_worktree(&session_id);
-    let _ = db.clear_merge_target(&session_id);
-    Ok(())
+
+    let plan_dir = repo_path.join(".claude").join("plans").join(&session_id);
+    if plan_dir.exists()
+        && let Err(e) = std::fs::remove_dir_all(&plan_dir)
+    {
+        let msg = format!("plan files remove: {e}");
+        tracing::warn!("{msg}");
+        warnings.push(msg);
+    }
+
+    if let Err(e) = db.delete_session(&session_id) {
+        let msg = format!("db delete: {e}");
+        tracing::warn!("{msg}");
+        warnings.push(msg);
+    }
+
+    Ok(CleanupResult {
+        deleted: true,
+        warnings,
+    })
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -1564,11 +1611,18 @@ pub fn get_pr_status(
         return Err("session not found".into());
     };
 
-    let Some(ref branch) = session.worktree_branch else {
-        return Ok(None);
-    };
-
     let cwd = resolve_session_cwd(&db, &session_id)?;
+    // Sessions without a worktree (e.g., working directly on main or a
+    // user-created feature branch) still benefit from PR detection — fall
+    // back to whatever branch the cwd is currently on.
+    let branch_owned;
+    let branch: &str = match session.worktree_branch.as_deref() {
+        Some(b) => b,
+        None => {
+            branch_owned = crate::worktree::current_branch(&cwd).map_err(|e| e.to_string())?;
+            &branch_owned
+        }
+    };
     crate::worktree::pr_status(&cwd, branch).map_err(|e| e.to_string())
 }
 
@@ -1864,12 +1918,23 @@ pub fn git_ship(
     pr_title: String,
     pr_body: String,
     auto_merge: Option<bool>,
+    target_branch: Option<String>,
 ) -> Result<crate::worktree::ShipResult, String> {
     use tauri::Emitter;
     let db = db.lock().map_err(|e| e.to_string())?;
     let cwd = resolve_session_cwd(&db, &session_id)?;
     let branch = resolve_session_branch(&db, &session_id)?;
-    let base = resolve_session_base(&db, &session_id)?;
+    // Frontend override (PR target picker on Step 2) wins over the
+    // session's resolved base when supplied; otherwise fall back to
+    // the workspace default.
+    let base = match target_branch
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(override_base) => override_base.to_string(),
+        None => resolve_session_base(&db, &session_id)?,
+    };
     let sid = session_id.clone();
     let app_clone = app.clone();
     let on_stage = move |stage: crate::worktree::ShipStage, ok: bool| {

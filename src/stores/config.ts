@@ -10,4 +10,5 @@ export const configAtom = atom<Config>({
   theme_mode: "dark",
   preferred_editor: "",
   terminal_kitty_keyboard: true,
+  git_auto_merge_default: true,
 });

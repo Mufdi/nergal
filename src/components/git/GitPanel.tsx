@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke, listen } from "@/lib/tauri";
-import { refreshGitInfoAtom, refreshConflictedFilesAtom, activeConflictedFilesAtom, prChecksMapAtom, type PrChecks } from "@/stores/git";
+import { refreshGitInfoAtom, refreshConflictedFilesAtom, activeConflictedFilesAtom, prChecksMapAtom, sessionsAutoMergedAtom, type PrChecks } from "@/stores/git";
 import { openZenModeAtom } from "@/stores/zenMode";
 import { triggerShipAtom } from "@/stores/ship";
+import { triggerMergeAtom } from "@/stores/shortcuts";
 import { toastsAtom } from "@/stores/toast";
 import { openConflictsTabAction } from "@/stores/conflict";
 import { useSetAtom, useAtomValue } from "jotai";
@@ -24,7 +25,12 @@ import {
   AlertTriangle,
   Check,
   CircleDashed,
+  GitMerge,
+  Maximize2,
 } from "lucide-react";
+import { Kbd } from "@/components/ui/kbd";
+import { MergeModal } from "@/components/session/MergeModal";
+import { activeSessionAtom, activeWorkspaceAtom, workspacesAtom, sessionTabIdsAtom, activeSessionIdAtom, type Workspace } from "@/stores/workspace";
 
 interface ChangedFile {
   path: string;
@@ -87,14 +93,24 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
   const refreshGit = useSetAtom(refreshGitInfoAtom);
   const refreshConflicts = useSetAtom(refreshConflictedFilesAtom);
   const conflictedFiles = useAtomValue(activeConflictedFilesAtom);
+  const sessionsAutoMerged = useAtomValue(sessionsAutoMergedAtom);
+  const setSessionsAutoMerged = useSetAtom(sessionsAutoMergedAtom);
+  const setSessionTabIds = useSetAtom(sessionTabIdsAtom);
+  const setActiveSessionId = useSetAtom(activeSessionIdAtom);
+  const isAutoMergeConflict = sessionsAutoMerged.has(sessionId) && conflictedFiles.length > 0;
   const setPrChecksMap = useSetAtom(prChecksMapAtom);
   const openZenMode = useSetAtom(openZenModeAtom);
   const triggerShip = useSetAtom(triggerShipAtom);
+  const triggerMergeSignal = useAtomValue(triggerMergeAtom);
   const addToast = useSetAtom(toastsAtom);
   const openConflictsTab = useSetAtom(openConflictsTabAction);
   const [ciChecks, setCiChecks] = useState<PrChecks | null>(null);
   const [pendingMerge, setPendingMerge] = useState(false);
   const [completing, setCompleting] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const activeSession = useAtomValue(activeSessionAtom);
+  const activeWorkspace = useAtomValue(activeWorkspaceAtom);
+  const setWorkspaces = useSetAtom(workspacesAtom);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const allFiles = [
@@ -102,6 +118,18 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
     ...status.unstaged.map((f) => f.path),
     ...status.untracked,
   ];
+
+  // Flat list for arrow-key navigation (Staged → Changes → Untracked).
+  type NavEntry = { path: string; group: "staged" | "unstaged" | "untracked" };
+  const flatNav: NavEntry[] = [
+    ...status.staged.map((f) => ({ path: f.path, group: "staged" as const })),
+    ...status.unstaged.map((f) => ({ path: f.path, group: "unstaged" as const })),
+    ...status.untracked.map((p) => ({ path: p, group: "untracked" as const })),
+  ];
+  const [fileCursor, setFileCursor] = useState(0);
+  useEffect(() => {
+    if (fileCursor >= flatNav.length) setFileCursor(Math.max(0, flatNav.length - 1));
+  }, [fileCursor, flatNav.length]);
 
   function openZen(filePath: string) {
     openZenMode({ filePath, sessionId, files: allFiles });
@@ -169,7 +197,12 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
 
   useEffect(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-    if (!prInfo || prInfo.state !== "OPEN") { setCiChecks(null); return; }
+    // Detect MERGED PRs but DO NOT auto-cleanup — we surface a banner
+    // (rendered below) with an explicit "Cleanup session" button so the
+    // destructive deletion is always user-triggered. This was reported as
+    // a "session vanished without confirmation" bug; the banner is the fix.
+    if (prInfo && prInfo.state !== "OPEN") { setCiChecks(null); return; }
+    if (!prInfo) { setCiChecks(null); return; }
     const tick = () => {
       invoke<PrChecks | null>("poll_pr_checks", { sessionId })
         .then((result) => {
@@ -230,6 +263,37 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
     openConflictsTab({ sessionId, path });
   }
 
+  /// User-confirmed total cleanup (worktree + branch + plan files + DB row).
+  /// Removes the session from the tab list and clears active selection so
+  /// no ghost references remain after the underlying row disappears.
+  async function handleCleanupSession() {
+    try {
+      const res = await invoke<{ deleted: boolean; warnings: string[] }>("cleanup_merged_session", { sessionId });
+      addToast({
+        message: "Session closed",
+        description: res.warnings.length > 0
+          ? `Cleanup ran with ${res.warnings.length} warning(s). Press Ctrl+N to start a new session.`
+          : "Worktree, branch and plan files removed. Press Ctrl+N to start a new session.",
+        type: "success",
+      });
+      setSessionsAutoMerged((prev) => {
+        if (!prev.has(sessionId)) return prev;
+        const next = new Set(prev);
+        next.delete(sessionId);
+        return next;
+      });
+      // Remove the deleted session from open tabs so Ctrl+Tab doesn't
+      // navigate back to a ghost. If it was the active session, clear so
+      // the next tab event picks a real one.
+      setSessionTabIds((prev) => prev.filter((id) => id !== sessionId));
+      setActiveSessionId((current) => (current === sessionId ? null : current));
+      invoke<Workspace[]>("get_workspaces").then(setWorkspaces).catch(() => {});
+    } catch (e) {
+      console.error("cleanup_merged_session failed", e);
+      addToast({ message: "Cleanup failed", description: String(e), type: "error" });
+    }
+  }
+
   async function handleCompleteMerge() {
     if (completing) return;
     setCompleting(true);
@@ -267,6 +331,56 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
     }
   }
 
+  // Arrow up/down navigates the flat files list; Space toggles stage/unstage
+  // based on the section the cursor is in. Skipped when typing in the commit
+  // textarea or any input/editor.
+  useEffect(() => {
+    if (flatNav.length === 0) return;
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      const inField = target?.tagName === "INPUT"
+        || target?.tagName === "TEXTAREA"
+        || !!target?.closest(".cm-editor")
+        || target?.getAttribute("contenteditable") === "true";
+      if (inField) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+      if (e.code === "ArrowDown") {
+        e.preventDefault();
+        setFileCursor((i) => (i + 1) % flatNav.length);
+        return;
+      }
+      if (e.code === "ArrowUp") {
+        e.preventDefault();
+        setFileCursor((i) => (i - 1 + flatNav.length) % flatNav.length);
+        return;
+      }
+      if (e.code === "Space") {
+        e.preventDefault();
+        const entry = flatNav[fileCursor];
+        if (!entry) return;
+        if (entry.group === "staged") handleUnstageFile(entry.path);
+        else handleStageFile(entry.path);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flatNav.length, fileCursor]);
+
+  // Ctrl+Shift+M opens the MergeModal — same dirty/ahead pre-check the
+  // Sidebar used to do, now hosted here so this panel is the single owner.
+  useEffect(() => {
+    if (triggerMergeSignal === 0 || !activeSession) return;
+    invoke<{ dirty: boolean; commits_ahead: boolean }>("check_session_has_commits", { sessionId: activeSession.id })
+      .then((s) => {
+        if (s.dirty) addToast({ message: "Merge", description: "Commit your changes first", type: "info" });
+        else if (s.commits_ahead) setMergeOpen(true);
+        else addToast({ message: "Merge", description: "Nothing to merge", type: "info" });
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [triggerMergeSignal]);
+
   useEffect(() => {
     function onOpenFirst(ev: Event) {
       const detail = (ev as CustomEvent<{ path: string }>).detail;
@@ -289,7 +403,12 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
 
   const canCommit = status.staged.length > 0 && commitMsg.trim().length > 0 && !committing;
   const canCreatePr = ahead > 0 && !prInfo && !creatingPr;
-  const showShipBadge = ahead > 0 && !prInfo && !committing;
+  // Merge button: only show when the worktree actually has commits beyond
+  // its base branch — merging a branch with no commits is a no-op and the
+  // pre-check inside the trigger handler would just toast "Nothing to merge".
+  // Hiding here matches the disable-when-nothing-to-do pattern used for
+  // Push/Ship.
+  const canMergeLocal = !!activeSession?.worktree_branch && ahead > 0;
 
   return (
     <div className="flex h-full flex-col">
@@ -313,40 +432,54 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
             </a>
           </>
         )}
-        {showShipBadge && (
-          <div className="ml-auto flex items-center gap-1">
-            <button
-              onClick={() => handleShip(null)}
-              className="flex h-5 items-center gap-1 rounded bg-green-500/15 px-2 text-[10px] font-medium text-green-400 hover:bg-green-500/25 transition-colors"
-              title="Ship (Ctrl+Shift+Y)"
-            >
-              <Rocket size={10} />
-              Ship it
-            </button>
-            <button
-              onClick={handlePush}
-              className="flex h-5 items-center gap-1 rounded border border-border/50 px-2 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-              title="Push (Ctrl+Shift+U)"
-            >
-              <Upload size={10} />
-              Push
-            </button>
-          </div>
-        )}
+        <button
+          onClick={() => document.dispatchEvent(new CustomEvent("cluihud:expand-zen-git", { detail: { sessionId } }))}
+          className="ml-auto flex h-5 items-center gap-1 rounded text-muted-foreground hover:text-foreground hover:bg-secondary px-1.5 transition-colors"
+          title="Expand to Zen mode"
+        >
+          <Maximize2 size={10} />
+          <Kbd keys="ctrl+shift+0" />
+        </button>
       </div>
 
       {pendingMerge && conflictedFiles.length === 0 && (
         <div className="shrink-0 flex items-center gap-2 border-b border-border/50 bg-green-500/10 px-3 py-1.5">
           <Check size={12} className="text-green-400" />
-          <span className="text-[11px] text-green-300">All conflicts resolved — ready to finish merge.</span>
+          <span className="text-[11px] text-green-300">In-progress merge ready to finish (creates a local merge commit).</span>
           <button
             onClick={handleCompleteMerge}
             disabled={completing}
-            className="ml-auto flex h-6 items-center gap-1 rounded bg-green-500/20 px-2 text-[10px] font-medium text-green-300 hover:bg-green-500/30 transition-colors disabled:opacity-50"
+            className="ml-auto flex h-6 items-center gap-1.5 rounded bg-green-500/20 px-2 text-[10px] font-medium text-green-300 hover:bg-green-500/30 transition-colors disabled:opacity-50"
+            title="Creates a merge commit locally. No push."
           >
             {completing ? <Loader2 size={10} className="animate-spin" /> : null}
-            Complete merge
+            Finish merge <Kbd keys="ctrl+alt+enter" />
           </button>
+        </div>
+      )}
+
+      {prInfo && prInfo.state !== "OPEN" && (
+        <div className="shrink-0 flex items-center gap-2 border-b border-border/50 bg-purple-500/10 px-3 py-1.5">
+          <Check size={12} className="text-purple-400" />
+          <span className="text-[11px] text-purple-300">
+            PR #{prInfo.number} is {prInfo.state.toLowerCase()}. Cleanup will delete this session, its worktree, branch and plan files.
+          </span>
+          <button
+            onClick={handleCleanupSession}
+            className="ml-auto flex h-6 items-center gap-1.5 rounded bg-purple-500/20 px-2 text-[10px] font-medium text-purple-300 hover:bg-purple-500/30 transition-colors"
+            title="Permanently deletes the session — irreversible"
+          >
+            Cleanup session
+          </button>
+        </div>
+      )}
+
+      {isAutoMergeConflict && (
+        <div className="shrink-0 flex items-center gap-2 border-b border-border/50 bg-yellow-500/10 px-3 py-1.5">
+          <AlertTriangle size={12} className="text-yellow-400" />
+          <span className="text-[11px] text-yellow-300">
+            Auto-merge blocked by conflict — Conflicts panel pre-filled an Ask-Claude prompt; press <Kbd keys="ctrl+shift+r" /> to send.
+          </span>
         </div>
       )}
 
@@ -480,7 +613,7 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
             count={status.staged.length}
             action={status.staged.length > 0 ? { label: "Unstage all", icon: <ChevronDown size={10} />, onClick: handleUnstageAll } : undefined}
           >
-            {status.staged.map((f) => (
+            {status.staged.map((f, i) => (
               <FileRow
                 key={f.path}
                 path={f.path}
@@ -488,9 +621,11 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
                 actionIcon={<Minus size={10} />}
                 actionLabel="Unstage"
                 expanded={expandedFile === f.path}
+                isCursor={fileCursor === i}
                 onAction={() => handleUnstageFile(f.path)}
                 onToggleDiff={() => toggleFileDiff(f.path)}
                 onOpenZen={() => openZen(f.path)}
+                onCursor={() => setFileCursor(i)}
                 sessionId={sessionId}
               />
             ))}
@@ -501,39 +636,54 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
             count={status.unstaged.length}
             action={status.unstaged.length > 0 ? { label: "Stage all", icon: <ChevronUp size={10} />, onClick: handleStageAll } : undefined}
           >
-            {status.unstaged.map((f) => (
-              <FileRow
-                key={f.path}
-                path={f.path}
-                status={f.status}
-                actionIcon={<Plus size={10} />}
-                actionLabel="Stage"
-                expanded={expandedFile === f.path}
-                onAction={() => handleStageFile(f.path)}
-                onToggleDiff={() => toggleFileDiff(f.path)}
-                onOpenZen={() => openZen(f.path)}
-                sessionId={sessionId}
-              />
-            ))}
+            {status.unstaged.map((f, i) => {
+              const navIdx = status.staged.length + i;
+              return (
+                <FileRow
+                  key={f.path}
+                  path={f.path}
+                  status={f.status}
+                  actionIcon={<Plus size={10} />}
+                  actionLabel="Stage"
+                  expanded={expandedFile === f.path}
+                  isCursor={fileCursor === navIdx}
+                  onAction={() => handleStageFile(f.path)}
+                  onToggleDiff={() => toggleFileDiff(f.path)}
+                  onOpenZen={() => openZen(f.path)}
+                  onCursor={() => setFileCursor(navIdx)}
+                  sessionId={sessionId}
+                />
+              );
+            })}
           </FileSection>
 
           {status.untracked.length > 0 && (
             <FileSection title="Untracked" count={status.untracked.length}>
-              {status.untracked.map((path) => (
-                <FileRow
-                  key={path}
-                  path={path}
-                  status="Create"
-                  actionIcon={<Plus size={10} />}
-                  actionLabel="Stage"
-                  expanded={expandedFile === path}
-                  onAction={() => handleStageFile(path)}
-                  onToggleDiff={() => toggleFileDiff(path)}
-                  onOpenZen={() => openZen(path)}
-                  sessionId={sessionId}
-                />
-              ))}
+              {status.untracked.map((path, i) => {
+                const navIdx = status.staged.length + status.unstaged.length + i;
+                return (
+                  <FileRow
+                    key={path}
+                    path={path}
+                    status="Create"
+                    actionIcon={<Plus size={10} />}
+                    actionLabel="Stage"
+                    expanded={expandedFile === path}
+                    isCursor={fileCursor === navIdx}
+                    onAction={() => handleStageFile(path)}
+                    onToggleDiff={() => toggleFileDiff(path)}
+                    onOpenZen={() => openZen(path)}
+                    onCursor={() => setFileCursor(navIdx)}
+                    sessionId={sessionId}
+                  />
+                );
+              })}
             </FileSection>
+          )}
+          {flatNav.length > 0 && (
+            <div className="sticky bottom-0 flex items-center gap-1 border-t border-border/40 bg-card/95 px-3 py-1 text-[9px] text-muted-foreground/60">
+              <Kbd keys="arrowup" /><Kbd keys="arrowdown" /> move · <Kbd keys="space" /> stage/unstage
+            </div>
           )}
         </div>
         )}
@@ -550,39 +700,63 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
           className="mb-2 h-16 resize-none rounded border-border/50 bg-background font-mono text-[11px] leading-relaxed focus-visible:ring-1"
           spellCheck={false}
         />
-        <div className="flex gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           <button
             onClick={handleCommit}
             disabled={!canCommit}
-            className={`flex h-6 flex-1 items-center justify-center gap-1 rounded text-[11px] font-medium transition-colors ${
+            className={`flex h-6 flex-1 items-center justify-center gap-1.5 rounded text-[11px] font-medium transition-colors ${
               canCommit
                 ? "bg-primary text-primary-foreground hover:bg-primary/90"
                 : "bg-secondary text-muted-foreground cursor-not-allowed"
             }`}
           >
             {committing ? "Committing..." : `Commit (${status.staged.length})`}
+            {canCommit && <Kbd keys="ctrl+enter" />}
           </button>
           {canCreatePr && (
             <button
               onClick={handlePush}
-              className="flex h-6 items-center gap-1 rounded border border-border/50 px-2 text-[10px] text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-              title="Push only (Ctrl+Shift+U)"
+              className="flex h-6 items-center gap-1.5 rounded border border-border/50 px-2 text-[10px] text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
             >
-              <Upload size={10} /> Push
+              <Upload size={10} /> Push <Kbd keys="ctrl+alt+p" />
             </button>
           )}
           {(canCreatePr || creatingPr) && (
             <button
               onClick={() => handleShip(commitMsg.trim() || null)}
               disabled={creatingPr}
-              className="flex h-6 items-center gap-1 rounded bg-green-500/15 px-2 text-[10px] font-medium text-green-400 hover:bg-green-500/25 transition-colors"
-              title="Ship: commit + push + PR (Ctrl+Shift+Y)"
+              className="flex h-6 items-center gap-1.5 rounded bg-green-500/15 px-2 text-[10px] font-medium text-green-400 hover:bg-green-500/25 transition-colors"
             >
-              <Rocket size={10} /> Ship
+              <Rocket size={10} /> Ship <Kbd keys="ctrl+shift+y" />
+            </button>
+          )}
+          {canMergeLocal && (
+            <button
+              onClick={() => setMergeOpen(true)}
+              className="flex h-6 items-center gap-1.5 rounded border border-border/50 px-2 text-[10px] text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+            >
+              <GitMerge size={10} /> Merge
             </button>
           )}
         </div>
       </div>
+      )}
+      {activeSession && activeWorkspace && (
+        <MergeModal
+          open={mergeOpen}
+          onOpenChange={setMergeOpen}
+          session={activeSession}
+          workspaceId={activeWorkspace.id}
+          onMerged={() => {
+            invoke<Workspace[]>("get_workspaces").then(setWorkspaces).catch(() => {});
+            refreshGit(sessionId);
+            refreshCore();
+          }}
+          onConflict={(_target, _detail) => {
+            refreshConflicts(sessionId);
+            refreshCore();
+          }}
+        />
       )}
     </div>
   );
@@ -651,9 +825,11 @@ function FileRow({
   actionIcon,
   actionLabel,
   expanded,
+  isCursor,
   onAction,
   onToggleDiff,
   onOpenZen,
+  onCursor,
   sessionId,
 }: {
   path: string;
@@ -661,9 +837,11 @@ function FileRow({
   actionIcon: React.ReactNode;
   actionLabel: string;
   expanded: boolean;
+  isCursor?: boolean;
   onAction: () => void;
   onToggleDiff: () => void;
   onOpenZen: () => void;
+  onCursor?: () => void;
   sessionId: string;
 }) {
   const filename = path.split("/").pop() ?? path;
@@ -672,7 +850,13 @@ function FileRow({
 
   return (
     <div>
-      <div className="group flex items-center gap-1 px-3 py-0.5 hover:bg-secondary/30 transition-colors">
+      <div
+        ref={(el) => { if (el && isCursor) el.scrollIntoView({ block: "nearest" }); }}
+        onMouseEnter={onCursor}
+        className={`group flex items-center gap-1 px-3 py-0.5 transition-colors ${
+          isCursor ? "bg-orange-500/15 border-l-2 border-l-orange-500" : "hover:bg-secondary/30 border-l-2 border-l-transparent"
+        }`}
+      >
         <button
           onClick={onToggleDiff}
           className="flex size-3 shrink-0 items-center justify-center text-muted-foreground/50"

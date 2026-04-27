@@ -13,15 +13,11 @@ import {
 } from "@/stores/workspace";
 import { openTabAction } from "@/stores/rightPanel";
 import { toastsAtom } from "@/stores/toast";
-import { refreshConflictedFilesAtom } from "@/stores/git";
-import { openConflictsTabAction } from "@/stores/conflict";
 import { SessionRow } from "@/components/session/SessionRow";
 import { SessionIndicator } from "@/components/session/SessionIndicator";
 import { ResumeModal } from "@/components/session/ResumeModal";
-import { MergeModal } from "@/components/session/MergeModal";
 import { CommitModal } from "@/components/session/CommitModal";
 import { ProjectPickerModal } from "@/components/session/ProjectPickerModal";
-import Swal from "sweetalert2";
 import { invoke } from "@/lib/tauri";
 import { open } from "@tauri-apps/plugin-dialog";
 import * as terminalService from "@/components/terminal/terminalService";
@@ -169,8 +165,6 @@ function WorkspacesView() {
   const setFreshSessions = useSetAtom(freshSessionsAtom);
   const openTab = useSetAtom(openTabAction);
   const addToast = useSetAtom(toastsAtom);
-  const refreshConflicts = useSetAtom(refreshConflictedFilesAtom);
-  const openConflictsTab = useSetAtom(openConflictsTabAction);
   const triggerCommitSignal = useAtomValue(triggerCommitAtom);
   const triggerMergeSignal = useAtomValue(triggerMergeAtom);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -178,7 +172,6 @@ function WorkspacesView() {
   const [newSessionName, setNewSessionName] = useState("");
 
   const [resumeModal, setResumeModal] = useState<{ session: Session } | null>(null);
-  const [mergeModal, setMergeModal] = useState<{ session: Session; workspaceId: string } | null>(null);
   const [commitModal, setCommitModal] = useState<{ session: Session } | null>(null);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const triggerResumeId = useAtomValue(triggerResumeSessionAtom);
@@ -239,19 +232,9 @@ function WorkspacesView() {
       .catch(() => {});
   }, [triggerCommitSignal]);
 
-  useEffect(() => {
-    if (triggerMergeSignal === 0 || !activeSessionId) return;
-    const ws = workspaces.find((w) => w.sessions.some((s) => s.id === activeSessionId));
-    const session = ws?.sessions.find((s) => s.id === activeSessionId);
-    if (!ws || !session) return;
-    invoke<{ dirty: boolean; commits_ahead: boolean }>("check_session_has_commits", { sessionId: activeSessionId })
-      .then((status) => {
-        if (status.dirty) addToast({ message: "Merge", description: "Commit your changes first", type: "info" });
-        else if (status.commits_ahead) setMergeModal({ session, workspaceId: ws.id });
-        else addToast({ message: "Merge", description: "Nothing to merge", type: "info" });
-      })
-      .catch(() => {});
-  }, [triggerMergeSignal]);
+  // Merge entry point moved to GitPanel — it owns both the visible button
+  // and the Ctrl+Shift+M shortcut handler.
+  void triggerMergeSignal;
 
   const activeSession = useAtomValue(activeSessionAtom);
   void activeSession;
@@ -535,56 +518,9 @@ function WorkspacesView() {
           onSelect={handleResume}
         />
       )}
-      {mergeModal && (
-        <MergeModal
-          open={true}
-          onOpenChange={(o) => { if (!o) setMergeModal(null); }}
-          session={mergeModal.session}
-          workspaceId={mergeModal.workspaceId}
-          onMerged={() => {
-            const merged = mergeModal?.session;
-            Swal.fire({
-              title: "Merge complete",
-              text: merged ? `Delete the worktree for "${merged.name}"?` : "Delete the worktree?",
-              icon: "question",
-              showCancelButton: true,
-              confirmButtonText: "Delete worktree",
-              cancelButtonText: "Keep worktree",
-              background: "#171717",
-              color: "#ededef",
-              confirmButtonColor: "#ef4444",
-              cancelButtonColor: "#3f3f46",
-            }).then((result) => {
-              if (result.isConfirmed && merged) {
-                invoke("cleanup_merged_session", { sessionId: merged.id })
-                  .catch(() => {})
-                  .finally(() => {
-                    invoke<Workspace[]>("get_workspaces").then(setWorkspaces).catch(() => {});
-                  });
-              } else {
-                invoke<Workspace[]>("get_workspaces").then(setWorkspaces).catch(() => {});
-              }
-            });
-          }}
-          onConflict={(targetBranch) => {
-            if (!mergeModal) return;
-            const sid = mergeModal.session.id;
-            setActiveSessionId(sid);
-            setMergeModal(null);
-            invoke<string[]>("pull_target_into_session", { sessionId: sid, target: targetBranch })
-              .then((files) => {
-                if (files.length === 0) {
-                  addToast({ message: "Merge", description: "No conflicts after pull — ready to commit", type: "info" });
-                  return;
-                }
-                refreshConflicts(sid);
-                openConflictsTab({ sessionId: sid, path: files[0] });
-                addToast({ message: "Conflicts", description: `${files.length} file(s) — resolve via the Conflicts tab`, type: "info" });
-              })
-              .catch((e: unknown) => addToast({ message: "Pull failed", description: String(e), type: "error" }));
-          }}
-        />
-      )}
+      {/* MergeModal is now hosted in GitPanel (single entry point). The
+          Ctrl+Shift+M shortcut still triggers it via triggerMergeAtom which
+          GitPanel listens to. */}
       {commitModal && (
         <CommitModal
           open={true}

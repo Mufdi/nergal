@@ -464,8 +464,11 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
 
     invoke("open_in_editor", { sessionId: sid, editorId, filePath, specChangeName, specArtifactPath }).catch(() => {});
   }},
-  { id: "merge-session", label: "Merge Session", keys: "ctrl+shift+m", category: "action", keywords: ["merge", "git", "branch"], handler: () => store().set(triggerMergeAtom, (p: number) => p + 1) },
-  { id: "commit-session", label: "Commit Session", keys: "ctrl+shift+c", category: "action", keywords: ["commit", "git"], handler: () => store().set(triggerCommitAtom, (p: number) => p + 1) },
+  // Local-merge shortcut intentionally removed — user's flow is Ship-driven;
+  // local merge is a rare GitPanel button click. The `triggerMergeAtom` export
+  // stays in case other surfaces want to invoke programmatically.
+  // Commit shortcut intentionally removed — committing requires a message,
+  // and the GitPanel textarea already binds Ctrl+Enter locally for that flow.
   { id: "ship-session", label: "Ship (commit + push + PR)", keys: "ctrl+shift+y", category: "action", keywords: ["ship", "pr", "push", "commit", "deploy", "yeet"], handler: () => {
     const s = store();
     const sid = s.get(activeSessionIdAtom);
@@ -473,7 +476,27 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
       s.set(toastsAtom, { message: "Ship", description: "No active session", type: "info" });
       return;
     }
-    s.set(triggerShipAtom, { tick: Date.now(), sessionId: sid, inlineMessage: null });
+    // Pre-check before opening the modal: don't make the user open and
+    // dismiss an empty Ship dialog when there's nothing to do. Open the
+    // dialog only when there's actually something to ship (commits in
+    // base..HEAD, staged changes, OR unstaged work that could be staged).
+    Promise.all([
+      invokeCmd<{ commits: unknown[]; staged_count: number }>("get_pr_preview_data", { sessionId: sid }).catch(() => null),
+      invokeCmd<{ unstaged: unknown[]; untracked: string[] }>("get_git_status", { sessionId: sid }).catch(() => null),
+    ]).then(([preview, status]) => {
+      const commits = preview?.commits.length ?? 0;
+      const staged = preview?.staged_count ?? 0;
+      const unstaged = (status?.unstaged.length ?? 0) + (status?.untracked.length ?? 0);
+      if (commits === 0 && staged === 0 && unstaged === 0) {
+        s.set(toastsAtom, {
+          message: "Ship",
+          description: "Nothing to ship — no commits ahead, no staged changes, no unstaged work.",
+          type: "info",
+        });
+        return;
+      }
+      s.set(triggerShipAtom, { tick: Date.now(), sessionId: sid, inlineMessage: null });
+    });
   }},
   { id: "complete-merge", label: "Complete Merge", keys: "ctrl+alt+enter", category: "action", keywords: ["merge", "complete", "finish"], handler: () => {
     const s = store();
@@ -487,7 +510,16 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
         }
         return invokeCmd<string>("complete_pending_merge", { sessionId: sid })
           .then(() => s.set(toastsAtom, { message: "Merge", description: "Merge commit created", type: "success" }))
-          .catch((e: unknown) => s.set(toastsAtom, { message: "Complete merge failed", description: String(e), type: "error" }));
+          .catch((e: unknown) => {
+            // Print full error to console so the user can inspect even if
+            // the toast text gets clipped (git stderr is often multi-line).
+            console.error("complete_pending_merge failed", e);
+            s.set(toastsAtom, {
+              message: "Complete merge failed",
+              description: `${String(e).slice(0, 220)} — full error in DevTools console.`,
+              type: "error",
+            });
+          });
       });
   }},
   { id: "push-session", label: "Push Session", keys: "ctrl+alt+p", category: "action", keywords: ["push", "upload", "remote"], handler: () => {

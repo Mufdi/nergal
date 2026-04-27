@@ -93,6 +93,15 @@ export function useKeyboardShortcuts() {
 
       if (paletteOpen) return;
 
+      // Modal-open guard: when any dialog is mounted, the modal owns its
+      // keyboard space (Ctrl+1/2/3 for action buttons, Ctrl+Enter to
+      // confirm, etc.). Without this, Ctrl+Digit shortcuts pass through
+      // to global session-switching even while the user is in the Ship
+      // modal. Modals attach their own scoped listeners that handle the
+      // keys; we just step out of the way.
+      const dialogOpen = !!document.querySelector('[data-slot="dialog-content"]');
+      if (dialogOpen) return;
+
       // Ctrl+Ñ — toggle terminal focus
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === "Semicolon") {
         e.preventDefault();

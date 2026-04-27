@@ -18,7 +18,7 @@ import {
   selectedConflictFileMapAtom,
   conflictIntentMapAtom,
 } from "@/stores/conflict";
-import { activeConflictedFilesAtom, refreshConflictedFilesAtom, sessionsAutoMergedAtom } from "@/stores/git";
+import { activeConflictedFilesAtom, refreshConflictedFilesAtom } from "@/stores/git";
 import { toastsAtom } from "@/stores/toast";
 import { focusZoneAtom } from "@/stores/shortcuts";
 import * as terminalService from "@/components/terminal/terminalService";
@@ -351,7 +351,6 @@ function ConflictView({
   const refreshConflicts = useSetAtom(refreshConflictedFilesAtom);
   const addToast = useSetAtom(toastsAtom);
   const setFocusZone = useSetAtom(focusZoneAtom);
-  const sessionsAutoMerged = useAtomValue(sessionsAutoMergedAtom);
   const [focusedRegion, setFocusedRegion] = useState<number>(0);
   const [collapsedRegions, setCollapsedRegions] = useState<Set<number>>(new Set());
   const [sending, setSending] = useState(false);
@@ -375,21 +374,6 @@ function ConflictView({
   }, [current, key, sessionId, path, setStateMap, addToast]);
 
   const regions = useMemo(() => current?.loaded ? parseRegions(current.merged) : [], [current?.merged, current?.loaded]);
-
-  // Closed-loop handoff: when this file's conflict came from an auto-merged
-  // PR, pre-fill the Ask-Claude prompt with PR/file/region context. The
-  // user still has to confirm via Ctrl+Shift+R to actually send it.
-  useEffect(() => {
-    if (!current?.loaded) return;
-    if (!sessionsAutoMerged.has(sessionId)) return;
-    if (intent.trim().length > 0) return;
-    if (regions.length === 0) return;
-    const summary = regions
-      .map((r, i) => `- region ${i + 1}: -${r.oursLines.length} ours / +${r.theirsLines.length} theirs`)
-      .join("\n");
-    const template = `Auto-merge blocked by conflict in ${path}.\n\n${summary}\n\nResolve preserving both intents where possible; favor theirs for non-functional churn (formatting, imports). Press Ctrl+Shift+R to send this prompt.`;
-    setIntentMap((prev) => ({ ...prev, [key]: template }));
-  }, [current?.loaded, sessionsAutoMerged, sessionId, intent, regions.length, path, key, setIntentMap]);
 
   useEffect(() => {
     if (focusedRegion >= regions.length) setFocusedRegion(Math.max(0, regions.length - 1));

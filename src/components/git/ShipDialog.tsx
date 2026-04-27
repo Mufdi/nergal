@@ -416,17 +416,21 @@ export function ShipDialog() {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [state.open, shipping, existingPr, armedAction, close, dispatchAction]);
 
-  const nothingToShip = preview !== null
-    && preview.commits.length === 0
-    && preview.staged_count === 0
-    && toStage.size === 0;
+  // Per-action gates. The user's flow assumption: once a commit lands
+  // (no more staged/unstaged work), the canonical next step is shipping
+  // to a PR — Commit and Commit+Push only make sense while there's still
+  // local work to commit. Push-only-existing-commits is available via
+  // the global Ctrl+Alt+P shortcut, not via this modal.
+  const hasUncommitted = (preview?.staged_count ?? 0) > 0 || toStage.size > 0;
+  const hasCommitsAhead = (preview?.commits.length ?? 0) > 0;
+  const nothingToShip = !hasUncommitted && !hasCommitsAhead;
   const titleEmpty = !title.trim();
 
-  // Per-action disabled state (each button has its own gate).
-  const baseDisabled = shipping || loading || nothingToShip;
-  const commitDisabled = baseDisabled || titleEmpty;
-  const commitPushDisabled = baseDisabled || titleEmpty;
-  const commitPushPrDisabled = baseDisabled || titleEmpty || ghOk === false || existingPr !== null;
+  const baseDisabled = shipping || loading;
+  const commitDisabled = baseDisabled || titleEmpty || !hasUncommitted;
+  const commitPushDisabled = baseDisabled || titleEmpty || !hasUncommitted;
+  const commitPushPrDisabled = baseDisabled || titleEmpty || ghOk === false
+    || existingPr !== null || nothingToShip;
 
   return (
     <Dialog open={state.open} onOpenChange={(o) => { if (!o) close(); }}>

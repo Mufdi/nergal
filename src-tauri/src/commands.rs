@@ -649,6 +649,145 @@ pub fn list_branches(db: State<'_, SharedDb>, workspace_id: String) -> Result<Ve
     crate::worktree::list_branches(&repo_path).map_err(|e| e.to_string())
 }
 
+/// Summary of a single PR rendered in the GitPanel PRs sidebar list.
+#[derive(Clone, serde::Serialize)]
+pub struct PrSummary {
+    pub number: u32,
+    pub title: String,
+    pub state: String,
+    pub url: String,
+    pub base_ref_name: String,
+    pub updated_at: String,
+}
+
+/// List the workspace's pull requests via `gh pr list`. Ordered with OPEN
+/// first (by `updatedAt` desc), then MERGED/CLOSED. Capped at 20.
+#[tauri::command]
+pub fn list_prs(db: State<'_, SharedDb>, workspace_id: String) -> Result<Vec<PrSummary>, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let repo_path = db
+        .workspace_repo_path(&workspace_id)
+        .map_err(|e| e.to_string())?
+        .ok_or("workspace not found")?;
+
+    let output = std::process::Command::new("gh")
+        .args([
+            "pr",
+            "list",
+            "--state",
+            "all",
+            "--limit",
+            "20",
+            "--json",
+            "number,title,state,url,baseRefName,updatedAt",
+        ])
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| format!("failed to invoke gh: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("gh pr list failed: {stderr}"));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let raw: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap_or_default();
+
+    let mut prs: Vec<PrSummary> = raw
+        .into_iter()
+        .filter_map(|v| {
+            Some(PrSummary {
+                number: v.get("number")?.as_u64()? as u32,
+                title: v.get("title")?.as_str()?.to_owned(),
+                state: v.get("state")?.as_str()?.to_owned(),
+                url: v.get("url")?.as_str()?.to_owned(),
+                base_ref_name: v.get("baseRefName")?.as_str()?.to_owned(),
+                updated_at: v.get("updatedAt")?.as_str()?.to_owned(),
+            })
+        })
+        .collect();
+
+    // OPEN first, then everything else; within each bucket, newest update first.
+    prs.sort_by(|a, b| {
+        let a_open = a.state == "OPEN";
+        let b_open = b.state == "OPEN";
+        b_open
+            .cmp(&a_open)
+            .then_with(|| b.updated_at.cmp(&a.updated_at))
+    });
+
+    Ok(prs)
+}
+
+/// Fetch the PR's unified diff via `gh pr diff <num>`. Returned text is
+/// parsed by the frontend into chunks for rendering and chunk-by-chunk
+/// navigation. Errors from `gh` are surfaced verbatim so the inline error
+/// path in the PR Viewer can show them.
+#[tauri::command]
+pub fn get_pr_diff(
+    db: State<'_, SharedDb>,
+    workspace_id: String,
+    pr_number: u32,
+) -> Result<String, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let repo_path = db
+        .workspace_repo_path(&workspace_id)
+        .map_err(|e| e.to_string())?
+        .ok_or("workspace not found")?;
+
+    let output = std::process::Command::new("gh")
+        .args(["pr", "diff", &pr_number.to_string()])
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| format!("failed to invoke gh: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("gh pr diff failed: {stderr}"));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Merge a PR via `gh pr merge`. `strategy` is one of `squash` (default,
+/// matches the project's PR convention), `merge`, or `rebase`. On
+/// `mergeable=false` (typically a conflict), the returned error string
+/// contains `mergeable=false` so the frontend can switch to opening the
+/// conflicts tab instead of just toasting the failure.
+#[tauri::command]
+pub fn gh_pr_merge(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    strategy: Option<String>,
+) -> Result<(), String> {
+    let strategy = strategy.unwrap_or_else(|| "squash".to_string());
+    if !matches!(strategy.as_str(), "squash" | "merge" | "rebase") {
+        return Err(format!("unknown merge strategy: {strategy}"));
+    }
+
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let strategy_flag = format!("--{strategy}");
+
+    let output = std::process::Command::new("gh")
+        .args(["pr", "merge", &strategy_flag])
+        .current_dir(&cwd)
+        .output()
+        .map_err(|e| format!("failed to invoke gh: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // Marker the frontend can grep for to route to the conflicts tab
+        // instead of a generic error toast.
+        if stderr.contains("not mergeable") || stderr.contains("merge conflict") {
+            return Err(format!("mergeable=false: {stderr}"));
+        }
+        return Err(format!("gh pr merge failed: {stderr}"));
+    }
+
+    Ok(())
+}
+
 #[derive(Clone, serde::Serialize)]
 pub struct MergeResult {
     pub success: bool,
@@ -705,17 +844,27 @@ pub fn merge_session(
 /// Result of total session cleanup, surfaced to the frontend so the UI can
 /// distinguish "all artifacts wiped" from "wiped most, kept the branch
 /// because it was checked out elsewhere" without losing the warning thread.
+/// `archived_plans_path` is `Some` when at least one plan file was copied
+/// into the archive — used by the toast to point users at where their
+/// session-scoped plans now live.
 #[derive(Clone, serde::Serialize)]
 pub struct CleanupResult {
     pub deleted: bool,
     pub warnings: Vec<String>,
+    pub archived_plans_path: Option<String>,
 }
 
-/// Total deletion of a session's persisted state. Removes worktree, branch,
-/// per-project plan files, and the DB row. Each step is independently
-/// best-effort: failure of one artifact is logged as a warning and does
-/// NOT block deletion of the others. Returns aggregated warnings so the
-/// frontend can decide whether to show a non-blocking toast.
+/// Total deletion of a session's persisted state. Sequence:
+/// 1. Archive plans from the worktree to the main repo's archive dir
+///    (so they survive the worktree deletion that follows).
+/// 2. Remove the worktree directory.
+/// 3. Delete the branch.
+/// 4. Delete the DB row.
+///
+/// Each step is independently best-effort: failure of one artifact is
+/// logged as a warning and does NOT block deletion of the others. Returns
+/// aggregated warnings so the frontend can decide whether to show a
+/// non-blocking toast.
 ///
 /// Transcript files (`~/.claude/projects/<encoded-cwd>/*.jsonl`) are owned
 /// by the Claude Code CLI itself, not cluihud. We do not delete them — the
@@ -735,7 +884,25 @@ pub fn cleanup_merged_session(
         .ok_or("workspace not found")?;
 
     let mut warnings: Vec<String> = Vec::new();
+    let mut archived_plans_path: Option<String> = None;
 
+    // Step 1: archive plans BEFORE removing the worktree. Source is
+    // `<worktree>/.claude/plans/*.md` (Claude writes plans per-cwd, and
+    // the worktree IS the cwd for this session).
+    if let Some(ref wt_path) = session.worktree_path {
+        let plans_src = wt_path.join(".claude").join("plans");
+        match archive_plans(&plans_src, &repo_path, &session_id) {
+            Ok(Some(dest)) => archived_plans_path = Some(dest.display().to_string()),
+            Ok(None) => {} // no plans to archive — silent
+            Err(e) => {
+                let msg = format!("plan archive: {e}");
+                tracing::warn!("{msg}");
+                warnings.push(msg);
+            }
+        }
+    }
+
+    // Step 2: remove the worktree directory.
     if let Some(ref wt_path) = session.worktree_path
         && let Err(e) = crate::worktree::remove_worktree(&repo_path, wt_path)
     {
@@ -744,6 +911,7 @@ pub fn cleanup_merged_session(
         warnings.push(msg);
     }
 
+    // Step 3: delete the branch.
     if let Some(ref branch) = session.worktree_branch
         && let Err(e) = crate::worktree::delete_branch(&repo_path, branch)
     {
@@ -752,15 +920,7 @@ pub fn cleanup_merged_session(
         warnings.push(msg);
     }
 
-    let plan_dir = repo_path.join(".claude").join("plans").join(&session_id);
-    if plan_dir.exists()
-        && let Err(e) = std::fs::remove_dir_all(&plan_dir)
-    {
-        let msg = format!("plan files remove: {e}");
-        tracing::warn!("{msg}");
-        warnings.push(msg);
-    }
-
+    // Step 4: delete the DB row.
     if let Err(e) = db.delete_session(&session_id) {
         let msg = format!("db delete: {e}");
         tracing::warn!("{msg}");
@@ -770,7 +930,90 @@ pub fn cleanup_merged_session(
     Ok(CleanupResult {
         deleted: true,
         warnings,
+        archived_plans_path,
     })
+}
+
+/// Copy `*.md` files from `<worktree>/.claude/plans/` into
+/// `<main_repo>/.claude/plans/archive/YYYY-MM/<session_id>/`. Returns the
+/// destination dir on success (Some when any files were copied, None when
+/// the source dir was missing or empty). Appends `-N` to the destination
+/// dir name if a collision exists. Failures inside the copy are bubbled
+/// up to the caller as Err so they can be surfaced as warnings without
+/// blocking the rest of cleanup.
+fn archive_plans(
+    plans_src: &std::path::Path,
+    main_repo: &std::path::Path,
+    session_id: &str,
+) -> anyhow::Result<Option<std::path::PathBuf>> {
+    use anyhow::Context;
+
+    if !plans_src.exists() {
+        return Ok(None);
+    }
+
+    let entries: Vec<_> = std::fs::read_dir(plans_src)
+        .with_context(|| format!("read_dir {}", plans_src.display()))?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map(|ext| ext == "md").unwrap_or(false))
+        .collect();
+
+    if entries.is_empty() {
+        return Ok(None);
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Format YYYY-MM from epoch seconds — avoid pulling chrono just for this.
+    let month = epoch_secs_to_year_month(now);
+    let archive_root = main_repo
+        .join(".claude")
+        .join("plans")
+        .join("archive")
+        .join(&month);
+
+    // Collision-safe destination: if `<archive_root>/<session_id>` exists,
+    // append `-1`, `-2`, ... until a free path is found.
+    let mut dest = archive_root.join(session_id);
+    let mut suffix = 1;
+    while dest.exists() {
+        dest = archive_root.join(format!("{session_id}-{suffix}"));
+        suffix += 1;
+    }
+
+    std::fs::create_dir_all(&dest).with_context(|| format!("create_dir_all {}", dest.display()))?;
+
+    for entry in entries {
+        let src_path = entry.path();
+        let file_name = src_path
+            .file_name()
+            .ok_or_else(|| anyhow::anyhow!("no file name"))?;
+        let dest_path = dest.join(file_name);
+        std::fs::copy(&src_path, &dest_path)
+            .with_context(|| format!("copy {} → {}", src_path.display(), dest_path.display()))?;
+    }
+
+    Ok(Some(dest))
+}
+
+/// Convert epoch seconds to a `YYYY-MM` string. Pure date math (Gregorian)
+/// good for the next thousand years — sufficient for an archive folder name.
+fn epoch_secs_to_year_month(secs: u64) -> String {
+    // Days since 1970-01-01.
+    let days = (secs / 86_400) as i64;
+    // Algorithm: shift epoch to 0000-03-01 (which begins a 400-year cycle).
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+    format!("{year:04}-{m:02}")
 }
 
 #[derive(Clone, serde::Serialize)]

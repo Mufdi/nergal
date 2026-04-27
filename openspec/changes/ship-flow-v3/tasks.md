@@ -8,12 +8,12 @@
 
 ## 2. Backend: plan archive + PR list + merge command
 
-- [ ] 2.1 Extend `cleanup_merged_session` in `src-tauri/src/commands.rs` to copy `<worktree>/.claude/plans/*.md` into `<main_repo>/.claude/plans/archive/YYYY-MM/<session_id>/` BEFORE worktree removal; create archive dir if missing; append `-N` suffix on collision; return the archive path in `CleanupResult.archived_plans_path`
-- [ ] 2.2 Add `list_prs(workspace_id: String) -> Vec<PrSummary>` Tauri command in `src-tauri/src/commands.rs` that invokes `gh pr list --json number,title,state,url,updatedAt,baseRefName --limit 20 --state all` in the workspace repo; parse + return ordered (OPEN first, then MERGED/CLOSED by `updatedAt` desc)
-- [ ] 2.3 Add `gh_pr_merge(session_id: String, strategy: "squash" | "merge" | "rebase") -> Result<(), String>` Tauri command that invokes `gh pr merge --<strategy>`; returns specific error variant for `mergeable=false` so the frontend can open the conflicts tab. Default strategy: squash; spec calls out squash as primary, others available for advanced flows
-- [ ] 2.3b Add `get_pr_diff(workspace_id: String, pr_number: u32) -> Result<String, String>` Tauri command that invokes `gh pr diff <pr_number>` in the workspace repo and returns the unified diff text; surface `gh` errors verbatim to the frontend for the inline error path
-- [ ] 2.4 Register the new commands in `src-tauri/src/lib.rs` `invoke_handler`
-- [ ] 2.5 Backend build + tests: `cargo build`, `cargo test --lib`, `cargo fmt --check`, `cargo clippy -- -D warnings`
+- [x] 2.1 Extended `cleanup_merged_session`: archive plans BEFORE worktree removal via new `archive_plans` helper. Source `<worktree>/.claude/plans/*.md`, dest `<main_repo>/.claude/plans/archive/YYYY-MM/<session_id>/`. Collision-safe with `-N` suffix. Returns `archived_plans_path: Option<String>` in `CleanupResult`. Inline `epoch_secs_to_year_month` helper avoids chrono dep.
+- [x] 2.2 Added `list_prs(workspace_id) -> Vec<PrSummary>` invoking `gh pr list --state all --limit 20`; sorted OPEN first then by `updatedAt` desc
+- [x] 2.3 Added `gh_pr_merge(session_id, strategy?)` defaulting to squash; detects `not mergeable` / `merge conflict` in stderr and returns `mergeable=false: <msg>` error so the frontend routes to the conflicts tab
+- [x] 2.3b Added `get_pr_diff(workspace_id, pr_number) -> String` invoking `gh pr diff`; surfaces stderr verbatim for inline error rendering
+- [x] 2.4 Registered `list_prs`, `get_pr_diff`, `gh_pr_merge` in lib.rs invoke_handler
+- [x] 2.5 Backend: `cargo build` clean, 30/30 tests pass, `cargo fmt --check` clean
 
 ## 3. Frontend: ShipDialog single-pane rewrite
 

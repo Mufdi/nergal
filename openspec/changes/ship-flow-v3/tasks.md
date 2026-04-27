@@ -1,10 +1,10 @@
 ## 1. Cleanup of v2 leftovers
 
-- [ ] 1.1 Remove `git_auto_merge_default` field from `Config` in `src-tauri/src/config.rs` and from `lib/types.ts` `Config` interface; remove `autoMergeDefaultAtom` from `src/stores/git.ts`
-- [ ] 1.2 Remove `sessionsAutoMergedAtom` from `src/stores/git.ts` and all references (GitPanel, ShipDialog)
-- [ ] 1.3 Remove the `prInfo.state === "MERGED"` auto-cleanup branch from GitPanel's PR poll (keep only the recovery banner path)
-- [ ] 1.4 Remove the `<Merge>` button from GitPanel commit bar; remove the `triggerMergeAtom` listener in GitPanel; remove `MergeModal` rendering from GitPanel (keep MergeModal component for future external use)
-- [ ] 1.5 Remove the auto-merge-conflict closed-loop wiring in ConflictsPanel (the `sessionsAutoMerged.has(sessionId)` template prefill effect)
+- [x] 1.1 Removed `git_auto_merge_default` field from Config (Rust + TS) + autoMergeDefaultAtom from stores/git.ts; configAtom default updated
+- [x] 1.2 Removed `sessionsAutoMergedAtom` and all references (GitPanel state + cleanup hook; ShipDialog import + setter call)
+- [x] 1.3 Auto-cleanup-on-MERGED branch already removed in prior pass — `prInfo.state !== "OPEN"` short-circuits poll, banner+button is the only cleanup path
+- [x] 1.4 Removed `<Merge>` button + `MergeModal` render + `triggerMergeAtom` consumer + `mergeOpen` state + `canMergeLocal` from GitPanel; MergeModal component file kept for potential future repos-without-remote use
+- [x] 1.5 Removed `sessionsAutoMerged.has(sessionId)` prefill effect from ConflictsPanel; intent stays user-controlled
 
 ## 2. Backend: plan archive + PR list + merge command
 

@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useAtomValue, useSetAtom, useAtom } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { listen, invoke } from "@/lib/tauri";
 import {
   Dialog,
@@ -15,7 +15,7 @@ import { Kbd } from "@/components/ui/kbd";
 import { Loader2, AlertTriangle, Check, CircleDashed, FileDiff, ArrowLeft, GitBranch, ChevronDown } from "lucide-react";
 import { shipDialogAtom, triggerShipAtom, type ShipProgressEvent } from "@/stores/ship";
 import { toastsAtom } from "@/stores/toast";
-import { refreshGitInfoAtom, autoMergeDefaultAtom, sessionsAutoMergedAtom } from "@/stores/git";
+import { refreshGitInfoAtom } from "@/stores/git";
 import { activeWorkspaceAtom } from "@/stores/workspace";
 
 interface PrCommit { hash: string; subject: string }
@@ -89,8 +89,9 @@ export function ShipDialog() {
   const trigger = useAtomValue(triggerShipAtom);
   const addToast = useSetAtom(toastsAtom);
   const refreshGit = useSetAtom(refreshGitInfoAtom);
-  const [autoMerge, setAutoMerge] = useAtom(autoMergeDefaultAtom);
-  const setSessionsAutoMerged = useSetAtom(sessionsAutoMergedAtom);
+  // Auto-merge state stripped in v3 cleanup; ShipDialog full rewrite in
+  // phase 3 will replace this stub with the single-pane 3-button surface.
+  const [autoMerge, setAutoMerge] = useState(false);
   const workspace = useAtomValue(activeWorkspaceAtom);
 
   // ── Top-level lifecycle state ──
@@ -227,16 +228,6 @@ export function ShipDialog() {
         ? `PR #${result.pr_info.number} created — auto-merge enabled`
         : `PR #${result.pr_info.number} created`;
       addToast({ message: "Shipped", description: desc, type: "success" });
-      // Mark the session as auto-merged so a future conflict surfaces the
-      // closed-loop handoff (alert + prefilled Ask-Claude prompt) instead
-      // of just the bare conflicts list.
-      if (autoMerge && state.sessionId) {
-        setSessionsAutoMerged((prev) => {
-          const next = new Set(prev);
-          next.add(state.sessionId!);
-          return next;
-        });
-      }
       refreshGit(state.sessionId);
       close();
     } catch (e) {

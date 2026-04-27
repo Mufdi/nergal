@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke, listen } from "@/lib/tauri";
-import { refreshGitInfoAtom, refreshConflictedFilesAtom, activeConflictedFilesAtom, prChecksMapAtom, sessionsAutoMergedAtom, type PrChecks } from "@/stores/git";
+import { refreshGitInfoAtom, refreshConflictedFilesAtom, activeConflictedFilesAtom, prChecksMapAtom, type PrChecks } from "@/stores/git";
 import { openZenModeAtom } from "@/stores/zenMode";
 import { triggerShipAtom } from "@/stores/ship";
 import { triggerMergeAtom } from "@/stores/shortcuts";
@@ -25,12 +25,10 @@ import {
   AlertTriangle,
   Check,
   CircleDashed,
-  GitMerge,
   Maximize2,
 } from "lucide-react";
 import { Kbd } from "@/components/ui/kbd";
-import { MergeModal } from "@/components/session/MergeModal";
-import { activeSessionAtom, activeWorkspaceAtom, workspacesAtom, sessionTabIdsAtom, activeSessionIdAtom, type Workspace } from "@/stores/workspace";
+import { workspacesAtom, sessionTabIdsAtom, activeSessionIdAtom, type Workspace } from "@/stores/workspace";
 
 interface ChangedFile {
   path: string;
@@ -93,11 +91,8 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
   const refreshGit = useSetAtom(refreshGitInfoAtom);
   const refreshConflicts = useSetAtom(refreshConflictedFilesAtom);
   const conflictedFiles = useAtomValue(activeConflictedFilesAtom);
-  const sessionsAutoMerged = useAtomValue(sessionsAutoMergedAtom);
-  const setSessionsAutoMerged = useSetAtom(sessionsAutoMergedAtom);
   const setSessionTabIds = useSetAtom(sessionTabIdsAtom);
   const setActiveSessionId = useSetAtom(activeSessionIdAtom);
-  const isAutoMergeConflict = sessionsAutoMerged.has(sessionId) && conflictedFiles.length > 0;
   const setPrChecksMap = useSetAtom(prChecksMapAtom);
   const openZenMode = useSetAtom(openZenModeAtom);
   const triggerShip = useSetAtom(triggerShipAtom);
@@ -107,9 +102,6 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
   const [ciChecks, setCiChecks] = useState<PrChecks | null>(null);
   const [pendingMerge, setPendingMerge] = useState(false);
   const [completing, setCompleting] = useState(false);
-  const [mergeOpen, setMergeOpen] = useState(false);
-  const activeSession = useAtomValue(activeSessionAtom);
-  const activeWorkspace = useAtomValue(activeWorkspaceAtom);
   const setWorkspaces = useSetAtom(workspacesAtom);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -276,12 +268,6 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
           : "Worktree, branch and plan files removed. Press Ctrl+N to start a new session.",
         type: "success",
       });
-      setSessionsAutoMerged((prev) => {
-        if (!prev.has(sessionId)) return prev;
-        const next = new Set(prev);
-        next.delete(sessionId);
-        return next;
-      });
       // Remove the deleted session from open tabs so Ctrl+Tab doesn't
       // navigate back to a ghost. If it was the active session, clear so
       // the next tab event picks a real one.
@@ -367,19 +353,10 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flatNav.length, fileCursor]);
 
-  // Ctrl+Shift+M opens the MergeModal — same dirty/ahead pre-check the
-  // Sidebar used to do, now hosted here so this panel is the single owner.
-  useEffect(() => {
-    if (triggerMergeSignal === 0 || !activeSession) return;
-    invoke<{ dirty: boolean; commits_ahead: boolean }>("check_session_has_commits", { sessionId: activeSession.id })
-      .then((s) => {
-        if (s.dirty) addToast({ message: "Merge", description: "Commit your changes first", type: "info" });
-        else if (s.commits_ahead) setMergeOpen(true);
-        else addToast({ message: "Merge", description: "Nothing to merge", type: "info" });
-      })
-      .catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [triggerMergeSignal]);
+  // Local merge entry point removed in v3 — Ship flow is the canonical
+  // path. The triggerMergeAtom export and merge_session command remain
+  // for future repos-without-remote scenarios; no UI surface exposes them.
+  void triggerMergeSignal;
 
   useEffect(() => {
     function onOpenFirst(ev: Event) {
@@ -408,7 +385,6 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
   // pre-check inside the trigger handler would just toast "Nothing to merge".
   // Hiding here matches the disable-when-nothing-to-do pattern used for
   // Push/Ship.
-  const canMergeLocal = !!activeSession?.worktree_branch && ahead > 0;
 
   return (
     <div className="flex h-full flex-col">
@@ -471,15 +447,6 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
           >
             Cleanup session
           </button>
-        </div>
-      )}
-
-      {isAutoMergeConflict && (
-        <div className="shrink-0 flex items-center gap-2 border-b border-border/50 bg-yellow-500/10 px-3 py-1.5">
-          <AlertTriangle size={12} className="text-yellow-400" />
-          <span className="text-[11px] text-yellow-300">
-            Auto-merge blocked by conflict — Conflicts panel pre-filled an Ask-Claude prompt; press <Kbd keys="ctrl+shift+r" /> to send.
-          </span>
         </div>
       )}
 
@@ -730,33 +697,8 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
               <Rocket size={10} /> Ship <Kbd keys="ctrl+shift+y" />
             </button>
           )}
-          {canMergeLocal && (
-            <button
-              onClick={() => setMergeOpen(true)}
-              className="flex h-6 items-center gap-1.5 rounded border border-border/50 px-2 text-[10px] text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-            >
-              <GitMerge size={10} /> Merge
-            </button>
-          )}
         </div>
       </div>
-      )}
-      {activeSession && activeWorkspace && (
-        <MergeModal
-          open={mergeOpen}
-          onOpenChange={setMergeOpen}
-          session={activeSession}
-          workspaceId={activeWorkspace.id}
-          onMerged={() => {
-            invoke<Workspace[]>("get_workspaces").then(setWorkspaces).catch(() => {});
-            refreshGit(sessionId);
-            refreshCore();
-          }}
-          onConflict={(_target, _detail) => {
-            refreshConflicts(sessionId);
-            refreshCore();
-          }}
-        />
       )}
     </div>
   );

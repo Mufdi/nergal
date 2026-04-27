@@ -21,11 +21,6 @@ pub struct Config {
     /// encode unambiguously so shells can bind them distinctively.
     #[serde(default = "default_true")]
     pub terminal_kitty_keyboard: bool,
-    /// Default for the "auto-merge when checks pass" toggle in the Ship
-    /// dialog. Persisted across sessions so the user's preference (typically
-    /// on for solo workflows) doesn't reset every Ship.
-    #[serde(default = "default_true")]
-    pub git_auto_merge_default: bool,
 }
 
 impl Default for Config {
@@ -43,7 +38,6 @@ impl Default for Config {
             theme_mode: "dark".into(),
             preferred_editor: String::new(),
             terminal_kitty_keyboard: true,
-            git_auto_merge_default: true,
         }
     }
 }

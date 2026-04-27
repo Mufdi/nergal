@@ -16,6 +16,7 @@ Prevent misframing in analysis, recommendations, and tool-driven suggestions:
 ## Project Documentation
 
 - Design doc completo: `/home/user/Documents/Obsidian/Projects/cluihud/cluihud.md`
+- Design system (UI tokens, components, decision rules): [`./DESIGN.md`](./DESIGN.md) — read before touching UI
 
 ## Stack
 

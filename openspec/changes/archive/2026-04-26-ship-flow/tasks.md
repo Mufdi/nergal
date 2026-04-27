@@ -82,7 +82,7 @@
 
 - [x] 11.1 Run `cd src-tauri && cargo clippy -- -D warnings && cargo test && cargo fmt --check` — tests pass (26/26), cargo check passes, cargo fmt --check passes; clippy has 18 pre-existing warnings unrelated to ship-flow (none in new code)
 - [x] 11.2 Run `npx tsc --noEmit` from project root — passes clean
-- [ ] 11.3 Manual E2E: stage file → Ctrl+Shift+Enter in textarea → dialog confirms → PR created → CI indicator appears
-- [ ] 11.4 Manual E2E: trigger conflict via `merge_session` against a known conflicting branch → conflict list appears in git panel → Resolve opens ConflictTab → Accept Theirs + Save → conflict list empties
-- [ ] 11.5 Manual E2E: Claude runs `/commit` → Ship-it badge appears → click Ship → PR created
-- [ ] 11.6 Manual E2E: Ctrl+Shift+R in plan panel with pending review still revises; Ctrl+Shift+R in git panel with conflicts opens first conflict tab
+- [x] 11.3 Manual E2E: stage file → Ctrl+Shift+Enter in textarea → dialog confirms → PR created → CI indicator appears — verified in production usage; refinements rolled into ship-flow-v2
+- [x] 11.4 Manual E2E: trigger conflict via `merge_session` against a known conflicting branch → conflict list appears in git panel → Resolve opens ConflictTab → Accept Theirs + Save → conflict list empties — verified; space-toggle bug deferred to ship-flow-v2
+- [x] 11.5 Manual E2E: Claude runs `/commit` → Ship-it badge appears → click Ship → PR created — verified via real workflow
+- [x] 11.6 Manual E2E: Ctrl+Shift+R in plan panel with pending review still revises; Ctrl+Shift+R in git panel with conflicts opens first conflict tab — verified; closed-loop refinement rolled into ship-flow-v2

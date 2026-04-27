@@ -39,7 +39,7 @@
 
 - [x] 5.1 `keydown` handler attached to the focusable canvas in `wireInput`; builds `TerminalKeyEvent` from `KeyboardEvent`
 - [x] 5.2 `invoke("terminal_input", { sessionId, event })` — no local encoding
-- [ ] 5.3 IME composition — deferred. Phase 4 canvas lacks the hidden textarea overlay; CJK/dead-key composition needs Phase 5 follow-up
+- [x] 5.3 IME composition — landed via hidden textarea overlay in `terminalService.ts` (compositionstart/end, ghost-keydown suppression)
 - [x] 5.4 `shouldPassThrough` mirrors the global-shortcut filter from `terminalService.ts:wireIMEFix` so Ctrl+1/2/3, Ctrl+K, Ctrl+Tab, Ctrl+Shift+letter, Alt+arrows skip the terminal
 
 ## 6. Frontend: selection, copy/paste, scrollback
@@ -47,7 +47,7 @@
 - [x] 6.1 `mousedown/move/up` in `wireInput` — anchor-and-head selection with cell-accurate hit testing via `mouseToCell`. `paintSelection` overlays `WEZ_THEME.selectionBackground` on the selected rectangle; re-applied after per-row repaints so live updates don't wipe the tint.
 - [x] 6.2 Ctrl+Shift+C (only when a selection is active; otherwise falls through to cluihud global). `serializeSelection` walks rows, trimming trailing blanks per row, joined with `\n`, then `navigator.clipboard.writeText`.
 - [x] 6.3 Ctrl+Shift+V → `navigator.clipboard.readText` → new backend `terminal_paste` command wraps text in `\x1b[200~...\x1b[201~` and writes to the PTY.
-- [ ] 6.4 Scrollback — deferred. Needs a `terminal_get_scrollback` backend command and a scroll-offset render mode in the renderer. Not required for MVP; the backend already keeps 10k rows of scrollback, so the state exists, just not exposed to the frontend yet.
+- [x] 6.4 Scrollback — landed: `terminal_scroll(delta, col, row)` + `terminal_scroll_to_bottom` Tauri commands, scroll_offset/anchor in `TerminalSession`, wheel listener with primary/alt-screen routing (alt screen forwards via `mouse_event` to support TUIs like claude fullscreen). Pill indicator + Shift+End/Esc snap to bottom.
 - [x] 6.5 Typing clears any active selection before sending the key — matches every mainstream terminal's "type to dismiss highlight" behavior. Auto-scroll-to-bottom is implicit: the renderer is always pinned to the live viewport until 6.4 lands.
 
 ## 7. Frontend: OSC 8 hyperlinks

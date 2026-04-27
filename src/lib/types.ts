@@ -39,6 +39,7 @@ export interface Config {
   theme_mode: string;
   preferred_editor: string;
   terminal_kitty_keyboard: boolean;
+  git_auto_merge_default: boolean;
 }
 
 // ── wezterm-term renderer IPC types (Phase 4) ─────────────────────────

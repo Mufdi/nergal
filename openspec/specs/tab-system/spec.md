@@ -22,9 +22,7 @@ Core requirements implemented. Known deviations:
 - **Pinned tabs**: pinTabAction exists but no double-click handler in TabBar. Auto-pin on edit not wired.
 - **Unsaved confirmation dialog**: closeTabAction blocks closure but no modal dialog shown — tab just stays open.
 - **Status bar git metadata**: Shows branch name but not from tabs context.
-
 ## Requirements
-
 ### Requirement: Tab bar renders in right panel header
 The right panel SHALL display a horizontal tab bar below the panel header showing all open tabs for the active session. Each tab SHALL display a type icon, title text, and close button.
 
@@ -74,7 +72,7 @@ Each session SHALL maintain its own independent set of open tabs. Switching the 
 - **THEN** the tab bar is empty for that session
 
 ### Requirement: Tab types support mixed content
-The tab bar SHALL support these content types in the same bar: plan, diff, spec, tasks, git, transcript, file. Each type SHALL have a distinct icon. Singleton types (tasks, git) SHALL have at most one tab per session.
+The tab bar SHALL support these content types in the same bar: plan, diff, spec, tasks, git, transcript, file, conflict. Each type SHALL have a distinct icon. Singleton types (tasks, git) SHALL have at most one tab per session. `conflict` tabs SHALL be singleton per `(session, file path)` pair — opening a conflict tab for an already-open file focuses the existing tab.
 
 #### Scenario: Singleton tab reuse
 - **WHEN** tasks tab is open and user triggers "open tasks" again
@@ -83,6 +81,14 @@ The tab bar SHALL support these content types in the same bar: plan, diff, spec,
 #### Scenario: Multiple file tabs
 - **WHEN** user opens diff for "auth.rs" and then pins diff for "main.rs"
 - **THEN** both file-specific tabs coexist in the tab bar
+
+#### Scenario: Conflict tab reuse per file
+- **WHEN** a conflict tab for `src/foo.ts` is open and user clicks Resolve on the same file again
+- **THEN** the existing conflict tab is focused; no duplicate created
+
+#### Scenario: Multiple conflict tabs for different files
+- **WHEN** session has conflicts in `src/a.ts` and `src/b.ts` and user clicks Resolve on both
+- **THEN** two conflict tabs coexist in the tab bar, one per file
 
 ### Requirement: Tab overflow handling
 When tabs exceed the available width, the tab bar SHALL scroll horizontally. Navigation arrows SHALL appear at bar edges. A dropdown button SHALL show all open tabs for quick selection.
@@ -145,3 +151,4 @@ The left sidebar SHALL contain only the workspace/session tree. Tasks and Git ta
 #### Scenario: Sidebar has no tabs
 - **WHEN** the app loads
 - **THEN** the sidebar shows only the workspaces tree with expandable sessions, no tab bar at top
+

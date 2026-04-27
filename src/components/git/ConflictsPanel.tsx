@@ -18,11 +18,12 @@ import {
   selectedConflictFileMapAtom,
   conflictIntentMapAtom,
 } from "@/stores/conflict";
-import { activeConflictedFilesAtom, refreshConflictedFilesAtom } from "@/stores/git";
+import { activeConflictedFilesAtom, refreshConflictedFilesAtom, sessionsAutoMergedAtom } from "@/stores/git";
 import { toastsAtom } from "@/stores/toast";
 import { focusZoneAtom } from "@/stores/shortcuts";
 import * as terminalService from "@/components/terminal/terminalService";
 import { Button } from "@/components/ui/button";
+import { Kbd } from "@/components/ui/kbd";
 import {
   AlertTriangle,
   Check,
@@ -179,14 +180,25 @@ export function ConflictsPanel({ sessionId, inZen = false, onToggleZen }: Props)
   if (files.length === 0) {
     return (
       <div className="flex h-full items-center justify-center">
-        <div className="flex flex-col items-center gap-3 text-center">
+        <div className="flex max-w-sm flex-col items-center gap-3 px-4 text-center">
           <FileCheck size={24} className="text-green-400" />
-          <span className="text-[11px] text-muted-foreground">No conflicts — everything resolved.</span>
-          {pendingMerge && (
-            <Button onClick={completeMerge} disabled={completing} className="gap-1.5" size="sm">
-              <Check size={12} /> {completing ? "Completing…" : "Complete merge"}
-              <span className="ml-1 text-[9px] opacity-60">Ctrl+Alt+Enter</span>
-            </Button>
+          {pendingMerge ? (
+            <>
+              <span className="text-[11px] text-muted-foreground">
+                Conflicts resolved. A merge is in progress and needs a final merge commit to finish.
+              </span>
+              <Button onClick={completeMerge} disabled={completing} className="gap-1.5" size="sm">
+                <Check size={12} /> {completing ? "Completing…" : "Finish in-progress merge"}
+                <Kbd keys="ctrl+alt+enter" tone="onPrimary" className="ml-1" />
+              </Button>
+              <span className="text-[10px] text-muted-foreground/60">
+                Creates a local merge commit. No push happens — your remote branch is unaffected.
+              </span>
+            </>
+          ) : (
+            <span className="text-[11px] text-muted-foreground">
+              No conflicts — nothing to resolve here.
+            </span>
           )}
         </div>
       </div>
@@ -339,6 +351,7 @@ function ConflictView({
   const refreshConflicts = useSetAtom(refreshConflictedFilesAtom);
   const addToast = useSetAtom(toastsAtom);
   const setFocusZone = useSetAtom(focusZoneAtom);
+  const sessionsAutoMerged = useAtomValue(sessionsAutoMergedAtom);
   const [focusedRegion, setFocusedRegion] = useState<number>(0);
   const [collapsedRegions, setCollapsedRegions] = useState<Set<number>>(new Set());
   const [sending, setSending] = useState(false);
@@ -362,6 +375,21 @@ function ConflictView({
   }, [current, key, sessionId, path, setStateMap, addToast]);
 
   const regions = useMemo(() => current?.loaded ? parseRegions(current.merged) : [], [current?.merged, current?.loaded]);
+
+  // Closed-loop handoff: when this file's conflict came from an auto-merged
+  // PR, pre-fill the Ask-Claude prompt with PR/file/region context. The
+  // user still has to confirm via Ctrl+Shift+R to actually send it.
+  useEffect(() => {
+    if (!current?.loaded) return;
+    if (!sessionsAutoMerged.has(sessionId)) return;
+    if (intent.trim().length > 0) return;
+    if (regions.length === 0) return;
+    const summary = regions
+      .map((r, i) => `- region ${i + 1}: -${r.oursLines.length} ours / +${r.theirsLines.length} theirs`)
+      .join("\n");
+    const template = `Auto-merge blocked by conflict in ${path}.\n\n${summary}\n\nResolve preserving both intents where possible; favor theirs for non-functional churn (formatting, imports). Press Ctrl+Shift+R to send this prompt.`;
+    setIntentMap((prev) => ({ ...prev, [key]: template }));
+  }, [current?.loaded, sessionsAutoMerged, sessionId, intent, regions.length, path, key, setIntentMap]);
 
   useEffect(() => {
     if (focusedRegion >= regions.length) setFocusedRegion(Math.max(0, regions.length - 1));
@@ -526,22 +554,22 @@ function ConflictView({
                 <span className="text-purple-400">+{regions[focusedRegion].theirsLines.length}</span>
               </span>
             )}
-            <button onClick={() => applyRegion(focusedRegion, "ours")} className="ml-2 flex h-5 items-center gap-1 rounded bg-blue-500/15 px-2 text-[10px] text-blue-300 hover:bg-blue-500/25 transition-colors" title="Use Ours (O)"><Minus size={9} /> Ours</button>
-            <button onClick={() => applyRegion(focusedRegion, "theirs")} className="flex h-5 items-center gap-1 rounded bg-purple-500/15 px-2 text-[10px] text-purple-300 hover:bg-purple-500/25 transition-colors" title="Use Theirs (T)"><Minus size={9} /> Theirs</button>
-            <button onClick={() => applyRegion(focusedRegion, "both")} className="flex h-5 items-center gap-1 rounded bg-green-500/15 px-2 text-[10px] text-green-300 hover:bg-green-500/25 transition-colors" title="Use Both (B)"><Minus size={9} /> Both</button>
-            <span className="ml-2 text-[9px] text-muted-foreground/60">↑↓/JK move · Space collapse · O/T/B accept</span>
+            <button onClick={() => applyRegion(focusedRegion, "ours")} className="ml-2 flex h-5 items-center gap-1 rounded bg-blue-500/15 px-2 text-[10px] text-blue-300 hover:bg-blue-500/25 transition-colors"><Minus size={9} /> Ours <Kbd keys="o" /></button>
+            <button onClick={() => applyRegion(focusedRegion, "theirs")} className="flex h-5 items-center gap-1 rounded bg-purple-500/15 px-2 text-[10px] text-purple-300 hover:bg-purple-500/25 transition-colors"><Minus size={9} /> Theirs <Kbd keys="t" /></button>
+            <button onClick={() => applyRegion(focusedRegion, "both")} className="flex h-5 items-center gap-1 rounded bg-green-500/15 px-2 text-[10px] text-green-300 hover:bg-green-500/25 transition-colors"><Minus size={9} /> Both <Kbd keys="b" /></button>
+            <span className="ml-2 text-[9px] text-muted-foreground/60">↑↓/JK move · Space collapse</span>
           </>
         ) : (
           <span className="text-[10px] text-green-400">No markers remain — ready to save.</span>
         )}
         <div className="ml-auto flex items-center gap-1">
           {isDirty && (
-            <Button variant="secondary" size="sm" onClick={resetMerged} className="h-6 gap-1 px-2 text-[10px]" title="Reset (Ctrl+Shift+Z)">
-              <RotateCcw size={10} /> Reset
+            <Button variant="secondary" size="sm" onClick={resetMerged} className="h-6 gap-1 px-2 text-[10px]">
+              <RotateCcw size={10} /> Reset <Kbd keys="ctrl+shift+z" />
             </Button>
           )}
-          <Button size="sm" onClick={saveResolution} className="h-6 gap-1 px-2 text-[10px]" title="Save (Ctrl+Shift+Enter)">
-            <Save size={10} /> Save
+          <Button size="sm" onClick={saveResolution} className="h-6 gap-1 px-2 text-[10px]">
+            <Save size={10} /> Save <Kbd keys="ctrl+shift+enter" />
           </Button>
         </div>
       </div>
@@ -556,7 +584,15 @@ function ConflictView({
             return (
               <div
                 key={i}
-                onClick={() => setFocusedRegion(i)}
+                onClick={(e) => {
+                  setFocusedRegion(i);
+                  // Drop focus from the row so the next Space keypress is
+                  // owned exclusively by the global keydown listener — without
+                  // this, the browser's default button activation fires Space
+                  // on the focused button AND the global handler runs, causing
+                  // the region to toggle twice.
+                  (e.currentTarget as HTMLElement).blur();
+                }}
                 className={`flex items-center gap-2 border-t border-border/20 px-3 py-0.5 cursor-pointer transition-colors ${
                   focused
                     ? "border-l-2 border-l-yellow-500 bg-yellow-500/10"
@@ -564,7 +600,11 @@ function ConflictView({
                 }`}
               >
                 <button
-                  onClick={(e) => { e.stopPropagation(); toggleRegionCollapse(i); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleRegionCollapse(i);
+                    (e.currentTarget as HTMLElement).blur();
+                  }}
                   className="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:bg-secondary"
                   title={collapsed ? "Expand (Space)" : "Collapse (Space)"}
                 >

@@ -19,6 +19,7 @@ import {
   CircleDashed,
   GitBranch,
   ChevronDown,
+  FileDiff,
 } from "lucide-react";
 import { shipDialogAtom, triggerShipAtom, type ShipProgressEvent } from "@/stores/ship";
 import { toastsAtom } from "@/stores/toast";
@@ -39,6 +40,25 @@ interface PrInfo { number: number; title: string; state: string; url: string }
 interface ShipResult { commit_hash: string | null; pr_info: PrInfo }
 interface ChangedFile { path: string; status: string }
 interface GitFullStatus { staged: ChangedFile[]; unstaged: ChangedFile[]; untracked: string[] }
+interface StageEntry {
+  path: string;
+  status: string;
+  source: "staged" | "unstaged" | "untracked";
+}
+
+/// Tooling artefacts that show up as untracked when a worktree was
+/// branched from a commit predating an updated .gitignore. Never useful
+/// to stage — keep them out of the picker noise.
+const TOOLING_PATH_PREFIXES = [
+  ".memory-opt-out", ".worktrees/", ".claude/plans/",
+  ".claude/settings.local.json", ".claude/skills/", ".claude/commands/",
+  ".agent/", ".agents/", ".opencode/", ".windsurf/", ".playwright-cli/",
+  ".gitnexus", "node_modules/", "dist/", "target/", "src-tauri/target/",
+] as const;
+
+function isToolingPath(p: string): boolean {
+  return TOOLING_PATH_PREFIXES.some((prefix) => p === prefix || p.startsWith(prefix));
+}
 
 type Action = "commit" | "commit-push" | "commit-push-pr";
 
@@ -88,7 +108,14 @@ export function ShipDialog() {
   const [body, setBody] = useState("");
   const [branches, setBranches] = useState<string[]>([]);
   const [targetBranch, setTargetBranch] = useState("");
-  const [hasUnstagedWork, setHasUnstagedWork] = useState(false);
+
+  // Stage picker state: every changed file in a unified list, with a
+  // checked-set the user can flip with Space (only files in `toStage`
+  // get staged before commit). Default = all checked so the common case
+  // is one keystroke.
+  const [stageEntries, setStageEntries] = useState<StageEntry[]>([]);
+  const [toStage, setToStage] = useState<Set<string>>(new Set());
+  const [stageCursor, setStageCursor] = useState(0);
 
   // Action arming: default to the most common path, update on hover/focus.
   const [armedAction, setArmedAction] = useState<Action>("commit-push-pr");
@@ -119,7 +146,17 @@ export function ShipDialog() {
       const firstSubject = data.commits[0]?.subject ?? "";
       setTitle(firstSubject);
       setBody(buildBody(data));
-      setHasUnstagedWork(status.unstaged.length + status.untracked.length > 0);
+      // Build the unified stage entries (staged + unstaged + untracked)
+      // filtered against tooling paths. Default-check everything so the
+      // user can hit Ctrl+1/2/3 immediately for the common case.
+      const entries: StageEntry[] = [
+        ...status.staged.map((f) => ({ path: f.path, status: f.status, source: "staged" as const })),
+        ...status.unstaged.map((f) => ({ path: f.path, status: f.status, source: "unstaged" as const })),
+        ...status.untracked.map((p) => ({ path: p, status: "??", source: "untracked" as const })),
+      ].filter((e) => !isToolingPath(e.path));
+      setStageEntries(entries);
+      setToStage(new Set(entries.map((e) => e.path)));
+      setStageCursor(0);
       const filtered = branchList.filter((b) => !b.startsWith("cluihud/"));
       setBranches(filtered);
       const initial = filtered.includes(data.base)
@@ -157,12 +194,21 @@ export function ShipDialog() {
     setState({ open: false, sessionId: null, inlineMessage: null });
   }, [setState]);
 
-  // Stage everything that should land in this commit. Pre-staged files are
-  // already in `git add` index; we only need to add unstaged + untracked.
-  const stageUnstaged = useCallback(async (sessionId: string) => {
-    if (!hasUnstagedWork) return;
-    await invoke("git_stage_all", { sessionId });
-  }, [hasUnstagedWork]);
+  // Reconcile the index against the user's stage selection. For each
+  // changed file: if the user wants it staged (in `toStage`), make sure
+  // it is; if they unchecked it, unstage it. This respects per-file
+  // intent instead of `git add -A` which would force-include everything.
+  const applyStageSelection = useCallback(async (sessionId: string) => {
+    for (const entry of stageEntries) {
+      const wanted = toStage.has(entry.path);
+      const isStaged = entry.source === "staged";
+      if (wanted && !isStaged) {
+        await invoke("git_stage_file", { sessionId, path: entry.path });
+      } else if (!wanted && isStaged) {
+        await invoke("git_unstage_file", { sessionId, path: entry.path });
+      }
+    }
+  }, [stageEntries, toStage]);
 
   // Commit-only path: stage everything → git_commit with title as subject.
   // Body is appended as the commit body (multi-line message).
@@ -172,7 +218,7 @@ export function ShipDialog() {
     setShipping(true);
     setError(null);
     try {
-      await stageUnstaged(state.sessionId);
+      await applyStageSelection(state.sessionId);
       const message = body.trim().length > 0 ? `${title.trim()}\n\n${body.trim()}` : title.trim();
       await invoke<string>("git_commit", { sessionId: state.sessionId, message });
       addToast({ message: "Committed", description: "Local commit created", type: "success" });
@@ -183,7 +229,7 @@ export function ShipDialog() {
     } finally {
       setShipping(false);
     }
-  }, [state.sessionId, title, body, stageUnstaged, addToast, refreshGit, close]);
+  }, [state.sessionId, title, body, applyStageSelection, addToast, refreshGit, close]);
 
   // Commit + Push: same as Commit, then push.
   const runCommitPush = useCallback(async () => {
@@ -192,11 +238,11 @@ export function ShipDialog() {
     setShipping(true);
     setError(null);
     try {
-      await stageUnstaged(state.sessionId);
+      await applyStageSelection(state.sessionId);
       const message = body.trim().length > 0 ? `${title.trim()}\n\n${body.trim()}` : title.trim();
       // Only commit if there are staged files (avoid empty commits when the
       // user just wants to push existing local commits).
-      if (hasUnstagedWork || (preview?.staged_count ?? 0) > 0) {
+      if (toStage.size > 0 || (preview?.staged_count ?? 0) > 0) {
         await invoke<string>("git_commit", { sessionId: state.sessionId, message });
       }
       await invoke<boolean>("git_push", { sessionId: state.sessionId });
@@ -208,7 +254,7 @@ export function ShipDialog() {
     } finally {
       setShipping(false);
     }
-  }, [state.sessionId, title, body, hasUnstagedWork, preview, stageUnstaged, addToast, refreshGit, close]);
+  }, [state.sessionId, title, body, toStage, preview, applyStageSelection, addToast, refreshGit, close]);
 
   // Commit + Push + PR: full ship via existing atomic backend command.
   const runCommitPushPr = useCallback(async () => {
@@ -217,8 +263,8 @@ export function ShipDialog() {
     setShipping(true);
     setError(null);
     try {
-      await stageUnstaged(state.sessionId);
-      const willCommit = (preview.staged_count > 0) || hasUnstagedWork;
+      await applyStageSelection(state.sessionId);
+      const willCommit = (preview.staged_count > 0) || toStage.size > 0;
       const noPriorCommits = preview.commits.length === 0;
       const commitMessage = state.inlineMessage
         ?? (willCommit && noPriorCommits ? title : null);
@@ -242,7 +288,7 @@ export function ShipDialog() {
     } finally {
       setShipping(false);
     }
-  }, [state.sessionId, state.inlineMessage, preview, ghOk, title, body, targetBranch, hasUnstagedWork, stageUnstaged, addToast, refreshGit, close]);
+  }, [state.sessionId, state.inlineMessage, preview, ghOk, title, body, targetBranch, toStage, applyStageSelection, addToast, refreshGit, close]);
 
   const pushOnly = useCallback(async () => {
     if (!state.sessionId || pushing) return;
@@ -268,6 +314,62 @@ export function ShipDialog() {
     if (action === "commit-push") return runCommitPush();
     return runCommitPushPr();
   }, [runCommit, runCommitPush, runCommitPushPr]);
+
+  const toggleStage = useCallback((path: string) => {
+    setToStage((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
+
+  // Keyboard nav for the stage picker section. Active when modal is open
+  // AND focus is not in title/body/textarea (those keep their native
+  // typing). Arrow up/down moves cursor, Space toggles, Ctrl+A select-all.
+  useEffect(() => {
+    if (!state.open || stageEntries.length === 0) return;
+    function onStagingKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      const inTextField = target?.tagName === "INPUT"
+        || target?.tagName === "TEXTAREA"
+        || !!target?.closest(".cm-editor")
+        || target?.getAttribute("contenteditable") === "true";
+      if (inTextField) return;
+
+      if (e.code === "KeyA" && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        setToStage((prev) =>
+          prev.size === stageEntries.length
+            ? new Set()
+            : new Set(stageEntries.map((x) => x.path)),
+        );
+        return;
+      }
+      if (e.code === "Space" && !e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        const path = stageEntries[stageCursor]?.path;
+        if (path) toggleStage(path);
+        return;
+      }
+      if (e.code === "ArrowDown" && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        setStageCursor((i) => (i + 1) % stageEntries.length);
+        return;
+      }
+      if (e.code === "ArrowUp" && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        setStageCursor((i) => (i - 1 + stageEntries.length) % stageEntries.length);
+        return;
+      }
+    }
+    window.addEventListener("keydown", onStagingKey, true);
+    return () => window.removeEventListener("keydown", onStagingKey, true);
+  }, [state.open, stageEntries, stageCursor, toggleStage]);
 
   // Modal-scoped keyboard:
   // - Esc closes
@@ -317,7 +419,7 @@ export function ShipDialog() {
   const nothingToShip = preview !== null
     && preview.commits.length === 0
     && preview.staged_count === 0
-    && !hasUnstagedWork;
+    && toStage.size === 0;
   const titleEmpty = !title.trim();
 
   // Per-action disabled state (each button has its own gate).
@@ -374,12 +476,22 @@ export function ShipDialog() {
           </Banner>
         )}
 
+        {!loading && preview && stageEntries.length > 0 && (
+          <StagePicker
+            entries={stageEntries}
+            toStage={toStage}
+            cursor={stageCursor}
+            setCursor={setStageCursor}
+            toggle={toggleStage}
+          />
+        )}
+
         {!loading && preview && (
           <div className="flex flex-col gap-3">
             <div className="flex flex-col gap-1">
               <label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                 Title
-                {(preview.staged_count > 0 || hasUnstagedWork) && (
+                {(preview.staged_count > 0 || toStage.size > 0) && (
                   <span className="ml-2 normal-case text-[10px] font-normal text-orange-400">
                     · used as commit subject
                   </span>
@@ -502,6 +614,74 @@ export function ShipDialog() {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ── Stage picker ──
+
+function StagePicker({
+  entries,
+  toStage,
+  cursor,
+  setCursor,
+  toggle,
+}: {
+  entries: StageEntry[];
+  toStage: Set<string>;
+  cursor: number;
+  setCursor: (i: number) => void;
+  toggle: (path: string) => void;
+}) {
+  return (
+    <div className="rounded border border-border/50 bg-background/30 p-2">
+      <div className="flex items-center gap-2">
+        <FileDiff size={11} className="text-muted-foreground" />
+        <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+          Stage for commit ({toStage.size}/{entries.length})
+        </span>
+        <span className="ml-auto flex items-center gap-1 text-[9px] text-muted-foreground/60">
+          <Kbd keys="arrowup" /><Kbd keys="arrowdown" /> move
+          <span className="ml-1">·</span>
+          <Kbd keys="space" /> toggle
+          <span>·</span>
+          <Kbd keys="ctrl+a" /> all
+        </span>
+      </div>
+      <div className="mt-1 flex max-h-40 flex-col gap-0.5 overflow-y-auto rounded">
+        {entries.map((entry, i) => {
+          const isCursor = i === cursor;
+          const isChecked = toStage.has(entry.path);
+          const sourceColor =
+            entry.source === "untracked" ? "text-blue-400"
+            : entry.source === "staged" ? "text-green-400"
+            : "text-yellow-400";
+          return (
+            <div
+              key={entry.path}
+              ref={(el) => { if (el && isCursor) el.scrollIntoView({ block: "nearest" }); }}
+              role="button"
+              onClick={() => { setCursor(i); toggle(entry.path); }}
+              className={`flex cursor-pointer items-center gap-2 rounded px-2 py-0.5 text-left font-mono text-[10px] transition-colors ${
+                isCursor ? "bg-orange-500/15 border border-orange-500/40" : "border border-transparent hover:bg-secondary/40"
+              }`}
+            >
+              <span
+                className={`flex size-3 shrink-0 items-center justify-center rounded-sm border ${
+                  isChecked
+                    ? "bg-orange-500 border-orange-500 text-background"
+                    : "border-muted-foreground/40 bg-transparent"
+                }`}
+              >
+                {isChecked && <Check size={9} strokeWidth={3} />}
+              </span>
+              <span className={`shrink-0 w-5 text-center ${sourceColor}`}>{entry.status}</span>
+              <span className="flex-1 truncate text-foreground/85">{entry.path}</span>
+              <span className="shrink-0 text-[9px] uppercase tracking-wider text-muted-foreground/60">{entry.source}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

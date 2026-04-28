@@ -108,6 +108,7 @@ pub fn run() {
             commands::list_branches,
             commands::list_prs,
             commands::get_pr_diff,
+            commands::get_pr_checks,
             commands::gh_pr_merge,
             commands::merge_session,
             commands::cleanup_merged_session,

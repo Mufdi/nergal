@@ -657,6 +657,7 @@ pub struct PrSummary {
     pub state: String,
     pub url: String,
     pub base_ref_name: String,
+    pub head_ref_name: String,
     pub updated_at: String,
 }
 
@@ -679,7 +680,7 @@ pub fn list_prs(db: State<'_, SharedDb>, workspace_id: String) -> Result<Vec<PrS
             "--limit",
             "20",
             "--json",
-            "number,title,state,url,baseRefName,updatedAt",
+            "number,title,state,url,baseRefName,headRefName,updatedAt",
         ])
         .current_dir(&repo_path)
         .output()
@@ -702,6 +703,7 @@ pub fn list_prs(db: State<'_, SharedDb>, workspace_id: String) -> Result<Vec<PrS
                 state: v.get("state")?.as_str()?.to_owned(),
                 url: v.get("url")?.as_str()?.to_owned(),
                 base_ref_name: v.get("baseRefName")?.as_str()?.to_owned(),
+                head_ref_name: v.get("headRefName")?.as_str()?.to_owned(),
                 updated_at: v.get("updatedAt")?.as_str()?.to_owned(),
             })
         })
@@ -749,15 +751,37 @@ pub fn get_pr_diff(
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// Merge a PR via `gh pr merge`. `strategy` is one of `squash` (default,
-/// matches the project's PR convention), `merge`, or `rebase`. On
-/// `mergeable=false` (typically a conflict), the returned error string
+/// CI checks for an arbitrary PR (workspace-scoped, not session-scoped). Used
+/// by the PR Viewer header where the active session may not be the one that
+/// owns the PR. Returns `None` when `gh pr checks` produces no parsable
+/// output rather than surfacing the error: a missing CI block in the header
+/// is benign and the user can retry by reopening the tab.
+#[tauri::command]
+pub fn get_pr_checks(
+    db: State<'_, SharedDb>,
+    workspace_id: String,
+    pr_number: u32,
+) -> Result<Option<crate::worktree::PrChecks>, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let repo_path = db
+        .workspace_repo_path(&workspace_id)
+        .map_err(|e| e.to_string())?
+        .ok_or("workspace not found")?;
+    Ok(crate::worktree::pr_checks(&repo_path, pr_number).ok())
+}
+
+/// Merge a PR via `gh pr merge <number>`. `strategy` is one of `squash`
+/// (default, matches the project's PR convention), `merge`, or `rebase`.
+/// Workspace-scoped (not session-scoped) so the PR Viewer can drive merges
+/// for any PR the user clicks into, regardless of which session is active.
+/// On `mergeable=false` (typically a conflict), the returned error string
 /// contains `mergeable=false` so the frontend can switch to opening the
 /// conflicts tab instead of just toasting the failure.
 #[tauri::command]
 pub fn gh_pr_merge(
     db: State<'_, SharedDb>,
-    session_id: String,
+    workspace_id: String,
+    pr_number: u32,
     strategy: Option<String>,
 ) -> Result<(), String> {
     let strategy = strategy.unwrap_or_else(|| "squash".to_string());
@@ -766,11 +790,15 @@ pub fn gh_pr_merge(
     }
 
     let db = db.lock().map_err(|e| e.to_string())?;
-    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let cwd = db
+        .workspace_repo_path(&workspace_id)
+        .map_err(|e| e.to_string())?
+        .ok_or("workspace not found")?;
     let strategy_flag = format!("--{strategy}");
+    let pr_arg = pr_number.to_string();
 
     let output = std::process::Command::new("gh")
-        .args(["pr", "merge", &strategy_flag])
+        .args(["pr", "merge", &pr_arg, &strategy_flag])
         .current_dir(&cwd)
         .output()
         .map_err(|e| format!("failed to invoke gh: {e}"))?;

@@ -28,14 +28,14 @@
 
 ## 4. Frontend: PR Viewer tab
 
-- [ ] 4.1 Add `pr` tab type to `src/stores/rightPanel.ts`; add `openPrTabAction` atom that opens or focuses a `pr` tab keyed by `(workspaceId, prNumber)`
-- [ ] 4.2 Create `src/components/git/PrViewer.tsx`: header (PR meta + CI), body (annotated diff with chunk nav), footer (Merge button + Apply-with-Claude when annotations exist)
-- [ ] 4.3 Body uses the existing diff component (reuse the chunk-rendering logic from DiffView); add `↑/↓` and `j/k` navigation; add `a` to annotate the focused chunk
-- [ ] 4.4 Add per-PR annotations atom in `src/stores/git.ts`: `prAnnotationsMapAtom: Map<string, Annotation[]>` keyed by `${workspaceId}:${prNumber}`; persistence via existing annotation system if available (else session-only for v3 MVP)
-- [ ] 4.5 "Apply annotations with Claude" footer button: enabled only when `activeSessionId === pr.sessionId AND annotations.length > 0`; on click, build a structured prompt (PR diff + annotations with chunk anchors) and write to the session's PTY via `terminal_paste` or similar; do NOT auto-mark annotations applied
-- [ ] 4.6 "Merge into `<base>`" footer button: invokes `gh_pr_merge`; on success, triggers session-cleanup; on `mergeable=false` error, opens the `conflicts` tab; gated by unresolved annotations with a `Merge anyway` confirm
-- [ ] 4.7 Register `pr` tab renderer in `src/components/layout/RightPanel.tsx`
-- [ ] 4.8 Wire `Ctrl+Enter` shortcut for Merge when `pr` tab is the focused tab
+- [x] 4.1 Added `pr` to `TabType` + `PANEL_CATEGORY_MAP` in `src/stores/rightPanel.ts`. `openPrTabAction` lives in `stores/git.ts` next to the PR state (keyed by `pr:${workspaceId}:${prNumber}` via `prTabId`); reuses `openTabAction` so it focuses an existing tab or pins a new one. Extended `PrSummary` with `head_ref_name` (backend + TS) so the action can pass everything the viewer needs in `tab.data`.
+- [x] 4.2 `src/components/git/PrViewer.tsx` — header (PR # + title + state pill + CI pill + GitHub link), body (annotated diff with chunk nav), footer (Merge into base + Apply-with-Claude when annotations exist). New `get_pr_checks(workspace_id, pr_number)` Tauri command for workspace-scoped CI fetch (existing `poll_pr_checks` was session-scoped).
+- [x] 4.3 Self-contained `parsePrDiff` (PrViewer.tsx) — handles multi-file `gh pr diff` output, emits `file` boundary rows, and tracks hunkIndex globally. `j/k` and `↑/↓` navigate hunks; `a` enters annotation edit mode for the focused hunk. Sticky file headers keep the path in view.
+- [x] 4.4 Added `prAnnotationsMapAtom: Record<string, PrAnnotation[]>` (keyed by `prAnnotationsKey(wsId, prNumber)`) plus `PrAnnotation { id, hunkIndex, text }` in `src/stores/git.ts`. v3 MVP: in-memory only — annotations vanish on app restart, matching the "annotations only exist if they drive Claude" rule.
+- [x] 4.5 Apply-with-Claude button is gated on `isOwningSessionActive` (active session's branch matches the PR's `head_ref_name`). Builds a structured prompt with `### <file> @@ <hunk label>` anchors per annotation and writes via `terminal_paste`. Annotations are not auto-resolved — user clears them manually after Claude confirms the change.
+- [x] 4.6 Merge button calls `gh_pr_merge(workspaceId, prNumber)` (refactored from session-scoped to workspace-scoped — passes `gh pr merge <number>` so the Viewer can drive any PR). On `mergeable=false` it opens the conflicts tab via `openConflictsTabAction`. Unresolved annotations trigger a "Merge anyway" inline confirm. Success path runs `cleanup_merged_session(owningSessionId)` + toast (phase 7 will add the post-cleanup session switch).
+- [x] 4.7 `RightPanel.tsx` — `pr` case in `DocumentContent` renders `<PrViewer data={...} tabId={...} />`; added `GitPullRequest` icon to `TAB_ICONS` (also in `TabBar.tsx`); `viewPanelLabel` gets `pr: "PR"`.
+- [x] 4.8 PR-tab-scoped `Ctrl+Enter` lives inside the viewer's keydown handler (capture phase, gated on `activeTab.id === tabId`). When the annotation textarea is open, Ctrl+Enter saves the annotation instead — Esc cancels.
 
 ## 5. Frontend: PRs sidebar mode
 

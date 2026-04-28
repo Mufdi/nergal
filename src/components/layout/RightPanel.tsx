@@ -23,6 +23,7 @@ import { SpecListView } from "@/components/panel/SpecListView";
 import { SpecPanel } from "@/components/spec/SpecPanel";
 import { GitPanel } from "@/components/git/GitPanel";
 import { ConflictsPanel, ConflictsFilesDrawer } from "@/components/git/ConflictsPanel";
+import { PrViewer, type PrTabData } from "@/components/git/PrViewer";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
 import { FileBrowser } from "@/components/files/FileBrowser";
 import { CodeEditor } from "@/components/editor/CodeEditor";
@@ -40,6 +41,7 @@ import {
   ScrollText,
   FolderOpen,
   AlertTriangle,
+  GitPullRequest,
 } from "lucide-react";
 import {
   Tooltip,
@@ -57,6 +59,7 @@ const TAB_ICONS: Record<TabType, typeof FileText> = {
   git: GitBranch,
   transcript: ScrollText,
   conflicts: AlertTriangle,
+  pr: GitPullRequest,
 };
 
 const PICKER_TYPES: TabType[] = ["plan", "file", "diff", "spec"];
@@ -413,6 +416,7 @@ function viewPanelLabel(view: TabType): string {
     git: "Git",
     transcript: "Transcript",
     conflicts: "Conflicts",
+    pr: "PR",
   };
   return labels[view];
 }
@@ -468,6 +472,12 @@ function DocumentContent({ tab }: { tab: Tab }) {
       return <GitPanelWrapper />;
     case "conflicts":
       return <ConflictsPanelWrapper />;
+    case "pr": {
+      const prData = tab.data as unknown as PrTabData | undefined;
+      return prData
+        ? <PrViewer key={tab.id} data={prData} tabId={tab.id} />
+        : <PlaceholderView label="Missing PR data" />;
+    }
     case "file": {
       const filePath = tab.data?.path as string | undefined;
       const fileSession = tab.data?.sessionId as string | undefined;

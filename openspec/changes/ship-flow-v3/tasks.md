@@ -39,12 +39,12 @@
 
 ## 5. Frontend: PRs sidebar mode
 
-- [ ] 5.1 Add `gitSidebarModeAtom` per workspace: `Map<workspaceId, "files" | "prs">` defaulting to "files"
-- [ ] 5.2 Create `src/components/git/PrListSidebar.tsx`: invokes `list_prs`, renders open-first ordered list with PR number, title (truncated), state badge, CI pill
-- [ ] 5.3 Add Files | PRs toggle to GitPanel sidebar header (segmented buttons)
-- [ ] 5.4 Conditional rendering in GitPanel: show staged/unstaged/untracked sections OR PrListSidebar based on the toggle state
-- [ ] 5.5 Click handler on a PR row dispatches `openPrTabAction`
-- [ ] 5.6 Refresh logic: refresh PRs on workspace switch + after Ship-creates-PR + every 60s while PRs view is active (stop polling when toggled to Files)
+- [x] 5.1 `gitSidebarModeAtom: Record<workspaceId, "files" | "prs">` lives in `stores/git.ts`, defaults to "files" via fallback in GitPanel.
+- [x] 5.2 `src/components/git/PrListSidebar.tsx` consumes `list_prs`, renders state pill (#N + OPEN/MERGED/CLOSED color), title (truncated), `head→base` mono labels, and a state icon. Empty + error + loading states all rendered.
+- [x] 5.3 Files | PRs segmented toggle in the GitPanel sidebar header (uses `FileText` + `GitPullRequest` icons; aria-pressed reflects current mode).
+- [x] 5.4 Conditional render in GitPanel: when `sidebarMode === "prs"` the right column renders `PrListSidebar`, otherwise the existing Staged/Changes/Untracked sections + Kbd hint footer.
+- [x] 5.5 PrListSidebar row dispatches `openPrTabAction({ workspaceId, pr })` on click; `data-nav-item` enables keyboard navigation parity with other panel lists.
+- [x] 5.6 Refresh: workspaceId/refreshSignal change → refetch; clicking PRs toggle bumps `prRefreshSignal`; PR transitions (`prInfo.number` / `prInfo.state` change) auto-bump the signal so a freshly-shipped PR appears without waiting; 60s poll runs only while `active === true` (stops when user flips back to Files).
 
 ## 6. Frontend: Conflicts as a tab
 

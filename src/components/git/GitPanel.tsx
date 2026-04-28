@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { invoke, listen } from "@/lib/tauri";
-import { refreshGitInfoAtom, refreshConflictedFilesAtom, activeConflictedFilesAtom, prChecksMapAtom, type PrChecks } from "@/stores/git";
+import { refreshGitInfoAtom, refreshConflictedFilesAtom, activeConflictedFilesAtom, prChecksMapAtom, gitSidebarModeAtom, type PrChecks, type GitSidebarMode } from "@/stores/git";
+import { PrListSidebar } from "@/components/git/PrListSidebar";
 import { openZenModeAtom } from "@/stores/zenMode";
 import { triggerShipAtom } from "@/stores/ship";
 import { triggerMergeAtom } from "@/stores/shortcuts";
@@ -26,6 +27,8 @@ import {
   Check,
   CircleDashed,
   Maximize2,
+  FileText,
+  GitPullRequest,
 } from "lucide-react";
 import { Kbd } from "@/components/ui/kbd";
 import { workspacesAtom, sessionTabIdsAtom, activeSessionIdAtom, type Workspace } from "@/stores/workspace";
@@ -103,7 +106,30 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
   const [pendingMerge, setPendingMerge] = useState(false);
   const [completing, setCompleting] = useState(false);
   const setWorkspaces = useSetAtom(workspacesAtom);
+  const workspaces = useAtomValue(workspacesAtom);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sidebarModeMap = useAtomValue(gitSidebarModeAtom);
+  const setSidebarModeMap = useSetAtom(gitSidebarModeAtom);
+  const [prRefreshSignal, setPrRefreshSignal] = useState(0);
+
+  /// Resolve the workspace that owns this session — the PRs sidebar fetches
+  /// the workspace's PR list, not the session's. Recomputed on every render
+  /// because workspaces atom is the source of truth.
+  const workspaceId = useMemo<string | null>(() => {
+    for (const ws of workspaces) {
+      if (ws.sessions.some((s) => s.id === sessionId)) return ws.id;
+    }
+    return null;
+  }, [workspaces, sessionId]);
+
+  const sidebarMode: GitSidebarMode = workspaceId
+    ? (sidebarModeMap[workspaceId] ?? "files")
+    : "files";
+
+  function setSidebarMode(mode: GitSidebarMode) {
+    if (!workspaceId) return;
+    setSidebarModeMap((prev) => ({ ...prev, [workspaceId]: mode }));
+  }
 
   const allFiles = [
     ...status.staged.map((f) => f.path),
@@ -207,6 +233,13 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
     pollRef.current = setInterval(tick, 20000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [prInfo, sessionId, setPrChecksMap]);
+
+  /// Bump the PRs sidebar refresh signal whenever the session's PR transitions
+  /// (created, state change). Tracks the PR number so reopening the panel
+  /// after Ship → PR-created shows the new PR without a 60s wait.
+  useEffect(() => {
+    setPrRefreshSignal((n) => n + 1);
+  }, [prInfo?.number, prInfo?.state]);
 
   function handleStageFile(path: string) {
     invoke("git_stage_file", { sessionId, path }).then(refreshCore).catch(() => {});
@@ -572,9 +605,46 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
         </div>
         )}
 
-        {/* Right sidebar: Staged / Unstaged / Untracked */}
+        {/* Right sidebar: Files toggle ↔ PRs list */}
         {!hideChanges && (
-        <div className={`overflow-y-auto ${hideHistory ? "flex-1" : "w-52 shrink-0"}`}>
+        <div className={`flex flex-col overflow-hidden ${hideHistory ? "flex-1" : "w-52 shrink-0"}`}>
+          <div className="flex shrink-0 items-center gap-0.5 border-b border-border/50 px-2 py-1">
+            <button
+              onClick={() => setSidebarMode("files")}
+              className={`flex h-5 flex-1 items-center justify-center gap-1 rounded text-[10px] font-medium transition-colors ${
+                sidebarMode === "files"
+                  ? "bg-secondary text-foreground"
+                  : "text-muted-foreground hover:bg-secondary/50"
+              }`}
+              aria-pressed={sidebarMode === "files"}
+            >
+              <FileText size={10} /> Files
+            </button>
+            <button
+              onClick={() => {
+                setSidebarMode("prs");
+                setPrRefreshSignal((n) => n + 1);
+              }}
+              className={`flex h-5 flex-1 items-center justify-center gap-1 rounded text-[10px] font-medium transition-colors ${
+                sidebarMode === "prs"
+                  ? "bg-secondary text-foreground"
+                  : "text-muted-foreground hover:bg-secondary/50"
+              }`}
+              aria-pressed={sidebarMode === "prs"}
+            >
+              <GitPullRequest size={10} /> PRs
+            </button>
+          </div>
+          {sidebarMode === "prs" && workspaceId ? (
+            <div className="flex-1 overflow-hidden">
+              <PrListSidebar
+                workspaceId={workspaceId}
+                active={sidebarMode === "prs"}
+                refreshSignal={prRefreshSignal}
+              />
+            </div>
+          ) : (
+        <div className="flex-1 overflow-y-auto">
           <FileSection
             title="Staged"
             count={status.staged.length}
@@ -651,6 +721,8 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
             <div className="sticky bottom-0 flex items-center gap-1 border-t border-border/40 bg-card/95 px-3 py-1 text-[9px] text-muted-foreground/60">
               <Kbd keys="arrowup" /><Kbd keys="arrowdown" /> move · <Kbd keys="space" /> stage/unstage
             </div>
+          )}
+        </div>
           )}
         </div>
         )}

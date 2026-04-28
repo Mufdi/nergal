@@ -76,6 +76,12 @@ export const activePrChecksAtom = atom<PrChecks | null>((get) => {
   return get(prChecksMapAtom)[id] ?? null;
 });
 
+export type GitSidebarMode = "files" | "prs";
+
+/// Per-workspace toggle: show staged/unstaged/untracked vs. the workspace's
+/// PRs list in the GitPanel sidebar. Default "files".
+export const gitSidebarModeAtom = atom<Record<string, GitSidebarMode>>({});
+
 /// Per-PR annotations keyed by `${workspaceId}:${prNumber}`. v3 MVP keeps
 /// these in-memory only — they vanish on app restart, which matches the
 /// "annotations only exist if they drive Claude" rule from the design doc.

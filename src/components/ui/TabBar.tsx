@@ -19,6 +19,7 @@ import {
   ScrollText,
   MoreHorizontal,
   AlertTriangle,
+  GitPullRequest,
   X,
 } from "lucide-react";
 
@@ -31,6 +32,7 @@ const TAB_ICONS: Record<TabType, typeof FileText> = {
   git: GitBranch,
   transcript: ScrollText,
   conflicts: AlertTriangle,
+  pr: GitPullRequest,
 };
 
 export function TabBar() {

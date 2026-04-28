@@ -4,6 +4,7 @@ import { invoke } from "@/lib/tauri";
 import {
   prAnnotationsMapAtom,
   prAnnotationsKey,
+  transitionAfterCleanupAction,
   type PrAnnotation,
   type PrChecks,
 } from "@/stores/git";
@@ -189,6 +190,7 @@ export function PrViewer({ data, tabId }: PrViewerProps) {
   const activeTab = useAtomValue(activeTabAtom);
   const addToast = useSetAtom(toastsAtom);
   const openConflictsTab = useSetAtom(openConflictsTabAction);
+  const transitionAfterCleanup = useSetAtom(transitionAfterCleanupAction);
 
   const annotationsKey = useMemo(
     () => prAnnotationsKey(workspaceId, prNumber),
@@ -350,14 +352,16 @@ export function PrViewer({ data, tabId }: PrViewerProps) {
           type: "success",
         });
         if (owningSessionId) {
-          invoke<unknown>("cleanup_merged_session", { sessionId: owningSessionId })
-            .then(() => {
-              addToast({
-                message: "Session cleanup",
-                description: "Worktree, branch, and DB row deleted. Plans archived.",
-                type: "success",
-              });
-            })
+          invoke<{ deleted: boolean; warnings: string[]; archived_plans_path: string | null }>(
+            "cleanup_merged_session",
+            { sessionId: owningSessionId },
+          )
+            .then((res) => transitionAfterCleanup({
+              deletedSessionId: owningSessionId,
+              workspaceId,
+              warnings: res.warnings,
+              archivedPlansPath: res.archived_plans_path,
+            }))
             .catch((err: unknown) => {
               addToast({
                 message: "Cleanup failed",
@@ -393,7 +397,7 @@ export function PrViewer({ data, tabId }: PrViewerProps) {
         }
       })
       .finally(() => setMerging(false));
-  }, [workspaceId, prNumber, baseRefName, owningSessionId, addToast, openConflictsTab]);
+  }, [workspaceId, prNumber, baseRefName, owningSessionId, addToast, openConflictsTab, transitionAfterCleanup]);
 
   function handleMergeClick() {
     if (state !== "OPEN") return;

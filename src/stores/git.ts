@@ -1,6 +1,7 @@
 import { atom } from "jotai";
-import { activeSessionIdAtom } from "./workspace";
+import { activeSessionIdAtom, sessionTabIdsAtom, workspacesAtom, type Workspace } from "./workspace";
 import { openTabAction, expandRightPanelAtom, type TabType } from "./rightPanel";
+import { toastsAtom } from "./toast";
 import { invoke } from "@/lib/tauri";
 
 export interface GitInfo {
@@ -101,6 +102,70 @@ export interface OpenPrTabParams {
   workspaceId: string;
   pr: PrSummary;
 }
+
+export interface TransitionAfterCleanupParams {
+  deletedSessionId: string;
+  workspaceId: string;
+  warnings: string[];
+  archivedPlansPath?: string | null;
+}
+
+/// Post-cleanup transition: removes the deleted session from open tabs,
+/// refreshes the workspaces atom from the backend (so the deleted row is
+/// gone), then either switches to the most-recently-updated remaining
+/// session in the same workspace, or clears `activeSessionIdAtom` when
+/// the workspace is empty (right panel renders the empty state on its
+/// own when there's no active session).
+export const transitionAfterCleanupAction = atom(
+  null,
+  async (get, set, params: TransitionAfterCleanupParams) => {
+    const { deletedSessionId, workspaceId, warnings, archivedPlansPath } = params;
+
+    set(sessionTabIdsAtom, (prev) => prev.filter((id) => id !== deletedSessionId));
+
+    let workspaces: Workspace[];
+    try {
+      workspaces = await invoke<Workspace[]>("get_workspaces");
+      set(workspacesAtom, workspaces);
+    } catch {
+      workspaces = get(workspacesAtom).map((w) => ({
+        ...w,
+        sessions: w.sessions.filter((s) => s.id !== deletedSessionId),
+      }));
+      set(workspacesAtom, workspaces);
+    }
+
+    const ws = workspaces.find((w) => w.id === workspaceId);
+    const candidates = (ws?.sessions ?? [])
+      .filter((s) => s.id !== deletedSessionId && s.status !== "completed")
+      .sort((a, b) => b.updated_at - a.updated_at);
+    const next = candidates[0] ?? null;
+
+    const archiveSuffix = archivedPlansPath ? ` Plans archived to ${archivedPlansPath}` : "";
+    const warningSuffix = warnings.length > 0
+      ? ` (${warnings.length} warning${warnings.length === 1 ? "" : "s"})`
+      : "";
+
+    if (next) {
+      set(activeSessionIdAtom, next.id);
+      set(toastsAtom, {
+        message: "Session cleaned up",
+        description: `Switched to "${next.name}".${archiveSuffix}${warningSuffix}`,
+        type: "success",
+      });
+    } else {
+      const current = get(activeSessionIdAtom);
+      if (current === deletedSessionId) {
+        set(activeSessionIdAtom, null);
+      }
+      set(toastsAtom, {
+        message: "Session cleaned up",
+        description: `Workspace empty. Press Ctrl+N to start a new session.${archiveSuffix}${warningSuffix}`,
+        type: "success",
+      });
+    }
+  },
+);
 
 /// Opens (or focuses) a PR Viewer tab. Multiple PR tabs can coexist — they're
 /// keyed by `(workspaceId, prNumber)` so each PR gets its own tab.

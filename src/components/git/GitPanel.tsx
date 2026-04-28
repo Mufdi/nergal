@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { invoke, listen } from "@/lib/tauri";
-import { refreshGitInfoAtom, refreshConflictedFilesAtom, activeConflictedFilesAtom, prChecksMapAtom, gitSidebarModeAtom, type PrChecks, type GitSidebarMode } from "@/stores/git";
+import { refreshGitInfoAtom, refreshConflictedFilesAtom, activeConflictedFilesAtom, prChecksMapAtom, gitSidebarModeAtom, transitionAfterCleanupAction, type PrChecks, type GitSidebarMode } from "@/stores/git";
 import { PrListSidebar } from "@/components/git/PrListSidebar";
 import { openZenModeAtom } from "@/stores/zenMode";
 import { triggerShipAtom } from "@/stores/ship";
@@ -31,7 +31,7 @@ import {
   GitPullRequest,
 } from "lucide-react";
 import { Kbd } from "@/components/ui/kbd";
-import { workspacesAtom, sessionTabIdsAtom, activeSessionIdAtom, type Workspace } from "@/stores/workspace";
+import { workspacesAtom } from "@/stores/workspace";
 
 interface ChangedFile {
   path: string;
@@ -94,8 +94,7 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
   const refreshGit = useSetAtom(refreshGitInfoAtom);
   const refreshConflicts = useSetAtom(refreshConflictedFilesAtom);
   const conflictedFiles = useAtomValue(activeConflictedFilesAtom);
-  const setSessionTabIds = useSetAtom(sessionTabIdsAtom);
-  const setActiveSessionId = useSetAtom(activeSessionIdAtom);
+  const transitionAfterCleanup = useSetAtom(transitionAfterCleanupAction);
   const setPrChecksMap = useSetAtom(prChecksMapAtom);
   const openZenMode = useSetAtom(openZenModeAtom);
   const triggerShip = useSetAtom(triggerShipAtom);
@@ -105,7 +104,6 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
   const [ciChecks, setCiChecks] = useState<PrChecks | null>(null);
   const [pendingMerge, setPendingMerge] = useState(false);
   const [completing, setCompleting] = useState(false);
-  const setWorkspaces = useSetAtom(workspacesAtom);
   const workspaces = useAtomValue(workspacesAtom);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sidebarModeMap = useAtomValue(gitSidebarModeAtom);
@@ -289,24 +287,26 @@ export function GitPanel({ sessionId, hideHistory = false, hideChanges = false }
   }
 
   /// User-confirmed total cleanup (worktree + branch + plan files + DB row).
-  /// Removes the session from the tab list and clears active selection so
-  /// no ghost references remain after the underlying row disappears.
+  /// Delegates the post-cleanup tab/active-session housekeeping to
+  /// `transitionAfterCleanupAction` so the PR Viewer's merge flow and this
+  /// recovery banner share the same "switch to most recent or empty"
+  /// behavior.
   async function handleCleanupSession() {
+    if (!workspaceId) {
+      addToast({ message: "Cleanup failed", description: "No workspace bound to this session", type: "error" });
+      return;
+    }
     try {
-      const res = await invoke<{ deleted: boolean; warnings: string[] }>("cleanup_merged_session", { sessionId });
-      addToast({
-        message: "Session closed",
-        description: res.warnings.length > 0
-          ? `Cleanup ran with ${res.warnings.length} warning(s). Press Ctrl+N to start a new session.`
-          : "Worktree, branch and plan files removed. Press Ctrl+N to start a new session.",
-        type: "success",
+      const res = await invoke<{ deleted: boolean; warnings: string[]; archived_plans_path: string | null }>(
+        "cleanup_merged_session",
+        { sessionId },
+      );
+      await transitionAfterCleanup({
+        deletedSessionId: sessionId,
+        workspaceId,
+        warnings: res.warnings,
+        archivedPlansPath: res.archived_plans_path,
       });
-      // Remove the deleted session from open tabs so Ctrl+Tab doesn't
-      // navigate back to a ghost. If it was the active session, clear so
-      // the next tab event picks a real one.
-      setSessionTabIds((prev) => prev.filter((id) => id !== sessionId));
-      setActiveSessionId((current) => (current === sessionId ? null : current));
-      invoke<Workspace[]>("get_workspaces").then(setWorkspaces).catch(() => {});
     } catch (e) {
       console.error("cleanup_merged_session failed", e);
       addToast({ message: "Cleanup failed", description: String(e), type: "error" });

@@ -55,8 +55,8 @@
 
 ## 7. Backend + Frontend: cleanup transition
 
-- [ ] 7.1 In the cleanup success handler (in PR Viewer Merge flow OR GitPanel recovery banner), after `cleanup_merged_session` returns successfully, look up the workspace's most recently-`updated_at` remaining session; if found, set `activeSessionIdAtom` to it and open/focus its tab; otherwise clear `activeSessionIdAtom` and close the right panel
-- [ ] 7.2 Toast on transition: "Switched to session: <name>" when a successor exists; "Session closed. Workspace empty." when none
+- [x] 7.1 New shared `transitionAfterCleanupAction` in `stores/git.ts`: drops the deleted session from `sessionTabIdsAtom`, refreshes `workspacesAtom` from `get_workspaces`, picks the workspace's most-recent non-completed session by `updated_at`, sets `activeSessionIdAtom` to it (or clears when there's none — the right panel renders the empty state on its own when `activeSessionIdAtom === null`). Wired into PrViewer's merge-success path and GitPanel's recovery-banner cleanup handler so both surfaces share identical post-cleanup behavior.
+- [x] 7.2 Toast: "Session cleaned up — Switched to \"&lt;name&gt;\". Plans archived to &lt;path&gt; (N warnings)" when a successor exists; "Session cleaned up — Workspace empty. Press Ctrl+N to start a new session." when none. Archive path + warnings appended only when present.
 
 ## 8. Cleanup leftover code
 

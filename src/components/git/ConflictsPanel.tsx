@@ -19,6 +19,7 @@ import {
   conflictIntentMapAtom,
 } from "@/stores/conflict";
 import { activeConflictedFilesAtom, refreshConflictedFilesAtom } from "@/stores/git";
+import { closeTabAction } from "@/stores/rightPanel";
 import { toastsAtom } from "@/stores/toast";
 import { focusZoneAtom } from "@/stores/shortcuts";
 import * as terminalService from "@/components/terminal/terminalService";
@@ -150,6 +151,22 @@ export function ConflictsPanel({ sessionId, inZen = false, onToggleZen }: Props)
   useEffect(() => {
     invoke<boolean>("has_pending_merge", { sessionId }).then(setPendingMerge).catch(() => setPendingMerge(false));
   }, [sessionId, files.length]);
+
+  /// Auto-close the singleton conflicts tab once it has nothing left to do.
+  /// Only fires after the panel has actually seen activity (conflicts present
+  /// or a pending merge) — opening Ctrl+Alt+Q on a clean session shouldn't
+  /// snap the tab shut on the user.
+  const hadActivityRef = useRef(false);
+  const closeTab = useSetAtom(closeTabAction);
+  useEffect(() => {
+    if (files.length > 0 || pendingMerge) {
+      hadActivityRef.current = true;
+      return;
+    }
+    if (!hadActivityRef.current || inZen) return;
+    const t = setTimeout(() => closeTab("conflicts"), 1500);
+    return () => clearTimeout(t);
+  }, [files.length, pendingMerge, inZen, closeTab]);
 
   const completeMerge = useCallback(async () => {
     if (completing) return;

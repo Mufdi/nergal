@@ -48,10 +48,10 @@
 
 ## 6. Frontend: Conflicts as a tab
 
-- [ ] 6.1 Convert `ConflictsPanel.tsx` body into a tab body component (lift any panel-level chrome into a tab host wrapper)
-- [ ] 6.2 Add `conflicts` tab type to `src/stores/rightPanel.ts` if not already present; ensure tab opens via `Ctrl+Alt+Q` and via failed PR merge
-- [ ] 6.3 Implement auto-close of the `conflicts` tab when `conflictedFiles.length === 0 && !pendingMerge`
-- [ ] 6.4 Update GitPanel inline conflicts list to dispatch the tab opener instead of the prior panel toggle
+- [x] 6.1 ConflictsPanel was already rendering as a tab body — singleton tab id `conflicts`, no panel-level chrome to lift. The PR Viewer's `mergeable=false` path now routes here via `openConflictsTabAction`.
+- [x] 6.2 `conflicts` already in `TabType` (phase 1); `Ctrl+Alt+Q` shortcut + GitPanel inline list + PrViewer failed-merge all dispatch `openConflictsTabAction`.
+- [x] 6.3 Added activity-gated auto-close in ConflictsPanel: `hadActivityRef` flips on first `files.length > 0` OR `pendingMerge`; once both go falsy and the panel had activity, schedules `closeTabAction("conflicts")` after 1.5s. `Ctrl+Alt+Q` on a clean session no longer snaps the tab shut on the user (no activity → no auto-close). Disabled in Zen mode.
+- [x] 6.4 GitPanel's inline conflicts list already dispatches `openConflictsTab({ sessionId, path })`; no panel-toggle leftover.
 
 ## 7. Backend + Frontend: cleanup transition
 

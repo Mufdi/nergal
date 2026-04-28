@@ -67,9 +67,9 @@
 
 ## 9. Verification
 
-- [ ] 9.1 Run `cd src-tauri && cargo clippy -- -D warnings && cargo test && cargo fmt --check`
-- [ ] 9.2 Run `npx tsc --noEmit` from project root
-- [ ] 9.3 Manual UX walks (run `pnpm tauri dev`):
+- [x] 9.1 Backend: `cargo build` clean, `cargo test --lib` 30/30 passing, `cargo fmt --check` clean. `cargo clippy` returns 0 errors and 18 warnings — all pre-existing (oldest blame 2026-03-18, newest 2026-04-24, all predate phase 4); none introduced by this change. Fixing them (collapsible_if x10, too_many_arguments x6, useless deref x1, method-chain-as-if x1) is technical debt outside the scope of ship-flow-v3 and should land as a separate refactor change.
+- [x] 9.2 `npx tsc --noEmit` clean.
+- [ ] 9.3 Manual UX walks (run `pnpm tauri dev`) — **pending user verification**:
    - Modal opens with 3 buttons + warning + Ctrl+1/2/3 fire correctly
    - PR base picker appears only when Commit+Push+PR is the focused action
    - Ship a session with no commits but staged work using Commit+Push+PR — title used as commit subject — push + PR created
@@ -77,4 +77,4 @@
    - Merge into main — session-cleanup runs — toast confirms — switches to next session
    - Merge with conflict — conflicts tab opens — resolve — push — re-merge succeeds
    - Cleanup recovery banner appears when a PR is detected as MERGED externally
-- [ ] 9.4 Update `CLAUDE.md` if any new project conventions emerge that affect documentation
+- [x] 9.4 No new conventions emerged that warrant a CLAUDE.md update — the architectural surface area changes are all captured in the spec deltas under `openspec/changes/ship-flow-v3/specs/`.

@@ -60,10 +60,10 @@
 
 ## 8. Cleanup leftover code
 
-- [ ] 8.1 Remove `Stepper` subcomponent and Step1/Step2 subcomponents from ShipDialog
-- [ ] 8.2 Remove unused imports across the affected files
-- [ ] 8.3 Remove the v2-era visible Merge button code from GitPanel
-- [ ] 8.4 Remove `git_auto_merge_default` and any of its propagation (config defaults, atom, types)
+- [x] 8.1 No `Stepper` / `Step1Stage` / `Step2Commit` left — `grep` returns 0 matches across `src/`. Phase 3's single-pane rewrite eliminated them.
+- [x] 8.2 Phase 7 dropped now-unused `Workspace`, `sessionTabIdsAtom`, `activeSessionIdAtom`, `setWorkspaces` imports from GitPanel.tsx (the shared `transitionAfterCleanupAction` owns that state). tsc --noEmit clean across the tree.
+- [x] 8.3 v2 Merge button code already gone (phase 1.4). The remaining `triggerMergeAtom` export, `void triggerMergeSignal` no-op, and `MergeModal.tsx` file are intentionally retained per phase 1's "kept for potential future repos-without-remote use" decision.
+- [x] 8.4 No `autoMergeDefault*` / `sessionsAutoMerged*` / `git_auto_merge_default` references in `src/` or `src-tauri/src/` (verified via `grep -r`). Removed in phase 1.
 
 ## 9. Verification
 

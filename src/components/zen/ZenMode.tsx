@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { zenModeAtom, closeZenModeAtom, zenModeNavigateAtom } from "@/stores/zenMode";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
@@ -11,6 +11,7 @@ import { invoke } from "@/lib/tauri";
 import { X, ChevronLeft, ChevronRight } from "lucide-react";
 
 type SidebarTab = "changes" | "history";
+type ZenZone = "viewer" | "sidebar";
 
 /// Full-screen diff review overlay with git sidebar.
 export function GitFullView() {
@@ -21,6 +22,9 @@ export function GitFullView() {
   const close = useSetAtom(closeZenModeAtom);
   const navigate = useSetAtom(zenModeNavigateAtom);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("changes");
+  const [zone, setZone] = useState<ZenZone>("viewer");
+  const viewerRef = useRef<HTMLDivElement>(null);
+  const sidebarRef = useRef<HTMLDivElement>(null);
 
   const closeAll = useCallback(() => {
     if (conflictsZen) setConflictsZen(false);
@@ -38,6 +42,12 @@ export function GitFullView() {
     } else if (e.key === "ArrowLeft" && e.altKey && state.open) {
       e.preventDefault();
       navigate("prev");
+    } else if (e.key === "Tab" && state.open && !e.altKey && !e.ctrlKey && !e.metaKey) {
+      // Tab toggles focus between the diff viewer and the git sidebar so the
+      // user can drive chunk nav (j/k/Space) or file nav from the keyboard
+      // without reaching for the mouse.
+      e.preventDefault();
+      setZone((z) => (z === "viewer" ? "sidebar" : "viewer"));
     }
   }, [state.open, conflictsZen, closeAll, navigate]);
 
@@ -45,6 +55,21 @@ export function GitFullView() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
+
+  // Whenever the active Zen zone changes (or Zen opens), move DOM focus there
+  // so the right keyboard listener (DiffView capture vs FilesChip window)
+  // owns the next keystroke. The sidebar specifically focuses the inner chip
+  // container so FilesChip's inZen scope-check (target ∈ chip) passes.
+  useEffect(() => {
+    if (!state.open) return;
+    const root = zone === "viewer" ? viewerRef.current : sidebarRef.current;
+    if (!root) return;
+    const focusTarget =
+      zone === "viewer"
+        ? (root.querySelector("[data-scrollable]") as HTMLElement | null) ?? root
+        : (root.querySelector("[data-files-chip]") as HTMLElement | null) ?? root;
+    requestAnimationFrame(() => focusTarget.focus());
+  }, [zone, state.open, state.filePath, sidebarTab]);
 
   if (conflictsZen && sessionId) {
     return (
@@ -74,7 +99,14 @@ export function GitFullView() {
       />
 
       {/* Diff content area */}
-      <div className="relative z-10 flex min-w-0 flex-1 flex-col m-3 mr-0 overflow-hidden">
+      <div
+        ref={viewerRef}
+        tabIndex={-1}
+        onMouseDown={() => setZone("viewer")}
+        className={`relative z-10 flex min-w-0 flex-1 flex-col m-3 mr-0 overflow-hidden outline-none ring-1 transition-colors ${
+          zone === "viewer" ? "ring-primary/40" : "ring-transparent"
+        }`}
+      >
         {/* Header */}
         <div className="flex h-9 shrink-0 items-center justify-between rounded-t-lg bg-card/95 border border-border px-3">
           <div className="flex items-center gap-2">
@@ -100,7 +132,7 @@ export function GitFullView() {
             </button>
           </div>
           <div className="flex items-center gap-1">
-            <span className="text-[10px] text-muted-foreground">Esc to close</span>
+            <span className="text-[10px] text-muted-foreground">Tab to switch · Esc to close</span>
             <button
               type="button"
               onClick={close}
@@ -119,7 +151,14 @@ export function GitFullView() {
       </div>
 
       {/* Git sidebar with tabs */}
-      <div className="relative z-10 w-72 shrink-0 flex flex-col m-3 ml-1.5 overflow-hidden rounded-lg bg-card/95 border border-border">
+      <div
+        ref={sidebarRef}
+        tabIndex={-1}
+        onMouseDown={() => setZone("sidebar")}
+        className={`relative z-10 w-72 shrink-0 flex flex-col m-3 ml-1.5 overflow-hidden rounded-lg bg-card/95 border outline-none ring-1 transition-colors ${
+          zone === "sidebar" ? "border-primary/40 ring-primary/40" : "border-border ring-transparent"
+        }`}
+      >
         {/* Tab bar */}
         <div className="flex shrink-0 border-b border-border/50">
           {(["changes", "history"] as const).map((tab) => (
@@ -162,7 +201,7 @@ function GitPanelChangesOnly({ sessionId }: { sessionId: string }) {
   }, [sessionId]);
   return (
     <div className="h-full overflow-hidden">
-      <FilesChip sessionId={sessionId} ahead={ahead} />
+      <FilesChip sessionId={sessionId} ahead={ahead} inZen />
     </div>
   );
 }

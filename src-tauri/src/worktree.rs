@@ -1242,32 +1242,67 @@ fn stash_ref(index: u32) -> String {
     format!("stash@{{{index}}}")
 }
 
-/// Apply a stash without removing it from the stack.
-pub fn stash_apply(cwd: &Path, index: u32) -> Result<()> {
+/// Outcome of a `git stash apply`/`git stash pop`. Conflicts are reported as
+/// data instead of as an error so the UI can route the user to the Conflicts
+/// chip rather than surfacing a generic failure toast. `stash_kept` matches
+/// git's own behavior: apply never drops the stash; pop drops it on a clean
+/// merge but keeps it when conflicts force git to abort the drop step.
+#[derive(Clone, serde::Serialize)]
+pub struct StashApplyOutcome {
+    pub conflicted_files: Vec<String>,
+    pub stash_kept: bool,
+}
+
+/// Apply a stash without removing it from the stack. Conflicts produced by
+/// the apply are returned as data — git exits non-zero when conflicts arise
+/// but the apply itself succeeded with markers in the working tree.
+pub fn stash_apply(cwd: &Path, index: u32) -> Result<StashApplyOutcome> {
     let output = Command::new("git")
         .args(["stash", "apply", &stash_ref(index)])
         .current_dir(cwd)
         .output()
         .context("failed to execute git stash apply")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git stash apply failed: {stderr}");
+    if output.status.success() {
+        return Ok(StashApplyOutcome {
+            conflicted_files: Vec::new(),
+            stash_kept: true,
+        });
     }
-    Ok(())
+    let conflicts = conflicted_files(cwd).unwrap_or_default();
+    if !conflicts.is_empty() {
+        return Ok(StashApplyOutcome {
+            conflicted_files: conflicts,
+            stash_kept: true,
+        });
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    anyhow::bail!("git stash apply failed: {stderr}");
 }
 
-/// Apply a stash and drop it from the stack on success.
-pub fn stash_pop(cwd: &Path, index: u32) -> Result<()> {
+/// Apply a stash and drop it from the stack on success. On conflicts git
+/// keeps the stash (so the user can retry), and we surface that via
+/// `stash_kept = true`.
+pub fn stash_pop(cwd: &Path, index: u32) -> Result<StashApplyOutcome> {
     let output = Command::new("git")
         .args(["stash", "pop", &stash_ref(index)])
         .current_dir(cwd)
         .output()
         .context("failed to execute git stash pop")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git stash pop failed: {stderr}");
+    if output.status.success() {
+        return Ok(StashApplyOutcome {
+            conflicted_files: Vec::new(),
+            stash_kept: false,
+        });
     }
-    Ok(())
+    let conflicts = conflicted_files(cwd).unwrap_or_default();
+    if !conflicts.is_empty() {
+        return Ok(StashApplyOutcome {
+            conflicted_files: conflicts,
+            stash_kept: true,
+        });
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    anyhow::bail!("git stash pop failed: {stderr}");
 }
 
 /// Drop a stash without applying.

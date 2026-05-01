@@ -49,41 +49,48 @@ export function ChipStrip({ active, conflictCount, prCount, stashCount, onSelect
   }, [active, onSelect]);
 
   return (
-    <div className="flex shrink-0 items-center gap-0.5 border-b border-border/50 px-2 py-1">
-      {CHIP_ORDER.map((mode) => {
-        const { label, icon: Icon } = CHIP_META[mode];
-        const isActive = active === mode;
-        const count = mode === "conflicts" ? conflictCount : mode === "prs" ? prCount : mode === "stashes" ? stashCount : 0;
-        const conflictHot = mode === "conflicts" && conflictCount > 0;
-        const dim = mode === "conflicts" && conflictCount === 0 && !isActive;
-        return (
-          <button
-            key={mode}
-            onClick={() => onSelect(mode)}
-            className={`relative flex h-6 flex-1 items-center justify-center gap-1 rounded text-[10px] font-medium transition-all ${
-              isActive
-                ? conflictHot
-                  ? "bg-red-500/20 text-red-300 ring-1 ring-red-500/60"
-                  : "bg-secondary text-foreground"
-                : conflictHot
-                ? "bg-red-500/10 text-red-400 ring-1 ring-red-500/40 animate-pulse hover:bg-red-500/15"
-                : dim
-                ? "text-muted-foreground/40 hover:text-muted-foreground hover:bg-secondary/30"
-                : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
-            }`}
-            aria-pressed={isActive}
-            title={`${label} (Shift+←/→)`}
-          >
-            <Icon size={11} className={conflictHot && !isActive ? "" : ""} />
-            <span>{label}</span>
-            {count > 0 && (
-              <span className={`tabular-nums text-[9px] ${conflictHot ? "text-red-300" : "text-muted-foreground/70"}`}>
-                ({count})
-              </span>
-            )}
-          </button>
-        );
-      })}
+    <div className="flex shrink-0 items-center border-b border-border/50">
+      <div className="flex flex-1 items-center gap-1 overflow-x-auto scrollbar-none px-2 py-1.5">
+        {CHIP_ORDER.map((mode) => {
+          const { label, icon: Icon } = CHIP_META[mode];
+          const isActive = active === mode;
+          const count = mode === "conflicts" ? conflictCount : mode === "prs" ? prCount : mode === "stashes" ? stashCount : 0;
+          const conflictHot = mode === "conflicts" && conflictCount > 0;
+          const dim = mode === "conflicts" && conflictCount === 0 && !isActive;
+          return (
+            <button
+              key={mode}
+              onClick={() => onSelect(mode)}
+              className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] whitespace-nowrap transition-colors ${
+                isActive
+                  ? conflictHot
+                    ? "bg-red-500/20 text-red-300 ring-1 ring-red-500/60"
+                    : "bg-secondary text-foreground"
+                  : conflictHot
+                    ? "bg-red-500/10 text-red-400 ring-1 ring-red-500/40 animate-pulse hover:bg-red-500/15"
+                    : dim
+                      ? "text-muted-foreground/40 hover:text-muted-foreground hover:bg-secondary/30"
+                      : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground/80"
+              }`}
+              aria-pressed={isActive}
+              title={`${label} (Shift+←/→)`}
+            >
+              <Icon size={11} />
+              {label}
+              {count > 0 && (
+                <span
+                  className={`flex h-3.5 items-center justify-center rounded-full px-1 text-[9px] font-medium tabular-nums ${
+                    conflictHot ? "bg-red-500/30 text-red-200" : "bg-primary/15 text-primary"
+                  }`}
+                  title={`${count}`}
+                >
+                  {count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

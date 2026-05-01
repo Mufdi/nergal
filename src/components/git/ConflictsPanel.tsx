@@ -1,10 +1,16 @@
 import { useEffect, useCallback, useMemo, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { EditorView } from "@codemirror/view";
-import { EditorState, Compartment } from "@codemirror/state";
+import { EditorState, Compartment, type StateEffect } from "@codemirror/state";
 import { basicSetup } from "codemirror";
 import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark";
-import { syntaxHighlighting } from "@codemirror/language";
+import {
+  syntaxHighlighting,
+  codeFolding,
+  foldEffect,
+  unfoldEffect,
+  foldedRanges,
+} from "@codemirror/language";
 import { javascript } from "@codemirror/lang-javascript";
 import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
@@ -285,6 +291,20 @@ function ConflictView({
 
   const regions = useMemo(() => current?.loaded ? parseRegions(current.merged) : [], [current?.merged, current?.loaded]);
 
+  /// Line ranges (0-indexed, inclusive) to hide in the merged pane when their
+  /// region is collapsed. CodeMirror's fold extension consumes these via
+  /// dispatched effects in CodePane — Space then folds/unfolds the entire
+  /// chunk, matching the diff-Zen behavior the user expects.
+  const mergedFoldRanges = useMemo(() => {
+    const out: { fromLine: number; toLine: number }[] = [];
+    for (const idx of collapsedRegions) {
+      const r = regions[idx];
+      if (!r) continue;
+      out.push({ fromLine: r.start, toLine: r.end });
+    }
+    return out;
+  }, [collapsedRegions, regions]);
+
   useEffect(() => {
     if (focusedRegion >= regions.length) setFocusedRegion(Math.max(0, regions.length - 1));
   }, [regions.length, focusedRegion]);
@@ -537,7 +557,16 @@ function ConflictView({
       <div className="grid min-h-0 flex-1 grid-cols-3 gap-0">
         <CodePane title="Ours" accent="text-blue-400" value={current.ours} readOnly filePath={path} wrap={inZen} />
         <CodePane title="Theirs" accent="text-purple-400" value={current.theirs} readOnly filePath={path} wrap={inZen} />
-        <CodePane title="Merged (editable)" accent="text-green-400" value={current.merged} onChange={updateMerged} hint="O/T/B accept · ↑↓ region" filePath={path} wrap={inZen} />
+        <CodePane
+          title="Merged (editable)"
+          accent="text-green-400"
+          value={current.merged}
+          onChange={updateMerged}
+          hint="O/T/B accept · ↑↓ region · space fold"
+          filePath={path}
+          wrap={inZen}
+          foldLineRanges={mergedFoldRanges}
+        />
       </div>
 
       {/* Intent + Ask Claude */}
@@ -565,7 +594,7 @@ function ConflictView({
 }
 
 /// Code pane with CodeMirror (syntax highlighting + line numbers).
-function CodePane({ title, accent, value, onChange, readOnly, hint, filePath, wrap = false }: {
+function CodePane({ title, accent, value, onChange, readOnly, hint, filePath, wrap = false, foldLineRanges }: {
   title: string;
   accent: string;
   value: string;
@@ -574,6 +603,10 @@ function CodePane({ title, accent, value, onChange, readOnly, hint, filePath, wr
   hint?: string;
   filePath: string;
   wrap?: boolean;
+  /// Line ranges (0-indexed, inclusive) to fold in this editor. Empty/omitted
+  /// = no folds applied. The pane reconciles the editor's current folds with
+  /// this prop on every change, so the caller can drive folds purely as data.
+  foldLineRanges?: { fromLine: number; toLine: number }[];
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -591,6 +624,7 @@ function CodePane({ title, accent, value, onChange, readOnly, hint, filePath, wr
       cmTheme,
       syntaxHighlighting(oneDarkHighlightStyle),
       getLanguageExtension(filePath),
+      codeFolding(),
       editableCompartment.current.of(EditorView.editable.of(!readOnly)),
       EditorView.updateListener.of((update) => {
         if (update.docChanged && onChange) {
@@ -627,6 +661,32 @@ function CodePane({ title, accent, value, onChange, readOnly, hint, filePath, wr
       });
     }
   }, [value]);
+
+  // Reconcile fold state with the foldLineRanges prop. We unfold everything
+  // currently folded then fold the desired ranges — simple and idempotent,
+  // and the regions are tiny (one per conflict), so the cost is negligible.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const ranges = foldLineRanges ?? [];
+    const doc = view.state.doc;
+    const desired: { from: number; to: number }[] = [];
+    for (const { fromLine, toLine } of ranges) {
+      if (fromLine < 0 || fromLine >= doc.lines) continue;
+      const safeTo = Math.min(toLine, doc.lines - 1);
+      if (safeTo < fromLine) continue;
+      desired.push({
+        from: doc.line(fromLine + 1).from,
+        to: doc.line(safeTo + 1).to,
+      });
+    }
+    const effects: StateEffect<unknown>[] = [];
+    foldedRanges(view.state).between(0, doc.length, (from, to) => {
+      effects.push(unfoldEffect.of({ from, to }));
+    });
+    for (const r of desired) effects.push(foldEffect.of(r));
+    if (effects.length > 0) view.dispatch({ effects });
+  }, [foldLineRanges, value]);
 
   return (
     <div className="flex min-h-0 flex-col border-r border-border/50 last:border-r-0">

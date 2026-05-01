@@ -22,9 +22,6 @@ import { FileListView } from "@/components/panel/FileListView";
 import { SpecListView } from "@/components/panel/SpecListView";
 import { SpecPanel } from "@/components/spec/SpecPanel";
 import { GitPanel } from "@/components/git/GitPanel";
-import { ConflictsPanel, ConflictsFilesDrawer } from "@/components/git/ConflictsPanel";
-import { PrViewer, type PrTabData } from "@/components/git/PrViewer";
-import { conflictsZenOpenAtom } from "@/stores/conflict";
 import { FileBrowser } from "@/components/files/FileBrowser";
 import { CodeEditor } from "@/components/editor/CodeEditor";
 import { DagGraph } from "@/components/activity/DagGraph";
@@ -40,8 +37,6 @@ import {
   GitBranch,
   ScrollText,
   FolderOpen,
-  AlertTriangle,
-  GitPullRequest,
 } from "lucide-react";
 import {
   Tooltip,
@@ -58,8 +53,6 @@ const TAB_ICONS: Record<TabType, typeof FileText> = {
   tasks: CheckSquare,
   git: GitBranch,
   transcript: ScrollText,
-  conflicts: AlertTriangle,
-  pr: GitPullRequest,
 };
 
 const PICKER_TYPES: TabType[] = ["plan", "file", "diff", "spec"];
@@ -196,7 +189,6 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
 
   if (activeTab) {
     const showAnnotationsDrawer = activeTab.type === "plan" || activeTab.type === "spec";
-    const showConflictsDrawer = activeTab.type === "conflicts";
     return (
       <div className="flex h-full flex-col gap-1 overflow-hidden">
         <div className="relative flex flex-1 flex-col overflow-hidden rounded bg-card" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus} onKeyDown={handlePanelKeyDown}>
@@ -235,12 +227,6 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
 
         {showAnnotationsDrawer && (
           <AnnotationsDrawer
-            open={annotationsDrawerOpen}
-            onToggle={() => setAnnotationsDrawerOpen(!annotationsDrawerOpen)}
-          />
-        )}
-        {showConflictsDrawer && (
-          <ConflictsFilesDrawerWrapper
             open={annotationsDrawerOpen}
             onToggle={() => setAnnotationsDrawerOpen(!annotationsDrawerOpen)}
           />
@@ -415,8 +401,6 @@ function viewPanelLabel(view: TabType): string {
     tasks: "Tasks",
     git: "Git",
     transcript: "Transcript",
-    conflicts: "Conflicts",
-    pr: "PR",
   };
   return labels[view];
 }
@@ -470,14 +454,6 @@ function DocumentContent({ tab }: { tab: Tab }) {
     }
     case "git":
       return <GitPanelWrapper />;
-    case "conflicts":
-      return <ConflictsPanelWrapper />;
-    case "pr": {
-      const prData = tab.data as unknown as PrTabData | undefined;
-      return prData
-        ? <PrViewer key={tab.id} data={prData} />
-        : <PlaceholderView label="Missing PR data" />;
-    }
     case "file": {
       const filePath = tab.data?.path as string | undefined;
       const fileSession = tab.data?.sessionId as string | undefined;
@@ -503,17 +479,6 @@ function SpecContentWrapper({ tabId, changeName, sessionId, initialSpecPath }: {
   return <SpecPanel changeName={changeName} sessionId={sessionId} initialSpecPath={initialSpecPath} onDirtyChange={handleDirtyChange} />;
 }
 
-function ConflictsPanelWrapper() {
-  const sessionId = useAtomValue(activeSessionIdAtom);
-  const setZen = useSetAtom(conflictsZenOpenAtom);
-  return sessionId ? <ConflictsPanel sessionId={sessionId} onToggleZen={() => setZen(true)} /> : null;
-}
-
-function ConflictsFilesDrawerWrapper({ open, onToggle }: { open: boolean; onToggle: () => void }) {
-  const sessionId = useAtomValue(activeSessionIdAtom);
-  if (!sessionId) return null;
-  return <ConflictsFilesDrawer sessionId={sessionId} open={open} onToggle={onToggle} />;
-}
 
 function GitPanelWrapper() {
   const sessionId = useAtomValue(activeSessionIdAtom);

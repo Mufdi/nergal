@@ -18,7 +18,8 @@ import {
 import { toggleRightPanelAtom, triggerCommitAtom, triggerMergeAtom } from "@/stores/shortcuts";
 import { triggerShipAtom } from "@/stores/ship";
 import { activeGitInfoAtom, refreshGitInfoAtom, conflictedFilesMapAtom, refreshConflictedFilesAtom, activeConflictedFilesAtom } from "@/stores/git";
-import { openConflictsTabAction } from "@/stores/conflict";
+import { selectedConflictFileMapAtom } from "@/stores/conflict";
+import { gitChipModeAtom } from "@/stores/git";
 import { toastsAtom } from "@/stores/toast";
 import { configAtom } from "@/stores/config";
 import { appStore } from "@/stores/jotaiStore";
@@ -104,7 +105,6 @@ const PANEL_BUTTONS: { type: TabType; label: string; shortcut: string; icon: typ
   { type: "diff", label: "Diff", shortcut: "Ctrl+Shift+D", icon: GitCompareArrows },
   { type: "spec", label: "Spec", shortcut: "Ctrl+Shift+S", icon: ClipboardList },
   { type: "git", label: "Git", shortcut: "Ctrl+Shift+G", icon: GitBranch },
-  { type: "conflicts", label: "Conflicts", shortcut: "Ctrl+Alt+Q", icon: AlertTriangle },
 ];
 
 
@@ -131,7 +131,8 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   const activeGitInfo = useAtomValue(activeGitInfoAtom);
   const conflictedFilesMap = useAtomValue(conflictedFilesMapAtom);
   const activeConflictedFiles = useAtomValue(activeConflictedFilesAtom);
-  const openConflictsTab = useSetAtom(openConflictsTabAction);
+  const setSelectedConflictMap = useSetAtom(selectedConflictFileMapAtom);
+  const setChipModeMap = useSetAtom(gitChipModeAtom);
   const addToast = useSetAtom(toastsAtom);
   const activeSession = workspace?.sessions.find((s) => s.id === sessionId) ?? null;
   const isWorktreeSession = activeSession?.worktree_path != null;
@@ -429,10 +430,15 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
             onClick={() => {
               if (!sessionId) return;
               const first = activeConflictedFiles[0];
-              openConflictsTab({ sessionId, path: first });
+              const ws = workspaces.find((w) => w.sessions.some((s) => s.id === sessionId));
+              if (ws) {
+                setSelectedConflictMap((prev) => ({ ...prev, [sessionId]: first }));
+                setChipModeMap((prev) => ({ ...prev, [ws.id]: "conflicts" }));
+              }
+              handleOpenPanel("git");
             }}
             className="mr-1 flex h-6 items-center gap-1 rounded bg-red-500/20 px-2 text-[10px] font-medium text-red-300 hover:bg-red-500/30 transition-colors animate-pulse"
-            title="Open conflict tab"
+            title="Open Conflicts chip"
           >
             <AlertTriangle size={11} />
             CONFLICT · {activeConflictedFiles.length}

@@ -5,6 +5,7 @@ import {
   prAnnotationsMapAtom,
   prAnnotationsKey,
   transitionAfterCleanupAction,
+  gitChipModeAtom,
   type PrAnnotation,
   type PrChecks,
 } from "@/stores/git";
@@ -12,7 +13,7 @@ import { activeSessionIdAtom, workspacesAtom } from "@/stores/workspace";
 import { gitInfoMapAtom } from "@/stores/git";
 import type { Tab } from "@/stores/rightPanel";
 import { toastsAtom } from "@/stores/toast";
-import { openConflictsTabAction } from "@/stores/conflict";
+import { selectedConflictFileMapAtom } from "@/stores/conflict";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import {
   ChevronUp,
@@ -193,7 +194,8 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
   const workspaces = useAtomValue(workspacesAtom);
   const gitInfoMap = useAtomValue(gitInfoMapAtom);
   const addToast = useSetAtom(toastsAtom);
-  const openConflictsTab = useSetAtom(openConflictsTabAction);
+  const setSelectedConflictMap = useSetAtom(selectedConflictFileMapAtom);
+  const setChipModeMap = useSetAtom(gitChipModeAtom);
   const transitionAfterCleanup = useSetAtom(transitionAfterCleanupAction);
 
   const annotationsKey = useMemo(
@@ -389,7 +391,14 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
             type: "info",
           });
           if (owningSessionId) {
-            openConflictsTab({ sessionId: owningSessionId });
+            setChipModeMap((prev) => ({ ...prev, [workspaceId]: "conflicts" }));
+            // Clear pre-selection so ConflictsPanel falls back to the first
+            // conflicted file from the new state.
+            setSelectedConflictMap((prev) => {
+              const copy = { ...prev };
+              delete copy[owningSessionId];
+              return copy;
+            });
           }
         } else {
           addToast({
@@ -400,7 +409,7 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
         }
       })
       .finally(() => setMerging(false));
-  }, [workspaceId, prNumber, baseRefName, owningSessionId, addToast, openConflictsTab, transitionAfterCleanup]);
+  }, [workspaceId, prNumber, baseRefName, owningSessionId, addToast, setChipModeMap, setSelectedConflictMap, transitionAfterCleanup]);
 
   function handleMergeClick() {
     if (state !== "OPEN") return;

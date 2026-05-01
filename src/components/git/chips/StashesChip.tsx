@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@/lib/tauri";
-import { useSetAtom } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { toastsAtom } from "@/stores/toast";
+import { zenModeAtom } from "@/stores/zenMode";
+import { conflictsZenOpenAtom } from "@/stores/conflict";
 import { Textarea } from "@/components/ui/textarea";
 import { Kbd } from "@/components/ui/kbd";
 import {
@@ -30,6 +32,12 @@ export function StashesChip({ sessionId }: StashesChipProps) {
   const branchInputRef = useRef<HTMLInputElement>(null);
   const dropConfirmTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const addToast = useSetAtom(toastsAtom);
+  const zenState = useAtomValue(zenModeAtom);
+  const conflictsZen = useAtomValue(conflictsZenOpenAtom);
+  // Stashes chip never renders inside Zen, so any Zen overlay means the
+  // user is interacting with that overlay — bail to avoid moving the
+  // hidden cursor on j/k/Space/Enter.
+  const listenerActive = !(zenState.open || conflictsZen);
 
   const refresh = useCallback(() => {
     invoke<StashEntry[]>("git_stash_list", { sessionId })
@@ -135,6 +143,7 @@ export function StashesChip({ sessionId }: StashesChipProps) {
   }
 
   useEffect(() => {
+    if (!listenerActive) return;
     function onKey(e: KeyboardEvent) {
       const target = e.target as HTMLElement | null;
       const inField = target?.tagName === "INPUT"
@@ -216,7 +225,7 @@ export function StashesChip({ sessionId }: StashesChipProps) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stashes, cursor, confirmingDropIdx]);
+  }, [stashes, cursor, confirmingDropIdx, listenerActive]);
 
   function onCreateKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {

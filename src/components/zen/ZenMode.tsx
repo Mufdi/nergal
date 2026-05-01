@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { useAtomValue, useSetAtom } from "jotai";
-import { zenModeAtom, closeZenModeAtom, zenModeNavigateAtom } from "@/stores/zenMode";
+import { useState, useEffect, useCallback } from "react";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import { zenModeAtom, zenActiveZoneAtom, closeZenModeAtom, zenModeNavigateAtom } from "@/stores/zenMode";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { DiffView } from "@/components/plan/DiffView";
@@ -11,7 +11,6 @@ import { invoke } from "@/lib/tauri";
 import { X, ChevronLeft, ChevronRight } from "lucide-react";
 
 type SidebarTab = "changes" | "history";
-type ZenZone = "viewer" | "sidebar";
 
 /// Full-screen diff review overlay with git sidebar.
 export function GitFullView() {
@@ -22,9 +21,7 @@ export function GitFullView() {
   const close = useSetAtom(closeZenModeAtom);
   const navigate = useSetAtom(zenModeNavigateAtom);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("changes");
-  const [zone, setZone] = useState<ZenZone>("viewer");
-  const viewerRef = useRef<HTMLDivElement>(null);
-  const sidebarRef = useRef<HTMLDivElement>(null);
+  const [zone, setZone] = useAtom(zenActiveZoneAtom);
 
   const closeAll = useCallback(() => {
     if (conflictsZen) setConflictsZen(false);
@@ -73,20 +70,13 @@ export function GitFullView() {
     return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [handleKeyDown]);
 
-  // Whenever the active Zen zone changes (or Zen opens), move DOM focus there
-  // so the right keyboard listener (DiffView capture vs FilesChip window)
-  // owns the next keystroke. The sidebar specifically focuses the inner chip
-  // container so FilesChip's inZen scope-check (target ∈ chip) passes.
+  // Reset zone to viewer when Zen opens (so chunk nav owns the first key) and
+  // when filePath changes via Alt+Ctrl+→/← navigation. The active zone is the
+  // canonical source of truth for which inner listener (viewer vs sidebar)
+  // handles the keystroke — DOM focus is decorative; we don't depend on it.
   useEffect(() => {
-    if (!state.open) return;
-    const root = zone === "viewer" ? viewerRef.current : sidebarRef.current;
-    if (!root) return;
-    const focusTarget =
-      zone === "viewer"
-        ? (root.querySelector("[data-scrollable]") as HTMLElement | null) ?? root
-        : (root.querySelector("[data-files-chip]") as HTMLElement | null) ?? root;
-    requestAnimationFrame(() => focusTarget.focus());
-  }, [zone, state.open, state.filePath, sidebarTab]);
+    if (state.open) setZone("viewer");
+  }, [state.open, state.filePath, setZone]);
 
   if (conflictsZen && sessionId) {
     return (
@@ -117,10 +107,8 @@ export function GitFullView() {
 
       {/* Diff content area */}
       <div
-        ref={viewerRef}
-        tabIndex={-1}
         onMouseDown={() => setZone("viewer")}
-        className={`relative z-10 flex min-w-0 flex-1 flex-col m-3 mr-0 overflow-hidden outline-none ring-1 transition-colors ${
+        className={`relative z-10 flex min-w-0 flex-1 flex-col m-3 mr-0 overflow-hidden ring-1 transition-colors ${
           zone === "viewer" ? "ring-primary/40" : "ring-transparent"
         }`}
       >
@@ -163,16 +151,14 @@ export function GitFullView() {
 
         {/* Diff viewer — side by side */}
         <div className="flex-1 overflow-hidden rounded-b-lg bg-card/95 border border-t-0 border-border">
-          <DiffView key={state.filePath} filePath={state.filePath} sessionId={state.sessionId} sideBySide />
+          <DiffView key={state.filePath} filePath={state.filePath} sessionId={state.sessionId} sideBySide inZen />
         </div>
       </div>
 
       {/* Git sidebar with tabs */}
       <div
-        ref={sidebarRef}
-        tabIndex={-1}
         onMouseDown={() => setZone("sidebar")}
-        className={`relative z-10 w-72 shrink-0 flex flex-col m-3 ml-1.5 overflow-hidden rounded-lg bg-card/95 border outline-none ring-1 transition-colors ${
+        className={`relative z-10 w-72 shrink-0 flex flex-col m-3 ml-1.5 overflow-hidden rounded-lg bg-card/95 border ring-1 transition-colors ${
           zone === "sidebar" ? "border-primary/40 ring-primary/40" : "border-border ring-transparent"
         }`}
       >
@@ -227,7 +213,7 @@ function GitPanelChangesOnly({ sessionId }: { sessionId: string }) {
 function GitPanelHistoryOnly({ sessionId }: { sessionId: string }) {
   return (
     <div className="h-full overflow-hidden">
-      <HistoryChip sessionId={sessionId} />
+      <HistoryChip sessionId={sessionId} inZen />
     </div>
   );
 }

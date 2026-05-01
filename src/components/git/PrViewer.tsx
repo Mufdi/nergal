@@ -13,7 +13,8 @@ import { activeSessionIdAtom, workspacesAtom } from "@/stores/workspace";
 import { gitInfoMapAtom } from "@/stores/git";
 import type { Tab } from "@/stores/rightPanel";
 import { toastsAtom } from "@/stores/toast";
-import { selectedConflictFileMapAtom } from "@/stores/conflict";
+import { selectedConflictFileMapAtom, conflictsZenOpenAtom } from "@/stores/conflict";
+import { zenModeAtom } from "@/stores/zenMode";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import {
   ChevronUp,
@@ -199,6 +200,9 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
   const setSelectedConflictMap = useSetAtom(selectedConflictFileMapAtom);
   const setChipModeMap = useSetAtom(gitChipModeAtom);
   const transitionAfterCleanup = useSetAtom(transitionAfterCleanupAction);
+  const zenState = useAtomValue(zenModeAtom);
+  const conflictsZen = useAtomValue(conflictsZenOpenAtom);
+  const anyZenOpen = zenState.open || conflictsZen;
 
   const annotationsKey = useMemo(
     () => prAnnotationsKey(workspaceId, prNumber),
@@ -432,14 +436,16 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
     performMerge();
   }
 
-  // Keyboard handling at window level, scoped to the viewer's container ref.
-  // Earlier versions attached to scrollRef which only fires when the scroll
-  // element itself is the focus target — clicking a PR row in PrsChip leaves
-  // focus on the back button, not on scrollRef, so j/k were never delivered.
-  // Window + container check mirrors the FilesChip pattern: nav works when
-  // any element inside the viewer (scroll body, header, footer) holds focus.
+  // Keyboard handling at window level, gated by `isActive` and Zen state.
+  // We deliberately do NOT depend on DOM focus — Tauri's WebKit on Linux
+  // drops `tabIndex=-1` focus across rapid React commits, so the previous
+  // containerRef.contains(target) check meant nav silently failed until the
+  // user clicked into the panel. State-based gating: PrViewer is the active
+  // chip body in PrsChip when isActive=true; Zen never embeds PrViewer, so
+  // anyZenOpen=true means we step out so DiffView/FilesChip in Zen own keys.
   useEffect(() => {
     if (!isActive) return;
+    if (anyZenOpen) return;
     function handleKeyDown(e: KeyboardEvent) {
       if (annotating) return;
       const target = e.target as HTMLElement | null;
@@ -448,9 +454,6 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
         || !!target?.closest(".cm-editor")
         || target?.getAttribute("contenteditable") === "true";
       if (inField) return;
-      // Only handle when focus is somewhere inside this viewer; otherwise
-      // sibling chips (or the chip strip) would steal nav from each other.
-      if (containerRef.current && target && !containerRef.current.contains(target)) return;
 
       if (e.code === "KeyJ" || e.code === "ArrowDown") {
         if (hunks.length === 0) return;
@@ -489,7 +492,7 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hunks.length, annotating, isActive, activeHunk, annotations.length, owningSessionId, toggleCollapse]);
+  }, [hunks.length, annotating, isActive, activeHunk, annotations.length, owningSessionId, toggleCollapse, anyZenOpen]);
 
   // Steal focus when the panel zone wrapper gets focused (Alt+Left/Right).
   useEffect(() => {

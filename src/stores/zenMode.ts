@@ -1,5 +1,15 @@
 import { atom } from "jotai";
 
+export type ZenZone = "viewer" | "sidebar";
+
+/// The Zen overlay is split into a viewer (DiffView / PrViewer / ConflictsPanel)
+/// and a git sidebar. This atom tracks which side currently owns keyboard input,
+/// so the active component's listener can fire while the other one stays out.
+/// We can't rely on DOM focus alone because Tauri's WebKit on Linux loses
+/// `tabIndex=-1` focus on rapid React commits — using state is deterministic.
+/// The default ("viewer") matches the natural intent: Zen opens, you read.
+export const zenActiveZoneAtom = atom<ZenZone>("viewer");
+
 export interface ZenModeState {
   open: boolean;
   filePath: string | null;
@@ -34,6 +44,7 @@ export const openZenModeAtom = atom(
 
 export const closeZenModeAtom = atom(null, (_get, set) => {
   set(zenModeAtom, defaultState);
+  set(zenActiveZoneAtom, "viewer");
 });
 
 export const zenModeNavigateAtom = atom(

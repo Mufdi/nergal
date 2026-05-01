@@ -23,10 +23,12 @@ import {
   conflictKey,
   selectedConflictFileMapAtom,
   conflictIntentMapAtom,
+  conflictsZenOpenAtom,
 } from "@/stores/conflict";
 import { activeConflictedFilesAtom, refreshConflictedFilesAtom } from "@/stores/git";
 import { toastsAtom } from "@/stores/toast";
 import { focusZoneAtom } from "@/stores/shortcuts";
+import { zenModeAtom } from "@/stores/zenMode";
 import * as terminalService from "@/components/terminal/terminalService";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
@@ -143,6 +145,14 @@ export function ConflictsPanel({ sessionId, inZen = false, onToggleZen, onResolv
   const [pendingMerge, setPendingMerge] = useState(false);
   const [completing, setCompleting] = useState(false);
   const addToastFn = useSetAtom(toastsAtom);
+  const zenState = useAtomValue(zenModeAtom);
+  const conflictsZen = useAtomValue(conflictsZenOpenAtom);
+  // Conflicts has its own Zen overlay (single-pane, no sidebar). Listener
+  // gating: in-Zen instance fires when its overlay is open; the inline chip
+  // copy fires only when no Zen is up. Diff Zen also blocks the inline copy.
+  const listenerActive = inZen
+    ? conflictsZen
+    : !(zenState.open || conflictsZen);
 
   useEffect(() => {
     if (files.length === 0) return;
@@ -190,6 +200,7 @@ export function ConflictsPanel({ sessionId, inZen = false, onToggleZen, onResolv
   }, [completing, sessionId, addToastFn]);
 
   useEffect(() => {
+    if (!listenerActive) return;
     function onKey(e: KeyboardEvent) {
       if (!(e.ctrlKey || e.metaKey) || !e.altKey) return;
       if (e.key === "Enter" && pendingMerge && files.length === 0) {
@@ -199,7 +210,7 @@ export function ConflictsPanel({ sessionId, inZen = false, onToggleZen, onResolv
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [pendingMerge, files.length, completeMerge]);
+  }, [pendingMerge, files.length, completeMerge, listenerActive]);
 
   if (files.length === 0) {
     return (
@@ -270,6 +281,11 @@ function ConflictView({
   const [focusedRegion, setFocusedRegion] = useState<number>(0);
   const [collapsedRegions, setCollapsedRegions] = useState<Set<number>>(new Set());
   const [sending, setSending] = useState(false);
+  const zenStateInner = useAtomValue(zenModeAtom);
+  const conflictsZenInner = useAtomValue(conflictsZenOpenAtom);
+  const listenerActiveInner = inZen
+    ? conflictsZenInner
+    : !(zenStateInner.open || conflictsZenInner);
 
   const toggleRegionCollapse = useCallback((idx: number) => {
     setCollapsedRegions((prev) => {
@@ -378,6 +394,7 @@ function ConflictView({
   }, [current, sessionId, path, refreshConflicts, addToast]);
 
   useEffect(() => {
+    if (!listenerActiveInner) return;
     function onKey(e: KeyboardEvent) {
       const target = e.target as HTMLElement | null;
       const inEditor = target?.tagName === "TEXTAREA"
@@ -418,7 +435,7 @@ function ConflictView({
       window.removeEventListener("keydown", onKey, true);
       document.removeEventListener("cluihud:resolve-conflict-active-tab", onResolveActive);
     };
-  }, [regions, focusedRegion, applyRegion, resetMerged, saveResolution, askClaude, toggleRegionCollapse]);
+  }, [regions, focusedRegion, applyRegion, resetMerged, saveResolution, askClaude, toggleRegionCollapse, listenerActiveInner]);
 
   if (!current?.loaded) {
     return <div className="flex flex-1 items-center justify-center text-[11px] text-muted-foreground">Loading conflict…</div>;

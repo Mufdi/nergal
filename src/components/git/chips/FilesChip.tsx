@@ -4,7 +4,7 @@ import { useSetAtom, useAtomValue } from "jotai";
 import { refreshGitInfoAtom } from "@/stores/git";
 import { triggerShipAtom } from "@/stores/ship";
 import { toastsAtom } from "@/stores/toast";
-import { openZenModeAtom, zenModeAtom } from "@/stores/zenMode";
+import { openZenModeAtom, zenModeAtom, zenActiveZoneAtom } from "@/stores/zenMode";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
 import { Textarea } from "@/components/ui/textarea";
 import { Kbd } from "@/components/ui/kbd";
@@ -67,8 +67,15 @@ export function FilesChip({ sessionId, ahead, inZen = false }: FilesChipProps) {
   const openZenMode = useSetAtom(openZenModeAtom);
   const zenState = useAtomValue(zenModeAtom);
   const conflictsZen = useAtomValue(conflictsZenOpenAtom);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const zenZone = useAtomValue(zenActiveZoneAtom);
   const anyZenOpen = zenState.open || conflictsZen;
+  // The Zen sidebar copy fires keys only when the user has switched the Zen
+  // zone to "sidebar" (via Alt+→ or click). The non-Zen copy fires only when
+  // no Zen overlay is up. Result: exactly one FilesChip listener is active
+  // at any time, and DOM focus never enters the equation.
+  const listenerActive = inZen
+    ? anyZenOpen && zenZone === "sidebar"
+    : !anyZenOpen;
 
   const allFiles = [
     ...status.staged.map((f) => f.path),
@@ -167,13 +174,26 @@ export function FilesChip({ sessionId, ahead, inZen = false }: FilesChipProps) {
 
   // List nav: ↑/↓ + j/k move, Space toggles stage, Enter opens Zen.
   //
+  // We hold flatNav + fileCursor in refs and read them inside the handler so
+  // the closure never goes stale. Without this, pressing Space stages a file
+  // (which moves it from `unstaged` → `staged` without changing flatNav.length
+  // or fileCursor); the deps wouldn't change, the effect wouldn't re-run, and
+  // the next Space saw the OLD entry.group="unstaged" and called stage on an
+  // already-staged file (silent no-op). The user's "Space gets stuck until I
+  // press an arrow" was exactly that stale-closure path.
+  //
   // The non-Zen instance bails out while a Zen overlay is open so the in-Zen
   // copy owns keystrokes; otherwise both listeners fight DiffView's chunk nav
   // and `j`/`k` slide the file cursor instead of moving between hunks.
+  const flatNavRef = useRef(flatNav);
+  flatNavRef.current = flatNav;
+  const fileCursorRef = useRef(fileCursor);
+  fileCursorRef.current = fileCursor;
   useEffect(() => {
-    if (flatNav.length === 0) return;
-    if (anyZenOpen && !inZen) return;
+    if (!listenerActive) return;
     function onKey(e: KeyboardEvent) {
+      const flat = flatNavRef.current;
+      if (flat.length === 0) return;
       const target = e.target as HTMLElement | null;
       const inField = target?.tagName === "INPUT"
         || target?.tagName === "TEXTAREA"
@@ -181,30 +201,26 @@ export function FilesChip({ sessionId, ahead, inZen = false }: FilesChipProps) {
         || target?.getAttribute("contenteditable") === "true";
       if (inField) return;
       if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
-      // In Zen, only handle keys when focus is inside this chip's container —
-      // DiffView (centre) handles its own j/k+Space via a capture listener,
-      // and the sidebar shouldn't steal events that bubbled from the viewer.
-      if (inZen && containerRef.current && target && !containerRef.current.contains(target)) return;
       if (e.code === "ArrowDown" || e.code === "KeyJ") {
         e.preventDefault();
-        setFileCursor((i) => (i + 1) % flatNav.length);
+        setFileCursor((i) => (i + 1) % flat.length);
         return;
       }
       if (e.code === "ArrowUp" || e.code === "KeyK") {
         e.preventDefault();
-        setFileCursor((i) => (i - 1 + flatNav.length) % flatNav.length);
+        setFileCursor((i) => (i - 1 + flat.length) % flat.length);
         return;
       }
       if (e.code === "Space") {
         e.preventDefault();
-        const entry = flatNav[fileCursor];
+        const entry = flat[fileCursorRef.current];
         if (!entry) return;
         if (entry.group === "staged") handleUnstageFile(entry.path);
         else handleStageFile(entry.path);
         return;
       }
       if (e.code === "Enter") {
-        const entry = flatNav[fileCursor];
+        const entry = flat[fileCursorRef.current];
         if (!entry) return;
         e.preventDefault();
         openZen(entry.path);
@@ -213,13 +229,13 @@ export function FilesChip({ sessionId, ahead, inZen = false }: FilesChipProps) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flatNav.length, fileCursor, inZen, anyZenOpen]);
+  }, [listenerActive]);
 
   const canCommit = status.staged.length > 0 && commitMsg.trim().length > 0 && !committing;
   const canPushOrShip = ahead > 0 || status.staged.length > 0;
 
   return (
-    <div ref={containerRef} tabIndex={-1} data-files-chip className="flex h-full flex-col outline-none">
+    <div className="flex h-full flex-col">
       {error && (
         <div className="shrink-0 border-b border-border/50 px-3 py-1">
           <span className="text-[10px] text-red-400">{error}</span>

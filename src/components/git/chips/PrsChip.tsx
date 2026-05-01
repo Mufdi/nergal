@@ -1,8 +1,11 @@
 import { useEffect, useState, useCallback } from "react";
+import { useAtomValue } from "jotai";
 import { invoke } from "@/lib/tauri";
 import type { PrSummary } from "@/stores/git";
 import { PrViewer } from "@/components/git/PrViewer";
 import { Kbd } from "@/components/ui/kbd";
+import { zenModeAtom } from "@/stores/zenMode";
+import { conflictsZenOpenAtom } from "@/stores/conflict";
 import {
   ChevronLeft,
   Loader2,
@@ -44,6 +47,11 @@ export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
   const [loading, setLoading] = useState(true);
   const [cursor, setCursor] = useState(0);
   const [selected, setSelected] = useState<PrSummary | null>(null);
+  const zenState = useAtomValue(zenModeAtom);
+  const conflictsZen = useAtomValue(conflictsZenOpenAtom);
+  // PRs chip never lives in Zen — bail when any overlay is open so j/k
+  // doesn't slide the (hidden) picker cursor while the user navigates Zen.
+  const listenerActive = !(zenState.open || conflictsZen);
 
   const refresh = useCallback(() => {
     if (!workspaceId) { setLoading(false); return; }
@@ -62,6 +70,7 @@ export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
   useEffect(() => {
     if (selected) return;
     if (prs.length === 0) return;
+    if (!listenerActive) return;
     function onKey(e: KeyboardEvent) {
       const target = e.target as HTMLElement | null;
       const inField = target?.tagName === "INPUT"
@@ -89,12 +98,13 @@ export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, prs, cursor]);
+  }, [selected, prs, cursor, listenerActive]);
 
   // Backspace in viewer mode returns to picker. Captured at window level
   // because the viewer's scrollRef has tabIndex=-1 and handles its own keys.
   useEffect(() => {
     if (!selected) return;
+    if (!listenerActive) return;
     function onKey(e: KeyboardEvent) {
       const target = e.target as HTMLElement | null;
       const inField = target?.tagName === "INPUT"
@@ -109,7 +119,7 @@ export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected]);
+  }, [selected, listenerActive]);
 
   if (!workspaceId) {
     return (

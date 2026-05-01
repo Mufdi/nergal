@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useAtomValue } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
 import { activeSessionFilesAtom } from "@/stores/files";
+import { zenModeAtom, zenActiveZoneAtom } from "@/stores/zenMode";
+import { conflictsZenOpenAtom } from "@/stores/conflict";
 import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, Maximize2 } from "lucide-react";
 import {
   Tooltip,
@@ -392,9 +394,14 @@ interface DiffViewProps {
   sessionId: string;
   sideBySide?: boolean;
   onOpenZen?: () => void;
+  /// Mark `true` when this DiffView is rendered inside Zen's viewer zone.
+  /// Used to gate the keyboard listener via the zenActiveZoneAtom so the
+  /// underlying (non-Zen) DiffView stops handling keys while Zen is open
+  /// and the in-Zen copy fires only when zone === "viewer".
+  inZen?: boolean;
 }
 
-export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen }: DiffViewProps) {
+export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen, inZen = false }: DiffViewProps) {
   const [lines, setLines] = useState<DiffLine[]>([]);
   const [hunks, setHunks] = useState<Hunk[]>([]);
   const [loading, setLoading] = useState(true);
@@ -472,12 +479,32 @@ export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen }:
     scrollRef.current?.focus();
   }, [filePath]);
 
-  // Keyboard: J/K and Alt+Up/Down for hunks, Space for collapse
+  // Keyboard: J/K and Alt+Up/Down for hunks, Space for collapse.
+  //
+  // The listener is window-level so DOM focus doesn't gate it (Tauri's WebKit
+  // on Linux drops `tabIndex=-1` focus across rapid React commits). Activity
+  // is gated by Zen state instead: when Zen is open, only the in-Zen DiffView
+  // (zone="viewer") fires; when Zen is closed, only the regular tab copy
+  // fires. Result: exactly one DiffView listener live at any moment, no
+  // race with FilesChip / PrViewer in the Zen sidebar.
+  const zenState = useAtomValue(zenModeAtom);
+  const conflictsZen = useAtomValue(conflictsZenOpenAtom);
+  const zenZone = useAtomValue(zenActiveZoneAtom);
+  const anyZenOpen = zenState.open || conflictsZen;
+  const listenerActive = inZen
+    ? anyZenOpen && zenZone === "viewer"
+    : !anyZenOpen;
+
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
+    if (!listenerActive) return;
 
     function handleKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      const inField = target?.tagName === "INPUT"
+        || target?.tagName === "TEXTAREA"
+        || !!target?.closest(".cm-editor")
+        || target?.getAttribute("contenteditable") === "true";
+      if (inField) return;
       if (hunks.length > 1) {
         if (e.code === "KeyK" || (e.code === "ArrowUp" && e.altKey)) {
           e.preventDefault();
@@ -492,16 +519,15 @@ export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen }:
           return;
         }
       }
-      if (e.code === "Space") {
+      if (e.code === "Space" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
         e.preventDefault();
         toggleCollapse(activeHunk);
       }
     }
 
-    // Capture phase to run before global shortcuts
-    el.addEventListener("keydown", handleKeyDown, true);
-    return () => el.removeEventListener("keydown", handleKeyDown, true);
-  }, [hunks.length, activeHunk, navigateHunk, toggleCollapse]);
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [hunks.length, activeHunk, navigateHunk, toggleCollapse, listenerActive]);
 
   if (loading && lines.length === 0) {
     return (

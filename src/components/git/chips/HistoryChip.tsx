@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@/lib/tauri";
-import { useSetAtom } from "jotai";
-import { openZenModeAtom } from "@/stores/zenMode";
+import { useAtomValue, useSetAtom } from "jotai";
+import { openZenModeAtom, zenModeAtom, zenActiveZoneAtom } from "@/stores/zenMode";
+import { conflictsZenOpenAtom } from "@/stores/conflict";
 import { Kbd } from "@/components/ui/kbd";
 
 interface CommitEntry {
@@ -11,15 +12,26 @@ interface CommitEntry {
 
 interface HistoryChipProps {
   sessionId: string;
+  /// When `true`, this History chip is rendered inside the Zen sidebar and
+  /// should listen only when zone === "sidebar". Otherwise the underlying
+  /// chip would race with the in-Zen DiffView for j/k.
+  inZen?: boolean;
 }
 
-export function HistoryChip({ sessionId }: HistoryChipProps) {
+export function HistoryChip({ sessionId, inZen = false }: HistoryChipProps) {
   const [commits, setCommits] = useState<CommitEntry[]>([]);
   const [expandedCommit, setExpandedCommit] = useState<string | null>(null);
   const [commitFiles, setCommitFiles] = useState<Record<string, string[]>>({});
   const [cursor, setCursor] = useState(0);
   const [loading, setLoading] = useState(true);
   const openZenMode = useSetAtom(openZenModeAtom);
+  const zenState = useAtomValue(zenModeAtom);
+  const conflictsZen = useAtomValue(conflictsZenOpenAtom);
+  const zenZone = useAtomValue(zenActiveZoneAtom);
+  const anyZenOpen = zenState.open || conflictsZen;
+  const listenerActive = inZen
+    ? anyZenOpen && zenZone === "sidebar"
+    : !anyZenOpen;
 
   const refresh = useCallback(() => {
     invoke<CommitEntry[]>("get_recent_commits", { sessionId, count: 20 })
@@ -54,6 +66,7 @@ export function HistoryChip({ sessionId }: HistoryChipProps) {
   // ↑/↓ + j/k navigate; Space expands; Enter on expanded commit opens first file
   useEffect(() => {
     if (commits.length === 0) return;
+    if (!listenerActive) return;
     function onKey(e: KeyboardEvent) {
       const target = e.target as HTMLElement | null;
       const inField = target?.tagName === "INPUT"
@@ -82,7 +95,7 @@ export function HistoryChip({ sessionId }: HistoryChipProps) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [commits, cursor]);
+  }, [commits, cursor, listenerActive]);
 
   if (loading) {
     return (

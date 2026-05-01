@@ -82,14 +82,38 @@ export function StashesChip({ sessionId }: StashesChipProps) {
   }
 
   function handleApply(stashIdx: number) {
-    invoke<void>("git_stash_apply", { sessionId, index: stashIdx })
-      .then(() => { addToast({ message: "Stash applied", description: `stash@{${stashIdx}}`, type: "success" }); refresh(); })
+    invoke<{ conflicted_files: string[]; stash_kept: boolean }>("git_stash_apply", { sessionId, index: stashIdx })
+      .then((outcome) => {
+        if (outcome.conflicted_files.length > 0) {
+          const count = outcome.conflicted_files.length;
+          addToast({
+            message: "Stash applied with conflicts",
+            description: `${count} file${count === 1 ? "" : "s"} need resolving — opening Conflicts chip. Stash was kept.`,
+            type: "info",
+          });
+        } else {
+          addToast({ message: "Stash applied", description: `stash@{${stashIdx}}`, type: "success" });
+        }
+        refresh();
+      })
       .catch((err: unknown) => addToast({ message: "Apply failed", description: String(err), type: "error" }));
   }
 
   function handlePop(stashIdx: number) {
-    invoke<void>("git_stash_pop", { sessionId, index: stashIdx })
-      .then(() => { addToast({ message: "Stash popped", description: `stash@{${stashIdx}}`, type: "success" }); refresh(); })
+    invoke<{ conflicted_files: string[]; stash_kept: boolean }>("git_stash_pop", { sessionId, index: stashIdx })
+      .then((outcome) => {
+        if (outcome.conflicted_files.length > 0) {
+          const count = outcome.conflicted_files.length;
+          addToast({
+            message: "Stash popped with conflicts",
+            description: `${count} file${count === 1 ? "" : "s"} need resolving — opening Conflicts chip. Stash was kept (git aborted the drop).`,
+            type: "info",
+          });
+        } else {
+          addToast({ message: "Stash popped", description: `stash@{${stashIdx}}`, type: "success" });
+        }
+        refresh();
+      })
       .catch((err: unknown) => addToast({ message: "Pop failed", description: String(err), type: "error" }));
   }
 

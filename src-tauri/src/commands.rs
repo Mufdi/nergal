@@ -1856,7 +1856,7 @@ pub fn git_stash_apply(
     db: State<'_, SharedDb>,
     session_id: String,
     index: u32,
-) -> Result<(), String> {
+) -> Result<crate::worktree::StashApplyOutcome, String> {
     let db = db.lock().map_err(|e| e.to_string())?;
     let cwd = resolve_session_cwd(&db, &session_id)?;
     crate::worktree::stash_apply(&cwd, index).map_err(|e| e.to_string())
@@ -1867,7 +1867,7 @@ pub fn git_stash_pop(
     db: State<'_, SharedDb>,
     session_id: String,
     index: u32,
-) -> Result<(), String> {
+) -> Result<crate::worktree::StashApplyOutcome, String> {
     let db = db.lock().map_err(|e| e.to_string())?;
     let cwd = resolve_session_cwd(&db, &session_id)?;
     crate::worktree::stash_pop(&cwd, index).map_err(|e| e.to_string())

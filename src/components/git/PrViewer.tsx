@@ -21,6 +21,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip
 import {
   ChevronUp,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   ExternalLink,
   Loader2,
@@ -176,9 +177,13 @@ interface PrViewerProps {
   /// listener gate then keys off `zenActiveZoneAtom === "viewer"` instead
   /// of bailing on any open Zen overlay.
   inZen?: boolean;
+  /// Open the file picker overlay on first mount. PrsChip flips this on when
+  /// the user presses Enter on a PR row so they pick which file to read
+  /// instead of being dropped onto the diff's first file.
+  defaultPickerOpen?: boolean;
 }
 
-export function PrViewer({ data, isActive = true, inZen = false }: PrViewerProps) {
+export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOpen = false }: PrViewerProps) {
   const { workspaceId, prNumber, title, state, url, baseRefName, headRefName } = data;
 
   const [hunks, setHunks] = useState<Hunk[]>([]);
@@ -206,7 +211,7 @@ export function PrViewer({ data, isActive = true, inZen = false }: PrViewerProps
     [setSelectedPrMap, prKey],
   );
   const setPrFilesCache = useSetAtom(prFilesCacheAtom);
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(defaultPickerOpen);
   const [pickerCursor, setPickerCursor] = useState(0);
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -616,12 +621,27 @@ export function PrViewer({ data, isActive = true, inZen = false }: PrViewerProps
         e.preventDefault();
         e.stopPropagation();
         handleMergeClick();
+        return;
+      }
+      // Ctrl+←/→ — file prev/next within the PR's file list.
+      if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.code === "ArrowLeft" || e.code === "ArrowRight")) {
+        if (prFiles.length < 2 || !selectedFile) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const idx = prFiles.indexOf(selectedFile);
+        if (idx === -1) return;
+        const nextIdx = e.code === "ArrowRight"
+          ? (idx + 1) % prFiles.length
+          : (idx - 1 + prFiles.length) % prFiles.length;
+        const next = prFiles[nextIdx];
+        if (next) setSelectedFile(next);
+        return;
       }
     }
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleHunks, annotating, isActive, activeHunk, annotations.length, owningSessionId, toggleCollapse, listenerActive, pickerOpen, prFiles, pickerCursor]);
+  }, [visibleHunks, annotating, isActive, activeHunk, annotations.length, owningSessionId, toggleCollapse, listenerActive, pickerOpen, prFiles, pickerCursor, selectedFile, setSelectedFile]);
 
   // External Ctrl+Shift+K → toggle the picker. When opened, snap the picker
   // cursor to the currently-selected file so j/k starts from a useful spot.
@@ -727,6 +747,38 @@ export function PrViewer({ data, isActive = true, inZen = false }: PrViewerProps
             belongs to which file. */}
         {selectedFile && (
           <div className="flex items-center gap-1.5 text-[10px]">
+            {prFiles.length > 1 && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const idx = prFiles.indexOf(selectedFile);
+                    if (idx === -1) return;
+                    const prev = prFiles[(idx - 1 + prFiles.length) % prFiles.length];
+                    if (prev) setSelectedFile(prev);
+                  }}
+                  className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                  aria-label="Previous file"
+                  title="Previous file (Ctrl+←)"
+                >
+                  <ChevronLeft size={12} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const idx = prFiles.indexOf(selectedFile);
+                    if (idx === -1) return;
+                    const next = prFiles[(idx + 1) % prFiles.length];
+                    if (next) setSelectedFile(next);
+                  }}
+                  className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                  aria-label="Next file"
+                  title="Next file (Ctrl+→)"
+                >
+                  <ChevronRight size={12} />
+                </button>
+              </>
+            )}
             <button
               type="button"
               onClick={() => {

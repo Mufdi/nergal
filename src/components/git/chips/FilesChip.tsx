@@ -152,8 +152,16 @@ export function FilesChip({ sessionId, ahead, inZen = false }: FilesChipProps) {
       .catch((err: unknown) => addToast({ message: "Push failed", description: String(err), type: "error" }));
   }
 
+  // Hold allFiles in a ref so the keyboard listener's onKey closure (which
+  // only re-binds on listenerActive change, not on every status refresh) can
+  // read the FRESH list at keystroke time. Without this, the first Zen open
+  // after mount fires with an empty file list because the listener captured
+  // the closure during the initial render before refresh() resolved.
+  const allFilesRef = useRef<string[]>([]);
+  allFilesRef.current = allFiles;
+
   function openZen(filePath: string) {
-    openZenMode({ filePath, sessionId, files: allFiles });
+    openZenMode({ filePath, sessionId, files: allFilesRef.current });
   }
 
   function toggleFileDiff(path: string) {

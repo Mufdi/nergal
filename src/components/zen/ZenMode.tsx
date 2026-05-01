@@ -35,25 +35,42 @@ export function GitFullView() {
     if (!state.open && !conflictsZen) return;
     if (e.key === "Escape") {
       e.preventDefault();
+      e.stopPropagation();
       closeAll();
-    } else if (e.key === "ArrowRight" && e.altKey && state.open) {
-      e.preventDefault();
-      navigate("next");
-    } else if (e.key === "ArrowLeft" && e.altKey && state.open) {
-      e.preventDefault();
-      navigate("prev");
-    } else if (e.key === "Tab" && state.open && !e.altKey && !e.ctrlKey && !e.metaKey) {
-      // Tab toggles focus between the diff viewer and the git sidebar so the
-      // user can drive chunk nav (j/k/Space) or file nav from the keyboard
-      // without reaching for the mouse.
-      e.preventDefault();
-      setZone((z) => (z === "viewer" ? "sidebar" : "viewer"));
+      return;
     }
-  }, [state.open, conflictsZen, closeAll, navigate]);
+    if (!state.open) return;
+    // Alt+←/→: rebound while Zen is open. Outside Zen these toggle app focus
+    // zones (sidebar/terminal/panel); inside Zen we steal them so the user
+    // moves between the diff viewer and the git sidebar without leaking the
+    // keystroke to the underlying app — same shortcut, same hand position,
+    // contextual meaning.
+    if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight") && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      setZone((z) => (z === "viewer" ? "sidebar" : "viewer"));
+      return;
+    }
+    // Alt+↑/↓: outside Zen these drive the global navigateItems within the
+    // active focus zone (sidebar sessions, panel rows). Inside Zen the
+    // panel underneath is hidden behind the overlay — letting that
+    // shortcut through means a stray Alt+↑ moves sessions/tabs invisibly.
+    // Swallow it; chunk/file nav uses j/k/arrows without the modifier.
+    if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      return;
+    }
+  }, [state.open, conflictsZen, closeAll]);
 
   useEffect(() => {
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    // Capture phase + stopPropagation so the global shortcut registry never
+    // sees Alt+arrow combos while Zen is open. Without capture the shortcut
+    // hook (window bubble listener) fires first and the focus zone leaks.
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [handleKeyDown]);
 
   // Whenever the active Zen zone changes (or Zen opens), move DOM focus there
@@ -132,7 +149,7 @@ export function GitFullView() {
             </button>
           </div>
           <div className="flex items-center gap-1">
-            <span className="text-[10px] text-muted-foreground">Tab to switch · Esc to close</span>
+            <span className="text-[10px] text-muted-foreground">Alt+←/→ to switch · Esc to close</span>
             <button
               type="button"
               onClick={close}

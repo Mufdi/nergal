@@ -589,6 +589,7 @@ export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen }:
         ref={scrollRef}
         className="flex-1 overflow-y-auto outline-none"
         tabIndex={-1}
+        data-scrollable
       >
         <div className="font-mono text-[11px] leading-[18px]" role="region" aria-label="File diff">
           {sideBySide ? (

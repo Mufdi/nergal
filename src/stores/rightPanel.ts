@@ -38,6 +38,13 @@ const defaultTabState: TabState = { tabs: [], activeTabId: null, previewTabId: n
 export const expandRightPanelAtom = atom(0);
 export const tabOpenedSignalAtom = atom(0);
 
+/// Whether the right panel's file-picker overlay (Ctrl+Shift+K) is open. Lifted
+/// out of RightPanel local state so DiffView can bail its capture-phase chunk
+/// listener while the picker owns arrow keys — without this, DiffView's
+/// `j`/`k`/arrow handler stops the picker from receiving keys (capture wins
+/// over React's onKeyDown bubble).
+export const filePickerOpenAtom = atom(false);
+
 export const activePanelViewAtom = atom<TabType | null>(null);
 
 export const tabStateMapAtom = atom<Record<string, TabState>>({});
@@ -182,6 +189,25 @@ export const setDirtyAction = atom(null, (get, set, params: { tabId: string; dir
   set(tabStateMapAtom, (prev) => {
     const state = prev[sessionId] ?? defaultTabState;
     const tabs = state.tabs.map((t) => (t.id === params.tabId ? { ...t, dirty: params.dirty } : t));
+    return { ...prev, [sessionId]: { ...state, tabs } };
+  });
+});
+
+/// Replace the `path` field on a tab's `data` blob so a viewer can swap which
+/// file it shows without remounting via close+open. Used by DiffView's file
+/// prev/next chevrons (and Ctrl+Left/Right) to navigate within
+/// `activeSessionFilesAtom` while keeping the tab — and its diff state —
+/// in place.
+export const setTabPathAction = atom(null, (get, set, params: { tabId: string; path: string }) => {
+  const sessionId = get(activeSessionIdAtom);
+  if (!sessionId) return;
+  set(tabStateMapAtom, (prev) => {
+    const state = prev[sessionId] ?? defaultTabState;
+    const tabs = state.tabs.map((t) =>
+      t.id === params.tabId
+        ? { ...t, data: { ...(t.data ?? {}), path: params.path } }
+        : t,
+    );
     return { ...prev, [sessionId]: { ...state, tabs } };
   });
 });

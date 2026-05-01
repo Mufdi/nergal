@@ -47,6 +47,11 @@ export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
   const [loading, setLoading] = useState(true);
   const [cursor, setCursor] = useState(0);
   const [selected, setSelected] = useState<PrSummary | null>(null);
+  /// One-shot flag: PrsChip's Enter on a PR row sets `selected` *and* asks
+  /// the viewer to open its file picker on mount. Cleared when the user goes
+  /// back to the PR list. Without this flag the viewer always defaulted to
+  /// the first file, which the user found surprising — they expect to pick.
+  const [openPickerOnSelect, setOpenPickerOnSelect] = useState(false);
   const zenState = useAtomValue(zenModeAtom);
   const conflictsZen = useAtomValue(conflictsZenOpenAtom);
   const prZen = useAtomValue(prZenAtom);
@@ -112,6 +117,7 @@ export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
         if (!pr) return;
         e.preventDefault();
         setSelected(pr);
+        setOpenPickerOnSelect(true);
       }
     }
     window.addEventListener("keydown", onKey);
@@ -133,6 +139,7 @@ export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
       if (e.code === "Backspace" && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
         setSelected(null);
+        setOpenPickerOnSelect(false);
       }
     }
     window.addEventListener("keydown", onKey);
@@ -161,7 +168,7 @@ export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
       <div className="flex h-full flex-col">
         <div className="flex shrink-0 items-center gap-1.5 border-b border-border/40 bg-secondary/20 px-2 py-1">
           <button
-            onClick={() => setSelected(null)}
+            onClick={() => { setSelected(null); setOpenPickerOnSelect(false); }}
             className="flex h-5 items-center gap-1 rounded text-[10px] text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
           >
             <ChevronLeft size={11} />
@@ -174,7 +181,7 @@ export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
           </span>
         </div>
         <div className="flex-1 overflow-hidden">
-          <PrViewer data={summaryToData(workspaceId, selected)} />
+          <PrViewer data={summaryToData(workspaceId, selected)} defaultPickerOpen={openPickerOnSelect} />
         </div>
       </div>
     );
@@ -210,7 +217,7 @@ export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
             <button
               key={pr.number}
               onMouseEnter={() => setCursor(i)}
-              onClick={() => setSelected(pr)}
+              onClick={() => { setSelected(pr); setOpenPickerOnSelect(true); }}
               ref={(el) => { if (el && isCursor) el.scrollIntoView({ block: "nearest" }); }}
               className={`flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors border-l-2 ${
                 isCursor

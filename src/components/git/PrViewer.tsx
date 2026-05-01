@@ -185,6 +185,7 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
   const [merging, setMerging] = useState(false);
   const [mergeAnywayConfirm, setMergeAnywayConfirm] = useState(false);
 
+  const containerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const hunkRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const annotationInputRef = useRef<HTMLTextAreaElement>(null);
@@ -431,13 +432,25 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
     performMerge();
   }
 
-  // Keyboard handling at body level: j/k + arrow nav, `a` annotate, Ctrl+Enter merge.
+  // Keyboard handling at window level, scoped to the viewer's container ref.
+  // Earlier versions attached to scrollRef which only fires when the scroll
+  // element itself is the focus target — clicking a PR row in PrsChip leaves
+  // focus on the back button, not on scrollRef, so j/k were never delivered.
+  // Window + container check mirrors the FilesChip pattern: nav works when
+  // any element inside the viewer (scroll body, header, footer) holds focus.
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
+    if (!isActive) return;
     function handleKeyDown(e: KeyboardEvent) {
       if (annotating) return;
-      if (!isActive) return;
+      const target = e.target as HTMLElement | null;
+      const inField = target?.tagName === "INPUT"
+        || target?.tagName === "TEXTAREA"
+        || !!target?.closest(".cm-editor")
+        || target?.getAttribute("contenteditable") === "true";
+      if (inField) return;
+      // Only handle when focus is somewhere inside this viewer; otherwise
+      // sibling chips (or the chip strip) would steal nav from each other.
+      if (containerRef.current && target && !containerRef.current.contains(target)) return;
 
       if (e.code === "KeyJ" || e.code === "ArrowDown") {
         if (hunks.length === 0) return;
@@ -473,8 +486,8 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
         handleMergeClick();
       }
     }
-    el.addEventListener("keydown", handleKeyDown, true);
-    return () => el.removeEventListener("keydown", handleKeyDown, true);
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hunks.length, annotating, isActive, activeHunk, annotations.length, owningSessionId, toggleCollapse]);
 
@@ -492,7 +505,12 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
   }, []);
 
   useEffect(() => {
-    if (isActive) scrollRef.current?.focus();
+    if (isActive) {
+      // Focus the container so the keyboard listener's containment check
+      // passes immediately on mount; the scroll body still owns wheel/scroll
+      // events because focus inside the container is enough.
+      containerRef.current?.focus();
+    }
   }, [isActive, prNumber]);
 
   if (loading && lines.length === 0) {
@@ -520,7 +538,7 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div ref={containerRef} tabIndex={-1} className="flex h-full flex-col outline-none">
       {/* Header */}
       <div className="flex shrink-0 flex-col gap-1 border-b border-border/50 px-3 py-2">
         <div className="flex items-center gap-2 min-w-0">

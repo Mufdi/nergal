@@ -1,6 +1,5 @@
 import { atom } from "jotai";
 import { activeSessionIdAtom, sessionTabIdsAtom, workspacesAtom, type Workspace } from "./workspace";
-import { openTabAction, expandRightPanelAtom, type TabType } from "./rightPanel";
 import { toastsAtom } from "./toast";
 import { invoke } from "@/lib/tauri";
 
@@ -77,12 +76,6 @@ export const activePrChecksAtom = atom<PrChecks | null>((get) => {
   return get(prChecksMapAtom)[id] ?? null;
 });
 
-export type GitSidebarMode = "files" | "prs";
-
-/// Per-workspace toggle: show staged/unstaged/untracked vs. the workspace's
-/// PRs list in the GitPanel sidebar. Default "files".
-export const gitSidebarModeAtom = atom<Record<string, GitSidebarMode>>({});
-
 /// The five chips of the GitPanel. Each chip owns its full layout; chips are
 /// reached via `Shift+←/→` and persist per-workspace.
 export type ChipMode = "files" | "history" | "stashes" | "prs" | "conflicts";
@@ -127,17 +120,6 @@ export const prAnnotationsMapAtom = atom<Record<string, PrAnnotation[]>>({});
 
 export function prAnnotationsKey(workspaceId: string, prNumber: number): string {
   return `${workspaceId}:${prNumber}`;
-}
-
-/// Tab id format for a PR Viewer tab. Stable per (workspace, PR) so reopening
-/// the same PR focuses the existing tab instead of duplicating it.
-export function prTabId(workspaceId: string, prNumber: number): string {
-  return `pr:${workspaceId}:${prNumber}`;
-}
-
-export interface OpenPrTabParams {
-  workspaceId: string;
-  pr: PrSummary;
 }
 
 export interface TransitionAfterCleanupParams {
@@ -201,35 +183,6 @@ export const transitionAfterCleanupAction = atom(
         type: "success",
       });
     }
-  },
-);
-
-/// Opens (or focuses) a PR Viewer tab. Multiple PR tabs can coexist — they're
-/// keyed by `(workspaceId, prNumber)` so each PR gets its own tab.
-export const openPrTabAction = atom(
-  null,
-  (_get, set, params: OpenPrTabParams) => {
-    const { workspaceId, pr } = params;
-    const id = prTabId(workspaceId, pr.number);
-    set(openTabAction, {
-      tab: {
-        id,
-        type: "pr" as TabType,
-        label: `PR #${pr.number}`,
-        data: {
-          workspaceId,
-          prNumber: pr.number,
-          title: pr.title,
-          state: pr.state,
-          url: pr.url,
-          baseRefName: pr.base_ref_name,
-          headRefName: pr.head_ref_name,
-          updatedAt: pr.updated_at,
-        },
-      },
-      isPinned: true,
-    });
-    set(expandRightPanelAtom, (prev: number) => prev + 1);
   },
 );
 

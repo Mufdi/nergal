@@ -19,7 +19,8 @@ import {
 import { layoutPresetAtom, sessionLayoutPresetAtom, applyPresetSignalAtom, type LayoutPreset } from "./layout";
 import { activityDrawerOpenAtom } from "./activity";
 import { activeConflictedFilesAtom, refreshGitInfoAtom } from "./git";
-import { openConflictsTabAction, conflictsZenOpenAtom } from "./conflict";
+import { conflictsZenOpenAtom, selectedConflictFileMapAtom } from "./conflict";
+import { gitChipModeAtom } from "./git";
 import { triggerShipAtom } from "./ship";
 import { toastsAtom } from "./toast";
 import { invoke as invokeCmd } from "@/lib/tauri";
@@ -386,14 +387,23 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     const s = store();
     const activeTab = s.get(activeTabAtom);
     const conflicted = s.get(activeConflictedFilesAtom);
-    if (activeTab?.type === "conflicts") {
-      document.dispatchEvent(new CustomEvent("cluihud:resolve-conflict-active-tab"));
-      return;
-    }
-    if (conflicted.length > 0) {
-      const sid = s.get(activeSessionIdAtom);
-      if (sid) s.set(openConflictsTabAction, { sessionId: sid, path: conflicted[0] });
-      return;
+    const sid = s.get(activeSessionIdAtom);
+    if (sid && conflicted.length > 0) {
+      const workspaces = s.get(workspacesAtom);
+      const ws = workspaces.find((w) => w.sessions.some((sx) => sx.id === sid));
+      if (ws) {
+        const chipMap = s.get(gitChipModeAtom);
+        const currentChip = chipMap[ws.id] ?? "files";
+        // Already on the Conflicts chip → forward to the panel's own resolver.
+        if (currentChip === "conflicts" && activeTab?.type === "git") {
+          document.dispatchEvent(new CustomEvent("cluihud:resolve-conflict-active-tab"));
+          return;
+        }
+        s.set(selectedConflictFileMapAtom, (prev) => ({ ...prev, [sid]: conflicted[0] }));
+        s.set(gitChipModeAtom, (prev) => ({ ...prev, [ws.id]: "conflicts" }));
+        document.dispatchEvent(new CustomEvent("cluihud:open-first-conflict", { detail: { path: conflicted[0] } }));
+        return;
+      }
     }
     if (activeTab?.type === "plan" || activeTab?.type === "spec") {
       document.dispatchEvent(new CustomEvent("cluihud:revise-plan"));
@@ -409,27 +419,23 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     if (!tab) return;
     const sessionId = s.get(activeSessionIdAtom);
     if (!sessionId) return;
-    if (tab.type === "conflicts") {
-      s.set(conflictsZenOpenAtom, (v) => !v);
-    } else if (tab.type === "diff" || tab.type === "file") {
+    if (tab.type === "diff" || tab.type === "file") {
       const filePath = tab.data?.path as string | undefined;
       if (filePath) document.dispatchEvent(new CustomEvent("cluihud:expand-zen", { detail: { filePath, sessionId } }));
     } else if (tab.type === "git") {
+      // Conflicts chip routes to the conflicts-only Zen view; everything else
+      // expands the GitPanel itself.
+      const workspaces = s.get(workspacesAtom);
+      const ws = workspaces.find((w) => w.sessions.some((sx) => sx.id === sessionId));
+      if (ws) {
+        const chipMap = s.get(gitChipModeAtom);
+        if ((chipMap[ws.id] ?? "files") === "conflicts") {
+          s.set(conflictsZenOpenAtom, (v) => !v);
+          return;
+        }
+      }
       document.dispatchEvent(new CustomEvent("cluihud:expand-zen-git", { detail: { sessionId } }));
     }
-  }},
-  { id: "open-conflicts", label: "Toggle Conflicts Panel", keys: "ctrl+alt+q", category: "panel", keywords: ["conflicts", "merge", "resolve", "panel"], handler: () => {
-    const s = store();
-    const sid = s.get(activeSessionIdAtom);
-    if (!sid) return;
-    // Toggle behavior parity with the other panel shortcuts: if the conflicts
-    // tab is already the active one, collapse the right panel.
-    const activeTab = s.get(activeTabAtom);
-    if (activeTab?.type === "conflicts") {
-      s.set(toggleRightPanelAtom, (p: number) => p + 1);
-      return;
-    }
-    s.set(openConflictsTabAction, { sessionId: sid });
   }},
   { id: "cycle-layout", label: "Cycle Layout Preset", keys: "ctrl+shift+i", category: "navigation", keywords: ["layout", "preset", "cycle", "resize"], handler: () => {
     const s = store();

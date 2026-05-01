@@ -11,7 +11,7 @@ import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { ActivityDrawer } from "@/components/activity/ActivityDrawer";
 import { ZenMode } from "@/components/zen/ZenMode";
 import { expandRightPanelAtom, activePanelViewAtom, activeTabAtom, openTabAction } from "@/stores/rightPanel";
-import { activeSessionIdAtom } from "@/stores/workspace";
+import { activeSessionIdAtom, workspacesAtom } from "@/stores/workspace";
 import { planReviewStatusMapAtom, planStateMapAtom } from "@/stores/plan";
 import { toggleSidebarAtom, toggleRightPanelAtom, focusZoneAtom } from "@/stores/shortcuts";
 
@@ -19,8 +19,8 @@ import { layoutPresetAtom, PRESET_SIZES, sessionLayoutPresetAtom, type LayoutPre
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { CommandPalette } from "@/components/command/CommandPalette";
 import { ShipDialog } from "@/components/git/ShipDialog";
-import { activeConflictedFilesAtom } from "@/stores/git";
-import { openConflictsTabAction } from "@/stores/conflict";
+import { activeConflictedFilesAtom, gitChipModeAtom } from "@/stores/git";
+import { selectedConflictFileMapAtom } from "@/stores/conflict";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -57,7 +57,9 @@ export function Workspace() {
   const setActivePanelView = useSetAtom(activePanelViewAtom);
   const activeTab = useAtomValue(activeTabAtom);
   const activeConflictedFiles = useAtomValue(activeConflictedFilesAtom);
-  const openConflictsTab = useSetAtom(openConflictsTabAction);
+  const setSelectedConflictMap = useSetAtom(selectedConflictFileMapAtom);
+  const setChipModeMap = useSetAtom(gitChipModeAtom);
+  const workspaces = useAtomValue(workspacesAtom);
 
   // Redistribute space when sidebar collapses/expands manually
   const prevSidebarCollapsed = useRef(sidebarCollapsed);
@@ -184,20 +186,27 @@ export function Workspace() {
     }
   }, [expandSignal]);
 
-  // Auto-open the Conflicts tab when conflicts appear in the active session.
+  // Auto-route to the Conflicts chip when conflicts appear in the active
+  // session: pre-select the first file, set the chip, expand the right panel.
+  // The user lands on the Conflicts chip immediately, ready to resolve.
   const prevConflictCountRef = useRef(0);
   useEffect(() => {
     if (!activeSessionId) return;
     const count = activeConflictedFiles.length;
     if (count > 0 && prevConflictCountRef.current === 0) {
-      openConflictsTab({ sessionId: activeSessionId, path: activeConflictedFiles[0] });
+      const ws = workspaces.find((w) => w.sessions.some((s) => s.id === activeSessionId));
+      if (ws) {
+        setSelectedConflictMap((prev) => ({ ...prev, [activeSessionId]: activeConflictedFiles[0] }));
+        setChipModeMap((prev) => ({ ...prev, [ws.id]: "conflicts" }));
+      }
+      setActivePanelView("git");
       requestAnimationFrame(() => {
         const panel = rightPanelRef.current;
         if (panel) panel.expand();
       });
     }
     prevConflictCountRef.current = count;
-  }, [activeSessionId, activeConflictedFiles, openConflictsTab]);
+  }, [activeSessionId, activeConflictedFiles, workspaces, setSelectedConflictMap, setChipModeMap, setActivePanelView]);
 
   // Auto-expand right panel when a plan review arrives for the active session
   const prevPlanReviewRef = useRef<string | undefined>(undefined);

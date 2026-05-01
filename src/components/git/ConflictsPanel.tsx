@@ -19,7 +19,6 @@ import {
   conflictIntentMapAtom,
 } from "@/stores/conflict";
 import { activeConflictedFilesAtom, refreshConflictedFilesAtom } from "@/stores/git";
-import { closeTabAction } from "@/stores/rightPanel";
 import { toastsAtom } from "@/stores/toast";
 import { focusZoneAtom } from "@/stores/shortcuts";
 import * as terminalService from "@/components/terminal/terminalService";
@@ -35,8 +34,6 @@ import {
   RotateCcw,
   Send,
   FileCheck,
-  Files,
-  X,
   Maximize2,
   Minimize2,
 } from "lucide-react";
@@ -158,23 +155,19 @@ export function ConflictsPanel({ sessionId, inZen = false, onToggleZen, onResolv
 
   /// Auto-resolve transition once the panel has nothing left to do. Only
   /// fires after the panel saw activity (conflicts present or a pending
-  /// merge). Disabled in Zen mode to avoid snapping the surface shut. When
-  /// `onResolved` is provided (chip mode) it routes to the next chip; the
-  /// legacy tab consumer falls back to closing its singleton tab.
+  /// merge). Disabled in Zen mode to avoid snapping the surface shut.
+  /// `onResolved` routes the user away (chip mode → switch to PRs chip).
   const hadActivityRef = useRef(false);
-  const closeTab = useSetAtom(closeTabAction);
   useEffect(() => {
     if (files.length > 0 || pendingMerge) {
       hadActivityRef.current = true;
       return;
     }
     if (!hadActivityRef.current || inZen) return;
-    const t = setTimeout(() => {
-      if (onResolved) onResolved();
-      else closeTab("conflicts");
-    }, 1500);
+    if (!onResolved) return;
+    const t = setTimeout(onResolved, 1500);
     return () => clearTimeout(t);
-  }, [files.length, pendingMerge, inZen, closeTab, onResolved]);
+  }, [files.length, pendingMerge, inZen, onResolved]);
 
   const completeMerge = useCallback(async () => {
     if (completing) return;
@@ -246,114 +239,6 @@ export function ConflictsPanel({ sessionId, inZen = false, onToggleZen, onResolv
   );
 }
 
-/// Drawer rendered as a sibling of the ConflictsPanel (same pattern as AnnotationsDrawer).
-export function ConflictsFilesDrawer({ sessionId, open, onToggle }: { sessionId: string; open: boolean; onToggle: () => void }) {
-  const files = useAtomValue(activeConflictedFilesAtom);
-  const [selectedMap, setSelectedMap] = useAtom(selectedConflictFileMapAtom);
-  const selectedPath = selectedMap[sessionId] ?? files[0] ?? null;
-  const stateMap = useAtomValue(conflictStateMapAtom);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open || files.length === 0) return;
-    let attempts = 0;
-    const timer = setInterval(() => {
-      attempts++;
-      const el = containerRef.current;
-      if (!el) { if (attempts > 20) clearInterval(timer); return; }
-      el.focus();
-      clearInterval(timer);
-    }, 16);
-    return () => clearInterval(timer);
-  }, [open, files.length]);
-
-  if (files.length === 0) return null;
-
-  if (!open) {
-    return (
-      <button
-        onClick={onToggle}
-        className="flex h-7 shrink-0 items-center gap-1.5 rounded bg-card px-3 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-      >
-        <Files size={11} className="text-yellow-400" />
-        <span>{files.length} conflicted file{files.length !== 1 ? "s" : ""}</span>
-      </button>
-    );
-  }
-
-  function handleKey(e: React.KeyboardEvent) {
-    if (files.length === 0) return;
-    const idx = selectedPath ? files.indexOf(selectedPath) : -1;
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      const next = files[(idx + 1) % files.length];
-      setSelectedMap((prev) => ({ ...prev, [sessionId]: next }));
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      const prev = files[(idx - 1 + files.length) % files.length];
-      setSelectedMap((p) => ({ ...p, [sessionId]: prev }));
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      onToggle();
-    }
-  }
-
-  return (
-    <div
-      ref={containerRef}
-      className="flex shrink-0 flex-col rounded bg-card outline-none"
-      style={{ maxHeight: "30vh" }}
-      tabIndex={-1}
-      onKeyDown={handleKey}
-    >
-      <div className="flex h-8 items-center justify-between border-b border-border px-3">
-        <div className="flex items-center gap-2">
-          <Files size={12} className="text-yellow-400" />
-          <span className="text-xs font-medium text-foreground">Conflicted files</span>
-          <span className="text-[10px] text-muted-foreground">({files.length})</span>
-        </div>
-        <button
-          onClick={onToggle}
-          className="rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-          title="Close (Ctrl+Shift+J)"
-        >
-          <X size={14} />
-        </button>
-      </div>
-      <div className="flex-1 overflow-y-auto py-1.5 px-2">
-        <div className="space-y-1">
-          {files.map((p) => {
-            const name = p.split("/").pop() ?? p;
-            const dir = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
-            const isSelected = p === selectedPath;
-            const state = stateMap[conflictKey(sessionId, p)];
-            const regions = state?.loaded ? parseRegions(state.merged) : [];
-            return (
-              <button
-                key={p}
-                type="button"
-                data-nav-item
-                onClick={() => setSelectedMap((prev) => ({ ...prev, [sessionId]: p }))}
-                className={`group w-full rounded p-2 text-left transition-colors ${
-                  isSelected ? "bg-yellow-500/15" : "bg-secondary/30 hover:bg-secondary/50"
-                }`}
-              >
-                <div className="flex items-center gap-1.5">
-                  <AlertTriangle size={10} className="shrink-0 text-yellow-400" />
-                  <span className="truncate font-mono text-[11px] text-foreground/90" title={p}>{name}</span>
-                  <span className="ml-auto shrink-0 rounded bg-yellow-500/10 px-1.5 py-0.5 text-[9px] text-yellow-300">
-                    {regions.length || "–"} region{regions.length === 1 ? "" : "s"}
-                  </span>
-                </div>
-                {dir && <p className="mt-0.5 pl-4 truncate text-[9px] text-muted-foreground/60">{dir}</p>}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function ConflictView({
   sessionId,

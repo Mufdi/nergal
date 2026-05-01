@@ -660,6 +660,18 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
     return () => document.removeEventListener("cluihud:toggle-file-picker", onToggle);
   }, [isActive, listenerActive, selectedFile, prFiles]);
 
+  // Ctrl+Shift+R routes here when the user is on the PRs chip (see the
+  // revise-or-resolve handler in shortcuts.ts). applyWithClaude is the same
+  // path the footer button uses; it no-ops when there are no annotations or
+  // the owning session isn't active, so the shortcut is safe to fire blind.
+  useEffect(() => {
+    if (!isActive || !listenerActive) return;
+    function onApply() { applyWithClaude(); }
+    document.addEventListener("cluihud:apply-pr-annotations", onApply);
+    return () => document.removeEventListener("cluihud:apply-pr-annotations", onApply);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActive, listenerActive, annotations.length, owningSessionId, isOwningSessionActive]);
+
   // Steal focus when the panel zone wrapper gets focused (Alt+Left/Right).
   useEffect(() => {
     const el = scrollRef.current;
@@ -1051,6 +1063,7 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
                   className="flex h-6 items-center gap-1.5 rounded bg-amber-500/15 px-2 text-[10px] font-medium text-amber-300 hover:bg-amber-500/25 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Sparkles size={10} /> Apply with Claude ({annotations.length})
+                  <Kbd keys="ctrl+shift+r" />
                 </button>
               </span>
             </TooltipTrigger>

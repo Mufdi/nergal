@@ -83,6 +83,49 @@ export type GitSidebarMode = "files" | "prs";
 /// PRs list in the GitPanel sidebar. Default "files".
 export const gitSidebarModeAtom = atom<Record<string, GitSidebarMode>>({});
 
+/// The five chips of the GitPanel. Each chip owns its full layout; chips are
+/// reached via `Shift+←/→` and persist per-workspace.
+export type ChipMode = "files" | "history" | "stashes" | "prs" | "conflicts";
+
+export const CHIP_ORDER: ChipMode[] = ["files", "history", "stashes", "prs", "conflicts"];
+
+/// Per-workspace active chip in the GitPanel.
+export const gitChipModeAtom = atom<Record<string, ChipMode>>({});
+
+/// Whether the GitPanel is in expansion mode (full right-panel width). Toggled
+/// via `Ctrl+Shift+0` from anywhere in the GitPanel.
+export const gitPanelExpandedAtom = atom<boolean>(false);
+
+/// The currently focused conflict file inside the Conflicts chip's file
+/// picker. Updated when a consumer (e.g. PrViewer's failed-merge path or the
+/// GitPanel inline conflicts list) routes the user to the chip with a
+/// specific file pre-selected.
+export const selectedConflictFileAtom = atom<string | null>(null);
+
+/// A stash entry surfaced by the backend's `git_stash_list`. Mirrors the
+/// Rust `StashEntry` struct exactly.
+export interface StashEntry {
+  index: number;
+  message: string;
+  branch: string;
+  age: string;
+}
+
+export interface SelectGitChipParams {
+  workspaceId: string;
+  mode: ChipMode;
+}
+
+/// Sets the active chip for a workspace. Used by consumers that previously
+/// opened a tab (PR Viewer's failed-merge → conflicts; conflict list click →
+/// conflicts) to instead route to the corresponding chip.
+export const selectGitChipAction = atom(
+  null,
+  (_get, set, params: SelectGitChipParams) => {
+    set(gitChipModeAtom, (prev) => ({ ...prev, [params.workspaceId]: params.mode }));
+  },
+);
+
 /// Per-PR annotations keyed by `${workspaceId}:${prNumber}`. v3 MVP keeps
 /// these in-memory only — they vanish on app restart, which matches the
 /// "annotations only exist if they drive Claude" rule from the design doc.

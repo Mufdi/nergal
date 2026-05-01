@@ -1831,6 +1831,83 @@ pub fn git_commit(
 }
 
 #[tauri::command]
+pub fn git_stash_list(
+    db: State<'_, SharedDb>,
+    session_id: String,
+) -> Result<Vec<crate::worktree::StashEntry>, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    crate::worktree::stash_list(&cwd).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn git_stash_create(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    message: String,
+) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    crate::worktree::stash_create(&cwd, &message).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn git_stash_apply(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    index: u32,
+) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    crate::worktree::stash_apply(&cwd, index).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn git_stash_pop(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    index: u32,
+) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    crate::worktree::stash_pop(&cwd, index).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn git_stash_drop(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    index: u32,
+) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    crate::worktree::stash_drop(&cwd, index).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn git_stash_show(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    index: u32,
+) -> Result<Vec<String>, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    crate::worktree::stash_show(&cwd, index).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn git_stash_branch(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    index: u32,
+    branch_name: String,
+) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    crate::worktree::stash_branch(&cwd, index, &branch_name).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn get_recent_commits(
     db: State<'_, SharedDb>,
     session_id: String,

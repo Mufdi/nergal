@@ -19,8 +19,35 @@ use db::Database;
 use hooks::server::start_hook_server;
 use plan_state::PlanStateManager;
 use pty::PtyManager;
+use std::path::PathBuf;
+
+/// File written to `~/.cluihud-active` while the app is running, so the
+/// `cluihud-conditional.sh` hook wrapper can detect whether forwarding
+/// hook events to `cluihud hook ...` is worth doing. Removed on Drop.
+struct SentinelGuard {
+    path: PathBuf,
+}
+
+impl SentinelGuard {
+    fn new() -> Self {
+        let path = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("/tmp"))
+            .join(".cluihud-active");
+        if let Err(e) = std::fs::write(&path, std::process::id().to_string()) {
+            tracing::warn!("failed to write sentinel {}: {e}", path.display());
+        }
+        Self { path }
+    }
+}
+
+impl Drop for SentinelGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
 
 pub fn run() {
+    let _sentinel = SentinelGuard::new();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -127,6 +154,13 @@ pub fn run() {
             commands::git_stage_all,
             commands::git_unstage_all,
             commands::git_commit,
+            commands::git_stash_list,
+            commands::git_stash_create,
+            commands::git_stash_apply,
+            commands::git_stash_pop,
+            commands::git_stash_drop,
+            commands::git_stash_show,
+            commands::git_stash_branch,
             commands::get_recent_commits,
             commands::get_pr_status,
             commands::create_pr,

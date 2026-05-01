@@ -4,8 +4,10 @@ import { zenModeAtom, closeZenModeAtom, zenModeNavigateAtom } from "@/stores/zen
 import { conflictsZenOpenAtom } from "@/stores/conflict";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { DiffView } from "@/components/plan/DiffView";
-import { GitPanel } from "@/components/git/GitPanel";
+import { FilesChip } from "@/components/git/chips/FilesChip";
+import { HistoryChip } from "@/components/git/chips/HistoryChip";
 import { ConflictsPanel } from "@/components/git/ConflictsPanel";
+import { invoke } from "@/lib/tauri";
 import { X, ChevronLeft, ChevronRight } from "lucide-react";
 
 type SidebarTab = "changes" | "history";
@@ -149,20 +151,27 @@ export function GitFullView() {
   );
 }
 
-/// Stripped-down git panel showing only staged/unstaged/untracked + commit bar.
+/// Files chip rendered standalone in Zen sidebar — no chip strip, no shell.
+/// Loads ahead count itself since GitPanel shell is bypassed.
 function GitPanelChangesOnly({ sessionId }: { sessionId: string }) {
+  const [ahead, setAhead] = useState(0);
+  useEffect(() => {
+    invoke<{ ahead: number }>("get_session_git_info", { sessionId })
+      .then((info) => setAhead(info.ahead))
+      .catch(() => {});
+  }, [sessionId]);
   return (
     <div className="h-full overflow-hidden">
-      <GitPanel sessionId={sessionId} hideHistory />
+      <FilesChip sessionId={sessionId} ahead={ahead} />
     </div>
   );
 }
 
-/// Stripped-down git panel showing only history.
+/// History chip rendered standalone in Zen sidebar.
 function GitPanelHistoryOnly({ sessionId }: { sessionId: string }) {
   return (
     <div className="h-full overflow-hidden">
-      <GitPanel sessionId={sessionId} hideChanges />
+      <HistoryChip sessionId={sessionId} />
     </div>
   );
 }

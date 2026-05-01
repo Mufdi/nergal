@@ -1,30 +1,115 @@
-import { useEffect, useState } from "react";
-import { useAtomValue, useSetAtom } from "jotai";
+import { useEffect, useState, useCallback } from "react";
 import { invoke } from "@/lib/tauri";
 import type { PrSummary } from "@/stores/git";
-import { openPrTabAction } from "@/stores/git";
+import { PrViewer } from "@/components/git/PrViewer";
+import { Kbd } from "@/components/ui/kbd";
+import {
+  ChevronLeft,
+  Loader2,
+  GitPullRequest,
+  ExternalLink,
+} from "lucide-react";
 
 interface PrsChipProps {
   sessionId: string;
   workspaceId: string | null;
 }
 
-/// Phase 6 stub: keeps the existing list-only UI to avoid losing the PRs view
-/// during the chip migration. PR Viewer integration lands in phase 6 when we
-/// migrate `PrViewer.tsx` into the chip's bottom area.
+interface PrTabData {
+  workspaceId: string;
+  prNumber: number;
+  title: string;
+  state: string;
+  url: string;
+  baseRefName: string;
+  headRefName: string;
+  updatedAt: string;
+}
+
+function summaryToData(workspaceId: string, pr: PrSummary): PrTabData {
+  return {
+    workspaceId,
+    prNumber: pr.number,
+    title: pr.title,
+    state: pr.state,
+    url: pr.url,
+    baseRefName: pr.base_ref_name,
+    headRefName: pr.head_ref_name,
+    updatedAt: pr.updated_at,
+  };
+}
+
 export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
   const [prs, setPrs] = useState<PrSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const openPrTab = useSetAtom(openPrTabAction);
-  const _ws = useAtomValue;
-  void _ws;
+  const [cursor, setCursor] = useState(0);
+  const [selected, setSelected] = useState<PrSummary | null>(null);
 
-  useEffect(() => {
+  const refresh = useCallback(() => {
     if (!workspaceId) { setLoading(false); return; }
     invoke<PrSummary[]>("list_prs", { workspaceId })
       .then((rows) => { setPrs(rows); setLoading(false); })
       .catch(() => setLoading(false));
   }, [workspaceId]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  useEffect(() => {
+    if (cursor >= prs.length) setCursor(Math.max(0, prs.length - 1));
+  }, [cursor, prs.length]);
+
+  // Picker keyboard nav. Disabled when a PR is selected (viewer takes over).
+  useEffect(() => {
+    if (selected) return;
+    if (prs.length === 0) return;
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      const inField = target?.tagName === "INPUT"
+        || target?.tagName === "TEXTAREA"
+        || !!target?.closest(".cm-editor")
+        || target?.getAttribute("contenteditable") === "true";
+      if (inField) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+      if (e.code === "ArrowDown" || e.code === "KeyJ") {
+        e.preventDefault();
+        setCursor((i) => (i + 1) % prs.length);
+        return;
+      }
+      if (e.code === "ArrowUp" || e.code === "KeyK") {
+        e.preventDefault();
+        setCursor((i) => (i - 1 + prs.length) % prs.length);
+        return;
+      }
+      if (e.code === "Enter") {
+        const pr = prs[cursor];
+        if (!pr) return;
+        e.preventDefault();
+        setSelected(pr);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected, prs, cursor]);
+
+  // Backspace in viewer mode returns to picker. Captured at window level
+  // because the viewer's scrollRef has tabIndex=-1 and handles its own keys.
+  useEffect(() => {
+    if (!selected) return;
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      const inField = target?.tagName === "INPUT"
+        || target?.tagName === "TEXTAREA"
+        || !!target?.closest(".cm-editor")
+        || target?.getAttribute("contenteditable") === "true";
+      if (inField) return;
+      if (e.code === "Backspace" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        setSelected(null);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected]);
 
   if (!workspaceId) {
     return (
@@ -36,8 +121,33 @@ export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <span className="text-[10px] text-muted-foreground">Loading PRs...</span>
+      <div className="flex h-full items-center justify-center gap-2">
+        <Loader2 size={14} className="animate-spin text-muted-foreground" />
+        <span className="text-[11px] text-muted-foreground">Loading PRs...</span>
+      </div>
+    );
+  }
+
+  if (selected) {
+    return (
+      <div className="flex h-full flex-col">
+        <div className="flex shrink-0 items-center gap-1.5 border-b border-border/40 bg-secondary/20 px-2 py-1">
+          <button
+            onClick={() => setSelected(null)}
+            className="flex h-5 items-center gap-1 rounded text-[10px] text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+          >
+            <ChevronLeft size={11} />
+            All PRs
+            <Kbd keys="backspace" />
+          </button>
+          <span className="text-[9px] text-muted-foreground/50">·</span>
+          <span className="truncate text-[10px] font-mono text-muted-foreground">
+            #{selected.number}
+          </span>
+        </div>
+        <div className="flex-1 overflow-hidden">
+          <PrViewer data={summaryToData(workspaceId, selected)} />
+        </div>
       </div>
     );
   }
@@ -46,6 +156,7 @@ export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
     return (
       <div className="flex h-full items-center justify-center px-6">
         <div className="text-center">
+          <GitPullRequest size={20} className="mx-auto mb-2 text-muted-foreground/40" />
           <p className="text-[11px] text-muted-foreground/80">No PRs yet</p>
           <p className="mt-1 text-[10px] text-muted-foreground/50">Ship a session to create one</p>
         </div>
@@ -59,30 +170,58 @@ export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
         <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
           PRs ({prs.length})
         </span>
-        <span className="text-[9px] text-muted-foreground/50">embedded viewer in phase 6</span>
+        <span className="text-[9px] text-muted-foreground/50">
+          <Kbd keys="enter" /> open
+        </span>
       </div>
+
       <div className="flex-1 overflow-y-auto">
-        {prs.map((pr) => (
-          <button
-            key={pr.number}
-            onClick={() => openPrTab({ workspaceId, pr })}
-            className="flex w-full items-center gap-2 px-3 py-1 text-left transition-colors hover:bg-secondary/30"
-          >
-            <span className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[9px] ${
-              pr.state === "OPEN"
-                ? "bg-green-500/15 text-green-400"
-                : pr.state === "MERGED"
-                ? "bg-purple-500/15 text-purple-400"
-                : "bg-muted text-muted-foreground"
-            }`}>
-              #{pr.number}
-            </span>
-            <span className="min-w-0 flex-1 truncate text-[11px] text-foreground/80">{pr.title}</span>
-            <span className="shrink-0 font-mono text-[9px] text-muted-foreground/60">
-              {pr.head_ref_name} → {pr.base_ref_name}
-            </span>
-          </button>
-        ))}
+        {prs.map((pr, i) => {
+          const isCursor = cursor === i;
+          return (
+            <button
+              key={pr.number}
+              onMouseEnter={() => setCursor(i)}
+              onClick={() => setSelected(pr)}
+              ref={(el) => { if (el && isCursor) el.scrollIntoView({ block: "nearest" }); }}
+              className={`flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors border-l-2 ${
+                isCursor
+                  ? "border-l-orange-500 bg-orange-500/10"
+                  : "border-l-transparent hover:bg-secondary/30"
+              }`}
+            >
+              <span className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[9px] ${
+                pr.state === "OPEN"
+                  ? "bg-green-500/15 text-green-400"
+                  : pr.state === "MERGED"
+                  ? "bg-purple-500/15 text-purple-400"
+                  : "bg-muted text-muted-foreground"
+              }`}>
+                #{pr.number}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-[11px] text-foreground/80">
+                {pr.title}
+              </span>
+              <span className="shrink-0 font-mono text-[9px] text-muted-foreground/60">
+                {pr.head_ref_name} → {pr.base_ref_name}
+              </span>
+              <a
+                href={pr.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="shrink-0 text-muted-foreground/50 hover:text-foreground"
+                title="Open on GitHub"
+              >
+                <ExternalLink size={10} />
+              </a>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="shrink-0 border-t border-border/40 px-3 py-1 text-[9px] text-muted-foreground/60">
+        <Kbd keys="arrowup" /><Kbd keys="arrowdown" /> · <Kbd keys="j" /><Kbd keys="k" /> move · <Kbd keys="enter" /> open · <Kbd keys="backspace" /> back
       </div>
     </div>
   );

@@ -475,7 +475,7 @@ function DocumentContent({ tab }: { tab: Tab }) {
     case "pr": {
       const prData = tab.data as unknown as PrTabData | undefined;
       return prData
-        ? <PrViewer key={tab.id} data={prData} tabId={tab.id} />
+        ? <PrViewer key={tab.id} data={prData} />
         : <PlaceholderView label="Missing PR data" />;
     }
     case "file": {

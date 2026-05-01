@@ -10,9 +10,10 @@ import {
 } from "@/stores/git";
 import { activeSessionIdAtom, workspacesAtom } from "@/stores/workspace";
 import { gitInfoMapAtom } from "@/stores/git";
-import { activeTabAtom, type Tab } from "@/stores/rightPanel";
+import type { Tab } from "@/stores/rightPanel";
 import { toastsAtom } from "@/stores/toast";
 import { openConflictsTabAction } from "@/stores/conflict";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import {
   ChevronUp,
   ChevronDown,
@@ -161,10 +162,14 @@ interface PrTabData {
 
 interface PrViewerProps {
   data: PrTabData;
-  tabId: string;
+  /// Gates the keyboard listener. Pass `false` while the viewer is mounted
+  /// but not the focused surface (e.g. parent re-renders behind a modal).
+  /// Defaults to `true` since the viewer is typically only mounted when it
+  /// is the active surface (chip body or active tab).
+  isActive?: boolean;
 }
 
-export function PrViewer({ data, tabId }: PrViewerProps) {
+export function PrViewer({ data, isActive = true }: PrViewerProps) {
   const { workspaceId, prNumber, title, state, url, baseRefName, headRefName } = data;
 
   const [hunks, setHunks] = useState<Hunk[]>([]);
@@ -187,7 +192,6 @@ export function PrViewer({ data, tabId }: PrViewerProps) {
   const activeSessionId = useAtomValue(activeSessionIdAtom);
   const workspaces = useAtomValue(workspacesAtom);
   const gitInfoMap = useAtomValue(gitInfoMapAtom);
-  const activeTab = useAtomValue(activeTabAtom);
   const addToast = useSetAtom(toastsAtom);
   const openConflictsTab = useSetAtom(openConflictsTabAction);
   const transitionAfterCleanup = useSetAtom(transitionAfterCleanupAction);
@@ -215,7 +219,6 @@ export function PrViewer({ data, tabId }: PrViewerProps) {
   }, [workspaces, workspaceId, headRefName, gitInfoMap]);
 
   const isOwningSessionActive = owningSessionId !== null && owningSessionId === activeSessionId;
-  const isPrTabFocused = activeTab?.id === tabId;
 
   const fetchDiff = useCallback(() => {
     setLoading(true);
@@ -414,8 +417,7 @@ export function PrViewer({ data, tabId }: PrViewerProps) {
     if (!el) return;
     function handleKeyDown(e: KeyboardEvent) {
       if (annotating) return;
-      // Only act when the PR tab is the focused panel tab.
-      if (!isPrTabFocused) return;
+      if (!isActive) return;
 
       if (e.code === "KeyJ" || e.code === "ArrowDown") {
         if (hunks.length === 0) return;
@@ -447,7 +449,7 @@ export function PrViewer({ data, tabId }: PrViewerProps) {
     el.addEventListener("keydown", handleKeyDown, true);
     return () => el.removeEventListener("keydown", handleKeyDown, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hunks.length, annotating, isPrTabFocused, activeHunk, annotations.length, owningSessionId]);
+  }, [hunks.length, annotating, isActive, activeHunk, annotations.length, owningSessionId]);
 
   // Steal focus when the panel zone wrapper gets focused (Alt+Left/Right).
   useEffect(() => {
@@ -463,8 +465,8 @@ export function PrViewer({ data, tabId }: PrViewerProps) {
   }, []);
 
   useEffect(() => {
-    scrollRef.current?.focus();
-  }, [tabId]);
+    if (isActive) scrollRef.current?.focus();
+  }, [isActive, prNumber]);
 
   if (loading && lines.length === 0) {
     return (
@@ -696,20 +698,26 @@ export function PrViewer({ data, tabId }: PrViewerProps) {
         )}
 
         {annotations.length > 0 && (
-          <button
-            onClick={applyWithClaude}
-            disabled={!isOwningSessionActive}
-            className="flex h-6 items-center gap-1.5 rounded bg-amber-500/15 px-2 text-[10px] font-medium text-amber-300 hover:bg-amber-500/25 disabled:cursor-not-allowed disabled:opacity-50"
-            title={
-              !owningSessionId
-                ? "No local session matches this PR's branch"
+          <Tooltip>
+            <TooltipTrigger>
+              <span className={!isOwningSessionActive ? "inline-block" : "inline-block"}>
+                <button
+                  onClick={applyWithClaude}
+                  disabled={!isOwningSessionActive}
+                  className="flex h-6 items-center gap-1.5 rounded bg-amber-500/15 px-2 text-[10px] font-medium text-amber-300 hover:bg-amber-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Sparkles size={10} /> Apply with Claude ({annotations.length})
+                </button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-xs text-[10px]">
+              {!owningSessionId
+                ? `No local session matches this PR's branch (${headRefName}). Open a session whose worktree is on this branch to apply.`
                 : !isOwningSessionActive
-                  ? "Switch to the session that owns this PR (its terminal will receive the prompt)"
-                  : "Send annotations as a structured prompt to the session terminal"
-            }
-          >
-            <Sparkles size={10} /> Apply with Claude
-          </button>
+                  ? `Switch to the session on branch "${headRefName}" — its terminal will receive the prompt.`
+                  : `Send ${annotations.length} annotation${annotations.length === 1 ? "" : "s"} as a structured prompt to the session terminal.`}
+            </TooltipContent>
+          </Tooltip>
         )}
 
         <div className="ml-auto flex items-center gap-2">

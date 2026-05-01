@@ -53,7 +53,7 @@ const TOOLING_PATH_PREFIXES = [
   ".memory-opt-out", ".worktrees/", ".claude/plans/",
   ".claude/settings.local.json", ".claude/skills/", ".claude/commands/",
   ".agent/", ".agents/", ".opencode/", ".windsurf/", ".playwright-cli/",
-  ".gitnexus", "node_modules/", "dist/", "target/", "src-tauri/target/",
+  "node_modules/", "dist/", "target/", "src-tauri/target/",
 ] as const;
 
 function isToolingPath(p: string): boolean {

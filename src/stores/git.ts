@@ -85,10 +85,6 @@ export const CHIP_ORDER: ChipMode[] = ["files", "history", "stashes", "prs", "co
 /// Per-workspace active chip in the GitPanel.
 export const gitChipModeAtom = atom<Record<string, ChipMode>>({});
 
-/// Whether the GitPanel is in expansion mode (full right-panel width). Toggled
-/// via `Ctrl+Shift+0` from anywhere in the GitPanel.
-export const gitPanelExpandedAtom = atom<boolean>(false);
-
 /// A stash entry surfaced by the backend's `git_stash_list`. Mirrors the
 /// Rust `StashEntry` struct exactly.
 export interface StashEntry {

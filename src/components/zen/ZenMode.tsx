@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   zenModeAtom,
@@ -91,10 +91,15 @@ export function GitFullView() {
     if (state.open || prZen) setZone("viewer");
   }, [state.open, state.filePath, prZen, setZone]);
 
-  // Sidebar j/k navigation: when zone === "sidebar", arrow/j/k cycle through
-  // state.files and Enter selects the cursor file. We register one listener
-  // here (rather than inside ZenFileList) so the cursor lives at zen-level
-  // and survives sidebar tab swaps if we re-add tabs later.
+  // Diff Zen sidebar cursor — separate from `currentIndex` so arrows move a
+  // hover ring through the file list without firing the diff fetch on every
+  // keystroke. Enter commits to `selectFile`. Snaps to currentIndex whenever
+  // the user enters the sidebar zone so the starting position matches what
+  // the viewer is showing.
+  const [sidebarCursor, setSidebarCursor] = useState(0);
+  useEffect(() => {
+    if (zone === "sidebar") setSidebarCursor(state.currentIndex);
+  }, [zone, state.currentIndex]);
   useEffect(() => {
     if (!state.open) return;
     if (zone !== "sidebar") return;
@@ -110,19 +115,26 @@ export function GitFullView() {
       if (e.code === "ArrowDown" || e.code === "KeyJ") {
         e.preventDefault();
         e.stopPropagation();
-        navigate("next");
+        setSidebarCursor((i) => Math.min(state.files.length - 1, i + 1));
         return;
       }
       if (e.code === "ArrowUp" || e.code === "KeyK") {
         e.preventDefault();
         e.stopPropagation();
-        navigate("prev");
+        setSidebarCursor((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (e.code === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        const target = state.files[sidebarCursor];
+        if (target) selectFile(target);
         return;
       }
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [zone, state.open, state.files.length, navigate]);
+  }, [zone, state.open, state.files, sidebarCursor, selectFile]);
 
   if (conflictsZen && sessionId) {
     return (
@@ -225,7 +237,14 @@ export function GitFullView() {
 
         {/* Diff viewer — side by side */}
         <div className="flex-1 overflow-hidden rounded-b-lg bg-card/95 border border-t-0 border-border">
-          <DiffView key={state.filePath} filePath={state.filePath} sessionId={state.sessionId} sideBySide inZen />
+          <DiffView
+            key={state.filePath}
+            filePath={state.filePath}
+            sessionId={state.sessionId}
+            sideBySide
+            inZen
+            onNavFile={(direction) => navigate(direction)}
+          />
         </div>
       </div>
 
@@ -248,20 +267,24 @@ export function GitFullView() {
           </span>
         </div>
         <div className="flex-1 overflow-y-auto">
-          {state.files.map((fp) => {
+          {state.files.map((fp, i) => {
             const isCurrent = fp === state.filePath;
+            const isCursor = zone === "sidebar" && sidebarCursor === i;
             const filename = fp.split("/").pop() ?? fp;
             const dir = fp.includes("/") ? fp.slice(0, fp.lastIndexOf("/")) : "";
             return (
               <button
                 key={fp}
                 type="button"
+                onMouseEnter={() => { if (zone === "sidebar") setSidebarCursor(i); }}
                 onClick={() => { selectFile(fp); setZone("viewer"); }}
-                ref={(el) => { if (el && isCurrent) el.scrollIntoView({ block: "nearest" }); }}
+                ref={(el) => { if (el && (isCursor || (zone !== "sidebar" && isCurrent))) el.scrollIntoView({ block: "nearest" }); }}
                 className={`flex w-full flex-col gap-0 px-3 py-1 text-left transition-colors border-l-2 ${
-                  isCurrent
-                    ? "border-l-orange-500 bg-orange-500/10"
-                    : "border-l-transparent hover:bg-secondary/30"
+                  isCursor
+                    ? "border-l-orange-500 bg-orange-500/15"
+                    : isCurrent
+                      ? "border-l-orange-500/40 bg-orange-500/5"
+                      : "border-l-transparent hover:bg-secondary/30"
                 }`}
               >
                 <span className={`truncate font-mono text-[11px] ${isCurrent ? "text-foreground" : "text-foreground/80"}`}>
@@ -293,6 +316,15 @@ function PrZenSidebar({ workspaceId, prNumber, sidebarActive }: { workspaceId: s
   const [selectedMap, setSelectedMap] = useAtom(selectedPrFileAtom);
   const files = filesCache[key] ?? [];
   const selected = selectedMap[key] ?? null;
+  const [cursor, setCursor] = useState(0);
+
+  // Snap cursor to the active file whenever the user enters the sidebar zone
+  // so j/k starts from "where the viewer is" rather than the top of the list.
+  useEffect(() => {
+    if (!sidebarActive) return;
+    const idx = selected ? files.findIndex((f) => f.path === selected) : 0;
+    setCursor(idx >= 0 ? idx : 0);
+  }, [sidebarActive, selected, files]);
 
   useEffect(() => {
     if (!sidebarActive) return;
@@ -308,30 +340,26 @@ function PrZenSidebar({ workspaceId, prNumber, sidebarActive }: { workspaceId: s
       if (e.code === "ArrowDown" || e.code === "KeyJ") {
         e.preventDefault();
         e.stopPropagation();
-        setSelectedMap((prev) => {
-          const cur = prev[key] ?? files[0]?.path ?? null;
-          const idx = files.findIndex((f) => f.path === cur);
-          const next = files[(idx + 1) % files.length];
-          return next ? { ...prev, [key]: next.path } : prev;
-        });
+        setCursor((i) => Math.min(files.length - 1, i + 1));
         return;
       }
       if (e.code === "ArrowUp" || e.code === "KeyK") {
         e.preventDefault();
         e.stopPropagation();
-        setSelectedMap((prev) => {
-          const cur = prev[key] ?? files[0]?.path ?? null;
-          const idx = files.findIndex((f) => f.path === cur);
-          const prevIdx = idx <= 0 ? files.length - 1 : idx - 1;
-          const next = files[prevIdx];
-          return next ? { ...prev, [key]: next.path } : prev;
-        });
+        setCursor((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (e.code === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        const pick = files[cursor];
+        if (pick) setSelectedMap((prev) => ({ ...prev, [key]: pick.path }));
         return;
       }
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [sidebarActive, files, key, setSelectedMap]);
+  }, [sidebarActive, files, cursor, key, setSelectedMap]);
 
   return (
     <>
@@ -349,20 +377,24 @@ function PrZenSidebar({ workspaceId, prNumber, sidebarActive }: { workspaceId: s
             <span className="text-[10px] text-muted-foreground/60">Loading PR files…</span>
           </div>
         ) : (
-          files.map((f) => {
+          files.map((f, i) => {
             const isCurrent = f.path === selected;
+            const isCursor = sidebarActive && cursor === i;
             const filename = f.path.split("/").pop() ?? f.path;
             const dir = f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : "";
             return (
               <button
                 key={f.path}
                 type="button"
+                onMouseEnter={() => { if (sidebarActive) setCursor(i); }}
                 onClick={() => setSelectedMap((prev) => ({ ...prev, [key]: f.path }))}
-                ref={(el) => { if (el && isCurrent) el.scrollIntoView({ block: "nearest" }); }}
+                ref={(el) => { if (el && (isCursor || (!sidebarActive && isCurrent))) el.scrollIntoView({ block: "nearest" }); }}
                 className={`flex w-full flex-col gap-0 px-3 py-1 text-left transition-colors border-l-2 ${
-                  isCurrent
-                    ? "border-l-orange-500 bg-orange-500/10"
-                    : "border-l-transparent hover:bg-secondary/30"
+                  isCursor
+                    ? "border-l-orange-500 bg-orange-500/15"
+                    : isCurrent
+                      ? "border-l-orange-500/40 bg-orange-500/5"
+                      : "border-l-transparent hover:bg-secondary/30"
                 }`}
               >
                 <div className="flex items-center gap-2">

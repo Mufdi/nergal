@@ -415,24 +415,30 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
 
   { id: "expand-zen", label: "Expand active panel to Zen", keys: "ctrl+shift+0", category: "navigation", keywords: ["zen", "expand", "maximize", "fullscreen"], handler: () => {
     const s = store();
-    const tab = s.get(activeTabAtom);
-    if (!tab) return;
     const sessionId = s.get(activeSessionIdAtom);
     if (!sessionId) return;
-    if (tab.type === "diff" || tab.type === "file") {
-      const filePath = tab.data?.path as string | undefined;
+    const tab = s.get(activeTabAtom);
+    const panelView = s.get(activePanelViewAtom);
+    // Resolve the effective panel kind: an active tab wins, otherwise the
+    // standalone panel view (e.g. Git panel opened via Ctrl+Shift+G with
+    // no tab) drives the Zen target. Without this fallback the Files /
+    // Conflicts chips can't trigger Zen because no tab is ever created.
+    const panelType = tab?.type ?? panelView;
+    if (!panelType) return;
+    if (panelType === "diff" || panelType === "file") {
+      const filePath = tab?.data?.path as string | undefined;
       if (filePath) document.dispatchEvent(new CustomEvent("cluihud:expand-zen", { detail: { filePath, sessionId } }));
-    } else if (tab.type === "git") {
-      // Conflicts chip routes to the conflicts-only Zen view; everything else
-      // expands the GitPanel itself.
+      return;
+    }
+    if (panelType === "git") {
       const workspaces = s.get(workspacesAtom);
       const ws = workspaces.find((w) => w.sessions.some((sx) => sx.id === sessionId));
-      if (ws) {
-        const chipMap = s.get(gitChipModeAtom);
-        if ((chipMap[ws.id] ?? "files") === "conflicts") {
-          s.set(conflictsZenOpenAtom, (v) => !v);
-          return;
-        }
+      if (!ws) return;
+      const chipMap = s.get(gitChipModeAtom);
+      const chip = chipMap[ws.id] ?? "files";
+      if (chip === "conflicts") {
+        s.set(conflictsZenOpenAtom, (v) => !v);
+        return;
       }
       document.dispatchEvent(new CustomEvent("cluihud:expand-zen-git", { detail: { sessionId } }));
     }

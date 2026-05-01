@@ -45,6 +45,10 @@ interface Props {
   sessionId: string;
   inZen?: boolean;
   onToggleZen?: () => void;
+  /// Called 1.5s after activity (conflicts/pendingMerge) drains. Replaces
+  /// the legacy `closeTab("conflicts")` behavior when the panel is mounted
+  /// inside a chip — the chip uses this to switch to the PRs chip.
+  onResolved?: () => void;
 }
 
 interface Region {
@@ -128,7 +132,7 @@ function applyChoice(text: string, region: Region, choice: "ours" | "theirs" | "
   return lines.join("\n");
 }
 
-export function ConflictsPanel({ sessionId, inZen = false, onToggleZen }: Props) {
+export function ConflictsPanel({ sessionId, inZen = false, onToggleZen, onResolved }: Props) {
   const files = useAtomValue(activeConflictedFilesAtom);
   const [selectedMap, setSelectedMap] = useAtom(selectedConflictFileMapAtom);
   const selectedPath = selectedMap[sessionId] ?? files[0] ?? null;
@@ -152,10 +156,11 @@ export function ConflictsPanel({ sessionId, inZen = false, onToggleZen }: Props)
     invoke<boolean>("has_pending_merge", { sessionId }).then(setPendingMerge).catch(() => setPendingMerge(false));
   }, [sessionId, files.length]);
 
-  /// Auto-close the singleton conflicts tab once it has nothing left to do.
-  /// Only fires after the panel has actually seen activity (conflicts present
-  /// or a pending merge) — opening Ctrl+Alt+Q on a clean session shouldn't
-  /// snap the tab shut on the user.
+  /// Auto-resolve transition once the panel has nothing left to do. Only
+  /// fires after the panel saw activity (conflicts present or a pending
+  /// merge). Disabled in Zen mode to avoid snapping the surface shut. When
+  /// `onResolved` is provided (chip mode) it routes to the next chip; the
+  /// legacy tab consumer falls back to closing its singleton tab.
   const hadActivityRef = useRef(false);
   const closeTab = useSetAtom(closeTabAction);
   useEffect(() => {
@@ -164,9 +169,12 @@ export function ConflictsPanel({ sessionId, inZen = false, onToggleZen }: Props)
       return;
     }
     if (!hadActivityRef.current || inZen) return;
-    const t = setTimeout(() => closeTab("conflicts"), 1500);
+    const t = setTimeout(() => {
+      if (onResolved) onResolved();
+      else closeTab("conflicts");
+    }, 1500);
     return () => clearTimeout(t);
-  }, [files.length, pendingMerge, inZen, closeTab]);
+  }, [files.length, pendingMerge, inZen, closeTab, onResolved]);
 
   const completeMerge = useCallback(async () => {
     if (completing) return;

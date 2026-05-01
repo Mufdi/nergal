@@ -35,7 +35,9 @@ import { Kbd } from "@/components/ui/kbd";
 import {
   AlertTriangle,
   Check,
+  ChevronLeft as ChevronLeftIcon,
   ChevronRight,
+  ChevronRight as ChevronRightIcon,
   Minus,
   Sparkles,
   Save,
@@ -241,6 +243,19 @@ export function ConflictsPanel({ sessionId, inZen = false, onToggleZen, onResolv
     );
   }
 
+  const handleNavFile = useCallback((direction: "prev" | "next") => {
+    if (files.length < 2) return;
+    const idx = selectedPath ? files.indexOf(selectedPath) : -1;
+    if (idx === -1) return;
+    const nextIdx = direction === "next"
+      ? (idx + 1) % files.length
+      : (idx - 1 + files.length) % files.length;
+    const next = files[nextIdx];
+    if (next && next !== selectedPath) {
+      setSelectedMap((prev) => ({ ...prev, [sessionId]: next }));
+    }
+  }, [files, selectedPath, sessionId, setSelectedMap]);
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {selectedPath && (
@@ -248,9 +263,10 @@ export function ConflictsPanel({ sessionId, inZen = false, onToggleZen, onResolv
           key={selectedPath}
           sessionId={sessionId}
           path={selectedPath}
-          fileCount={files.length}
+          files={files}
           inZen={inZen}
           onToggleZen={onToggleZen}
+          onNavFile={files.length > 1 ? handleNavFile : undefined}
         />
       )}
     </div>
@@ -261,16 +277,19 @@ export function ConflictsPanel({ sessionId, inZen = false, onToggleZen, onResolv
 function ConflictView({
   sessionId,
   path,
-  fileCount,
+  files,
   inZen,
   onToggleZen,
+  onNavFile,
 }: {
   sessionId: string;
   path: string;
-  fileCount: number;
+  files: string[];
   inZen?: boolean;
   onToggleZen?: () => void;
+  onNavFile?: (direction: "prev" | "next") => void;
 }) {
+  const fileCount = files.length;
   const key = conflictKey(sessionId, path);
   const [stateMap, setStateMap] = useAtom(conflictStateMapAtom);
   const current = stateMap[key];
@@ -402,6 +421,22 @@ function ConflictView({
       const inEditor = target?.tagName === "TEXTAREA"
         || target?.tagName === "INPUT"
         || !!target?.closest(".cm-editor");
+      // Ctrl+←/→ — file prev/next across the conflicted-files list. Owner
+      // wires the actual move via onNavFile so this stays editor-agnostic.
+      if (onNavFile && e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        if (e.code === "ArrowLeft") {
+          e.preventDefault();
+          e.stopPropagation();
+          onNavFile("prev");
+          return;
+        }
+        if (e.code === "ArrowRight") {
+          e.preventDefault();
+          e.stopPropagation();
+          onNavFile("next");
+          return;
+        }
+      }
       if (!inEditor && regions.length > 0) {
         // Arrow or J/K navigation between regions (parity with DiffView hunk nav).
         if ((e.key === "ArrowDown" || e.key === "j" || e.key === "J") && !(e.ctrlKey || e.metaKey) && !e.shiftKey) {
@@ -437,7 +472,7 @@ function ConflictView({
       window.removeEventListener("keydown", onKey, true);
       document.removeEventListener("cluihud:resolve-conflict-active-tab", onResolveActive);
     };
-  }, [regions, focusedRegion, applyRegion, resetMerged, saveResolution, askClaude, toggleRegionCollapse, listenerActiveInner]);
+  }, [regions, focusedRegion, applyRegion, resetMerged, saveResolution, askClaude, toggleRegionCollapse, listenerActiveInner, onNavFile]);
 
   if (!current?.loaded) {
     return <div className="flex flex-1 items-center justify-center text-[11px] text-muted-foreground">Loading conflict…</div>;
@@ -451,15 +486,31 @@ function ConflictView({
       <div className="flex shrink-0 items-center gap-2 border-b border-border/50 px-3 py-1.5">
         <AlertTriangle size={12} className="text-yellow-400" />
         <span className="text-[10px] font-medium uppercase tracking-wider text-yellow-400">Conflict</span>
+        {onNavFile && (
+          <span className="flex shrink-0 items-center">
+            <button
+              onClick={() => onNavFile("prev")}
+              className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+              aria-label="Previous file"
+              title="Previous file (Ctrl+←)"
+            >
+              <ChevronLeftIcon size={11} />
+            </button>
+            <button
+              onClick={() => onNavFile("next")}
+              className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+              aria-label="Next file"
+              title="Next file (Ctrl+→)"
+            >
+              <ChevronRightIcon size={11} />
+            </button>
+          </span>
+        )}
         <span className="truncate font-mono text-[11px] text-foreground/85" title={path}>{path}</span>
         {fileCount > 1 && (
-          <button
-            onClick={() => document.dispatchEvent(new CustomEvent("cluihud:toggle-annotations-drawer"))}
-            className="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[9px] text-muted-foreground hover:text-foreground transition-colors"
-            title="Toggle files drawer (Ctrl+Shift+J)"
-          >
-            +{fileCount - 1} more
-          </button>
+          <span className="shrink-0 text-[9px] text-muted-foreground/70 tabular-nums">
+            {files.indexOf(path) + 1}/{fileCount}
+          </span>
         )}
         <span className="ml-auto flex items-center gap-2">
           <span className="text-[10px] text-muted-foreground">{regions.length} region{regions.length !== 1 ? "s" : ""}</span>

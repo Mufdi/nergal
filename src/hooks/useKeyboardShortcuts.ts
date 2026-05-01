@@ -4,6 +4,8 @@ import {
   shortcutRegistryAtom,
   commandPaletteOpenAtom,
 } from "@/stores/shortcuts";
+import { zenModeAtom } from "@/stores/zenMode";
+import { conflictsZenOpenAtom } from "@/stores/conflict";
 import * as terminalService from "@/components/terminal/terminalService";
 
 const KEY_TO_CODE: Record<string, string> = {
@@ -51,6 +53,9 @@ export function useKeyboardShortcuts() {
   const registry = useAtomValue(shortcutRegistryAtom);
   const paletteOpen = useAtomValue(commandPaletteOpenAtom);
   const setPaletteOpen = useSetAtom(commandPaletteOpenAtom);
+  const zenState = useAtomValue(zenModeAtom);
+  const conflictsZen = useAtomValue(conflictsZenOpenAtom);
+  const zenOpen = zenState.open || conflictsZen;
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -102,6 +107,19 @@ export function useKeyboardShortcuts() {
       const dialogOpen = !!document.querySelector('[data-slot="dialog-content"]');
       if (dialogOpen) return;
 
+      // Zen-open guard for alt+arrow: ZenMode's own listener also runs at
+      // window capture, but mount order means this hook is registered first
+      // and stopImmediatePropagation in Zen can't help. Bail here so the
+      // background panels don't flash via focusZone()'s zone-flash class
+      // and so alt+↑/↓ doesn't slide hidden session/panel cursors. Esc and
+      // every other shortcut still flows normally.
+      if (zenOpen && e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey && (
+        e.code === "ArrowLeft" || e.code === "ArrowRight" ||
+        e.code === "ArrowUp" || e.code === "ArrowDown"
+      )) {
+        return;
+      }
+
       // Ctrl+Ñ — toggle terminal focus
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === "Semicolon") {
         e.preventDefault();
@@ -142,5 +160,5 @@ export function useKeyboardShortcuts() {
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [registry, paletteOpen, setPaletteOpen]);
+  }, [registry, paletteOpen, setPaletteOpen, zenOpen]);
 }

@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke, listen } from "@/lib/tauri";
-import { useSetAtom } from "jotai";
+import { useSetAtom, useAtomValue } from "jotai";
 import { refreshGitInfoAtom } from "@/stores/git";
 import { triggerShipAtom } from "@/stores/ship";
 import { toastsAtom } from "@/stores/toast";
-import { openZenModeAtom } from "@/stores/zenMode";
+import { openZenModeAtom, zenModeAtom } from "@/stores/zenMode";
+import { conflictsZenOpenAtom } from "@/stores/conflict";
 import { Textarea } from "@/components/ui/textarea";
 import { Kbd } from "@/components/ui/kbd";
 import { DiffView } from "@/components/plan/DiffView";
@@ -46,9 +47,14 @@ const STATUS_LETTERS: Record<string, string> = {
 interface FilesChipProps {
   sessionId: string;
   ahead: number;
+  /// Set to `true` for the FilesChip rendered inside Zen's sidebar. The chip
+  /// underneath (in the regular GitPanel) is still mounted while Zen overlays
+  /// the screen — without this signal, both copies' window-level keydown
+  /// listeners would fire on `j`/`k`/Space and fight DiffView's chunk nav.
+  inZen?: boolean;
 }
 
-export function FilesChip({ sessionId, ahead }: FilesChipProps) {
+export function FilesChip({ sessionId, ahead, inZen = false }: FilesChipProps) {
   const [status, setStatus] = useState<GitFullStatus>({ staged: [], unstaged: [], untracked: [] });
   const [commitMsg, setCommitMsg] = useState("");
   const [committing, setCommitting] = useState(false);
@@ -59,6 +65,10 @@ export function FilesChip({ sessionId, ahead }: FilesChipProps) {
   const triggerShip = useSetAtom(triggerShipAtom);
   const addToast = useSetAtom(toastsAtom);
   const openZenMode = useSetAtom(openZenModeAtom);
+  const zenState = useAtomValue(zenModeAtom);
+  const conflictsZen = useAtomValue(conflictsZenOpenAtom);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const anyZenOpen = zenState.open || conflictsZen;
 
   const allFiles = [
     ...status.staged.map((f) => f.path),
@@ -155,9 +165,14 @@ export function FilesChip({ sessionId, ahead }: FilesChipProps) {
     }
   }
 
-  // List nav: ↑/↓ + j/k move, Space toggles stage, Enter opens Zen
+  // List nav: ↑/↓ + j/k move, Space toggles stage, Enter opens Zen.
+  //
+  // The non-Zen instance bails out while a Zen overlay is open so the in-Zen
+  // copy owns keystrokes; otherwise both listeners fight DiffView's chunk nav
+  // and `j`/`k` slide the file cursor instead of moving between hunks.
   useEffect(() => {
     if (flatNav.length === 0) return;
+    if (anyZenOpen && !inZen) return;
     function onKey(e: KeyboardEvent) {
       const target = e.target as HTMLElement | null;
       const inField = target?.tagName === "INPUT"
@@ -166,6 +181,10 @@ export function FilesChip({ sessionId, ahead }: FilesChipProps) {
         || target?.getAttribute("contenteditable") === "true";
       if (inField) return;
       if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+      // In Zen, only handle keys when focus is inside this chip's container —
+      // DiffView (centre) handles its own j/k+Space via a capture listener,
+      // and the sidebar shouldn't steal events that bubbled from the viewer.
+      if (inZen && containerRef.current && target && !containerRef.current.contains(target)) return;
       if (e.code === "ArrowDown" || e.code === "KeyJ") {
         e.preventDefault();
         setFileCursor((i) => (i + 1) % flatNav.length);
@@ -194,13 +213,13 @@ export function FilesChip({ sessionId, ahead }: FilesChipProps) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flatNav.length, fileCursor]);
+  }, [flatNav.length, fileCursor, inZen, anyZenOpen]);
 
   const canCommit = status.staged.length > 0 && commitMsg.trim().length > 0 && !committing;
   const canPushOrShip = ahead > 0 || status.staged.length > 0;
 
   return (
-    <div className="flex h-full flex-col">
+    <div ref={containerRef} tabIndex={-1} data-files-chip className="flex h-full flex-col outline-none">
       {error && (
         <div className="shrink-0 border-b border-border/50 px-3 py-1">
           <span className="text-[10px] text-red-400">{error}</span>
@@ -293,8 +312,8 @@ export function FilesChip({ sessionId, ahead }: FilesChipProps) {
           value={commitMsg}
           onChange={(e) => setCommitMsg(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Commit message... (Ctrl+Enter = commit, Ctrl+Shift+Enter = ship)"
-          className="mb-2 h-16 resize-none rounded border-border/50 bg-background font-mono text-[11px] leading-relaxed focus-visible:ring-1"
+          placeholder="Commit message…"
+          className="mb-2 h-16 resize-none rounded border-border/50 bg-background font-mono text-[11px] leading-relaxed placeholder:text-[10px] focus-visible:ring-1"
           spellCheck={false}
         />
         <div className="flex flex-wrap items-center gap-1.5">

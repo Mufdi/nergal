@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useAtomValue } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
 import { activeSessionFilesAtom } from "@/stores/files";
-import { zenModeAtom, zenActiveZoneAtom } from "@/stores/zenMode";
+import { zenModeAtom, zenActiveZoneAtom, prZenAtom } from "@/stores/zenMode";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
 import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, Maximize2 } from "lucide-react";
 import {
@@ -489,8 +489,9 @@ export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen, i
   // race with FilesChip / PrViewer in the Zen sidebar.
   const zenState = useAtomValue(zenModeAtom);
   const conflictsZen = useAtomValue(conflictsZenOpenAtom);
+  const prZen = useAtomValue(prZenAtom);
   const zenZone = useAtomValue(zenActiveZoneAtom);
-  const anyZenOpen = zenState.open || conflictsZen;
+  const anyZenOpen = zenState.open || conflictsZen || prZen !== null;
   const listenerActive = inZen
     ? anyZenOpen && zenZone === "viewer"
     : !anyZenOpen;
@@ -505,21 +506,22 @@ export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen, i
         || !!target?.closest(".cm-editor")
         || target?.getAttribute("contenteditable") === "true";
       if (inField) return;
+      if (e.ctrlKey || e.metaKey || e.shiftKey) return;
       if (hunks.length > 1) {
-        if (e.code === "KeyK" || (e.code === "ArrowUp" && e.altKey)) {
+        if (e.code === "KeyK" || e.code === "ArrowUp") {
           e.preventDefault();
           e.stopPropagation();
           navigateHunk(-1);
           return;
         }
-        if (e.code === "KeyJ" || (e.code === "ArrowDown" && e.altKey)) {
+        if (e.code === "KeyJ" || e.code === "ArrowDown") {
           e.preventDefault();
           e.stopPropagation();
           navigateHunk(1);
           return;
         }
       }
-      if (e.code === "Space" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+      if (e.code === "Space" && !e.altKey) {
         e.preventDefault();
         toggleCollapse(activeHunk);
       }

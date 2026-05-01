@@ -118,6 +118,22 @@ export function prAnnotationsKey(workspaceId: string, prNumber: number): string 
   return `${workspaceId}:${prNumber}`;
 }
 
+/// Files a PR touches, with +/- counts. Populated by PrViewer when it parses
+/// the multi-file diff; consumed by the Zen sidebar so it can render a file
+/// list for the active PR without re-fetching the diff. Keyed identically to
+/// annotations so both stores share one PR identity.
+export interface PrFileInfo {
+  path: string;
+  adds: number;
+  removes: number;
+}
+export const prFilesCacheAtom = atom<Record<string, PrFileInfo[]>>({});
+
+/// The currently-selected file for each PR's PrViewer instance. Lifted here
+/// so the in-Zen viewer and the Zen sidebar see the same selection without
+/// passing refs through ZenMode.
+export const selectedPrFileAtom = atom<Record<string, string | null>>({});
+
 export interface TransitionAfterCleanupParams {
   deletedSessionId: string;
   workspaceId: string;

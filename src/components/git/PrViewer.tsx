@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { useAtomValue, useSetAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { invoke } from "@/lib/tauri";
 import {
   prAnnotationsMapAtom,
   prAnnotationsKey,
   transitionAfterCleanupAction,
   gitChipModeAtom,
+  prFilesCacheAtom,
+  selectedPrFileAtom,
   type PrAnnotation,
   type PrChecks,
 } from "@/stores/git";
@@ -14,7 +16,7 @@ import { gitInfoMapAtom } from "@/stores/git";
 import type { Tab } from "@/stores/rightPanel";
 import { toastsAtom } from "@/stores/toast";
 import { selectedConflictFileMapAtom, conflictsZenOpenAtom } from "@/stores/conflict";
-import { zenModeAtom } from "@/stores/zenMode";
+import { zenModeAtom, zenActiveZoneAtom, prZenAtom } from "@/stores/zenMode";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import {
   ChevronUp,
@@ -30,6 +32,7 @@ import {
   AlertTriangle,
   Check,
   Circle,
+  FolderOpen,
 } from "lucide-react";
 import { Kbd } from "@/components/ui/kbd";
 
@@ -169,9 +172,13 @@ interface PrViewerProps {
   /// Defaults to `true` since the viewer is typically only mounted when it
   /// is the active surface (chip body or active tab).
   isActive?: boolean;
+  /// Set `true` when the viewer is rendered inside Zen's viewer zone. The
+  /// listener gate then keys off `zenActiveZoneAtom === "viewer"` instead
+  /// of bailing on any open Zen overlay.
+  inZen?: boolean;
 }
 
-export function PrViewer({ data, isActive = true }: PrViewerProps) {
+export function PrViewer({ data, isActive = true, inZen = false }: PrViewerProps) {
   const { workspaceId, prNumber, title, state, url, baseRefName, headRefName } = data;
 
   const [hunks, setHunks] = useState<Hunk[]>([]);
@@ -185,6 +192,22 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
   const [annotationDraft, setAnnotationDraft] = useState("");
   const [merging, setMerging] = useState(false);
   const [mergeAnywayConfirm, setMergeAnywayConfirm] = useState(false);
+  /// Per-PR active file. Lifted to a global atom keyed by PR identity so the
+  /// Zen sidebar can show the same file list and stay in sync with the
+  /// viewer's selection. PrViewer mirrors the Diff panel's "one file at a
+  /// time" pattern; the picker (Ctrl+Shift+K) swaps files.
+  const prKey = prAnnotationsKey(workspaceId, prNumber);
+  const [selectedPrMap, setSelectedPrMap] = useAtom(selectedPrFileAtom);
+  const selectedFile = selectedPrMap[prKey] ?? null;
+  const setSelectedFile = useCallback(
+    (next: string | null) => {
+      setSelectedPrMap((prev) => ({ ...prev, [prKey]: next }));
+    },
+    [setSelectedPrMap, prKey],
+  );
+  const setPrFilesCache = useSetAtom(prFilesCacheAtom);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerCursor, setPickerCursor] = useState(0);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -202,7 +225,12 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
   const transitionAfterCleanup = useSetAtom(transitionAfterCleanupAction);
   const zenState = useAtomValue(zenModeAtom);
   const conflictsZen = useAtomValue(conflictsZenOpenAtom);
-  const anyZenOpen = zenState.open || conflictsZen;
+  const prZen = useAtomValue(prZenAtom);
+  const zenZone = useAtomValue(zenActiveZoneAtom);
+  const anyZenOpen = zenState.open || conflictsZen || prZen !== null;
+  const listenerActive = inZen
+    ? anyZenOpen && zenZone === "viewer"
+    : !anyZenOpen;
 
   const annotationsKey = useMemo(
     () => prAnnotationsKey(workspaceId, prNumber),
@@ -243,6 +271,71 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
       .finally(() => setLoading(false));
   }, [workspaceId, prNumber]);
 
+  /// Unique file paths the PR touches, in the order the diff parser emitted
+  /// them. Drives the file picker and the per-file filter that hides
+  /// non-selected hunks/lines from the render pass.
+  const prFiles = useMemo<string[]>(() => {
+    const seen = new Set<string>();
+    const list: string[] = [];
+    for (const h of hunks) {
+      if (!seen.has(h.filePath)) {
+        seen.add(h.filePath);
+        list.push(h.filePath);
+      }
+    }
+    return list;
+  }, [hunks]);
+
+  /// +/- counts per file, derived once from the parsed lines so the picker
+  /// can show "M src/foo.ts +12 -3" badges without re-walking on every key.
+  const fileStats = useMemo<Record<string, { adds: number; removes: number }>>(() => {
+    const stats: Record<string, { adds: number; removes: number }> = {};
+    for (const line of lines) {
+      const fp = line.filePath;
+      if (!fp || (line.type !== "add" && line.type !== "remove")) continue;
+      if (!stats[fp]) stats[fp] = { adds: 0, removes: 0 };
+      if (line.type === "add") stats[fp].adds += 1;
+      else stats[fp].removes += 1;
+    }
+    return stats;
+  }, [lines]);
+
+  const visibleHunks = useMemo<Hunk[]>(
+    () => (selectedFile ? hunks.filter((h) => h.filePath === selectedFile) : []),
+    [hunks, selectedFile],
+  );
+
+  // Snap activeHunk into visibleHunks whenever the file changes so j/k starts
+  // from the top of the new file's diff.
+  useEffect(() => {
+    if (visibleHunks.length === 0) return;
+    if (!visibleHunks.find((h) => h.index === activeHunk)) {
+      setActiveHunk(visibleHunks[0].index);
+    }
+  }, [visibleHunks, activeHunk]);
+
+  // Default-select the first file when the diff loads and nothing is picked.
+  // Skipped if the atom already remembers a previous selection — closing and
+  // reopening the same PR keeps the user where they were.
+  useEffect(() => {
+    if (selectedFile) return;
+    if (prFiles.length === 0) return;
+    setSelectedFile(prFiles[0]);
+  }, [selectedFile, prFiles, setSelectedFile]);
+
+  // Publish the parsed file list + per-file +/- counts to the global cache so
+  // the Zen sidebar (a separate component tree) can render the same list
+  // without re-fetching the diff.
+  useEffect(() => {
+    if (prFiles.length === 0) return;
+    const entries = prFiles.map((p) => ({
+      path: p,
+      adds: fileStats[p]?.adds ?? 0,
+      removes: fileStats[p]?.removes ?? 0,
+    }));
+    setPrFilesCache((prev) => ({ ...prev, [prKey]: entries }));
+  }, [prFiles, fileStats, prKey, setPrFilesCache]);
+
   const fetchChecks = useCallback(() => {
     invoke<PrChecks | null>("get_pr_checks", { workspaceId, prNumber })
       .then((res) => setChecks(res))
@@ -256,13 +349,19 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
 
   const navigateHunk = useCallback((direction: -1 | 1) => {
     setActiveHunk((prev) => {
-      const next = Math.max(0, Math.min(hunks.length - 1, prev + direction));
+      const visible = visibleHunks;
+      if (visible.length === 0) return prev;
+      const idx = visible.findIndex((h) => h.index === prev);
+      const nextIdx = idx === -1
+        ? 0
+        : Math.max(0, Math.min(visible.length - 1, idx + direction));
+      const next = visible[nextIdx]?.index ?? prev;
       if (next === prev) return prev;
       const el = hunkRefs.current.get(next);
       if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
       return next;
     });
-  }, [hunks.length]);
+  }, [visibleHunks]);
 
   const toggleCollapse = useCallback((index: number) => {
     setCollapsedHunks((prev) => {
@@ -437,15 +536,11 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
   }
 
   // Keyboard handling at window level, gated by `isActive` and Zen state.
-  // We deliberately do NOT depend on DOM focus — Tauri's WebKit on Linux
-  // drops `tabIndex=-1` focus across rapid React commits, so the previous
-  // containerRef.contains(target) check meant nav silently failed until the
-  // user clicked into the panel. State-based gating: PrViewer is the active
-  // chip body in PrsChip when isActive=true; Zen never embeds PrViewer, so
-  // anyZenOpen=true means we step out so DiffView/FilesChip in Zen own keys.
+  // State-based gating (no DOM focus dependency): exactly one PrViewer
+  // listener is live at any moment, regardless of which element holds focus.
   useEffect(() => {
     if (!isActive) return;
-    if (anyZenOpen) return;
+    if (!listenerActive) return;
     function handleKeyDown(e: KeyboardEvent) {
       if (annotating) return;
       const target = e.target as HTMLElement | null;
@@ -455,29 +550,63 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
         || target?.getAttribute("contenteditable") === "true";
       if (inField) return;
 
+      // Picker open: j/k drives the picker cursor, Enter commits, Esc closes.
+      if (pickerOpen) {
+        if (e.code === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          setPickerOpen(false);
+          return;
+        }
+        if (prFiles.length === 0) return;
+        if (e.code === "KeyJ" || e.code === "ArrowDown") {
+          e.preventDefault();
+          e.stopPropagation();
+          setPickerCursor((i) => (i + 1) % prFiles.length);
+          return;
+        }
+        if (e.code === "KeyK" || e.code === "ArrowUp") {
+          e.preventDefault();
+          e.stopPropagation();
+          setPickerCursor((i) => (i - 1 + prFiles.length) % prFiles.length);
+          return;
+        }
+        if (e.code === "Enter") {
+          e.preventDefault();
+          e.stopPropagation();
+          const pick = prFiles[pickerCursor];
+          if (pick) {
+            setSelectedFile(pick);
+            setPickerOpen(false);
+          }
+          return;
+        }
+        return;
+      }
+
       if (e.code === "KeyJ" || e.code === "ArrowDown") {
-        if (hunks.length === 0) return;
+        if (visibleHunks.length === 0) return;
         e.preventDefault();
         e.stopPropagation();
         navigateHunk(1);
         return;
       }
       if (e.code === "KeyK" || e.code === "ArrowUp") {
-        if (hunks.length === 0) return;
+        if (visibleHunks.length === 0) return;
         e.preventDefault();
         e.stopPropagation();
         navigateHunk(-1);
         return;
       }
       if (e.code === "Space" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
-        if (hunks.length === 0) return;
+        if (visibleHunks.length === 0) return;
         e.preventDefault();
         e.stopPropagation();
         toggleCollapse(activeHunk);
         return;
       }
       if (e.code === "KeyA" && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        if (hunks.length === 0) return;
+        if (visibleHunks.length === 0) return;
         e.preventDefault();
         e.stopPropagation();
         startAnnotating();
@@ -492,7 +621,24 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hunks.length, annotating, isActive, activeHunk, annotations.length, owningSessionId, toggleCollapse, anyZenOpen]);
+  }, [visibleHunks, annotating, isActive, activeHunk, annotations.length, owningSessionId, toggleCollapse, listenerActive, pickerOpen, prFiles, pickerCursor]);
+
+  // External Ctrl+Shift+K → toggle the picker. When opened, snap the picker
+  // cursor to the currently-selected file so j/k starts from a useful spot.
+  useEffect(() => {
+    if (!isActive || !listenerActive) return;
+    function onToggle() {
+      setPickerOpen((open) => {
+        if (!open) {
+          const idx = selectedFile ? prFiles.indexOf(selectedFile) : -1;
+          setPickerCursor(idx >= 0 ? idx : 0);
+        }
+        return !open;
+      });
+    }
+    document.addEventListener("cluihud:toggle-file-picker", onToggle);
+    return () => document.removeEventListener("cluihud:toggle-file-picker", onToggle);
+  }, [isActive, listenerActive, selectedFile, prFiles]);
 
   // Steal focus when the panel zone wrapper gets focused (Alt+Left/Right).
   useEffect(() => {
@@ -574,34 +720,62 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
           {checks && checks.total > 0 && (
             <CiPill checks={checks} />
           )}
-          {hunks.length > 0 && (
-            <span className="ml-auto shrink-0 flex items-center gap-1">
-              <span>{activeHunk + 1}/{hunks.length}</span>
-              <button
-                onClick={() => navigateHunk(-1)}
-                disabled={activeHunk <= 0}
-                className="flex size-4 items-center justify-center rounded text-muted-foreground hover:bg-secondary disabled:opacity-30"
-                aria-label="Previous chunk (K)"
-              >
-                <ChevronUp size={10} />
-              </button>
-              <button
-                onClick={() => navigateHunk(1)}
-                disabled={activeHunk >= hunks.length - 1}
-                className="flex size-4 items-center justify-center rounded text-muted-foreground hover:bg-secondary disabled:opacity-30"
-                aria-label="Next chunk (J)"
-              >
-                <ChevronDown size={10} />
-              </button>
-            </span>
-          )}
         </div>
+        {/* File-picker bar — mirrors the Diff panel: one file at a time, swap
+            via Ctrl+Shift+K. Without this, multi-file PRs stack `diff --git`
+            sticky headers on collapse and the user can't tell which chunk
+            belongs to which file. */}
+        {selectedFile && (
+          <div className="flex items-center gap-1.5 text-[10px]">
+            <button
+              type="button"
+              onClick={() => {
+                const idx = selectedFile ? prFiles.indexOf(selectedFile) : -1;
+                setPickerCursor(idx >= 0 ? idx : 0);
+                setPickerOpen((v) => !v);
+              }}
+              className="flex shrink-0 items-center gap-1 rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors px-1 py-0.5"
+              title="Pick file (Ctrl+Shift+K)"
+            >
+              <FolderOpen size={11} />
+              <span className="font-mono text-foreground/85 truncate max-w-[18rem]">{selectedFile}</span>
+              <span className="text-muted-foreground/60 tabular-nums">
+                {prFiles.length > 0 && `· ${prFiles.indexOf(selectedFile) + 1}/${prFiles.length}`}
+              </span>
+            </button>
+            <span className="text-muted-foreground/40">·</span>
+            <span className="font-mono">
+              <span className="text-green-400">+{fileStats[selectedFile]?.adds ?? 0}</span>
+              <span className="text-muted-foreground/40 px-0.5">/</span>
+              <span className="text-red-400">-{fileStats[selectedFile]?.removes ?? 0}</span>
+            </span>
+            {visibleHunks.length > 0 && (
+              <span className="ml-auto shrink-0 flex items-center gap-1">
+                <span>{(visibleHunks.findIndex((h) => h.index === activeHunk) + 1) || 1}/{visibleHunks.length}</span>
+                <button
+                  onClick={() => navigateHunk(-1)}
+                  className="flex size-4 items-center justify-center rounded text-muted-foreground hover:bg-secondary"
+                  aria-label="Previous chunk (K)"
+                >
+                  <ChevronUp size={10} />
+                </button>
+                <button
+                  onClick={() => navigateHunk(1)}
+                  className="flex size-4 items-center justify-center rounded text-muted-foreground hover:bg-secondary"
+                  aria-label="Next chunk (J)"
+                >
+                  <ChevronDown size={10} />
+                </button>
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Body */}
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto outline-none"
+        className="relative flex-1 overflow-y-auto outline-none"
         tabIndex={-1}
         data-scrollable
       >
@@ -610,18 +784,13 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
             <span className="text-[11px] text-muted-foreground">No diff content</span>
           </div>
         ) : (
-          <div className="font-mono text-[11px] leading-[18px]" role="region" aria-label={`PR #${prNumber} diff`}>
+          <div className="font-mono text-[11px] leading-[18px]" role="region" aria-label={`PR #${prNumber} diff for ${selectedFile ?? ""}`}>
             {lines.map((line, i) => {
-              if (line.type === "file") {
-                return (
-                  <div
-                    key={i}
-                    className="border-y border-border/50 bg-secondary/40 px-2 py-1 text-[11px] font-medium text-foreground/90 sticky top-0 z-10"
-                  >
-                    {line.content}
-                  </div>
-                );
-              }
+              // File boundary rows are no longer rendered — the file name is
+              // shown in the header bar now. Skip non-selected files entirely
+              // so the renderer only walks the active file's lines.
+              if (line.type === "file") return null;
+              if (selectedFile && line.filePath !== selectedFile) return null;
 
               if (line.type !== "header" && line.hunkIndex >= 0 && collapsedHunks.has(line.hunkIndex)) {
                 return null;
@@ -745,6 +914,60 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
               );
             })}
           </div>
+        )}
+
+        {/* File picker overlay — backdrop dims the diff, picker floats over
+            it with j/k+Enter nav. Mirrors the Diff panel's FilePickerOverlay
+            shape so muscle memory carries over from one panel to the other. */}
+        {pickerOpen && prFiles.length > 0 && (
+          <>
+            <div
+              className="absolute inset-0 z-30 backdrop-blur-sm bg-black/30"
+              onClick={() => setPickerOpen(false)}
+            />
+            <div className="absolute inset-0 z-40 flex items-start justify-center px-6 pt-12 pointer-events-none">
+              <div className="pointer-events-auto w-full max-w-md max-h-[60vh] overflow-y-auto rounded border border-border bg-card shadow-2xl">
+                <div className="sticky top-0 flex items-center justify-between border-b border-border/50 bg-card px-3 py-1.5">
+                  <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                    PR files ({prFiles.length})
+                  </span>
+                  <span className="text-[9px] text-muted-foreground/60">
+                    j/k move · Enter pick · Esc close
+                  </span>
+                </div>
+                {prFiles.map((fp, i) => {
+                  const isCursor = pickerCursor === i;
+                  const isSelected = selectedFile === fp;
+                  const stats = fileStats[fp];
+                  return (
+                    <button
+                      key={fp}
+                      type="button"
+                      onMouseEnter={() => setPickerCursor(i)}
+                      onClick={() => { setSelectedFile(fp); setPickerOpen(false); }}
+                      ref={(el) => { if (el && isCursor) el.scrollIntoView({ block: "nearest" }); }}
+                      className={`flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors border-l-2 ${
+                        isCursor
+                          ? "border-l-orange-500 bg-orange-500/10"
+                          : "border-l-transparent hover:bg-secondary/30"
+                      }`}
+                    >
+                      <span className={`flex-1 truncate font-mono text-[11px] ${isSelected ? "text-foreground" : "text-foreground/80"}`}>
+                        {fp}
+                      </span>
+                      {stats && (
+                        <span className="shrink-0 font-mono text-[10px]">
+                          <span className="text-green-400">+{stats.adds}</span>
+                          <span className="text-muted-foreground/40 px-0.5">/</span>
+                          <span className="text-red-400">-{stats.removes}</span>
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </>
         )}
       </div>
 

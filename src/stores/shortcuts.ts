@@ -383,7 +383,7 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   { id: "approve-plan", label: "Approve Plan", keys: "ctrl+shift+a", category: "action", keywords: ["approve", "plan", "review", "accept"], handler: () => {
     document.dispatchEvent(new CustomEvent("cluihud:approve-plan"));
   }},
-  { id: "revise-or-resolve", label: "Revise Plan / Resolve Conflict (contextual)", keys: "ctrl+shift+r", category: "action", keywords: ["revise", "plan", "review", "reject", "feedback", "resolve", "conflict"], handler: () => {
+  { id: "revise-or-resolve", label: "Revise Plan / Resolve Conflict / Apply PR Annotations (contextual)", keys: "ctrl+shift+r", category: "action", keywords: ["revise", "plan", "review", "reject", "feedback", "resolve", "conflict", "apply", "pr", "claude"], handler: () => {
     const s = store();
     const activeTab = s.get(activeTabAtom);
     const conflicted = s.get(activeConflictedFilesAtom);
@@ -403,6 +403,22 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
         s.set(gitChipModeAtom, (prev) => ({ ...prev, [ws.id]: "conflicts" }));
         document.dispatchEvent(new CustomEvent("cluihud:open-first-conflict", { detail: { path: conflicted[0] } }));
         return;
+      }
+    }
+    // PR context — dispatch apply-pr-annotations so the active PrViewer (chip
+    // body or PR Zen) sends its annotations to the owning session terminal.
+    // PrViewer's listener no-ops if there are no annotations or the owning
+    // session isn't active, so the shortcut is safe to fire from anywhere.
+    if (sid) {
+      const workspaces = s.get(workspacesAtom);
+      const ws = workspaces.find((w) => w.sessions.some((sx) => sx.id === sid));
+      if (ws) {
+        const chipMap = s.get(gitChipModeAtom);
+        const currentChip = chipMap[ws.id] ?? "files";
+        if (currentChip === "prs") {
+          document.dispatchEvent(new CustomEvent("cluihud:apply-pr-annotations"));
+          return;
+        }
       }
     }
     if (activeTab?.type === "plan" || activeTab?.type === "spec") {

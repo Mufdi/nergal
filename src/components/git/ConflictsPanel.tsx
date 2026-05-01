@@ -28,7 +28,7 @@ import {
 import { activeConflictedFilesAtom, refreshConflictedFilesAtom } from "@/stores/git";
 import { toastsAtom } from "@/stores/toast";
 import { focusZoneAtom } from "@/stores/shortcuts";
-import { zenModeAtom } from "@/stores/zenMode";
+import { zenModeAtom, prZenAtom } from "@/stores/zenMode";
 import * as terminalService from "@/components/terminal/terminalService";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
@@ -147,12 +147,13 @@ export function ConflictsPanel({ sessionId, inZen = false, onToggleZen, onResolv
   const addToastFn = useSetAtom(toastsAtom);
   const zenState = useAtomValue(zenModeAtom);
   const conflictsZen = useAtomValue(conflictsZenOpenAtom);
+  const prZen = useAtomValue(prZenAtom);
   // Conflicts has its own Zen overlay (single-pane, no sidebar). Listener
   // gating: in-Zen instance fires when its overlay is open; the inline chip
-  // copy fires only when no Zen is up. Diff Zen also blocks the inline copy.
+  // copy fires only when no Zen is up. Diff/PR Zen also block the inline copy.
   const listenerActive = inZen
     ? conflictsZen
-    : !(zenState.open || conflictsZen);
+    : !(zenState.open || conflictsZen || prZen !== null);
 
   useEffect(() => {
     if (files.length === 0) return;
@@ -283,9 +284,10 @@ function ConflictView({
   const [sending, setSending] = useState(false);
   const zenStateInner = useAtomValue(zenModeAtom);
   const conflictsZenInner = useAtomValue(conflictsZenOpenAtom);
+  const prZenInner = useAtomValue(prZenAtom);
   const listenerActiveInner = inZen
     ? conflictsZenInner
-    : !(zenStateInner.open || conflictsZenInner);
+    : !(zenStateInner.open || conflictsZenInner || prZenInner !== null);
 
   const toggleRegionCollapse = useCallback((idx: number) => {
     setCollapsedRegions((prev) => {

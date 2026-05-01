@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@/lib/tauri";
 import { useAtomValue, useSetAtom } from "jotai";
-import { openZenModeAtom, zenModeAtom, zenActiveZoneAtom } from "@/stores/zenMode";
+import { openZenModeAtom, zenModeAtom, zenActiveZoneAtom, prZenAtom } from "@/stores/zenMode";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
 import { Kbd } from "@/components/ui/kbd";
 
@@ -27,8 +27,9 @@ export function HistoryChip({ sessionId, inZen = false }: HistoryChipProps) {
   const openZenMode = useSetAtom(openZenModeAtom);
   const zenState = useAtomValue(zenModeAtom);
   const conflictsZen = useAtomValue(conflictsZenOpenAtom);
+  const prZen = useAtomValue(prZenAtom);
   const zenZone = useAtomValue(zenActiveZoneAtom);
-  const anyZenOpen = zenState.open || conflictsZen;
+  const anyZenOpen = zenState.open || conflictsZen || prZen !== null;
   const listenerActive = inZen
     ? anyZenOpen && zenZone === "sidebar"
     : !anyZenOpen;

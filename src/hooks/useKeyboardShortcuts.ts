@@ -4,7 +4,7 @@ import {
   shortcutRegistryAtom,
   commandPaletteOpenAtom,
 } from "@/stores/shortcuts";
-import { zenModeAtom } from "@/stores/zenMode";
+import { zenModeAtom, prZenAtom } from "@/stores/zenMode";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
 import * as terminalService from "@/components/terminal/terminalService";
 
@@ -55,7 +55,8 @@ export function useKeyboardShortcuts() {
   const setPaletteOpen = useSetAtom(commandPaletteOpenAtom);
   const zenState = useAtomValue(zenModeAtom);
   const conflictsZen = useAtomValue(conflictsZenOpenAtom);
-  const zenOpen = zenState.open || conflictsZen;
+  const prZen = useAtomValue(prZenAtom);
+  const zenOpen = zenState.open || conflictsZen || prZen !== null;
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {

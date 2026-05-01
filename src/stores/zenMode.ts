@@ -2,6 +2,24 @@ import { atom } from "jotai";
 
 export type ZenZone = "viewer" | "sidebar";
 
+/// PR Zen target. When non-null, ZenMode renders PrViewer fullscreen instead
+/// of DiffView — mirroring how `conflictsZenOpenAtom` swaps in ConflictsPanel.
+/// We carry the full PR row so the viewer can render its merge button, CI
+/// pill, etc. without re-querying. Set via `cluihud:expand-zen-pr` from the
+/// PRs chip; cleared by closing Zen.
+export interface PrZenTarget {
+  workspaceId: string;
+  prNumber: number;
+  title: string;
+  state: string;
+  url: string;
+  baseRefName: string;
+  headRefName: string;
+  updatedAt: string;
+}
+
+export const prZenAtom = atom<PrZenTarget | null>(null);
+
 /// The Zen overlay is split into a viewer (DiffView / PrViewer / ConflictsPanel)
 /// and a git sidebar. This atom tracks which side currently owns keyboard input,
 /// so the active component's listener can fire while the other one stays out.
@@ -45,6 +63,7 @@ export const openZenModeAtom = atom(
 export const closeZenModeAtom = atom(null, (_get, set) => {
   set(zenModeAtom, defaultState);
   set(zenActiveZoneAtom, "viewer");
+  set(prZenAtom, null);
 });
 
 export const zenModeNavigateAtom = atom(

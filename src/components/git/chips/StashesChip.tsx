@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@/lib/tauri";
 import { useAtomValue, useSetAtom } from "jotai";
 import { toastsAtom } from "@/stores/toast";
-import { zenModeAtom } from "@/stores/zenMode";
+import { zenModeAtom, prZenAtom } from "@/stores/zenMode";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
 import { Textarea } from "@/components/ui/textarea";
 import { Kbd } from "@/components/ui/kbd";
@@ -34,10 +34,11 @@ export function StashesChip({ sessionId }: StashesChipProps) {
   const addToast = useSetAtom(toastsAtom);
   const zenState = useAtomValue(zenModeAtom);
   const conflictsZen = useAtomValue(conflictsZenOpenAtom);
+  const prZen = useAtomValue(prZenAtom);
   // Stashes chip never renders inside Zen, so any Zen overlay means the
   // user is interacting with that overlay — bail to avoid moving the
   // hidden cursor on j/k/Space/Enter.
-  const listenerActive = !(zenState.open || conflictsZen);
+  const listenerActive = !(zenState.open || conflictsZen || prZen !== null);
 
   const refresh = useCallback(() => {
     invoke<StashEntry[]>("git_stash_list", { sessionId })

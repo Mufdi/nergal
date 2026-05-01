@@ -440,6 +440,13 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
         s.set(conflictsZenOpenAtom, (v) => !v);
         return;
       }
+      if (chip === "prs") {
+        // PRs chip owns the Zen target (it knows which PR is selected). The
+        // workspaceId lets the chip filter its listener so other workspaces'
+        // chips don't react to a Zen request meant for this one.
+        document.dispatchEvent(new CustomEvent("cluihud:expand-zen-pr", { detail: { workspaceId: ws.id } }));
+        return;
+      }
       document.dispatchEvent(new CustomEvent("cluihud:expand-zen-git", { detail: { sessionId } }));
     }
   }},

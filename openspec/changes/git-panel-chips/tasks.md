@@ -108,3 +108,9 @@
    - Conflicts: chip atenuado when 0, glow+pulse when >0, auto-switch to PRs after resolve
    - Ctrl+Shift+0 expands GitPanel, second press collapses
    - No PR tab and no Conflicts tab in TabBar; Ctrl+Alt+Q does nothing
+
+   **Round 1 bug fixes landed 2026-05-01** (re-verify the items below):
+   - **Bug #1 + #5** — `Ctrl+Shift+0` from Files chip used to no-op and from Conflicts chip used to open Files Zen. Handler now resolves via `activePanelView` when no active tab and routes Conflicts → its own Zen. Commit `9855ff5`.
+   - **Bug #2 + #3 + #6** — Diff tab Zen used to land focus on the Files sidebar; Files Zen sidebar swallowed `j/k`+Space; commit-box placeholder forced a scrollbar. Zen now tracks viewer/sidebar zones with `Tab` to switch, autofocuses the diff scrollable so chunk nav owns the first keystroke, and FilesChip's `inZen` copy scopes its window listener so DiffView wins. Placeholder shortened + dropped to 10px. Commit `af77898`.
+   - **Bug #4** — PrViewer now matches DiffView: `j/k` navigate hunks, `Space` collapses the active hunk, chevron exposes the same toggle for mouse, collapsed hunk content is skipped at render. Commit `76bc06c`.
+   - **Bug #7** — `stash_apply` / `stash_pop` return `StashApplyOutcome { conflicted_files, stash_kept }` so a conflict-on-apply is reported as data and the toast explicitly names the Conflicts chip + the stash retention behavior. Other failures still bail with stderr unchanged. Commit `4ee094e`.

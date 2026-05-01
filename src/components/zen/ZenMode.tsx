@@ -43,6 +43,17 @@ export function GitFullView() {
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (!anyOverlayOpen) return;
+    // Field-aware bail. Without this, Esc inside the PR annotation textarea
+    // (or any input the user opens within Zen) closes the entire overlay
+    // instead of letting the field cancel its own draft. The annotation
+    // textarea handles Esc itself via its onKeyDown — we just need to step
+    // out of its way.
+    const target = e.target as HTMLElement | null;
+    const inField = target?.tagName === "INPUT"
+      || target?.tagName === "TEXTAREA"
+      || !!target?.closest(".cm-editor")
+      || target?.getAttribute("contenteditable") === "true";
+    if (inField) return;
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
@@ -277,7 +288,7 @@ export function GitFullView() {
                 key={fp}
                 type="button"
                 onMouseEnter={() => { if (zone === "sidebar") setSidebarCursor(i); }}
-                onClick={() => { selectFile(fp); setZone("viewer"); }}
+                onClick={() => selectFile(fp)}
                 ref={(el) => { if (el && (isCursor || (zone !== "sidebar" && isCurrent))) el.scrollIntoView({ block: "nearest" }); }}
                 className={`flex w-full flex-col gap-0 px-3 py-1 text-left transition-colors border-l-2 ${
                   isCursor

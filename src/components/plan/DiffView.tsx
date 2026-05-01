@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { activeSessionFilesAtom } from "@/stores/files";
 import { zenModeAtom, zenActiveZoneAtom, prZenAtom } from "@/stores/zenMode";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
+import { filePickerOpenAtom } from "@/stores/rightPanel";
 import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, Maximize2 } from "lucide-react";
 import {
   Tooltip,
@@ -399,9 +400,14 @@ interface DiffViewProps {
   /// underlying (non-Zen) DiffView stops handling keys while Zen is open
   /// and the in-Zen copy fires only when zone === "viewer".
   inZen?: boolean;
+  /// Optional file navigation callback. When provided, DiffView renders prev/
+  /// next chevrons in its header and binds Ctrl+Left/Right to call it. Owner
+  /// decides what "next file" means — e.g., next entry in the Zen state.files
+  /// list, or next entry in `activeSessionFilesAtom` for a Diff tab.
+  onNavFile?: (direction: "prev" | "next") => void;
 }
 
-export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen, inZen = false }: DiffViewProps) {
+export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen, inZen = false, onNavFile }: DiffViewProps) {
   const [lines, setLines] = useState<DiffLine[]>([]);
   const [hunks, setHunks] = useState<Hunk[]>([]);
   const [loading, setLoading] = useState(true);
@@ -491,10 +497,15 @@ export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen, i
   const conflictsZen = useAtomValue(conflictsZenOpenAtom);
   const prZen = useAtomValue(prZenAtom);
   const zenZone = useAtomValue(zenActiveZoneAtom);
+  const filePickerOpen = useAtomValue(filePickerOpenAtom);
   const anyZenOpen = zenState.open || conflictsZen || prZen !== null;
+  // The Diff panel's file picker (Ctrl+Shift+K) needs the arrow keys for its
+  // own j/k+Enter cursor. DiffView's window-capture listener fires before
+  // the picker's React onKeyDown, so we bail here whenever the picker is up.
+  // Zen's in-viewer DiffView ignores this — the picker is panel-scoped.
   const listenerActive = inZen
     ? anyZenOpen && zenZone === "viewer"
-    : !anyZenOpen;
+    : !anyZenOpen && !filePickerOpen;
 
   useEffect(() => {
     if (!listenerActive) return;
@@ -506,6 +517,23 @@ export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen, i
         || !!target?.closest(".cm-editor")
         || target?.getAttribute("contenteditable") === "true";
       if (inField) return;
+      // Ctrl+←/→ — file prev/next when the owner wired a callback. Captured
+      // before the modifier-bail below so this is the only Ctrl combo we
+      // claim from the global registry.
+      if (onNavFile && e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        if (e.code === "ArrowLeft") {
+          e.preventDefault();
+          e.stopPropagation();
+          onNavFile("prev");
+          return;
+        }
+        if (e.code === "ArrowRight") {
+          e.preventDefault();
+          e.stopPropagation();
+          onNavFile("next");
+          return;
+        }
+      }
       if (e.ctrlKey || e.metaKey || e.shiftKey) return;
       if (hunks.length > 1) {
         if (e.code === "KeyK" || e.code === "ArrowUp") {
@@ -529,7 +557,7 @@ export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen, i
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [hunks.length, activeHunk, navigateHunk, toggleCollapse, listenerActive]);
+  }, [hunks.length, activeHunk, navigateHunk, toggleCollapse, listenerActive, onNavFile]);
 
   if (loading && lines.length === 0) {
     return (
@@ -563,16 +591,38 @@ export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen, i
     <div className="flex h-full flex-col overflow-hidden">
       {/* File header + hunk navigation */}
       <div className="flex shrink-0 items-center justify-between border-b border-border/50 px-3 py-1.5">
-        <Tooltip>
-          <TooltipTrigger className="cursor-default min-w-0">
-            <span className="block truncate text-[11px] font-medium text-foreground/80 font-mono">
-              {relPath}
-            </span>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="max-w-md">
-            <p className="font-mono text-xs break-all">{filePath}</p>
-          </TooltipContent>
-        </Tooltip>
+        <div className="flex min-w-0 items-center gap-1">
+          {onNavFile && (
+            <>
+              <button
+                onClick={() => onNavFile("prev")}
+                className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                aria-label="Previous file"
+                title="Previous file (Ctrl+←)"
+              >
+                <ChevronLeft size={12} />
+              </button>
+              <button
+                onClick={() => onNavFile("next")}
+                className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                aria-label="Next file"
+                title="Next file (Ctrl+→)"
+              >
+                <ChevronRight size={12} />
+              </button>
+            </>
+          )}
+          <Tooltip>
+            <TooltipTrigger className="cursor-default min-w-0">
+              <span className="block truncate text-[11px] font-medium text-foreground/80 font-mono">
+                {relPath}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="max-w-md">
+              <p className="font-mono text-xs break-all">{filePath}</p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
         <div className="flex shrink-0 items-center gap-2 ml-2">
           <span className="text-[10px] text-green-400">+{adds}</span>
           <span className="text-[10px] text-red-400">-{removes}</span>

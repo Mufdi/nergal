@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useAtomValue, useSetAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   activeTabAtom,
   activeTabsAtom,
   activeTabIdAtom,
   activePanelViewAtom,
   setDirtyAction,
+  setTabPathAction,
   tabOpenedSignalAtom,
+  filePickerOpenAtom,
   type Tab,
   type TabType,
 } from "@/stores/rightPanel";
@@ -69,7 +71,7 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
   const setActiveTabId = useSetAtom(activeTabIdAtom);
   const setFocusZone = useSetAtom(focusZoneAtom);
   const setPreviousZone = useSetAtom(previousNonTerminalZoneAtom);
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useAtom(filePickerOpenAtom);
   const [annotationsDrawerOpen, setAnnotationsDrawerOpen] = useState(false);
 
   // Toggle annotations drawer via custom event (from shortcuts registry or PlanPanel)
@@ -441,7 +443,7 @@ function DocumentContent({ tab }: { tab: Tab }) {
       const diffPath = tab.data?.path as string | undefined;
       const diffSession = tab.data?.sessionId as string | undefined;
       return diffPath && diffSession
-        ? <DiffWithExpand filePath={diffPath} sessionId={diffSession} />
+        ? <DiffWithExpand tabId={tab.id} filePath={diffPath} sessionId={diffSession} />
         : <PlaceholderView label="Diff view" />;
     }
     case "spec": {
@@ -498,8 +500,9 @@ function GitPanelWrapper() {
   return sessionId ? <GitPanel sessionId={sessionId} /> : null;
 }
 
-function DiffWithExpand({ filePath, sessionId }: { filePath: string; sessionId: string }) {
+function DiffWithExpand({ tabId, filePath, sessionId }: { tabId: string; filePath: string; sessionId: string }) {
   const setZenMode = useSetAtom(openZenModeAtom);
+  const setTabPath = useSetAtom(setTabPathAction);
   const files = useAtomValue(activeSessionFilesAtom);
   const filePaths = files.map((f) => f.path);
   useEffect(() => {
@@ -522,12 +525,25 @@ function DiffWithExpand({ filePath, sessionId }: { filePath: string; sessionId: 
       document.removeEventListener("cluihud:expand-zen-git", onExpandGit);
     };
   }, [filePath, sessionId, filePaths, setZenMode]);
+
+  const handleNavFile = useCallback((direction: "prev" | "next") => {
+    if (filePaths.length === 0) return;
+    const idx = filePaths.indexOf(filePath);
+    if (idx === -1) return;
+    const nextIdx = direction === "next"
+      ? (idx + 1) % filePaths.length
+      : (idx - 1 + filePaths.length) % filePaths.length;
+    const next = filePaths[nextIdx];
+    if (next && next !== filePath) setTabPath({ tabId, path: next });
+  }, [tabId, filePath, filePaths, setTabPath]);
+
   return (
     <div className="h-full">
       <DiffView
         filePath={filePath}
         sessionId={sessionId}
         onOpenZen={() => setZenMode({ filePath, sessionId, files: filePaths })}
+        onNavFile={filePaths.length > 1 ? handleNavFile : undefined}
       />
     </div>
   );

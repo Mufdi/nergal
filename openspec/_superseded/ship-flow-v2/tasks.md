@@ -4,7 +4,7 @@
 - [x] 1.2 Add a `delete_session(&self, session_id: &str)` method on the `Db` wrapper in `src-tauri/src/db.rs` that deletes the row by id; expose via `SharedDb` — already present at db.rs:328-332
 - [x] 1.3 Replace the body of `cleanup_merged_session` in `src-tauri/src/commands.rs` to perform total deletion: worktree dir, branch, plan files (`.claude/plans/<session_id>/`), then `db.delete_session(session_id)`. Transcript files are owned by Claude CLI, not cluihud — explicitly NOT deleted (documented in fn doc)
 - [x] 1.4 Make each deletion in `cleanup_merged_session` independently fault-tolerant (log warning on failure, continue with the rest); return a structured `CleanupResult { deleted: bool, warnings: Vec<String> }`
-- [x] 1.5 Audit the codebase for any other callers of `update_session_status("completed")` — the only callsite was inside `cleanup_merged_session` itself (per GitNexus impact analysis); now removed. Frontend filters by `status === "completed"` (Sidebar/TerminalManager/SessionRow) become dead branches once cleanup deletes the row; addressed in task 7.3
+- [x] 1.5 Audit the codebase for any other callers of `update_session_status("completed")` — the only callsite was inside `cleanup_merged_session` itself; now removed. Frontend filters by `status === "completed"` (Sidebar/TerminalManager/SessionRow) become dead branches once cleanup deletes the row; addressed in task 7.3
 - [x] 1.6 Single `cleanup_merged_session` covers both PR-merged-poll path and local-merge path with the same signature — no separate command needed; frontend invokes from both
 - [x] 1.7 Backend builds clean (no new commands to register — `cleanup_merged_session` already in invoke_handler with new signature). 30 tests pass, no regressions
 

@@ -38,7 +38,6 @@ import {
   ChevronLeft as ChevronLeftIcon,
   ChevronRight,
   ChevronRight as ChevronRightIcon,
-  Minus,
   Sparkles,
   Save,
   RotateCcw,
@@ -342,6 +341,20 @@ function ConflictView({
     return out;
   }, [collapsedRegions, regions]);
 
+  /// When the user navigates regions (via j/k, header-row click, or chevron
+  /// nav), drag the merged pane to that region. The nonce bumps on every
+  /// change of `focusedRegion` so even consecutive picks of the same region
+  /// scroll-back if the user scrolled the editor manually.
+  const [scrollNonce, setScrollNonce] = useState(0);
+  useEffect(() => {
+    setScrollNonce((n) => n + 1);
+  }, [focusedRegion]);
+  const mergedScrollTarget = useMemo(() => {
+    const region = regions[focusedRegion];
+    if (!region) return null;
+    return { line: region.start, nonce: scrollNonce };
+  }, [regions, focusedRegion, scrollNonce]);
+
   useEffect(() => {
     if (focusedRegion >= regions.length) setFocusedRegion(Math.max(0, regions.length - 1));
   }, [regions.length, focusedRegion]);
@@ -523,39 +536,46 @@ function ConflictView({
         </span>
       </div>
 
-      {/* Row 2: Chunk-header-style actions (diff panel visual parity) */}
-      <div className="flex shrink-0 items-center gap-2 border-b border-border/50 bg-secondary/30 px-3 py-0.5">
-        {regions.length > 0 ? (
-          <>
-            {/* @@ header cue — mirrors the diff panel chunk marker */}
-            <span className="font-mono text-[10px] text-muted-foreground">
-              @@ region {focusedRegion + 1}/{regions.length} @@
-            </span>
-            {regions[focusedRegion] && (
-              <span className="font-mono text-[10px]">
-                <span className="text-blue-400">-{regions[focusedRegion].oursLines.length}</span>
-                <span className="text-muted-foreground/40 px-0.5">/</span>
-                <span className="text-purple-400">+{regions[focusedRegion].theirsLines.length}</span>
+      {/* Row 2: Chunk-header-style actions (diff panel visual parity) — main
+          row holds region info + accept buttons + Save; the keyboard hint
+          lives on a thin sub-row so the bar doesn't double-stack. */}
+      <div className="shrink-0 border-b border-border/50 bg-secondary/30">
+        <div className="flex items-center gap-2 px-3 py-0.5">
+          {regions.length > 0 ? (
+            <>
+              <span className="font-mono text-[10px] text-muted-foreground">
+                @@ region {focusedRegion + 1}/{regions.length} @@
               </span>
-            )}
-            <button onClick={() => applyRegion(focusedRegion, "ours")} className="ml-2 flex h-5 items-center gap-1 rounded bg-blue-500/15 px-2 text-[10px] text-blue-300 hover:bg-blue-500/25 transition-colors"><Minus size={9} /> Ours <Kbd keys="o" /></button>
-            <button onClick={() => applyRegion(focusedRegion, "theirs")} className="flex h-5 items-center gap-1 rounded bg-purple-500/15 px-2 text-[10px] text-purple-300 hover:bg-purple-500/25 transition-colors"><Minus size={9} /> Theirs <Kbd keys="t" /></button>
-            <button onClick={() => applyRegion(focusedRegion, "both")} className="flex h-5 items-center gap-1 rounded bg-green-500/15 px-2 text-[10px] text-green-300 hover:bg-green-500/25 transition-colors"><Minus size={9} /> Both <Kbd keys="b" /></button>
-            <span className="ml-2 text-[9px] text-muted-foreground/60">↑↓/JK move · Space collapse</span>
-          </>
-        ) : (
-          <span className="text-[10px] text-green-400">No markers remain — ready to save.</span>
-        )}
-        <div className="ml-auto flex items-center gap-1">
-          {isDirty && (
-            <Button variant="secondary" size="sm" onClick={resetMerged} className="h-6 gap-1 px-2 text-[10px]">
-              <RotateCcw size={10} /> Reset <Kbd keys="ctrl+shift+z" />
-            </Button>
+              {regions[focusedRegion] && (
+                <span className="font-mono text-[10px]">
+                  <span className="text-blue-400">-{regions[focusedRegion].oursLines.length}</span>
+                  <span className="text-muted-foreground/40 px-0.5">/</span>
+                  <span className="text-purple-400">+{regions[focusedRegion].theirsLines.length}</span>
+                </span>
+              )}
+              <button onClick={() => applyRegion(focusedRegion, "ours")} className="ml-2 flex h-5 items-center gap-1 rounded bg-blue-500/15 px-2 text-[10px] text-blue-300 hover:bg-blue-500/25 transition-colors">Ours <Kbd keys="o" /></button>
+              <button onClick={() => applyRegion(focusedRegion, "theirs")} className="flex h-5 items-center gap-1 rounded bg-purple-500/15 px-2 text-[10px] text-purple-300 hover:bg-purple-500/25 transition-colors">Theirs <Kbd keys="t" /></button>
+              <button onClick={() => applyRegion(focusedRegion, "both")} className="flex h-5 items-center gap-1 rounded bg-green-500/15 px-2 text-[10px] text-green-300 hover:bg-green-500/25 transition-colors">Both <Kbd keys="b" /></button>
+            </>
+          ) : (
+            <span className="text-[10px] text-green-400">No markers remain — ready to save.</span>
           )}
-          <Button size="sm" onClick={saveResolution} className="h-6 gap-1 px-2 text-[10px]">
-            <Save size={10} /> Save <Kbd keys="ctrl+shift+enter" />
-          </Button>
+          <div className="ml-auto flex items-center gap-1">
+            {isDirty && (
+              <Button variant="secondary" size="sm" onClick={resetMerged} className="h-6 gap-1 px-2 text-[10px]">
+                <RotateCcw size={10} /> Reset <Kbd keys="ctrl+shift+z" />
+              </Button>
+            )}
+            <Button size="sm" onClick={saveResolution} className="h-6 gap-1 px-2 text-[10px]">
+              <Save size={10} /> Save <Kbd keys="ctrl+shift+enter" />
+            </Button>
+          </div>
         </div>
+        {regions.length > 0 && (
+          <div className="border-t border-border/30 px-3 py-0.5 text-[9px] text-muted-foreground/60">
+            ↑↓ / j k region · space fold · o / t / b accept · ctrl+shift+r ask Claude
+          </div>
+        )}
       </div>
 
       {/* Row 3: Region headers — one row per conflict region in @@ chunk style.
@@ -632,10 +652,11 @@ function ConflictView({
           accent="text-green-400"
           value={current.merged}
           onChange={updateMerged}
-          hint="O/T/B accept · ↑↓ region · space fold"
+          hint="click to edit"
           filePath={path}
           wrap={inZen}
           foldLineRanges={mergedFoldRanges}
+          scrollToLine={mergedScrollTarget}
         />
       </div>
 
@@ -664,7 +685,7 @@ function ConflictView({
 }
 
 /// Code pane with CodeMirror (syntax highlighting + line numbers).
-function CodePane({ title, accent, value, onChange, readOnly, hint, filePath, wrap = false, foldLineRanges }: {
+function CodePane({ title, accent, value, onChange, readOnly, hint, filePath, wrap = false, foldLineRanges, scrollToLine }: {
   title: string;
   accent: string;
   value: string;
@@ -677,6 +698,10 @@ function CodePane({ title, accent, value, onChange, readOnly, hint, filePath, wr
   /// = no folds applied. The pane reconciles the editor's current folds with
   /// this prop on every change, so the caller can drive folds purely as data.
   foldLineRanges?: { fromLine: number; toLine: number }[];
+  /// Line number (0-indexed) to scroll into view. Bumping this prop (e.g.,
+  /// to a fresh `{value, line}` tuple via parent state) re-issues the scroll
+  /// so navigating regions actually drags the editor with the user.
+  scrollToLine?: { line: number; nonce: number } | null;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -757,6 +782,23 @@ function CodePane({ title, accent, value, onChange, readOnly, hint, filePath, wr
     for (const r of desired) effects.push(foldEffect.of(r));
     if (effects.length > 0) view.dispatch({ effects });
   }, [foldLineRanges, value]);
+
+  // Scroll the editor to a requested line whenever the parent bumps the
+  // nonce — used by ConflictView to drag the merged pane to whichever
+  // region the user just focused. Without this, focusing a far region
+  // updated the header counter but the editor kept showing the previous
+  // viewport.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !scrollToLine) return;
+    const doc = view.state.doc;
+    const lineIdx = scrollToLine.line + 1;
+    if (lineIdx < 1 || lineIdx > doc.lines) return;
+    const pos = doc.line(lineIdx).from;
+    view.dispatch({
+      effects: EditorView.scrollIntoView(pos, { y: "center" }),
+    });
+  }, [scrollToLine]);
 
   return (
     <div className="flex min-h-0 flex-col border-r border-border/50 last:border-r-0">

@@ -1,26 +1,35 @@
-import { useState, useEffect, useCallback } from "react";
+import { useEffect, useCallback } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { zenModeAtom, zenActiveZoneAtom, closeZenModeAtom, zenModeNavigateAtom } from "@/stores/zenMode";
+import {
+  zenModeAtom,
+  zenActiveZoneAtom,
+  closeZenModeAtom,
+  zenModeNavigateAtom,
+  zenModeSelectFileAtom,
+  prZenAtom,
+} from "@/stores/zenMode";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
+import {
+  prAnnotationsKey,
+  prFilesCacheAtom,
+  selectedPrFileAtom,
+} from "@/stores/git";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { DiffView } from "@/components/plan/DiffView";
-import { FilesChip } from "@/components/git/chips/FilesChip";
-import { HistoryChip } from "@/components/git/chips/HistoryChip";
 import { ConflictsPanel } from "@/components/git/ConflictsPanel";
-import { invoke } from "@/lib/tauri";
+import { PrViewer } from "@/components/git/PrViewer";
 import { X, ChevronLeft, ChevronRight } from "lucide-react";
-
-type SidebarTab = "changes" | "history";
 
 /// Full-screen diff review overlay with git sidebar.
 export function GitFullView() {
   const state = useAtomValue(zenModeAtom);
   const conflictsZen = useAtomValue(conflictsZenOpenAtom);
   const setConflictsZen = useSetAtom(conflictsZenOpenAtom);
+  const prZen = useAtomValue(prZenAtom);
   const sessionId = useAtomValue(activeSessionIdAtom);
   const close = useSetAtom(closeZenModeAtom);
   const navigate = useSetAtom(zenModeNavigateAtom);
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("changes");
+  const selectFile = useSetAtom(zenModeSelectFileAtom);
   const [zone, setZone] = useAtom(zenActiveZoneAtom);
 
   const closeAll = useCallback(() => {
@@ -28,15 +37,19 @@ export function GitFullView() {
     else close();
   }, [conflictsZen, setConflictsZen, close]);
 
+  // Any of the three open atoms means Zen is overlaid. We treat them as a
+  // single boolean for keyboard gating; the render branches differentiate.
+  const anyOverlayOpen = state.open || conflictsZen || prZen !== null;
+
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (!state.open && !conflictsZen) return;
+    if (!anyOverlayOpen) return;
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
       closeAll();
       return;
     }
-    if (!state.open) return;
+    if (!state.open && !prZen) return;
     // Alt+←/→: rebound while Zen is open. Outside Zen these toggle app focus
     // zones (sidebar/terminal/panel); inside Zen we steal them so the user
     // moves between the diff viewer and the git sidebar without leaking the
@@ -60,7 +73,7 @@ export function GitFullView() {
       e.stopImmediatePropagation();
       return;
     }
-  }, [state.open, conflictsZen, closeAll]);
+  }, [state.open, conflictsZen, prZen, anyOverlayOpen, closeAll, setZone]);
 
   useEffect(() => {
     // Capture phase + stopPropagation so the global shortcut registry never
@@ -75,8 +88,41 @@ export function GitFullView() {
   // canonical source of truth for which inner listener (viewer vs sidebar)
   // handles the keystroke — DOM focus is decorative; we don't depend on it.
   useEffect(() => {
-    if (state.open) setZone("viewer");
-  }, [state.open, state.filePath, setZone]);
+    if (state.open || prZen) setZone("viewer");
+  }, [state.open, state.filePath, prZen, setZone]);
+
+  // Sidebar j/k navigation: when zone === "sidebar", arrow/j/k cycle through
+  // state.files and Enter selects the cursor file. We register one listener
+  // here (rather than inside ZenFileList) so the cursor lives at zen-level
+  // and survives sidebar tab swaps if we re-add tabs later.
+  useEffect(() => {
+    if (!state.open) return;
+    if (zone !== "sidebar") return;
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      const inField = target?.tagName === "INPUT"
+        || target?.tagName === "TEXTAREA"
+        || !!target?.closest(".cm-editor")
+        || target?.getAttribute("contenteditable") === "true";
+      if (inField) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+      if (state.files.length === 0) return;
+      if (e.code === "ArrowDown" || e.code === "KeyJ") {
+        e.preventDefault();
+        e.stopPropagation();
+        navigate("next");
+        return;
+      }
+      if (e.code === "ArrowUp" || e.code === "KeyK") {
+        e.preventDefault();
+        e.stopPropagation();
+        navigate("prev");
+        return;
+      }
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [zone, state.open, state.files.length, navigate]);
 
   if (conflictsZen && sessionId) {
     return (
@@ -84,6 +130,34 @@ export function GitFullView() {
         <div className="absolute inset-0 bg-background/60 backdrop-blur-md" onClick={closeAll} />
         <div className="relative z-10 flex min-w-0 flex-1 flex-col m-3 overflow-hidden rounded-lg bg-card/95 border border-border">
           <ConflictsPanel sessionId={sessionId} inZen onToggleZen={closeAll} />
+        </div>
+      </div>
+    );
+  }
+
+  if (prZen) {
+    return (
+      <div className="fixed inset-0 z-40 flex overflow-hidden" role="dialog" aria-label={`PR #${prZen.prNumber} full view`}>
+        <div className="absolute inset-0 bg-background/60 backdrop-blur-md" onClick={closeAll} />
+
+        {/* Viewer */}
+        <div
+          onMouseDown={() => setZone("viewer")}
+          className={`relative z-10 flex min-w-0 flex-1 flex-col m-3 mr-0 overflow-hidden rounded-lg bg-card/95 border ring-1 transition-colors ${
+            zone === "viewer" ? "ring-primary/40 border-primary/40" : "ring-transparent border-border"
+          }`}
+        >
+          <PrViewer data={prZen} inZen />
+        </div>
+
+        {/* PR files sidebar */}
+        <div
+          onMouseDown={() => setZone("sidebar")}
+          className={`relative z-10 w-72 shrink-0 flex flex-col m-3 ml-1.5 overflow-hidden rounded-lg bg-card/95 border ring-1 transition-colors ${
+            zone === "sidebar" ? "border-primary/40 ring-primary/40" : "border-border ring-transparent"
+          }`}
+        >
+          <PrZenSidebar workspaceId={prZen.workspaceId} prNumber={prZen.prNumber} sidebarActive={zone === "sidebar"} />
         </div>
       </div>
     );
@@ -155,66 +229,163 @@ export function GitFullView() {
         </div>
       </div>
 
-      {/* Git sidebar with tabs */}
+      {/* Files sidebar — mirrors the file picker the user sees in the Diff
+          panel. The previous Zen sidebar rendered FilesChip's full
+          stage/track UI, which is irrelevant when the user is reviewing
+          a diff: here they only need to switch which file the viewer shows. */}
       <div
         onMouseDown={() => setZone("sidebar")}
         className={`relative z-10 w-72 shrink-0 flex flex-col m-3 ml-1.5 overflow-hidden rounded-lg bg-card/95 border ring-1 transition-colors ${
           zone === "sidebar" ? "border-primary/40 ring-primary/40" : "border-border ring-transparent"
         }`}
       >
-        {/* Tab bar */}
-        <div className="flex shrink-0 border-b border-border/50">
-          {(["changes", "history"] as const).map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => setSidebarTab(tab)}
-              className={`flex-1 py-1.5 text-center text-[10px] font-medium uppercase tracking-wider transition-colors ${
-                sidebarTab === tab
-                  ? "text-foreground border-b-2 border-primary"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
+        <div className="flex shrink-0 items-center justify-between border-b border-border/50 px-3 py-1.5">
+          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+            Files ({state.files.length})
+          </span>
+          <span className="text-[9px] text-muted-foreground/50">
+            {zone === "sidebar" ? "j/k move · Enter pick" : "Alt+→ to focus"}
+          </span>
         </div>
-
-        {/* Tab content */}
-        <div className="flex-1 overflow-hidden">
-          {sidebarTab === "changes" ? (
-            <GitPanelChangesOnly sessionId={state.sessionId} />
-          ) : (
-            <GitPanelHistoryOnly sessionId={state.sessionId} />
-          )}
+        <div className="flex-1 overflow-y-auto">
+          {state.files.map((fp) => {
+            const isCurrent = fp === state.filePath;
+            const filename = fp.split("/").pop() ?? fp;
+            const dir = fp.includes("/") ? fp.slice(0, fp.lastIndexOf("/")) : "";
+            return (
+              <button
+                key={fp}
+                type="button"
+                onClick={() => { selectFile(fp); setZone("viewer"); }}
+                ref={(el) => { if (el && isCurrent) el.scrollIntoView({ block: "nearest" }); }}
+                className={`flex w-full flex-col gap-0 px-3 py-1 text-left transition-colors border-l-2 ${
+                  isCurrent
+                    ? "border-l-orange-500 bg-orange-500/10"
+                    : "border-l-transparent hover:bg-secondary/30"
+                }`}
+              >
+                <span className={`truncate font-mono text-[11px] ${isCurrent ? "text-foreground" : "text-foreground/80"}`}>
+                  {filename}
+                </span>
+                {dir && (
+                  <span className="truncate font-mono text-[9px] text-muted-foreground/60">
+                    {dir}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>
   );
 }
 
-/// Files chip rendered standalone in Zen sidebar — no chip strip, no shell.
-/// Loads ahead count itself since GitPanel shell is bypassed.
-function GitPanelChangesOnly({ sessionId }: { sessionId: string }) {
-  const [ahead, setAhead] = useState(0);
-  useEffect(() => {
-    invoke<{ ahead: number }>("get_session_git_info", { sessionId })
-      .then((info) => setAhead(info.ahead))
-      .catch(() => {});
-  }, [sessionId]);
-  return (
-    <div className="h-full overflow-hidden">
-      <FilesChip sessionId={sessionId} ahead={ahead} inZen />
-    </div>
-  );
-}
+/// PR Zen sidebar — reads the parsed PR file list from `prFilesCacheAtom`
+/// (populated by PrViewer when it parses the diff) and the active selection
+/// from `selectedPrFileAtom`. Click selects; arrow/j/k navigate when this
+/// zone owns keyboard input. We deliberately don't re-fetch the diff here —
+/// the viewer is already loading it, and shared state keeps both panes
+/// instantly in sync as the user picks files.
+function PrZenSidebar({ workspaceId, prNumber, sidebarActive }: { workspaceId: string; prNumber: number; sidebarActive: boolean }) {
+  const key = prAnnotationsKey(workspaceId, prNumber);
+  const filesCache = useAtomValue(prFilesCacheAtom);
+  const [selectedMap, setSelectedMap] = useAtom(selectedPrFileAtom);
+  const files = filesCache[key] ?? [];
+  const selected = selectedMap[key] ?? null;
 
-/// History chip rendered standalone in Zen sidebar.
-function GitPanelHistoryOnly({ sessionId }: { sessionId: string }) {
+  useEffect(() => {
+    if (!sidebarActive) return;
+    if (files.length === 0) return;
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      const inField = target?.tagName === "INPUT"
+        || target?.tagName === "TEXTAREA"
+        || !!target?.closest(".cm-editor")
+        || target?.getAttribute("contenteditable") === "true";
+      if (inField) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+      if (e.code === "ArrowDown" || e.code === "KeyJ") {
+        e.preventDefault();
+        e.stopPropagation();
+        setSelectedMap((prev) => {
+          const cur = prev[key] ?? files[0]?.path ?? null;
+          const idx = files.findIndex((f) => f.path === cur);
+          const next = files[(idx + 1) % files.length];
+          return next ? { ...prev, [key]: next.path } : prev;
+        });
+        return;
+      }
+      if (e.code === "ArrowUp" || e.code === "KeyK") {
+        e.preventDefault();
+        e.stopPropagation();
+        setSelectedMap((prev) => {
+          const cur = prev[key] ?? files[0]?.path ?? null;
+          const idx = files.findIndex((f) => f.path === cur);
+          const prevIdx = idx <= 0 ? files.length - 1 : idx - 1;
+          const next = files[prevIdx];
+          return next ? { ...prev, [key]: next.path } : prev;
+        });
+        return;
+      }
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [sidebarActive, files, key, setSelectedMap]);
+
   return (
-    <div className="h-full overflow-hidden">
-      <HistoryChip sessionId={sessionId} inZen />
-    </div>
+    <>
+      <div className="flex shrink-0 items-center justify-between border-b border-border/50 px-3 py-1.5">
+        <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+          PR files ({files.length})
+        </span>
+        <span className="text-[9px] text-muted-foreground/50">
+          {sidebarActive ? "j/k move" : "Alt+→ to focus"}
+        </span>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {files.length === 0 ? (
+          <div className="flex h-full items-center justify-center px-3">
+            <span className="text-[10px] text-muted-foreground/60">Loading PR files…</span>
+          </div>
+        ) : (
+          files.map((f) => {
+            const isCurrent = f.path === selected;
+            const filename = f.path.split("/").pop() ?? f.path;
+            const dir = f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : "";
+            return (
+              <button
+                key={f.path}
+                type="button"
+                onClick={() => setSelectedMap((prev) => ({ ...prev, [key]: f.path }))}
+                ref={(el) => { if (el && isCurrent) el.scrollIntoView({ block: "nearest" }); }}
+                className={`flex w-full flex-col gap-0 px-3 py-1 text-left transition-colors border-l-2 ${
+                  isCurrent
+                    ? "border-l-orange-500 bg-orange-500/10"
+                    : "border-l-transparent hover:bg-secondary/30"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className={`min-w-0 flex-1 truncate font-mono text-[11px] ${isCurrent ? "text-foreground" : "text-foreground/80"}`}>
+                    {filename}
+                  </span>
+                  <span className="shrink-0 font-mono text-[9px]">
+                    <span className="text-green-400">+{f.adds}</span>
+                    <span className="text-muted-foreground/40 px-0.5">/</span>
+                    <span className="text-red-400">-{f.removes}</span>
+                  </span>
+                </div>
+                {dir && (
+                  <span className="truncate font-mono text-[9px] text-muted-foreground/60">
+                    {dir}
+                  </span>
+                )}
+              </button>
+            );
+          })
+        )}
+      </div>
+    </>
   );
 }
 

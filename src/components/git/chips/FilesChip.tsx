@@ -4,7 +4,7 @@ import { useSetAtom, useAtomValue } from "jotai";
 import { refreshGitInfoAtom } from "@/stores/git";
 import { triggerShipAtom } from "@/stores/ship";
 import { toastsAtom } from "@/stores/toast";
-import { openZenModeAtom, zenModeAtom, zenActiveZoneAtom } from "@/stores/zenMode";
+import { openZenModeAtom, zenModeAtom, zenActiveZoneAtom, prZenAtom } from "@/stores/zenMode";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
 import { Textarea } from "@/components/ui/textarea";
 import { Kbd } from "@/components/ui/kbd";
@@ -67,8 +67,9 @@ export function FilesChip({ sessionId, ahead, inZen = false }: FilesChipProps) {
   const openZenMode = useSetAtom(openZenModeAtom);
   const zenState = useAtomValue(zenModeAtom);
   const conflictsZen = useAtomValue(conflictsZenOpenAtom);
+  const prZen = useAtomValue(prZenAtom);
   const zenZone = useAtomValue(zenActiveZoneAtom);
-  const anyZenOpen = zenState.open || conflictsZen;
+  const anyZenOpen = zenState.open || conflictsZen || prZen !== null;
   // The Zen sidebar copy fires keys only when the user has switched the Zen
   // zone to "sidebar" (via Alt+→ or click). The non-Zen copy fires only when
   // no Zen overlay is up. Result: exactly one FilesChip listener is active

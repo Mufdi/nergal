@@ -1,10 +1,10 @@
 import { useEffect, useState, useCallback } from "react";
-import { useAtomValue } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { invoke } from "@/lib/tauri";
 import type { PrSummary } from "@/stores/git";
 import { PrViewer } from "@/components/git/PrViewer";
 import { Kbd } from "@/components/ui/kbd";
-import { zenModeAtom } from "@/stores/zenMode";
+import { zenModeAtom, prZenAtom } from "@/stores/zenMode";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
 import {
   ChevronLeft,
@@ -49,9 +49,27 @@ export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
   const [selected, setSelected] = useState<PrSummary | null>(null);
   const zenState = useAtomValue(zenModeAtom);
   const conflictsZen = useAtomValue(conflictsZenOpenAtom);
+  const prZen = useAtomValue(prZenAtom);
+  const setPrZen = useSetAtom(prZenAtom);
   // PRs chip never lives in Zen — bail when any overlay is open so j/k
   // doesn't slide the (hidden) picker cursor while the user navigates Zen.
-  const listenerActive = !(zenState.open || conflictsZen);
+  const listenerActive = !(zenState.open || conflictsZen || prZen !== null);
+
+  // Ctrl+Shift+0 routes here when chipMode === "prs" (see shortcuts.ts).
+  // Open PR Zen with the currently-selected PR; the cursor PR is the
+  // fallback when the user pressed the shortcut from the picker without
+  // picking a row first.
+  useEffect(() => {
+    function onExpand(ev: Event) {
+      const detail = (ev as CustomEvent<{ workspaceId: string }>).detail;
+      if (!detail || detail.workspaceId !== workspaceId) return;
+      const target = selected ?? prs[cursor] ?? null;
+      if (!target || !workspaceId) return;
+      setPrZen(summaryToData(workspaceId, target));
+    }
+    document.addEventListener("cluihud:expand-zen-pr", onExpand);
+    return () => document.removeEventListener("cluihud:expand-zen-pr", onExpand);
+  }, [workspaceId, selected, prs, cursor, setPrZen]);
 
   const refresh = useCallback(() => {
     if (!workspaceId) { setLoading(false); return; }

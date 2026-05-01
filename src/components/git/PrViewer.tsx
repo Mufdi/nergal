@@ -178,6 +178,7 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeHunk, setActiveHunk] = useState(0);
+  const [collapsedHunks, setCollapsedHunks] = useState<Set<number>>(new Set());
   const [checks, setChecks] = useState<PrChecks | null>(null);
   const [annotating, setAnnotating] = useState(false);
   const [annotationDraft, setAnnotationDraft] = useState("");
@@ -231,6 +232,7 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
         setLines(parsed.lines);
         setHunks(parsed.hunks);
         setActiveHunk(0);
+        setCollapsedHunks(new Set());
       })
       .catch((err: unknown) => setError(String(err)))
       .finally(() => setLoading(false));
@@ -256,6 +258,15 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
       return next;
     });
   }, [hunks.length]);
+
+  const toggleCollapse = useCallback((index: number) => {
+    setCollapsedHunks((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }, []);
 
   function startAnnotating() {
     const existing = annotations.find((a) => a.hunkIndex === activeHunk);
@@ -442,6 +453,13 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
         navigateHunk(-1);
         return;
       }
+      if (e.code === "Space" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        if (hunks.length === 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        toggleCollapse(activeHunk);
+        return;
+      }
       if (e.code === "KeyA" && !e.ctrlKey && !e.metaKey && !e.altKey) {
         if (hunks.length === 0) return;
         e.preventDefault();
@@ -458,7 +476,7 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
     el.addEventListener("keydown", handleKeyDown, true);
     return () => el.removeEventListener("keydown", handleKeyDown, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hunks.length, annotating, isActive, activeHunk, annotations.length, owningSessionId]);
+  }, [hunks.length, annotating, isActive, activeHunk, annotations.length, owningSessionId, toggleCollapse]);
 
   // Steal focus when the panel zone wrapper gets focused (Alt+Left/Right).
   useEffect(() => {
@@ -584,8 +602,13 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
                 );
               }
 
+              if (line.type !== "header" && line.hunkIndex >= 0 && collapsedHunks.has(line.hunkIndex)) {
+                return null;
+              }
+
               if (line.type === "header") {
                 const isActive = line.hunkIndex === activeHunk;
+                const isCollapsed = collapsedHunks.has(line.hunkIndex);
                 const annotation = annotations.find((a) => a.hunkIndex === line.hunkIndex);
                 return (
                   <div key={i}>
@@ -599,9 +622,25 @@ export function PrViewer({ data, isActive = true }: PrViewerProps) {
                           : "border-t-border/30 bg-secondary/30 hover:bg-secondary/50"
                       }`}
                     >
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleCollapse(line.hunkIndex);
+                          (e.currentTarget as HTMLElement).blur();
+                        }}
+                        className="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:bg-secondary"
+                        title={isCollapsed ? "Expand (Space)" : "Collapse (Space)"}
+                      >
+                        <ChevronRight size={10} className={`transition-transform ${isCollapsed ? "" : "rotate-90"}`} />
+                      </button>
                       <span className={`text-[10px] truncate ${isActive ? "text-blue-400" : "text-muted-foreground"}`}>
                         {line.content}
                       </span>
+                      {isCollapsed && (
+                        <span className="text-[10px] text-muted-foreground/50">
+                          collapsed
+                        </span>
+                      )}
                       {annotation && (
                         <MessageSquare size={10} className="ml-auto shrink-0 text-amber-400" />
                       )}

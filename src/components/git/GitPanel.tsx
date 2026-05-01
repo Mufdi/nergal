@@ -13,7 +13,7 @@ import {
 } from "@/stores/git";
 import { triggerMergeAtom } from "@/stores/shortcuts";
 import { toastsAtom } from "@/stores/toast";
-import { openConflictsTabAction } from "@/stores/conflict";
+import { selectedConflictFileMapAtom } from "@/stores/conflict";
 import { useSetAtom, useAtomValue } from "jotai";
 import {
   GitBranch,
@@ -56,7 +56,7 @@ export function GitPanel({ sessionId }: GitPanelProps) {
   const setPrChecksMap = useSetAtom(prChecksMapAtom);
   const triggerMergeSignal = useAtomValue(triggerMergeAtom);
   const addToast = useSetAtom(toastsAtom);
-  const openConflictsTab = useSetAtom(openConflictsTabAction);
+  const setSelectedConflictMap = useSetAtom(selectedConflictFileMapAtom);
   const [ciChecks, setCiChecks] = useState<PrChecks | null>(null);
   const [pendingMerge, setPendingMerge] = useState(false);
   const [completing, setCompleting] = useState(false);
@@ -152,8 +152,12 @@ export function GitPanel({ sessionId }: GitPanelProps) {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [prInfo, sessionId, setPrChecksMap]);
 
-  function handleOpenConflictTab(path: string) {
-    openConflictsTab({ sessionId, path });
+  /// Routes the user to the Conflicts chip with the given file pre-selected.
+  /// Replaces the legacy `openConflictsTab` flow now that conflicts live in
+  /// a chip rather than a document tab.
+  function handleRouteToConflictChip(path: string) {
+    setSelectedConflictMap((prev) => ({ ...prev, [sessionId]: path }));
+    setChipMode("conflicts");
   }
 
   async function handleCleanupSession() {
@@ -197,8 +201,8 @@ export function GitPanel({ sessionId }: GitPanelProps) {
   useEffect(() => {
     function onOpenFirst(ev: Event) {
       const detail = (ev as CustomEvent<{ path: string }>).detail;
-      if (detail?.path) handleOpenConflictTab(detail.path);
-      else if (conflictedFiles[0]) handleOpenConflictTab(conflictedFiles[0]);
+      if (detail?.path) handleRouteToConflictChip(detail.path);
+      else if (conflictedFiles[0]) handleRouteToConflictChip(conflictedFiles[0]);
     }
     document.addEventListener("cluihud:open-first-conflict", onOpenFirst);
     return () => document.removeEventListener("cluihud:open-first-conflict", onOpenFirst);

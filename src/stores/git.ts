@@ -96,12 +96,6 @@ export const gitChipModeAtom = atom<Record<string, ChipMode>>({});
 /// via `Ctrl+Shift+0` from anywhere in the GitPanel.
 export const gitPanelExpandedAtom = atom<boolean>(false);
 
-/// The currently focused conflict file inside the Conflicts chip's file
-/// picker. Updated when a consumer (e.g. PrViewer's failed-merge path or the
-/// GitPanel inline conflicts list) routes the user to the chip with a
-/// specific file pre-selected.
-export const selectedConflictFileAtom = atom<string | null>(null);
-
 /// A stash entry surfaced by the backend's `git_stash_list`. Mirrors the
 /// Rust `StashEntry` struct exactly.
 export interface StashEntry {

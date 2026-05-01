@@ -1,0 +1,27 @@
+{
+  "tier": "L",
+  "tier_source": "heuristic",
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "discovery_skip_reason": "extensive in-conversation discovery already crystallized the design (5 chips agreed, layouts agreed, nav pattern agreed)",
+    "iprev_rounds": 0,
+    "iprev_skip_reason": "user explicitly requested 'no nos apresuremos' — extensive in-conversation review already substituted iprev",
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": ["compile", "test", "lint"],
+    "per_phase_models": {
+      "design": "claude-opus-4-7",
+      "implementation": "claude-opus-4-7",
+      "exploration": "claude-opus-4-7"
+    }
+  },
+  "spec_target": "git-panel-v2 + conflict-resolution + tab-system + ship-flow (multi-spec deltas)",
+  "interview_answers": {
+    "discovery": "skipped (in-conversation crystallization)",
+    "iprev": "skipped (user said no rush, lots of time on this feature)",
+    "reviewers": "single-sequential (default for L without security/auth/breaking signals)",
+    "gates": "verify-only (compile + test + lint; no security/deps gates — no auth/crypto/deps changes)"
+  },
+  "events": [],
+  "interview_ts": "2026-04-30T00:00:00Z"
+}

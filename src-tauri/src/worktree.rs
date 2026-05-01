@@ -1144,3 +1144,217 @@ pub fn list_worktrees(repo_path: &Path) -> Result<Vec<String>> {
 
     Ok(paths)
 }
+
+/// A single entry in the stash stack.
+#[derive(Clone, serde::Serialize)]
+pub struct StashEntry {
+    pub index: u32,
+    pub message: String,
+    pub branch: String,
+    pub age: String,
+}
+
+/// Parse a single line of `git stash list --format='%gd%x09%cr%x09%gs'`.
+///
+/// Returns `None` for malformed lines. The `%gs` (subject) field has two
+/// canonical shapes:
+/// - `WIP on <branch>: <short-hash> <commit-subject>` — automatic stash
+///   created without `-m`. We surface the commit subject as the message and
+///   the branch as the captured branch.
+/// - `On <branch>: <user-message>` — user-supplied message via `git stash
+///   push -m <msg>`. The user-message is the visible part.
+fn parse_stash_line(line: &str) -> Option<StashEntry> {
+    let parts: Vec<&str> = line.splitn(3, '\t').collect();
+    let [stash_ref, age, subject] = parts.as_slice() else {
+        return None;
+    };
+
+    let inner = stash_ref.strip_prefix("stash@{")?.strip_suffix('}')?;
+    let index: u32 = inner.parse().ok()?;
+
+    let (branch, message) = if let Some(rest) = subject.strip_prefix("WIP on ") {
+        let (b, m) = rest.split_once(": ")?;
+        (b.to_string(), m.to_string())
+    } else if let Some(rest) = subject.strip_prefix("On ") {
+        let (b, m) = rest.split_once(": ")?;
+        (b.to_string(), m.to_string())
+    } else {
+        ("".to_string(), subject.to_string())
+    };
+
+    Some(StashEntry {
+        index,
+        message,
+        branch,
+        age: age.to_string(),
+    })
+}
+
+/// List all stashes on the stack.
+pub fn stash_list(cwd: &Path) -> Result<Vec<StashEntry>> {
+    let output = Command::new("git")
+        .args(["stash", "list", "--format=%gd%x09%cr%x09%gs"])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git stash list")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git stash list failed: {stderr}");
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut entries = Vec::new();
+    for line in stdout.lines() {
+        if let Some(entry) = parse_stash_line(line) {
+            entries.push(entry);
+        }
+    }
+    Ok(entries)
+}
+
+/// Create a new stash from the current working tree (including untracked
+/// files via `-u`). When `message` is empty, git falls back to the auto
+/// "WIP on …" subject.
+pub fn stash_create(cwd: &Path, message: &str) -> Result<()> {
+    let mut args: Vec<&str> = vec!["stash", "push", "-u"];
+    if !message.is_empty() {
+        args.push("-m");
+        args.push(message);
+    }
+    let output = Command::new("git")
+        .args(&args)
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git stash push")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git stash push failed: {stderr}");
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Git prints "No local changes to save" on stdout with success status when
+    // there's nothing to stash. Surface that as an error so the UI can react.
+    if stdout.contains("No local changes to save") {
+        anyhow::bail!("No local changes to save");
+    }
+    Ok(())
+}
+
+fn stash_ref(index: u32) -> String {
+    format!("stash@{{{index}}}")
+}
+
+/// Apply a stash without removing it from the stack.
+pub fn stash_apply(cwd: &Path, index: u32) -> Result<()> {
+    let output = Command::new("git")
+        .args(["stash", "apply", &stash_ref(index)])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git stash apply")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git stash apply failed: {stderr}");
+    }
+    Ok(())
+}
+
+/// Apply a stash and drop it from the stack on success.
+pub fn stash_pop(cwd: &Path, index: u32) -> Result<()> {
+    let output = Command::new("git")
+        .args(["stash", "pop", &stash_ref(index)])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git stash pop")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git stash pop failed: {stderr}");
+    }
+    Ok(())
+}
+
+/// Drop a stash without applying.
+pub fn stash_drop(cwd: &Path, index: u32) -> Result<()> {
+    let output = Command::new("git")
+        .args(["stash", "drop", &stash_ref(index)])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git stash drop")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git stash drop failed: {stderr}");
+    }
+    Ok(())
+}
+
+/// Show the file list of a stash via `git stash show --name-only`.
+pub fn stash_show(cwd: &Path, index: u32) -> Result<Vec<String>> {
+    let output = Command::new("git")
+        .args(["stash", "show", "--name-only", &stash_ref(index)])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git stash show")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git stash show failed: {stderr}");
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(String::from)
+        .collect())
+}
+
+/// Create a new branch from a stash via `git stash branch <name> <ref>`.
+/// The stash is dropped on success per git's default behavior.
+pub fn stash_branch(cwd: &Path, index: u32, branch_name: &str) -> Result<()> {
+    let output = Command::new("git")
+        .args(["stash", "branch", branch_name, &stash_ref(index)])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git stash branch")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git stash branch failed: {stderr}");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_stash_line_wip_form() {
+        let line = "stash@{0}\t2 hours ago\tWIP on main: a1b2c3d fix login";
+        let entry = parse_stash_line(line).expect("should parse");
+        assert_eq!(entry.index, 0);
+        assert_eq!(entry.branch, "main");
+        assert_eq!(entry.message, "a1b2c3d fix login");
+        assert_eq!(entry.age, "2 hours ago");
+    }
+
+    #[test]
+    fn parse_stash_line_user_message_form() {
+        let line = "stash@{3}\t5 minutes ago\tOn feature/x: rebase wip";
+        let entry = parse_stash_line(line).expect("should parse");
+        assert_eq!(entry.index, 3);
+        assert_eq!(entry.branch, "feature/x");
+        assert_eq!(entry.message, "rebase wip");
+        assert_eq!(entry.age, "5 minutes ago");
+    }
+
+    #[test]
+    fn parse_stash_line_malformed_returns_none() {
+        assert!(parse_stash_line("not a stash line").is_none());
+        assert!(parse_stash_line("stash@{abc}\t1m\tWIP on x: y").is_none());
+        assert!(parse_stash_line("stash@{0}\tonly one tab").is_none());
+    }
+
+    #[test]
+    fn parse_stash_line_message_with_colon() {
+        // Colons inside the user message must not be split — only the first
+        // ": " separator after the branch name counts.
+        let line = "stash@{1}\t3 days ago\tOn main: feat: add new api endpoint";
+        let entry = parse_stash_line(line).expect("should parse");
+        assert_eq!(entry.branch, "main");
+        assert_eq!(entry.message, "feat: add new api endpoint");
+    }
+}

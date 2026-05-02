@@ -23,6 +23,7 @@ import { conflictsZenOpenAtom, selectedConflictFileMapAtom } from "./conflict";
 import { gitChipModeAtom } from "./git";
 import { triggerShipAtom } from "./ship";
 import { toastsAtom } from "./toast";
+import { softCloseSessionAction, undoSessionCloseAction, hasPendingSessionCloseAtom } from "./sessionTabs";
 import { invoke as invokeCmd } from "@/lib/tauri";
 
 export type FocusZone = "sidebar" | "terminal" | "panel";
@@ -124,7 +125,16 @@ function togglePanel(type: Tab["type"], _label: string) {
   const currentActiveTab = s.get(activeTabAtom);
 
   if (currentActiveTab?.type === type || (currentView === type && !currentActiveTab)) {
-    s.set(toggleRightPanelAtom, (p: number) => p + 1);
+    // Same panel pressed twice = close it. Clear the per-session view so the
+    // layout-preset effect collapses the right panel and a later session
+    // switch back doesn't auto-reopen this panel. Splitter-drag and the
+    // generic Ctrl+Shift+B toggle deliberately don't clear the view (those
+    // are "peek" interactions, not a close intent).
+    if (currentView === type && !currentActiveTab) {
+      s.set(activePanelViewAtom, null);
+    } else {
+      s.set(toggleRightPanelAtom, (p: number) => p + 1);
+    }
     return;
   }
 
@@ -291,12 +301,31 @@ function prevPanelTab() {
 
 function closeCurrentTab() {
   const s = store();
-  const activeId = s.get(activeTabIdAtom);
-  if (activeId) s.set(closeTabAction, activeId);
+  const zone = s.get(focusZoneAtom);
+  if (zone === "panel") {
+    const activeId = s.get(activeTabIdAtom);
+    if (activeId) s.set(closeTabAction, activeId);
+    return;
+  }
+  // Terminal/sidebar zones close the active session tab via soft-close: the
+  // PTY stays alive for SOFT_CLOSE_TTL_MS so Ctrl+Shift+T (or the toast's
+  // Undo button) can restore it instantly. Mirrors how Ctrl+Tab cycles
+  // session-tabs vs panel-tabs based on focused zone.
+  const activeSessionId = s.get(activeSessionIdAtom);
+  if (activeSessionId) s.set(softCloseSessionAction, activeSessionId);
 }
 
 function reopenLastTab() {
-  store().set(reopenTabAction);
+  const s = store();
+  const zone = s.get(focusZoneAtom);
+  // In terminal/sidebar zones prefer reviving a soft-closed session if one
+  // is still in its TTL window; only fall through to panel-tab reopen when
+  // no session is pending. Panel zone always operates on panel tabs.
+  if (zone !== "panel" && s.get(hasPendingSessionCloseAtom)) {
+    s.set(undoSessionCloseAction);
+    return;
+  }
+  s.set(reopenTabAction);
 }
 
 export const shortcutRegistryAtom = atom<ShortcutAction[]>([
@@ -358,8 +387,8 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   { id: "save-file", label: "Save File", keys: "ctrl+s", category: "action", keywords: ["save", "file", "write"], handler: () => {
     document.dispatchEvent(new CustomEvent("cluihud:save-file"));
   }},
-  { id: "close-tab", label: "Close Tab", keys: "ctrl+w", category: "panel", keywords: ["tab", "close"], handler: closeCurrentTab },
-  { id: "reopen-tab", label: "Reopen Closed Tab", keys: "ctrl+shift+t", category: "panel", keywords: ["tab", "reopen", "undo"], handler: reopenLastTab },
+  { id: "close-tab", label: "Close Active Tab (panel tab or session, by focused zone)", keys: "ctrl+w", category: "panel", keywords: ["tab", "close", "session"], handler: closeCurrentTab },
+  { id: "reopen-tab", label: "Reopen Last Closed (session if pending, else panel tab)", keys: "ctrl+shift+t", category: "panel", keywords: ["tab", "reopen", "undo", "session"], handler: reopenLastTab },
   { id: "open-plan", label: "Open Plan Panel", keys: "ctrl+shift+p", category: "panel", keywords: ["plan", "panel"], handler: () => togglePanel("plan", "Plan") },
   { id: "open-files", label: "Open Files Panel", keys: "ctrl+shift+f", category: "panel", keywords: ["files", "modified", "panel"], handler: () => togglePanel("file", "Files") },
   { id: "open-diff", label: "Open Diff Panel", keys: "ctrl+shift+d", category: "panel", keywords: ["diff", "changes", "panel"], handler: () => togglePanel("diff", "Diff") },
@@ -389,36 +418,28 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     const conflicted = s.get(activeConflictedFilesAtom);
     const sid = s.get(activeSessionIdAtom);
     if (sid && conflicted.length > 0) {
-      const workspaces = s.get(workspacesAtom);
-      const ws = workspaces.find((w) => w.sessions.some((sx) => sx.id === sid));
-      if (ws) {
-        const chipMap = s.get(gitChipModeAtom);
-        const currentChip = chipMap[ws.id] ?? "files";
-        // Already on the Conflicts chip → forward to the panel's own resolver.
-        if (currentChip === "conflicts" && activeTab?.type === "git") {
-          document.dispatchEvent(new CustomEvent("cluihud:resolve-conflict-active-tab"));
-          return;
-        }
-        s.set(selectedConflictFileMapAtom, (prev) => ({ ...prev, [sid]: conflicted[0] }));
-        s.set(gitChipModeAtom, (prev) => ({ ...prev, [ws.id]: "conflicts" }));
-        document.dispatchEvent(new CustomEvent("cluihud:open-first-conflict", { detail: { path: conflicted[0] } }));
+      const chipMap = s.get(gitChipModeAtom);
+      const currentChip = chipMap[sid] ?? "files";
+      // Already on the Conflicts chip → forward to the panel's own resolver.
+      if (currentChip === "conflicts" && activeTab?.type === "git") {
+        document.dispatchEvent(new CustomEvent("cluihud:resolve-conflict-active-tab"));
         return;
       }
+      s.set(selectedConflictFileMapAtom, (prev) => ({ ...prev, [sid]: conflicted[0] }));
+      s.set(gitChipModeAtom, (prev) => ({ ...prev, [sid]: "conflicts" }));
+      document.dispatchEvent(new CustomEvent("cluihud:open-first-conflict", { detail: { path: conflicted[0] } }));
+      return;
     }
     // PR context — dispatch apply-pr-annotations so the active PrViewer (chip
     // body or PR Zen) sends its annotations to the owning session terminal.
     // PrViewer's listener no-ops if there are no annotations or the owning
     // session isn't active, so the shortcut is safe to fire from anywhere.
     if (sid) {
-      const workspaces = s.get(workspacesAtom);
-      const ws = workspaces.find((w) => w.sessions.some((sx) => sx.id === sid));
-      if (ws) {
-        const chipMap = s.get(gitChipModeAtom);
-        const currentChip = chipMap[ws.id] ?? "files";
-        if (currentChip === "prs") {
-          document.dispatchEvent(new CustomEvent("cluihud:apply-pr-annotations"));
-          return;
-        }
+      const chipMap = s.get(gitChipModeAtom);
+      const currentChip = chipMap[sid] ?? "files";
+      if (currentChip === "prs") {
+        document.dispatchEvent(new CustomEvent("cluihud:apply-pr-annotations"));
+        return;
       }
     }
     if (activeTab?.type === "plan" || activeTab?.type === "spec") {
@@ -447,11 +468,8 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
       return;
     }
     if (panelType === "git") {
-      const workspaces = s.get(workspacesAtom);
-      const ws = workspaces.find((w) => w.sessions.some((sx) => sx.id === sessionId));
-      if (!ws) return;
       const chipMap = s.get(gitChipModeAtom);
-      const chip = chipMap[ws.id] ?? "files";
+      const chip = chipMap[sessionId] ?? "files";
       if (chip === "conflicts") {
         s.set(conflictsZenOpenAtom, (v) => !v);
         return;
@@ -460,6 +478,9 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
         // PRs chip owns the Zen target (it knows which PR is selected). The
         // workspaceId lets the chip filter its listener so other workspaces'
         // chips don't react to a Zen request meant for this one.
+        const workspaces = s.get(workspacesAtom);
+        const ws = workspaces.find((w) => w.sessions.some((sx) => sx.id === sessionId));
+        if (!ws) return;
         document.dispatchEvent(new CustomEvent("cluihud:expand-zen-pr", { detail: { workspaceId: ws.id } }));
         return;
       }

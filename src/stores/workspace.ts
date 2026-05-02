@@ -45,6 +45,17 @@ export const activeWorkspaceAtom = atom<Workspace | null>((get) => {
   return workspaces.find((w) => w.id === session.workspace_id) ?? null;
 });
 
+/// Reverse index sessionId → workspaceId. Lets callers (e.g. GitPanel) skip
+/// the O(workspaces × sessions) scan that previously ran on every render
+/// when they only needed the parent workspace of a known session.
+export const sessionToWorkspaceMapAtom = atom<Record<string, string>>((get) => {
+  const map: Record<string, string> = {};
+  for (const ws of get(workspacesAtom)) {
+    for (const s of ws.sessions) map[s.id] = ws.id;
+  }
+  return map;
+});
+
 // Session tabs — ordered list of session IDs open as tabs in the TopBar
 export const sessionTabIdsAtom = atom<string[]>([]);
 

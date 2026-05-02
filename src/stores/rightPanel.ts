@@ -45,7 +45,28 @@ export const tabOpenedSignalAtom = atom(0);
 /// over React's onKeyDown bubble).
 export const filePickerOpenAtom = atom(false);
 
-export const activePanelViewAtom = atom<TabType | null>(null);
+/// Per-session standalone panel view (e.g. Git panel opened via Ctrl+Shift+G
+/// without a tab). Keyed by sessionId so each session remembers what it was
+/// showing — switching sessions and back restores the panel without needing
+/// a tab to anchor it. Tabs already persist via `tabStateMapAtom`; this is
+/// the equivalent for tab-less standalone panels.
+export const activePanelViewMapAtom = atom<Record<string, TabType | null>>({});
+
+/// Reader/writer facade keyed by the active session. All call sites use
+/// `useAtomValue` / `useSetAtom`, so flipping this from primitive to derived
+/// is transparent — they keep working without touching their code.
+export const activePanelViewAtom = atom<TabType | null, [TabType | null], void>(
+  (get) => {
+    const sessionId = get(activeSessionIdAtom);
+    if (!sessionId) return null;
+    return get(activePanelViewMapAtom)[sessionId] ?? null;
+  },
+  (get, set, view: TabType | null) => {
+    const sessionId = get(activeSessionIdAtom);
+    if (!sessionId) return;
+    set(activePanelViewMapAtom, (prev) => ({ ...prev, [sessionId]: view }));
+  },
+);
 
 export const tabStateMapAtom = atom<Record<string, TabState>>({});
 

@@ -8,6 +8,8 @@ import {
   gitChipModeAtom,
   prFilesCacheAtom,
   selectedPrFileAtom,
+  prDiffCacheMapAtom,
+  PR_DIFF_TTL_MS,
   type PrAnnotation,
   type PrChecks,
 } from "@/stores/git";
@@ -188,8 +190,10 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
 
   const [hunks, setHunks] = useState<Hunk[]>([]);
   const [lines, setLines] = useState<DiffLine[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const prDiffCacheMap = useAtomValue(prDiffCacheMapAtom);
+  const setPrDiffCacheMap = useSetAtom(prDiffCacheMapAtom);
   const [activeHunk, setActiveHunk] = useState(0);
   const [collapsedHunks, setCollapsedHunks] = useState<Set<number>>(new Set());
   const [checks, setChecks] = useState<PrChecks | null>(null);
@@ -261,20 +265,24 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
 
   const isOwningSessionActive = owningSessionId !== null && owningSessionId === activeSessionId;
 
-  const fetchDiff = useCallback(() => {
-    setLoading(true);
+  /// Fetch + parse the PR diff. Cache the raw text by `${workspaceId}:${prNumber}`
+  /// so flipping back to a recently-viewed PR is instant. The parse step
+  /// runs each time (it's local and cheap relative to the network call,
+  /// and avoids holding both raw + parsed forms in the cache).
+  const fetchDiff = useCallback((opts: { background?: boolean } = {}) => {
+    if (!opts.background) setLoading(true);
     setError(null);
     invoke<string>("get_pr_diff", { workspaceId, prNumber })
       .then((text) => {
+        const cacheKey = `${workspaceId}:${prNumber}`;
+        setPrDiffCacheMap((prev) => ({ ...prev, [cacheKey]: { text, fetchedAt: Date.now() } }));
         const parsed = parsePrDiff(text);
         setLines(parsed.lines);
         setHunks(parsed.hunks);
-        setActiveHunk(0);
-        setCollapsedHunks(new Set());
       })
       .catch((err: unknown) => setError(String(err)))
       .finally(() => setLoading(false));
-  }, [workspaceId, prNumber]);
+  }, [workspaceId, prNumber, setPrDiffCacheMap]);
 
   /// Unique file paths the PR touches, in the order the diff parser emitted
   /// them. Drives the file picker and the per-file filter that hides
@@ -347,10 +355,27 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
       .catch(() => setChecks(null));
   }, [workspaceId, prNumber]);
 
+  /// Hydrate from the diff cache on mount: re-opening the same PR within
+  /// PR_DIFF_TTL_MS skips the network round-trip and the spinner. A stale
+  /// cache still seeds the parsed view immediately while a background
+  /// refresh fetches the latest diff in place.
   useEffect(() => {
-    fetchDiff();
+    const cacheKey = `${workspaceId}:${prNumber}`;
+    const cached = prDiffCacheMap[cacheKey];
+    if (cached) {
+      const parsed = parsePrDiff(cached.text);
+      setLines(parsed.lines);
+      setHunks(parsed.hunks);
+      const fresh = Date.now() - cached.fetchedAt < PR_DIFF_TTL_MS;
+      if (!fresh) fetchDiff({ background: true });
+    } else {
+      fetchDiff();
+    }
     fetchChecks();
-  }, [fetchDiff, fetchChecks]);
+    // prDiffCacheMap intentionally omitted: read for the staleness gate,
+    // must not retrigger on cache mutation (would cause refetch loop).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId, prNumber, fetchDiff, fetchChecks]);
 
   const navigateHunk = useCallback((direction: -1 | 1) => {
     setActiveHunk((prev) => {
@@ -511,7 +536,7 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
             type: "info",
           });
           if (owningSessionId) {
-            setChipModeMap((prev) => ({ ...prev, [workspaceId]: "conflicts" }));
+            setChipModeMap((prev) => ({ ...prev, [owningSessionId]: "conflicts" }));
             // Clear pre-selection so ConflictsPanel falls back to the first
             // conflicted file from the new state.
             setSelectedConflictMap((prev) => {
@@ -709,7 +734,7 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
         <AlertTriangle size={20} className="text-red-400" />
         <span className="text-[11px] text-red-400 text-center">{error}</span>
         <button
-          onClick={fetchDiff}
+          onClick={() => fetchDiff()}
           className="mt-2 rounded bg-secondary px-3 py-1 text-[10px] text-foreground hover:bg-secondary/70"
         >
           Retry

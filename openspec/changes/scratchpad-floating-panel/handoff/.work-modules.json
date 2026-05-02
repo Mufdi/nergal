@@ -1,0 +1,74 @@
+{
+  "tier": "M",
+  "tier_source": "heuristic",
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "discovery_skip_reason": "Design space crystallized via direct conversation with user (4 rounds). User confirmed every contested decision before /work invocation.",
+    "iprev_rounds": 3,
+    "iprev_evaluator": "claude",
+    "iprev_focus": "extensibility hooks correctness (storage abstraction, naming layer, settings hook, no future-breaking decisions)",
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": ["compile", "test", "lint"],
+    "per_phase_models": {
+      "design": "claude-opus-4-7",
+      "implementation": "claude-sonnet-4-6",
+      "exploration": "claude-haiku-4-5"
+    }
+  },
+  "spec_target": "scratchpad",
+  "interview_answers": {
+    "tier_signals": "multi-file feature, new module isolated, no schema migration cross-cutting, no auth/security/billing — solid M",
+    "discovery_skip": "user iterated design conversationally; running /discovery would be redundant",
+    "iprev_activation": "user explicit ask: 'cuidado con el diseño del proposal, debe matchear correctamente con los updates futuros' → iprev validates extensibility claims",
+    "spike_check": "no uncertainty signals: CodeMirror, notify, rusqlite, Tauri commands, Jotai patterns — all already in stack and validated"
+  },
+  "events": [
+    {
+      "ts": "2026-05-02T00:00:00Z",
+      "type": "proposal-locked",
+      "hash": "0dbb0cab2556248efa7313364bac10baa9b3be648853b37bae15600017949931"
+    },
+    {
+      "ts": "2026-05-02T17:30:00Z",
+      "type": "iprev-attempt-failed",
+      "reason": "All evaluators unavailable (claude quota, gemini capacity, codex not installed). Architect performed self-review (round 1, 11 issues: 4 high, 4 medium, 3 low). Verdict: REVISE. External cross-model iprev still pending."
+    },
+    {
+      "ts": "2026-05-02T17:35:00Z",
+      "type": "proposal-revised",
+      "hash": "4c7d851049d13a7be608d79bb8edbdc28a7c486610dd1f6b3fd08a85c7ca268b",
+      "addresses": "self-review issues 1-11 (filename UUID identity, send-to-prompt adapter, multi-row panel schema, own-write tracking, multi-instance downgrade, path-change semantics, trash epoch, pointer-events, background token, spec scaffold note, test list)"
+    },
+    {
+      "ts": "2026-05-02T18:50:00Z",
+      "type": "iprev-round-1",
+      "evaluator": "claude",
+      "verdict": "REVISE",
+      "issue_count": "21 (2 critical, 6 high, 9 medium, 4 low)",
+      "summary": "Ctrl+L colision con terminal clear, falta path traversal validation, epoch vs mtime inconsistency, orphan DB rows on path change, dirty buffer flush race, tmp file location, watcher indexes everything, own-write 500ms not robust, ornamental claims (storage abstraction, custom naming, FloatingPanel wrapper, send-to-prompt seam), UX bear-trap renumbering, empty-state, off-screen rescue, Esc routing, DB migration mechanism, max tabs, xdg-open, purge toast, frontend test coverage."
+    },
+    {
+      "ts": "2026-05-02T19:00:00Z",
+      "type": "iprev-round-2",
+      "evaluator": "claude",
+      "verdict": "REVISE",
+      "issue_count": "12 (1 critical carry-forward, 3 high, 5 medium, 3 low)",
+      "summary": "Table name inconsistency carry-forward, hash race needs ring buffer, symlink check incomplete on read path, first-launch only covers no-path not missing-dir, ornamental heading, watcher leak on path change, tmp dotfile filter, frontend test gaps, DB version unspecified, hash sync read, off-screen on viewport change, epoch unit."
+    },
+    {
+      "ts": "2026-05-02T19:10:00Z",
+      "type": "iprev-round-3",
+      "evaluator": "claude",
+      "verdict": "APPROVED",
+      "issue_count": "5 (0 critical, 0 high, 1 medium, 4 low)",
+      "summary": "Test description carry-forward (fixed), regex pattern pinned, frontend test coverage narrow (deferred), off-screen on viewport change (deferred), rename-to-non-matching behavior (specified). All architectural blockers resolved. Extensibility hooks audit: all load-bearing claims have verifiable artifacts; provider abstraction explicitly disclaimed as non-hook."
+    },
+    {
+      "ts": "2026-05-02T19:15:00Z",
+      "type": "proposal-final-locked",
+      "hash": "64f37dda50e1d9665d20bbf8c43851dc26103ce7aea35d536d3094b59c0d25f4"
+    }
+  ],
+  "interview_ts": "2026-05-02T00:00:00Z"
+}

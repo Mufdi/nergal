@@ -6,6 +6,15 @@ import {
 } from "@/stores/shortcuts";
 import { zenModeAtom, prZenAtom } from "@/stores/zenMode";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
+import {
+  scratchpadOpenAtom,
+  scratchpadActiveTabIdAtom,
+  closeScratchTab,
+  createNewScratchTab,
+  cycleScratchTab,
+  restoreLastClosedScratchTab,
+} from "@/stores/scratchpad";
+import { appStore } from "@/stores/jotaiStore";
 import * as terminalService from "@/components/terminal/terminalService";
 
 const KEY_TO_CODE: Record<string, string> = {
@@ -95,6 +104,44 @@ export function useKeyboardShortcuts() {
         e.stopPropagation();
         setPaletteOpen(!paletteOpen);
         return;
+      }
+
+      // Scratchpad-focused override: when the panel is open AND focus is
+      // inside it, hijack Ctrl+Tab/Ctrl+Shift+Tab/Ctrl+W/Ctrl+Shift+T
+      // so they operate on scratchpad tabs instead of session/right-panel
+      // tabs. Other shortcuts (Ctrl+B, Ctrl+1..9, Ctrl+S, Ctrl+Alt+L) keep
+      // working as global controls.
+      const scratchpadOpen = appStore.get(scratchpadOpenAtom);
+      if (scratchpadOpen) {
+        const target = e.target as HTMLElement | null;
+        const inScratchpad = !!target?.closest('[data-floating-panel-id="scratchpad"]');
+        if (inScratchpad) {
+          if (e.ctrlKey && !e.altKey && e.code === "Tab") {
+            e.preventDefault();
+            e.stopPropagation();
+            cycleScratchTab(e.shiftKey ? -1 : 1);
+            return;
+          }
+          if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === "KeyW") {
+            e.preventDefault();
+            e.stopPropagation();
+            const activeId = appStore.get(scratchpadActiveTabIdAtom);
+            if (activeId) void closeScratchTab(activeId);
+            return;
+          }
+          if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === "KeyT") {
+            e.preventDefault();
+            e.stopPropagation();
+            void createNewScratchTab();
+            return;
+          }
+          if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyT") {
+            e.preventDefault();
+            e.stopPropagation();
+            void restoreLastClosedScratchTab();
+            return;
+          }
+        }
       }
 
       if (paletteOpen) return;

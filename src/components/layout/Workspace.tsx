@@ -19,6 +19,7 @@ import { layoutPresetAtom, PRESET_SIZES, sessionLayoutPresetAtom, type LayoutPre
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { CommandPalette } from "@/components/command/CommandPalette";
 import { ShipDialog } from "@/components/git/ShipDialog";
+import { ScratchpadPanel } from "@/components/scratchpad/ScratchpadPanel";
 import { activeConflictedFilesAtom, gitChipModeAtom } from "@/stores/git";
 import { selectedConflictFileMapAtom } from "@/stores/conflict";
 import {
@@ -343,6 +344,7 @@ export function Workspace() {
       <SettingsPanel open={settingsOpen} onOpenChange={setSettingsOpen} />
       <CommandPalette />
       <ShipDialog />
+      <ScratchpadPanel />
     </div>
   );
 }

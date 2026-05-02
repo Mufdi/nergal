@@ -638,9 +638,11 @@ dependencies = [
  "notify-debouncer-full",
  "portable-pty",
  "pulldown-cmark",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "similar",
  "tauri",
  "tauri-build",
@@ -652,6 +654,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "wezterm-term",
 ]
 

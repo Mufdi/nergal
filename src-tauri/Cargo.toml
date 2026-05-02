@@ -32,6 +32,12 @@ tauri-plugin-clipboard-manager = "2"
 # which stalls nearby async tasks — see `terminal_clipboard_write` in pty.rs.
 arboard = "3"
 
+# Scratchpad: UUID-keyed file identity, content hashing for own-write
+# tracking, regex filter for watcher.
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+regex = "1"
+
 # Terminal VT emulation (Phase 1 of replace-xterm-with-wezterm).
 # wezterm-term / termwiz are not published on crates.io — they only live inside
 # the wezterm workspace. Pinned to the last stable tag (Feb 2024); the core VT

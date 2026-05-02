@@ -25,6 +25,7 @@ import { triggerShipAtom } from "./ship";
 import { toastsAtom } from "./toast";
 import { softCloseSessionAction, undoSessionCloseAction, hasPendingSessionCloseAtom } from "./sessionTabs";
 import { invoke as invokeCmd } from "@/lib/tauri";
+import { scratchpadOpenAtom } from "./scratchpad";
 
 export type FocusZone = "sidebar" | "terminal" | "panel";
 
@@ -398,6 +399,7 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     document.dispatchEvent(new CustomEvent("cluihud:toggle-file-picker"));
   }},
   { id: "toggle-activity", label: "Toggle Activity Drawer", keys: "ctrl+shift+l", category: "panel", keywords: ["activity", "log", "timeline", "drawer"], handler: () => store().set(activityDrawerOpenAtom, (prev: boolean) => !prev) },
+  { id: "toggle-scratchpad", label: "Toggle Scratchpad", keys: "ctrl+alt+l", category: "panel", keywords: ["scratchpad", "notes", "scratch", "buffer"], handler: () => store().set(scratchpadOpenAtom, (prev: boolean) => !prev) },
   { id: "toggle-annotations", label: "Toggle Annotations Drawer", keys: "ctrl+shift+j", category: "panel", keywords: ["annotations", "drawer", "comments", "plan"], handler: () => {
     document.dispatchEvent(new CustomEvent("cluihud:toggle-annotations-drawer"));
   }},

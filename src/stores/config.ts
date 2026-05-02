@@ -10,4 +10,5 @@ export const configAtom = atom<Config>({
   theme_mode: "dark",
   preferred_editor: "",
   terminal_kitty_keyboard: true,
+  scratchpad_path: null,
 });

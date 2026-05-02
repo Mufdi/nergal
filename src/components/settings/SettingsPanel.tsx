@@ -15,6 +15,89 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { scratchpadPathAtom, reloadTabsFromBackend } from "@/stores/scratchpad";
+
+function ScratchpadPathField() {
+  const [path, setPath] = useAtom(scratchpadPathAtom);
+  const [draft, setDraft] = useState(path);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setDraft(path);
+  }, [path]);
+
+  async function handleApply() {
+    if (!draft || draft === path) return;
+    setBusy(true);
+    try {
+      const canonical = await invoke<string>("scratchpad_set_path", { newPath: draft });
+      setPath(canonical);
+      await reloadTabsFromBackend();
+    } catch (err) {
+      console.error("[settings] scratchpad_set_path failed:", err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleReveal() {
+    try {
+      await invoke("scratchpad_reveal_in_file_manager");
+    } catch (err) {
+      console.error("[settings] reveal failed:", err);
+    }
+  }
+
+  async function handleResetDefault() {
+    setBusy(true);
+    try {
+      const def = await invoke<string>("scratchpad_default_path");
+      const canonical = await invoke<string>("scratchpad_set_path", { newPath: def });
+      setPath(canonical);
+      setDraft(canonical);
+      await reloadTabsFromBackend();
+    } catch (err) {
+      console.error("[settings] reset default failed:", err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="grid gap-2">
+      <Label htmlFor="setting-scratchpad-path">Scratchpad Directory</Label>
+      <div className="flex gap-2">
+        <Input
+          id="setting-scratchpad-path"
+          type="text"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="~/.config/cluihud/scratchpad/"
+          className="flex-1"
+        />
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleApply}
+          disabled={busy || draft === path || !draft}
+        >
+          Apply
+        </Button>
+      </div>
+      <div className="flex gap-2">
+        <Button variant="ghost" size="xs" onClick={handleReveal}>
+          Reveal in file manager
+        </Button>
+        <Button variant="ghost" size="xs" onClick={handleResetDefault} disabled={busy}>
+          Reset to default
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Path where scratchpad notes (.md) live. Changing it closes open tabs and reloads from the new path.
+      </p>
+    </div>
+  );
+}
 
 interface SettingsProps {
   open: boolean;
@@ -119,6 +202,10 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
               ))}
             </select>
           </div>
+
+          <Separator />
+
+          <ScratchpadPathField />
 
           <Separator />
 

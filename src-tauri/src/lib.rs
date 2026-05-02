@@ -6,6 +6,7 @@ pub mod hooks;
 mod models;
 mod plan_state;
 mod pty;
+pub mod scratchpad;
 pub mod setup;
 mod tasks;
 mod terminal;
@@ -19,7 +20,9 @@ use db::Database;
 use hooks::server::start_hook_server;
 use plan_state::PlanStateManager;
 use pty::PtyManager;
+use scratchpad::commands::ScratchpadState;
 use std::path::PathBuf;
+use tauri::Manager;
 
 /// File written to `~/.cluihud-active` while the app is running, so the
 /// `cluihud-conditional.sh` hook wrapper can detect whether forwarding
@@ -65,6 +68,22 @@ pub fn run() {
         PlanStateManager::new(config.plans_directory.clone()),
     ));
 
+    let scratchpad_root = config
+        .scratchpad_path
+        .clone()
+        .unwrap_or_else(scratchpad::default_scratchpad_dir);
+    if let Err(e) = scratchpad::ensure_dir(&scratchpad_root) {
+        tracing::warn!("scratchpad ensure_dir failed: {e}");
+    }
+    if let Err(e) = scratchpad::cleanup_orphan_tmps(&scratchpad_root) {
+        tracing::warn!("scratchpad cleanup_orphan_tmps failed: {e}");
+    }
+    match scratchpad::purge::purge_trash(&scratchpad_root) {
+        Ok(0) => {}
+        Ok(n) => tracing::info!("scratchpad purge: removed {n} expired notes"),
+        Err(e) => tracing::warn!("scratchpad purge failed: {e}"),
+    }
+
     // Startup reconciliation: clean up sessions with missing worktree paths
     if let Ok(db_guard) = db.lock() {
         reconcile_worktrees(&db_guard);
@@ -78,6 +97,7 @@ pub fn run() {
         .manage(PtyManager::new(config.terminal_kitty_keyboard))
         .manage(db.clone())
         .manage(plan_state.clone())
+        .manage(ScratchpadState::new(scratchpad_root.clone()))
         .invoke_handler(tauri::generate_handler![
             // PTY commands
             pty::start_claude_session,
@@ -184,6 +204,20 @@ pub fn run() {
             commands::read_file_content,
             commands::write_file_content,
             pty::write_to_session_pty,
+            // Scratchpad commands
+            scratchpad::commands::scratchpad_get_path,
+            scratchpad::commands::scratchpad_default_path,
+            scratchpad::commands::scratchpad_set_path,
+            scratchpad::commands::scratchpad_list_tabs,
+            scratchpad::commands::scratchpad_read_tab,
+            scratchpad::commands::scratchpad_write_tab,
+            scratchpad::commands::scratchpad_create_tab,
+            scratchpad::commands::scratchpad_close_tab,
+            scratchpad::commands::scratchpad_cleanup_tmps,
+            scratchpad::commands::scratchpad_restore_tab,
+            scratchpad::commands::scratchpad_get_geometry,
+            scratchpad::commands::scratchpad_set_geometry,
+            scratchpad::commands::scratchpad_reveal_in_file_manager,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
@@ -257,6 +291,26 @@ pub fn run() {
                     "openspec directory does not exist yet, skipping watcher: {}",
                     openspec_dir.display()
                 );
+            }
+
+            // Scratchpad watcher (lives for the lifetime of the app, owned
+            // by the managed ScratchpadState so set_path can replace it).
+            let scratchpad_state = app.state::<ScratchpadState>();
+            match scratchpad::watcher::ScratchpadWatcher::spawn(
+                scratchpad_root.clone(),
+                scratchpad_state.own_writes.clone(),
+                app_handle.clone(),
+            ) {
+                Ok(watcher) => {
+                    if let Ok(mut guard) = scratchpad_state.watcher.lock() {
+                        *guard = Some(watcher);
+                    }
+                    tracing::info!(
+                        "scratchpad watcher started on {}",
+                        scratchpad_root.display()
+                    );
+                }
+                Err(e) => tracing::warn!("scratchpad watcher failed: {e}"),
             }
 
             Ok(())

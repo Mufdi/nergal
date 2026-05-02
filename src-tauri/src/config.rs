@@ -21,6 +21,11 @@ pub struct Config {
     /// encode unambiguously so shells can bind them distinctively.
     #[serde(default = "default_true")]
     pub terminal_kitty_keyboard: bool,
+    /// Path where scratchpad notes (`.md` files) live. Defaults to
+    /// `~/.config/cluihud/scratchpad/`. Can be changed at runtime via
+    /// `scratchpad_set_path`; the new value is persisted here.
+    #[serde(default)]
+    pub scratchpad_path: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -38,6 +43,7 @@ impl Default for Config {
             theme_mode: "dark".into(),
             preferred_editor: String::new(),
             terminal_kitty_keyboard: true,
+            scratchpad_path: None,
         }
     }
 }

@@ -10,8 +10,8 @@ import * as terminalService from "@/components/terminal/terminalService";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { ActivityDrawer } from "@/components/activity/ActivityDrawer";
 import { ZenMode } from "@/components/zen/ZenMode";
-import { expandRightPanelAtom, activePanelViewAtom, activeTabAtom, openTabAction } from "@/stores/rightPanel";
-import { activeSessionIdAtom, workspacesAtom } from "@/stores/workspace";
+import { expandRightPanelAtom, activePanelViewAtom, openTabAction } from "@/stores/rightPanel";
+import { activeSessionIdAtom } from "@/stores/workspace";
 import { planReviewStatusMapAtom, planStateMapAtom } from "@/stores/plan";
 import { toggleSidebarAtom, toggleRightPanelAtom, focusZoneAtom } from "@/stores/shortcuts";
 
@@ -55,11 +55,9 @@ export function Workspace() {
   const prevSessionRef = useRef<string | null>(null);
 
   const setActivePanelView = useSetAtom(activePanelViewAtom);
-  const activeTab = useAtomValue(activeTabAtom);
   const activeConflictedFiles = useAtomValue(activeConflictedFilesAtom);
   const setSelectedConflictMap = useSetAtom(selectedConflictFileMapAtom);
   const setChipModeMap = useSetAtom(gitChipModeAtom);
-  const workspaces = useAtomValue(workspacesAtom);
 
   // Redistribute space when sidebar collapses/expands manually
   const prevSidebarCollapsed = useRef(sidebarCollapsed);
@@ -110,10 +108,11 @@ export function Workspace() {
       }
     }
 
-    // Otherwise clear panel view if new session has no tabs
-    if (!activeTab) {
-      setActivePanelView(null);
-    }
+    // Standalone panel view (Ctrl+Shift+G etc.) is now persisted per-session
+    // via `activePanelViewMapAtom`, so we no longer clear it on switch — the
+    // layout-preset effect below picks up the new session's view and resizes
+    // the right panel accordingly. Sessions that never opened a panel start
+    // with view=null → "terminal-focus" preset → right collapsed (default).
 
     // Focus terminal on session switch so the user can type immediately.
     requestAnimationFrame(() => {
@@ -194,11 +193,8 @@ export function Workspace() {
     if (!activeSessionId) return;
     const count = activeConflictedFiles.length;
     if (count > 0 && prevConflictCountRef.current === 0) {
-      const ws = workspaces.find((w) => w.sessions.some((s) => s.id === activeSessionId));
-      if (ws) {
-        setSelectedConflictMap((prev) => ({ ...prev, [activeSessionId]: activeConflictedFiles[0] }));
-        setChipModeMap((prev) => ({ ...prev, [ws.id]: "conflicts" }));
-      }
+      setSelectedConflictMap((prev) => ({ ...prev, [activeSessionId]: activeConflictedFiles[0] }));
+      setChipModeMap((prev) => ({ ...prev, [activeSessionId]: "conflicts" }));
       setActivePanelView("git");
       requestAnimationFrame(() => {
         const panel = rightPanelRef.current;
@@ -206,7 +202,7 @@ export function Workspace() {
       });
     }
     prevConflictCountRef.current = count;
-  }, [activeSessionId, activeConflictedFiles, workspaces, setSelectedConflictMap, setChipModeMap, setActivePanelView]);
+  }, [activeSessionId, activeConflictedFiles, setSelectedConflictMap, setChipModeMap, setActivePanelView]);
 
   // Auto-expand right panel when a plan review arrives for the active session
   const prevPlanReviewRef = useRef<string | undefined>(undefined);

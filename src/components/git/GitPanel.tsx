@@ -1,10 +1,19 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useEffect, useCallback, useRef, useState } from "react";
 import { invoke, listen } from "@/lib/tauri";
 import {
   refreshGitInfoAtom,
   refreshConflictedFilesAtom,
   activeConflictedFilesAtom,
   prChecksMapAtom,
+  prsCacheMapAtom,
+  stashCountMapAtom,
+  gitHeaderMapAtom,
+  prInfoMapAtom,
+  pendingMergeMapAtom,
+  PRS_CACHE_TTL_MS,
+  STASH_CACHE_TTL_MS,
+  SESSION_GIT_TTL_MS,
+  PR_INFO_TTL_MS,
   transitionAfterCleanupAction,
   gitChipModeAtom,
   type ChipMode,
@@ -18,14 +27,14 @@ import { useSetAtom, useAtomValue } from "jotai";
 import {
   GitBranch,
   ExternalLink,
-  Loader2,
   AlertTriangle,
   Check,
   CircleDashed,
+  Loader2,
   Maximize2,
 } from "lucide-react";
 import { Kbd } from "@/components/ui/kbd";
-import { workspacesAtom } from "@/stores/workspace";
+import { sessionToWorkspaceMapAtom } from "@/stores/workspace";
 import { ChipStrip } from "./chips/ChipStrip";
 import { FilesChip } from "./chips/FilesChip";
 import { HistoryChip } from "./chips/HistoryChip";
@@ -45,10 +54,6 @@ interface GitPanelProps {
 }
 
 export function GitPanel({ sessionId }: GitPanelProps) {
-  const [prInfo, setPrInfo] = useState<PrInfo | null>(null);
-  const [branch, setBranch] = useState("");
-  const [ahead, setAhead] = useState(0);
-  const [loading, setLoading] = useState(true);
   const refreshGit = useSetAtom(refreshGitInfoAtom);
   const refreshConflicts = useSetAtom(refreshConflictedFilesAtom);
   const conflictedFiles = useAtomValue(activeConflictedFilesAtom);
@@ -58,82 +63,138 @@ export function GitPanel({ sessionId }: GitPanelProps) {
   const addToast = useSetAtom(toastsAtom);
   const setSelectedConflictMap = useSetAtom(selectedConflictFileMapAtom);
   const [ciChecks, setCiChecks] = useState<PrChecks | null>(null);
-  const [pendingMerge, setPendingMerge] = useState(false);
   const [completing, setCompleting] = useState(false);
-  const workspaces = useAtomValue(workspacesAtom);
+  const sessionToWorkspace = useAtomValue(sessionToWorkspaceMapAtom);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const chipModeMap = useAtomValue(gitChipModeAtom);
   const setChipModeMap = useSetAtom(gitChipModeAtom);
-  const [prCount, setPrCount] = useState(0);
-  const [stashCount, setStashCount] = useState(0);
+  const prsCacheMap = useAtomValue(prsCacheMapAtom);
+  const setPrsCacheMap = useSetAtom(prsCacheMapAtom);
+  const stashCountMap = useAtomValue(stashCountMapAtom);
+  const setStashCountMap = useSetAtom(stashCountMapAtom);
+  const gitHeaderMap = useAtomValue(gitHeaderMapAtom);
+  const setGitHeaderMap = useSetAtom(gitHeaderMapAtom);
+  const prInfoMap = useAtomValue(prInfoMapAtom);
+  const setPrInfoMap = useSetAtom(prInfoMapAtom);
+  const pendingMergeMap = useAtomValue(pendingMergeMapAtom);
+  const setPendingMergeMap = useSetAtom(pendingMergeMapAtom);
 
-  const workspaceId = useMemo<string | null>(() => {
-    for (const ws of workspaces) {
-      if (ws.sessions.some((s) => s.id === sessionId)) return ws.id;
-    }
-    return null;
-  }, [workspaces, sessionId]);
+  const workspaceId: string | null = sessionToWorkspace[sessionId] ?? null;
+  const chipMode: ChipMode = chipModeMap[sessionId] ?? "files";
 
-  const chipMode: ChipMode = workspaceId ? (chipModeMap[workspaceId] ?? "files") : "files";
+  /// All header + counts derive from caches: switching to a session that's
+  /// been visited paints the panel instantly with the last-known values.
+  /// Background fetches refresh in place — no spinner, no flash.
+  const headerEntry = gitHeaderMap[sessionId];
+  const branch = headerEntry?.branch ?? "";
+  const ahead = headerEntry?.ahead ?? 0;
+  const prInfo: PrInfo | null = prInfoMap[sessionId]?.data ?? null;
+  const pendingMerge = pendingMergeMap[sessionId]?.pending ?? false;
+  const prCount = workspaceId
+    ? (prsCacheMap[workspaceId]?.data.filter((p) => p.state === "OPEN").length ?? 0)
+    : 0;
+  const stashCount = stashCountMap[sessionId]?.count ?? 0;
 
   const setChipMode = useCallback((mode: ChipMode) => {
-    if (!workspaceId) return;
-    setChipModeMap((prev) => ({ ...prev, [workspaceId]: mode }));
-  }, [workspaceId, setChipModeMap]);
+    setChipModeMap((prev) => ({ ...prev, [sessionId]: mode }));
+  }, [sessionId, setChipModeMap]);
 
   const refreshHeader = useCallback(() => {
-    Promise.all([
-      invoke<{ branch: string; dirty: boolean; ahead: number }>("get_session_git_info", { sessionId }),
-    ])
-      .then(([info]) => {
-        setBranch(info.branch);
-        setAhead(info.ahead);
+    invoke<{ branch: string; dirty: boolean; ahead: number }>("get_session_git_info", { sessionId })
+      .then((info) => {
+        setGitHeaderMap((prev) => ({ ...prev, [sessionId]: { branch: info.branch, ahead: info.ahead, fetchedAt: Date.now() } }));
       })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [sessionId]);
+      .catch(() => {});
+  }, [sessionId, setGitHeaderMap]);
 
   const refreshPr = useCallback(() => {
     invoke<PrInfo | null>("get_pr_status", { sessionId })
-      .then(setPrInfo)
-      .catch(() => setPrInfo(null));
-  }, [sessionId]);
+      .then((data) => {
+        setPrInfoMap((prev) => ({ ...prev, [sessionId]: { data, fetchedAt: Date.now() } }));
+      })
+      .catch(() => {
+        setPrInfoMap((prev) => ({ ...prev, [sessionId]: { data: null, fetchedAt: Date.now() } }));
+      });
+  }, [sessionId, setPrInfoMap]);
 
   const refreshPendingMerge = useCallback(() => {
     invoke<boolean>("has_pending_merge", { sessionId })
-      .then(setPendingMerge)
-      .catch(() => setPendingMerge(false));
-  }, [sessionId]);
+      .then((pending) => {
+        setPendingMergeMap((prev) => ({ ...prev, [sessionId]: { pending, fetchedAt: Date.now() } }));
+      })
+      .catch(() => {});
+  }, [sessionId, setPendingMergeMap]);
 
-  const refreshChipCounts = useCallback(async () => {
-    if (workspaceId) {
-      try {
-        const prs = await invoke<PrSummary[]>("list_prs", { workspaceId });
-        setPrCount(prs.filter((p) => p.state === "OPEN").length);
-      } catch {
-        setPrCount(0);
-      }
-    }
-    try {
-      const stashes = await invoke<{ index: number }[]>("git_stash_list", { sessionId });
-      setStashCount(stashes.length);
-    } catch {
-      setStashCount(0);
-    }
-  }, [workspaceId, sessionId]);
+  const refreshStashCount = useCallback(() => {
+    invoke<{ index: number }[]>("git_stash_list", { sessionId })
+      .then((stashes) => {
+        setStashCountMap((prev) => ({ ...prev, [sessionId]: { count: stashes.length, fetchedAt: Date.now() } }));
+      })
+      .catch(() => {});
+  }, [sessionId, setStashCountMap]);
 
+  const refreshPrsList = useCallback((wsId: string) => {
+    invoke<PrSummary[]>("list_prs", { workspaceId: wsId })
+      .then((rows) => {
+        setPrsCacheMap((prev) => ({ ...prev, [wsId]: { data: rows, fetchedAt: Date.now() } }));
+      })
+      .catch(() => {});
+  }, [setPrsCacheMap]);
+
+  /// Session-scoped fetches: per-session git/PR status + stash count. All
+  /// cache-gated on mount — switching to a session whose cache is still
+  /// fresh skips the round-trip entirely. Background polling (5s) and the
+  /// `files:modified` listener keep caches warm. Conflicts always refresh
+  /// on mount because they drive a critical UI signal (red ring on the
+  /// Conflicts chip) and are cheap.
   useEffect(() => {
-    refreshHeader();
-    refreshPr();
+    const now = Date.now();
+    const headerEntry = gitHeaderMap[sessionId];
+    if (!headerEntry || now - headerEntry.fetchedAt > SESSION_GIT_TTL_MS) refreshHeader();
+    const prEntry = prInfoMap[sessionId];
+    if (!prEntry || now - prEntry.fetchedAt > PR_INFO_TTL_MS) refreshPr();
+    const mergeEntry = pendingMergeMap[sessionId];
+    if (!mergeEntry || now - mergeEntry.fetchedAt > SESSION_GIT_TTL_MS) refreshPendingMerge();
+    const stashEntry = stashCountMap[sessionId];
+    if (!stashEntry || now - stashEntry.fetchedAt > STASH_CACHE_TTL_MS) refreshStashCount();
     refreshConflicts(sessionId);
-    refreshPendingMerge();
-    refreshChipCounts();
+
     const unlisteners: (() => void)[] = [];
-    listen("files:modified", () => { refreshHeader(); refreshConflicts(sessionId); refreshPendingMerge(); refreshChipCounts(); })
-      .then((fn) => unlisteners.push(fn));
-    const id = setInterval(() => { refreshHeader(); refreshPr(); refreshPendingMerge(); refreshChipCounts(); }, 15000);
+    listen("files:modified", () => {
+      refreshHeader();
+      refreshConflicts(sessionId);
+      refreshPendingMerge();
+      refreshStashCount();
+    }).then((fn) => unlisteners.push(fn));
+    const id = setInterval(() => {
+      refreshHeader();
+      refreshPr();
+      refreshPendingMerge();
+    }, 5000);
     return () => { for (const fn of unlisteners) fn(); clearInterval(id); };
-  }, [refreshHeader, refreshPr, refreshConflicts, refreshPendingMerge, refreshChipCounts, sessionId]);
+    // Cache atoms intentionally omitted from deps: read for the staleness
+    // gate but the effect must not re-run on every cache mutation (would
+    // create a refresh loop).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshHeader, refreshPr, refreshConflicts, refreshPendingMerge, refreshStashCount, sessionId]);
+
+  /// Workspace-scoped fetch: `gh pr list` is a network round-trip, so it's
+  /// keyed by workspaceId (not sessionId), cached for PRS_CACHE_TTL_MS, and
+  /// polled at a relaxed 60s. Switching session within the same workspace
+  /// reads the cache directly — no spinner, no network.
+  useEffect(() => {
+    if (!workspaceId) return;
+    const cached = prsCacheMap[workspaceId];
+    if (!cached || Date.now() - cached.fetchedAt > PRS_CACHE_TTL_MS) {
+      refreshPrsList(workspaceId);
+    }
+    const id = setInterval(() => refreshPrsList(workspaceId), 60_000);
+    return () => clearInterval(id);
+    // prsCacheMap intentionally omitted: same reason as above — we read it
+    // for the staleness gate but the effect must not re-run on every cache
+    // mutation (would create a refresh loop).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId, refreshPrsList]);
 
   useEffect(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -209,20 +270,13 @@ export function GitPanel({ sessionId }: GitPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conflictedFiles]);
 
-  if (loading) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-2">
-        <Loader2 size={16} className="animate-spin text-muted-foreground" />
-        <span className="text-[11px] text-muted-foreground">Loading git status...</span>
-      </div>
-    );
-  }
-
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-border/50 px-3 py-1.5">
         <GitBranch size={12} className="text-muted-foreground" />
-        <span className="text-[11px] font-medium text-foreground/80 font-mono truncate">{branch}</span>
+        <span className="text-[11px] font-medium text-foreground/80 font-mono truncate">
+          {branch || <span className="text-muted-foreground/40">…</span>}
+        </span>
         {ahead > 0 && <span className="text-[10px] text-green-400">+{ahead} ahead</span>}
         {prInfo && (
           <>

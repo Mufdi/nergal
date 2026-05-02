@@ -1,7 +1,6 @@
 import { useCallback } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { activeConflictedFilesAtom, gitChipModeAtom } from "@/stores/git";
-import { workspacesAtom } from "@/stores/workspace";
 import { ConflictsPanel } from "@/components/git/ConflictsPanel";
 import { CheckCircle2 } from "lucide-react";
 
@@ -11,20 +10,11 @@ interface ConflictsChipProps {
 
 export function ConflictsChip({ sessionId }: ConflictsChipProps) {
   const conflicts = useAtomValue(activeConflictedFilesAtom);
-  const workspaces = useAtomValue(workspacesAtom);
   const setChipModeMap = useSetAtom(gitChipModeAtom);
 
   const onResolved = useCallback(() => {
-    let workspaceId: string | null = null;
-    for (const ws of workspaces) {
-      if (ws.sessions.some((s) => s.id === sessionId)) {
-        workspaceId = ws.id;
-        break;
-      }
-    }
-    if (!workspaceId) return;
-    setChipModeMap((prev) => ({ ...prev, [workspaceId!]: "prs" }));
-  }, [workspaces, sessionId, setChipModeMap]);
+    setChipModeMap((prev) => ({ ...prev, [sessionId]: "prs" }));
+  }, [sessionId, setChipModeMap]);
 
   if (conflicts.length === 0) {
     return (

@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { invoke } from "@/lib/tauri";
 import type { PrSummary } from "@/stores/git";
+import { prsCacheMapAtom, PRS_CACHE_TTL_MS, activePrInChipMapAtom } from "@/stores/git";
 import { PrViewer } from "@/components/git/PrViewer";
 import { Kbd } from "@/components/ui/kbd";
 import { zenModeAtom, prZenAtom } from "@/stores/zenMode";
@@ -43,14 +44,39 @@ function summaryToData(workspaceId: string, pr: PrSummary): PrTabData {
 }
 
 export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
-  const [prs, setPrs] = useState<PrSummary[]>([]);
-  const [loading, setLoading] = useState(true);
+  const prsCacheMap = useAtomValue(prsCacheMapAtom);
+  const setPrsCacheMap = useSetAtom(prsCacheMapAtom);
+  const activePrInChipMap = useAtomValue(activePrInChipMapAtom);
+  const setActivePrInChipMap = useSetAtom(activePrInChipMapAtom);
+  /// Read PRs straight from the workspace-scoped cache. GitPanel is the
+  /// canonical owner of the fetch loop (60s polling + on-mount); this chip
+  /// is a pure consumer that revalidates on its own mount when the cache is
+  /// either absent or older than the TTL. No spinner unless the cache is
+  /// completely empty.
+  const cached = workspaceId ? prsCacheMap[workspaceId] : null;
+  const prs: PrSummary[] = cached?.data ?? [];
+  const loading = !cached;
   const [cursor, setCursor] = useState(0);
-  const [selected, setSelected] = useState<PrSummary | null>(null);
+  /// Selected PR rehydrated from a workspace-scoped atom: switching to
+  /// another chip and back, or reopening the panel, restores whichever PR
+  /// the user was viewing. The `selectedPrFileAtom` (per-PR) remembers
+  /// which file was open inside that PR, so file selection is preserved
+  /// transitively. Set to `null` only when the user explicitly hits
+  /// Backspace / "All PRs".
+  const persistedPrNumber = workspaceId ? activePrInChipMap[workspaceId] ?? null : null;
+  const selected: PrSummary | null = persistedPrNumber !== null
+    ? prs.find((p) => p.number === persistedPrNumber) ?? null
+    : null;
+  const setSelected = useCallback((pr: PrSummary | null) => {
+    if (!workspaceId) return;
+    setActivePrInChipMap((prev) => ({ ...prev, [workspaceId]: pr?.number ?? null }));
+  }, [workspaceId, setActivePrInChipMap]);
   /// One-shot flag: PrsChip's Enter on a PR row sets `selected` *and* asks
   /// the viewer to open its file picker on mount. Cleared when the user goes
   /// back to the PR list. Without this flag the viewer always defaulted to
   /// the first file, which the user found surprising — they expect to pick.
+  /// Not persisted across chip switches: the picker should only auto-open on
+  /// fresh Enter, not on chip-restore.
   const [openPickerOnSelect, setOpenPickerOnSelect] = useState(false);
   const zenState = useAtomValue(zenModeAtom);
   const conflictsZen = useAtomValue(conflictsZenOpenAtom);
@@ -76,14 +102,28 @@ export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
     return () => document.removeEventListener("cluihud:expand-zen-pr", onExpand);
   }, [workspaceId, selected, prs, cursor, setPrZen]);
 
-  const refresh = useCallback(() => {
-    if (!workspaceId) { setLoading(false); return; }
-    invoke<PrSummary[]>("list_prs", { workspaceId })
-      .then((rows) => { setPrs(rows); setLoading(false); })
-      .catch(() => setLoading(false));
-  }, [workspaceId]);
+  /// Revalidate on mount only when the cache is absent or stale. GitPanel's
+  /// own workspace effect keeps the cache fresh in the background; this
+  /// fallback covers the case where the user enters the chip after a long
+  /// idle period.
+  const refresh = useCallback((wsId: string) => {
+    invoke<PrSummary[]>("list_prs", { workspaceId: wsId })
+      .then((rows) => {
+        setPrsCacheMap((prev) => ({ ...prev, [wsId]: { data: rows, fetchedAt: Date.now() } }));
+      })
+      .catch(() => {});
+  }, [setPrsCacheMap]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    if (!workspaceId) return;
+    const entry = prsCacheMap[workspaceId];
+    if (!entry || Date.now() - entry.fetchedAt > PRS_CACHE_TTL_MS) {
+      refresh(workspaceId);
+    }
+    // prsCacheMap intentionally omitted: read for the staleness gate, must
+    // not retrigger this effect on every cache mutation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId, refresh]);
 
   useEffect(() => {
     if (cursor >= prs.length) setCursor(Math.max(0, prs.length - 1));

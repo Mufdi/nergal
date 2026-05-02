@@ -16,6 +16,7 @@ import {
   type TabType,
 } from "@/stores/rightPanel";
 import { toggleRightPanelAtom, triggerCommitAtom, triggerMergeAtom } from "@/stores/shortcuts";
+import { softCloseSessionAction } from "@/stores/sessionTabs";
 import { triggerShipAtom } from "@/stores/ship";
 import { activeGitInfoAtom, refreshGitInfoAtom, conflictedFilesMapAtom, refreshConflictedFilesAtom, activeConflictedFilesAtom } from "@/stores/git";
 import { selectedConflictFileMapAtom } from "@/stores/conflict";
@@ -24,7 +25,6 @@ import { toastsAtom } from "@/stores/toast";
 import { configAtom } from "@/stores/config";
 import { appStore } from "@/stores/jotaiStore";
 import { invoke } from "@/lib/tauri";
-import * as terminalService from "@/components/terminal/terminalService";
 import {
   FileText,
   Files,
@@ -119,6 +119,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
 
   const setActiveSessionId = useSetAtom(activeSessionIdAtom);
   const [sessionTabIds, setSessionTabIds] = useAtom(sessionTabIdsAtom);
+  const softCloseSession = useSetAtom(softCloseSessionAction);
   const setActiveTabId = useSetAtom(activeTabIdAtom);
   const setActivePanelView = useSetAtom(activePanelViewAtom);
   const setExpand = useSetAtom(expandRightPanelAtom);
@@ -240,13 +241,11 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
 
   function handleCloseTab(id: string, e: React.MouseEvent) {
     e.stopPropagation();
-    const remaining = sessionTabIds.filter((tid) => tid !== id);
-    setSessionTabIds(remaining);
-    terminalService.destroy(id);
-
-    if (sessionId === id) {
-      setActiveSessionId(remaining.length > 0 ? remaining[remaining.length - 1] : null);
-    }
+    // Soft-close: tab disappears immediately but the PTY keeps running for
+    // SOFT_CLOSE_TTL_MS so the toast's Undo (or Ctrl+Shift+T) can restore
+    // the session without re-spawning Claude. Owns its own active-session
+    // bookkeeping so we don't double-flip here.
+    softCloseSession(id);
   }
 
   function handleMiddleClick(id: string, e: React.MouseEvent) {
@@ -430,11 +429,8 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
             onClick={() => {
               if (!sessionId) return;
               const first = activeConflictedFiles[0];
-              const ws = workspaces.find((w) => w.sessions.some((s) => s.id === sessionId));
-              if (ws) {
-                setSelectedConflictMap((prev) => ({ ...prev, [sessionId]: first }));
-                setChipModeMap((prev) => ({ ...prev, [ws.id]: "conflicts" }));
-              }
+              setSelectedConflictMap((prev) => ({ ...prev, [sessionId]: first }));
+              setChipModeMap((prev) => ({ ...prev, [sessionId]: "conflicts" }));
               handleOpenPanel("git");
             }}
             className="mr-1 flex h-6 items-center gap-1 rounded bg-red-500/20 px-2 text-[10px] font-medium text-red-300 hover:bg-red-500/30 transition-colors animate-pulse"

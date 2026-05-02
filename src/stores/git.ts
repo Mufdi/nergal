@@ -82,7 +82,12 @@ export type ChipMode = "files" | "history" | "stashes" | "prs" | "conflicts";
 
 export const CHIP_ORDER: ChipMode[] = ["files", "history", "stashes", "prs", "conflicts"];
 
-/// Per-workspace active chip in the GitPanel.
+/// Per-session active chip in the GitPanel. Keyed by sessionId because each
+/// chip's data is naturally session-scoped: Files/History/Stashes/Conflicts
+/// reflect the worktree of *this* session, and even PRs (workspace data) are
+/// a per-session UI choice. Earlier this was per-workspace, which leaked the
+/// chip selection across sessions of the same repo — switching from a
+/// conflicted session to a clean sibling kept the Conflicts chip showing.
 export const gitChipModeAtom = atom<Record<string, ChipMode>>({});
 
 /// A stash entry surfaced by the backend's `git_stash_list`. Mirrors the
@@ -95,19 +100,102 @@ export interface StashEntry {
 }
 
 export interface SelectGitChipParams {
-  workspaceId: string;
+  sessionId: string;
   mode: ChipMode;
 }
 
-/// Sets the active chip for a workspace. Used by consumers that previously
+/// Sets the active chip for a session. Used by consumers that previously
 /// opened a tab (PR Viewer's failed-merge → conflicts; conflict list click →
 /// conflicts) to instead route to the corresponding chip.
 export const selectGitChipAction = atom(
   null,
   (_get, set, params: SelectGitChipParams) => {
-    set(gitChipModeAtom, (prev) => ({ ...prev, [params.workspaceId]: params.mode }));
+    set(gitChipModeAtom, (prev) => ({ ...prev, [params.sessionId]: params.mode }));
   },
 );
+
+/// Workspace-scoped cache of `gh pr list` results. The fetch is a network
+/// round-trip to GitHub (500-2000ms) that previously fired on every GitPanel
+/// mount AND every PrsChip mount AND every 15s. Caching by workspace lets
+/// session switches and chip switches read instantly while the background
+/// revalidation runs at a relaxed cadence.
+export interface PrsCacheEntry {
+  data: PrSummary[];
+  fetchedAt: number;
+}
+export const prsCacheMapAtom = atom<Record<string, PrsCacheEntry>>({});
+
+/// TTL for `gh pr list` revalidation. Background refresh fires when the
+/// cache is older than this; the UI never blocks on it.
+export const PRS_CACHE_TTL_MS = 30_000;
+
+/// Per-session cached count of `git stash list`. Cheap shellout but firing
+/// it every 15s × every session × every chip render is wasteful; cache by
+/// sessionId and revalidate on `files:modified` events.
+export interface StashCountCacheEntry {
+  count: number;
+  fetchedAt: number;
+}
+export const stashCountMapAtom = atom<Record<string, StashCountCacheEntry>>({});
+
+export const STASH_CACHE_TTL_MS = 10_000;
+
+/// Cached header data per session: branch + ahead count. Backed by the same
+/// `get_session_git_info` shellout chain (rev-parse + diff --shortstat +
+/// rev-list). Cheap individually but firing it on every session switch
+/// produces a visible "…" flash. Read-from-cache + background refresh keeps
+/// the header stable during navigation.
+export interface GitHeaderCacheEntry {
+  branch: string;
+  ahead: number;
+  fetchedAt: number;
+}
+export const gitHeaderMapAtom = atom<Record<string, GitHeaderCacheEntry>>({});
+
+/// Per-session cached PR status (`gh pr view <branch>`). Network call when
+/// `gh` is configured; cached so session switches don't re-hit GitHub for
+/// the same branch.
+export interface PrInfoCacheEntry {
+  data: { number: number; title: string; state: string; url: string } | null;
+  fetchedAt: number;
+}
+export const prInfoMapAtom = atom<Record<string, PrInfoCacheEntry>>({});
+
+/// Per-session cached `has_pending_merge` flag. Local git check, but cached
+/// for symmetry — keeps the green "in-progress merge" banner stable across
+/// switches without a refetch.
+export interface PendingMergeCacheEntry {
+  pending: boolean;
+  fetchedAt: number;
+}
+export const pendingMergeMapAtom = atom<Record<string, PendingMergeCacheEntry>>({});
+
+/// TTL shared by header + pendingMerge. Short because these reflect local
+/// git state that the user can change between switches.
+export const SESSION_GIT_TTL_MS = 5_000;
+
+/// TTL for `gh pr view`. Same workspace-network class as `gh pr list`; the
+/// PR's title/state rarely flip in seconds.
+export const PR_INFO_TTL_MS = 30_000;
+
+/// Cached unified-diff text from `gh pr diff <number>`. Without this every
+/// re-open of the same PR within the PrsChip refetched the diff (a network
+/// round-trip + a multi-MB parse). Keyed by `${workspaceId}:${prNumber}`
+/// so concurrent open PRs each get their own slot.
+export interface PrDiffCacheEntry {
+  text: string;
+  fetchedAt: number;
+}
+export const prDiffCacheMapAtom = atom<Record<string, PrDiffCacheEntry>>({});
+
+export const PR_DIFF_TTL_MS = 60_000;
+
+/// Per-workspace memory of "which PR was open in the chip". When the user
+/// navigates away from the PRs chip and returns, restore the previously
+/// opened PR (and via `selectedPrFileAtom`, the file they were viewing
+/// inside it) instead of dropping back to the PR list. Cleared explicitly
+/// on Backspace ("All PRs" button).
+export const activePrInChipMapAtom = atom<Record<string, number | null>>({});
 
 /// Per-PR annotations keyed by `${workspaceId}:${prNumber}`. v3 MVP keeps
 /// these in-memory only — they vanish on app restart, which matches the

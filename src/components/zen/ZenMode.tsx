@@ -94,13 +94,15 @@ export function GitFullView() {
     return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [handleKeyDown]);
 
-  // Reset zone to viewer when Zen opens (so chunk nav owns the first key) and
-  // when filePath changes via Alt+Ctrl+→/← navigation. The active zone is the
-  // canonical source of truth for which inner listener (viewer vs sidebar)
-  // handles the keystroke — DOM focus is decorative; we don't depend on it.
+  // Reset zone to viewer only when Zen opens, not when filePath changes within
+  // an already-open Zen. Resetting on filePath change stole focus back to the
+  // viewer every time the user picked a file in the sidebar — including via
+  // Enter from j/k navigation, which made sidebar-driven file switching feel
+  // broken. PR Zen avoids this by storing selection in a separate atom; we
+  // achieve the same effect by gating the reset to open transitions only.
   useEffect(() => {
     if (state.open || prZen) setZone("viewer");
-  }, [state.open, state.filePath, prZen, setZone]);
+  }, [state.open, prZen, setZone]);
 
   // Diff Zen sidebar cursor — separate from `currentIndex` so arrows move a
   // hover ring through the file list without firing the diff fetch on every

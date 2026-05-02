@@ -15,8 +15,9 @@ Prevent misframing in analysis, recommendations, and tool-driven suggestions:
 
 ## Project Documentation
 
-- Design doc completo: `/home/felipe/Documents/Obsidian23/Projects/cluihud/cluihud.md`
+- Project hub (Obsidian): `/home/felipe/Documents/Obsidian23/Projects/cluihud/cluihud.md` — referencial; este `CLAUDE.md` es la source of truth viva.
 - Design system (UI tokens, components, decision rules): [`./DESIGN.md`](./DESIGN.md) — read before touching UI
+- OpenSpec specs (feature contracts): [`./openspec/specs/`](./openspec/specs/) — read before implementing or proposing a feature
 
 ## Stack
 
@@ -39,12 +40,14 @@ Prevent misframing in analysis, recommendations, and tool-driven suggestions:
 - **State**: Jotai (atomic state management)
 - **Styling**: TailwindCSS 4.2 + shadcn/ui + class-variance-authority
 - **Terminal**: canvas renderer + wezterm-term VT emulator (in Rust backend)
-- **Editor**: CodeMirror 6 (syntax highlighting) + MDXEditor (plan editing)
-- **Markdown**: react-markdown + remark-gfm
+- **Editor**: CodeMirror 6 (syntax highlighting)
+- **Markdown / plan editing**: react-markdown + remark-gfm + custom `AnnotatableMarkdownView` (inline annotations, no MDXEditor)
 - **Layout**: react-resizable-panels
 - **Flow diagrams**: @xyflow/react
 - **Icons**: lucide-react
-- **Components**: @base-ui/react (headless)
+- **Components**: shadcn/ui + @base-ui/react (headless primitives)
+- **Toasts**: sileo
+- **Highlighter**: web-highlighter (annotation overlays)
 
 ## Architecture
 
@@ -55,39 +58,66 @@ src/                              # React frontend (TypeScript)
 ├── main.tsx                      # Entry point (StrictMode + Jotai Provider)
 ├── App.tsx                       # Root (ErrorBoundary + Workspace)
 ├── components/
-│   ├── layout/                   # Workspace, TopBar, Sidebar, RightPanel, StatusBar
-│   ├── terminal/                 # TerminalManager + terminalService (canvas + wezterm-term)
+│   ├── layout/                   # Workspace, TopBar, Sidebar, RightPanel, StatusBar, BuddyWidget (frozen)
+│   ├── terminal/                 # TerminalManager + terminalService + fontAtlas + theme (canvas + wezterm-term)
 │   ├── editor/                   # CodeEditor (CodeMirror 6)
-│   ├── plan/                     # PlanPanel, PlanEditor, AnnotatableMarkdownView
-│   ├── spec/                     # SpecViewer (OpenSpec artifacts)
+│   ├── plan/                     # PlanPanel, AnnotatableMarkdownView
+│   ├── spec/                     # SpecViewer / SpecPanel (OpenSpec artifacts)
 │   ├── tasks/                    # TaskPanel
 │   ├── activity/                 # ActivityDrawer
 │   ├── session/                  # AskUserModal, SessionRow
-│   ├── git/                      # GitPanel
+│   ├── git/                      # GitPanel + chips/ (Files, History, Stashes, PRs, Conflicts) + PrViewer + ConflictsPanel + ShipDialog
+│   ├── files/                    # FileBrowser, ModifiedFiles
+│   ├── panel/                    # FileSidebar, FileListView, PlanListView, SpecListView (sidebars per panel category)
+│   ├── zen/                      # ZenMode (full-screen contextual editor for diff/files/conflicts)
 │   ├── command/                  # CommandPalette (Cmd+K)
 │   ├── ui/                       # shadcn components (button, dialog, tabs, etc.)
 │   └── settings/
-├── stores/                       # Jotai atoms
+├── stores/                       # Jotai atoms (jotaiStore.ts exports the shared appStore)
 │   ├── workspace.ts              # Workspaces, sessions, costs
-│   ├── rightPanel.ts             # Tab state, active tab
-│   ├── hooks.ts                  # Hook event listeners
-│   ├── shortcuts.ts              # Keyboard shortcuts
+│   ├── rightPanel.ts             # Tab state, panel categories (document | tool)
+│   ├── hooks.ts                  # Hook event listeners → atom updates
+│   ├── shortcuts.ts              # Keyboard shortcuts (event.code based)
 │   ├── plan.ts, tasks.ts, git.ts # Domain state
-│   └── ...
+│   ├── annotations.ts            # Inline plan/spec annotations
+│   ├── conflict.ts, ship.ts      # Conflict resolution + ship-flow state
+│   ├── zenMode.ts, layout.ts     # Zen + layout config
+│   ├── files.ts, activity.ts     # File browser + activity drawer
+│   ├── askUser.ts, toast.ts      # Modals + sileo toasts
+│   ├── session.ts, config.ts     # Session + app config
+│   └── buddy.ts                  # Buddy widget (frozen — disconnected from UI)
 ├── hooks/                        # React hooks (useKeyboardShortcuts)
 └── lib/                          # tauri.ts, types.ts, utils.ts
 
 src-tauri/src/                    # Rust backend
-├── main.rs                       # CLI entry (hook subcommands)
-├── lib.rs                        # Tauri app init, plugins, commands
+├── main.rs                       # CLI entry (hook subcommands via clap)
+├── lib.rs                        # Tauri app init, plugins, commands registration
 ├── commands.rs                   # 60+ Tauri invoke handlers
-├── pty.rs                        # PTY session management
-├── db.rs                         # SQLite wrapper
-├── hooks/                        # Unix socket server + events
-├── claude/                       # Transcript watcher, plan manager, OpenSpec
-├── tasks/                        # Task parsing from transcripts
-├── worktree.rs                   # Git worktree management
-└── config.rs                     # Config, paths, defaults
+├── pty.rs                        # PTY session management (portable-pty)
+├── worktree.rs                   # Git worktree + stash + ship-flow ops
+├── db.rs                         # SQLite wrapper (rusqlite, bundled)
+├── config.rs                     # Config, paths, defaults
+├── setup.rs                      # `cluihud setup` — auto-configure hooks
+├── models.rs                     # Shared serde types
+├── plan_state.rs                 # Plan FIFO state for blocking hooks
+├── hooks/                        # Unix socket server + event types + CLI subcommands
+│   ├── cli.rs                    # `cluihud hook send|inject-edits|plan-review|ask-user`
+│   ├── server.rs                 # async socket listener + dispatch
+│   ├── events.rs                 # event payloads
+│   └── state.rs                  # in-memory hook state
+├── claude/                       # Transcript watcher + plan + cost + openspec
+│   ├── transcript.rs             # `.jsonl` parser with notify
+│   ├── plan.rs                   # plan file watcher
+│   ├── cost.rs                   # cost extraction from transcript
+│   └── openspec.rs               # OpenSpec artifact reader
+├── tasks/                        # Task parsing (TodoWrite + transcript fallback)
+└── terminal/                     # wezterm-term VT session + grid emitter + input
+    ├── session.rs                # PTY ↔ VT bridge, grid state
+    ├── emitter.rs                # coalesced `terminal:grid-update` events
+    ├── differ.rs                 # row-level diff for delta emission
+    ├── input.rs                  # keystroke encoding (xterm protocol)
+    ├── config.rs, types.rs       # terminal config + shared types
+    └── transcript_parser.rs      # in-terminal transcript hooks
 ```
 
 ## Coding Standards
@@ -108,7 +138,9 @@ src-tauri/src/                    # Rust backend
 - Tauri `invoke<T>()` for frontend → backend calls
 - Tauri `listen()` for backend → frontend events
 - TailwindCSS utility classes, shadcn/ui components
-- Terminal managed outside React (terminalService.ts owns xterm instances)
+- Terminal managed outside React: `terminalService.ts` owns canvas + glyph atlas; renders rows on `terminal:grid-update` events from the wezterm-term backend (no xterm.js)
+- Keyboard shortcuts use `event.code` not `event.key` (WebKitGTK Linux bug)
+- Verify `stores/shortcuts.ts` before proposing new keybindings — collisions silently break existing flows
 
 ### Project Conventions
 - No TODO/FIXME — track in issues
@@ -126,6 +158,8 @@ src-tauri/src/                    # Rust backend
 | Rust test | `cd src-tauri && cargo test` |
 | Rust lint | `cd src-tauri && cargo clippy -- -D warnings` |
 | Rust format | `cd src-tauri && cargo fmt --check` |
+| TS check | `npx tsc --noEmit` |
+| Reinstall CLI binary | `cargo install --path src-tauri --force` (run after editing `hooks/cli.rs` so the installed `cluihud` binary picks up changes) |
 | Full check | `cd src-tauri && cargo clippy -- -D warnings && cargo test && cargo fmt --check` |
 
 Run full check after significant changes.
@@ -145,13 +179,17 @@ Run full check after significant changes.
 4. Events flow through tokio channels → Tauri emit → Jotai atom updates
 5. React components auto-re-render on atom changes
 
-### Plan Editing Flow (bidirectional)
-1. Claude writes plan to `plansDirectory`
-2. `PreToolUse[ExitPlanMode]` hook notifies the app
-3. App loads plan in MDXEditor panel
-4. User edits + adds inline annotations
-5. On reject: `UserPromptSubmit` hook injects "re-read plan at <path>"
-6. Claude re-reads the edited file and re-plans
+### Plan Review Flow (blocking via PermissionRequest)
+1. Claude calls `ExitPlanMode` → `PermissionRequest[ExitPlanMode]` hook fires
+2. CLI `cluihud hook plan-review` blocks on a FIFO at `/tmp/cluihud-plan-{pid}.fifo`
+3. App loads plan in `AnnotatableMarkdownView` (panel `plan/`); user can add inline annotations during `pending_review` state
+4. User accepts → GUI writes `allow` to FIFO → Claude proceeds
+5. User rejects → GUI writes `deny` with a Plannotator-style message that points Claude back to the edited plan file → Claude re-reads and re-plans
+6. State machine lives in `planReviewStatusMapAtom`: `idle | pending_review | submitted`
+
+### AskUserQuestion Interception
+- `PreToolUse[AskUserQuestion]` → `cluihud hook ask-user` (blocking, FIFO)
+- GUI shows modal; user-typed answer returned via `permissionDecision: "allow"` + `updatedInput`
 
 ### Hook Config (project settings.json)
 CLI uses `cluihud hook send <event>` for async event forwarding and `cluihud hook inject-edits` for sync prompt modification.

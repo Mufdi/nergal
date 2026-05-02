@@ -1,4 +1,4 @@
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: PR Viewer is embedded in the PRs chip
 The PR Viewer SHALL render inside the `PRs` chip's body when a PR is selected from the picker. It is no longer wrapped in a document tab.
@@ -38,9 +38,3 @@ When `gh_pr_merge` returns `mergeable=false`, PrViewer SHALL flip the workspace'
 - **WHEN** `gh_pr_merge` returns `mergeable=false`
 - **AND** no local session matches the PR's `head_ref_name`
 - **THEN** no chip transition fires; an error toast surfaces the message verbatim
-
-## REMOVED Requirements
-
-### Requirement: PRs sidebar mode toggles Files-or-PRs in GitPanel sidebar
-**Reason**: The 5-chip strip subsumes the toggle. `PRs` is one of the chips, not a sidebar mode.
-**Migration**: `gitSidebarModeAtom` and the toggle UI in GitPanel are gone (covered in `git-panel-v2` delta).

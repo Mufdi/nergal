@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use tauri::State;
 
-use crate::claude::cost::{self, CostSummary};
+use crate::agents::claude_code::cost::{self, CostSummary};
 use crate::config::Config;
 use crate::db::SharedDb;
 use crate::hooks::state::HookState;

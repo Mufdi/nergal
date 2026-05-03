@@ -1,6 +1,4 @@
 #![allow(dead_code)]
-pub mod transcript_parser;
-
 use serde::Serialize;
 
 /// Status of a task in the task list.

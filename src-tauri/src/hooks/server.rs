@@ -287,7 +287,7 @@ fn process_event(
                                 let local_plans = cwd.join(".claude").join("plans");
                                 if local_plans.exists() {
                                     let local_mgr =
-                                        crate::claude::plan::PlanManager::new(local_plans);
+                                        crate::agents::claude_code::plan::PlanManager::new(local_plans);
                                     return local_mgr.find_latest_plan().ok().flatten();
                                 }
                             }
@@ -337,7 +337,7 @@ fn process_event(
             ..
         } => {
             let cost =
-                crate::claude::cost::parse_cost_from_transcript(&std::path::PathBuf::from(path));
+                crate::agents::claude_code::cost::parse_cost_from_transcript(&std::path::PathBuf::from(path));
 
             // Store cost in DB
             if let Ok(db_guard) = db.lock() {
@@ -413,7 +413,7 @@ fn process_event(
                                 let local_plans = cwd.join(".claude").join("plans");
                                 if local_plans.exists() {
                                     let local_mgr =
-                                        crate::claude::plan::PlanManager::new(local_plans);
+                                        crate::agents::claude_code::plan::PlanManager::new(local_plans);
                                     return local_mgr.find_latest_plan().ok().flatten();
                                 }
                             }

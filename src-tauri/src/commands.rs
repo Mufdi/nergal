@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use tauri::State;
 
+use crate::agents::AgentId;
 use crate::agents::claude_code::cost::{self, CostSummary};
+use crate::agents::state::AgentRuntimeState;
 use crate::config::Config;
 use crate::db::SharedDb;
 use crate::hooks::state::HookState;
@@ -552,6 +554,7 @@ pub fn delete_workspace(db: State<'_, SharedDb>, workspace_id: String) -> Result
 #[tauri::command]
 pub fn create_session(
     db: State<'_, SharedDb>,
+    agents: State<'_, AgentRuntimeState>,
     workspace_id: String,
     name: String,
 ) -> Result<Session, String> {
@@ -606,11 +609,19 @@ pub fn create_session(
     };
 
     db.create_session(&session).map_err(|e| e.to_string())?;
+    // Populate the agent_id cache BEFORE the PTY spawn so the SessionStart
+    // hook never races the cache. Until the session-creation flow exposes a
+    // picker (commit 11), every new session is a CC session by default.
+    agents.register_session(&session.id, AgentId::claude_code());
     Ok(session)
 }
 
 #[tauri::command]
-pub fn delete_session(db: State<'_, SharedDb>, session_id: String) -> Result<(), String> {
+pub fn delete_session(
+    db: State<'_, SharedDb>,
+    agents: State<'_, AgentRuntimeState>,
+    session_id: String,
+) -> Result<(), String> {
     let db = db.lock().map_err(|e| e.to_string())?;
 
     // Get session + workspace for worktree cleanup
@@ -625,6 +636,7 @@ pub fn delete_session(db: State<'_, SharedDb>, session_id: String) -> Result<(),
         let _ = crate::worktree::remove_worktree(&repo_path, wt_path);
     }
 
+    agents.forget_session(&session_id);
     db.delete_session(&session_id).map_err(|e| e.to_string())
 }
 

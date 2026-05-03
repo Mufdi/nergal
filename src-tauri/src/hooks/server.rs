@@ -6,6 +6,8 @@ use tokio::io::AsyncBufReadExt;
 use tokio::net::UnixListener;
 
 use super::events::HookEvent;
+use crate::agents::AgentId;
+use crate::agents::state::AgentRuntimeState;
 use crate::db::SharedDb;
 use crate::plan_state::SharedPlanState;
 
@@ -176,6 +178,7 @@ pub async fn start_hook_server(
     app: AppHandle,
     db: SharedDb,
     plan_state: SharedPlanState,
+    agent_state: AgentRuntimeState,
 ) -> Result<()> {
     if socket_path.exists() {
         std::fs::remove_file(socket_path)?;
@@ -189,6 +192,7 @@ pub async fn start_hook_server(
         let app = app.clone();
         let db = db.clone();
         let plan_state = plan_state.clone();
+        let agent_state = agent_state.clone();
 
         tokio::spawn(async move {
             let reader = tokio::io::BufReader::new(stream);
@@ -205,7 +209,14 @@ pub async fn start_hook_server(
 
                 match serde_json::from_str::<HookEvent>(&line) {
                     Ok(event) => {
-                        process_event(&app, &event, &db, &plan_state, cluihud_sid.as_deref());
+                        process_event(
+                            &app,
+                            &event,
+                            &db,
+                            &plan_state,
+                            &agent_state,
+                            cluihud_sid.as_deref(),
+                        );
                     }
                     Err(e) => {
                         tracing::warn!("failed to parse hook event: {e}");
@@ -221,12 +232,29 @@ fn process_event(
     event: &HookEvent,
     db: &SharedDb,
     plan_state: &SharedPlanState,
+    agent_state: &AgentRuntimeState,
     cluihud_session_id: Option<&str>,
 ) {
     if cluihud_session_id.is_none() {
         tracing::debug!("ignoring hook event without cluihud_session_id");
         return;
     }
+
+    // Resolve the owning adapter for this session (cache → DB-fallback path
+    // lands once the DB schema carries agent_id; until then unknown sessions
+    // are tagged claude-code defensively to preserve current behavior). Drop
+    // events whose session is fully unknown — they are orphans.
+    if let Some(csid) = cluihud_session_id
+        && agent_state.resolve(csid).is_none()
+    {
+        tracing::warn!(
+            cluihud_session_id = %csid,
+            event_type = ?std::any::type_name_of_val(event),
+            "hook event for session not in agent cache; assuming claude-code (foundation transitional)"
+        );
+        agent_state.register_session(csid, AgentId::claude_code());
+    }
+
     let mut frontend_event = FrontendHookEvent::from_hook(event);
     frontend_event.cluihud_session_id = cluihud_session_id.map(String::from);
     let _ = app.emit("hook:event", &frontend_event);
@@ -391,6 +419,18 @@ fn process_event(
             ..
         } => {
             tracing::debug!("PlanReview: fifo_path={fifo_path}");
+
+            // Hand the FIFO path to the CC adapter so future
+            // adapter.submit_plan_decision() calls know where to unblock the
+            // plan-review CLI. Today the production path still goes through
+            // the legacy commands::submit_plan_decision (which receives the
+            // FIFO from the frontend); this registration is the seam used
+            // when the call site flips to the trait method.
+            if let Some(csid) = cluihud_session_id {
+                agent_state
+                    .claude_code
+                    .register_pending_plan_fifo(csid, std::path::PathBuf::from(fifo_path));
+            }
 
             if let Ok(mut state) = plan_state.lock() {
                 let runtime = state.get_or_create(session_id);
@@ -574,6 +614,12 @@ fn process_event(
             fifo_path,
         } => {
             tracing::debug!("AskUser: fifo_path={fifo_path}");
+
+            if let Some(csid) = cluihud_session_id {
+                agent_state
+                    .claude_code
+                    .register_pending_ask_fifo(csid, std::path::PathBuf::from(fifo_path));
+            }
 
             #[derive(Clone, serde::Serialize)]
             struct AskUserQuestion {

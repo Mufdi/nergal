@@ -18,6 +18,7 @@
 pub mod claude_code;
 pub mod cost_aggregator;
 pub mod registry;
+pub mod state;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

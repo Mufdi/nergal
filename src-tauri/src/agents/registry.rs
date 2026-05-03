@@ -79,13 +79,15 @@ impl AgentRegistry {
     }
 }
 
-/// Register every adapter that ships with cluihud. Subsequent agent changes
-/// (opencode-adapter, pi-adapter, codex-adapter) extend this function with
-/// their own registrations. Called once at app startup.
-pub fn default_registrations(reg: &AgentRegistry) -> Result<(), AdapterError> {
-    reg.register(Arc::new(
-        crate::agents::claude_code::ClaudeCodeAdapter::new(),
-    ))?;
+/// Register the OpenCode/Pi/Codex adapters that don't need a typed handle in
+/// [`crate::agents::state::AgentRuntimeState`]. The CC adapter is registered
+/// directly by `AgentRuntimeState::bootstrap` because the runtime keeps a
+/// typed `Arc<ClaudeCodeAdapter>` for CC-specific side-channels (FIFO
+/// registration). Subsequent agent changes (opencode-adapter, pi-adapter,
+/// codex-adapter) extend this function with their own registrations.
+pub fn register_supplementary_adapters(_reg: &AgentRegistry) -> Result<(), AdapterError> {
+    // Empty until OpenCode/Pi/Codex land. Each adapter change appends a
+    // single `reg.register(Arc::new(<NewAdapter>::new()))?;` line.
     Ok(())
 }
 

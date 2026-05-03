@@ -3,6 +3,7 @@ import { useAtomValue, useSetAtom, useAtom } from "jotai";
 import { planDocumentsAtom, defaultPlanState, activePlanReviewStatusAtom, planReviewStatusMapAtom } from "@/stores/plan";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { activeAnnotationsAtom, clearAnnotationsAtom, addAnnotationAtom, serializeAnnotations, annotationModeAtom, annotationScopeAtom, canEnterAnnotationModeAtom } from "@/stores/annotations";
+import { hasCapabilityAtom } from "@/stores/agent";
 import { toastsAtom } from "@/stores/toast";
 import { invoke } from "@/lib/tauri";
 import { AnnotatableMarkdownView } from "./AnnotatableMarkdownView";
@@ -18,6 +19,7 @@ interface PlanPanelProps {
 }
 
 export function PlanPanel({ path }: PlanPanelProps) {
+  const supportsPlanReview = useAtomValue(hasCapabilityAtom("PLAN_REVIEW"));
   const docs = useAtomValue(planDocumentsAtom);
   const plan = path ? (docs[path] ?? defaultPlanState) : defaultPlanState;
   const addToast = useSetAtom(toastsAtom);
@@ -49,6 +51,16 @@ export function PlanPanel({ path }: PlanPanelProps) {
   const [showGlobalInput, setShowGlobalInput] = useState(false);
   const [globalComment, setGlobalComment] = useState("");
   const globalInputRef = useRef<HTMLTextAreaElement>(null);
+
+  if (!supportsPlanReview) {
+    return (
+      <div className="flex h-full items-center justify-center px-6 text-center">
+        <p className="text-xs text-muted-foreground">
+          The active agent does not support plan review.
+        </p>
+      </div>
+    );
+  }
 
   const hasPlan = plan.content.length > 0;
   const backendSessionId = plan.claudeSessionId;

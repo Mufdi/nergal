@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
-import { useAtom } from "jotai";
+import { useAtom, useAtomValue } from "jotai";
 import { configAtom } from "@/stores/config";
+import { availableAgentsAtom } from "@/stores/agent";
 import { invoke } from "@/lib/tauri";
 import type { Config } from "@/lib/types";
 import {
@@ -95,6 +96,34 @@ function ScratchpadPathField() {
       <p className="text-xs text-muted-foreground">
         Path where scratchpad notes (.md) live. Changing it closes open tabs and reloads from the new path.
       </p>
+    </div>
+  );
+}
+
+function DetectedAgentsList() {
+  const agents = useAtomValue(availableAgentsAtom);
+  return (
+    <div className="grid gap-2">
+      <Label>Detected Agents</Label>
+      {agents.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          No detection results yet. Run <code>cluihud rescan-agents</code> to refresh.
+        </p>
+      ) : (
+        <ul className="space-y-1 text-xs">
+          {agents.map((a) => (
+            <li
+              key={a.id}
+              className="flex items-center justify-between rounded border border-border/40 bg-muted/30 px-2 py-1"
+            >
+              <span className="font-mono">{a.id}</span>
+              <span className={a.installed ? "text-foreground" : "text-muted-foreground"}>
+                {a.installed ? a.version ?? "installed" : "not detected"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -202,6 +231,10 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
               ))}
             </select>
           </div>
+
+          <Separator />
+
+          <DetectedAgentsList />
 
           <Separator />
 

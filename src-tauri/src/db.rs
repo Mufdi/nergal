@@ -90,6 +90,7 @@ impl Database {
             include_str!("../migrations/004_annotation_highlight_source.sql"),
             include_str!("../migrations/005_spec_annotations.sql"),
             include_str!("../migrations/006_scratchpad.sql"),
+            include_str!("../migrations/007_agent_id.sql"),
         ];
 
         for (i, sql) in migrations.iter().enumerate() {
@@ -193,7 +194,7 @@ impl Database {
         )?;
         let mut sess_stmt = self
             .conn
-            .prepare("SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at FROM sessions WHERE workspace_id = ?1 ORDER BY created_at")?;
+            .prepare("SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id FROM sessions WHERE workspace_id = ?1 ORDER BY created_at")?;
 
         let workspaces = ws_stmt.query_map([], |row| {
             Ok((
@@ -222,6 +223,9 @@ impl Database {
                         ),
                         created_at: row.get(7)?,
                         updated_at: row.get(8)?,
+                        agent_id: row.get(9)?,
+                        agent_internal_session_id: row.get(10)?,
+                        agent_capabilities: Vec::new(),
                     })
                 })?
                 .filter_map(|r| r.ok())
@@ -262,7 +266,7 @@ impl Database {
 
     pub fn create_session(&self, session: &Session) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO sessions (id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO sessions (id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 session.id,
                 session.workspace_id,
@@ -273,6 +277,8 @@ impl Database {
                 session.status.as_str(),
                 session.created_at,
                 session.updated_at,
+                session.agent_id,
+                session.agent_internal_session_id,
             ],
         )?;
         Ok(())
@@ -280,7 +286,7 @@ impl Database {
 
     pub fn find_session(&self, id: &str) -> Result<Option<Session>> {
         let result = self.conn.query_row(
-            "SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at FROM sessions WHERE id = ?1",
+            "SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id FROM sessions WHERE id = ?1",
             [id],
             |row| Ok(Session {
                 id: row.get(0)?,
@@ -292,6 +298,9 @@ impl Database {
                 status: SessionStatus::from_str(&row.get::<_, String>(6).unwrap_or_default()),
                 created_at: row.get(7)?,
                 updated_at: row.get(8)?,
+                agent_id: row.get(9)?,
+                agent_internal_session_id: row.get(10)?,
+                agent_capabilities: Vec::new(),
             }),
         );
         match result {

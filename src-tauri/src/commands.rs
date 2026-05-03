@@ -596,6 +596,18 @@ pub fn create_session(
     };
     let session_id = format!("{}-{ts}", &workspace_id[..6.min(workspace_id.len())]);
 
+    let agent_id = AgentId::claude_code();
+    let agent_capabilities = agents
+        .registry
+        .get(&agent_id)
+        .map(|a| {
+            let caps = a.capabilities();
+            serde_json::to_value(caps.flags)
+                .ok()
+                .and_then(|v| serde_json::from_value::<Vec<String>>(v).ok())
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
     let session = Session {
         id: session_id,
         name,
@@ -606,13 +618,16 @@ pub fn create_session(
         status: SessionStatus::Idle,
         created_at: ts,
         updated_at: ts,
+        agent_id: agent_id.as_str().to_string(),
+        agent_internal_session_id: None,
+        agent_capabilities,
     };
 
     db.create_session(&session).map_err(|e| e.to_string())?;
     // Populate the agent_id cache BEFORE the PTY spawn so the SessionStart
     // hook never races the cache. Until the session-creation flow exposes a
     // picker (commit 11), every new session is a CC session by default.
-    agents.register_session(&session.id, AgentId::claude_code());
+    agents.register_session(&session.id, agent_id);
     Ok(session)
 }
 

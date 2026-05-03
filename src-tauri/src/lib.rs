@@ -209,6 +209,8 @@ pub fn run() {
             commands::list_directory,
             commands::read_file_content,
             commands::write_file_content,
+            commands::list_available_agents,
+            commands::resolve_default_agent,
             pty::write_to_session_pty,
             // Scratchpad commands
             scratchpad::commands::scratchpad_get_path,

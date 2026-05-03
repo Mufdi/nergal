@@ -557,6 +557,7 @@ pub fn create_session(
     agents: State<'_, AgentRuntimeState>,
     workspace_id: String,
     name: String,
+    agent_id: Option<String>,
 ) -> Result<Session, String> {
     let db = db.lock().map_err(|e| e.to_string())?;
 
@@ -596,7 +597,14 @@ pub fn create_session(
     };
     let session_id = format!("{}-{ts}", &workspace_id[..6.min(workspace_id.len())]);
 
-    let agent_id = AgentId::claude_code();
+    // Picker priority: explicit caller arg > config-resolved > CC fallback.
+    // Today the frontend passes no agent_id, so this resolves to CC unless the
+    // user has set config.default_agent. Picker UI lands once another adapter
+    // is registered (opencode-adapter, pi-adapter, codex-adapter).
+    let agent_id = agent_id
+        .as_deref()
+        .and_then(|s| AgentId::new(s).ok())
+        .unwrap_or_else(AgentId::claude_code);
     let agent_capabilities = agents
         .registry
         .get(&agent_id)
@@ -2461,4 +2469,57 @@ pub fn write_file_content(
     let file_path = cwd.join(&path);
     std::fs::write(&file_path, &content).map_err(|e| e.to_string())?;
     Ok(file_path.to_string_lossy().to_string())
+}
+
+// -- Agent registry commands --
+
+#[derive(serde::Serialize)]
+pub struct AvailableAgent {
+    pub id: String,
+    pub display_name: String,
+    pub installed: bool,
+    pub binary_path: Option<String>,
+    pub config_path: Option<String>,
+    pub version: Option<String>,
+    pub capabilities: Vec<String>,
+}
+
+/// Returns the registered adapters with their current detection status. Used
+/// by the session-creation modal's agent picker; until adapters beyond CC
+/// land, this list has a single entry.
+#[tauri::command]
+pub async fn list_available_agents(
+    agents: State<'_, AgentRuntimeState>,
+) -> Result<Vec<AvailableAgent>, String> {
+    let detections = agents.registry.scan().await;
+    let mut out = Vec::with_capacity(detections.len());
+    for (id, det) in detections {
+        let adapter = match agents.registry.get(&id) {
+            Some(a) => a,
+            None => continue,
+        };
+        let cap_value = serde_json::to_value(adapter.capabilities().flags).unwrap_or_default();
+        let capabilities: Vec<String> = serde_json::from_value(cap_value).unwrap_or_default();
+        out.push(AvailableAgent {
+            id: id.as_str().to_string(),
+            display_name: adapter.display_name().to_string(),
+            installed: det.installed,
+            binary_path: det.binary_path.map(|p| p.display().to_string()),
+            config_path: det.config_path.map(|p| p.display().to_string()),
+            version: det.version,
+            capabilities,
+        });
+    }
+    Ok(out)
+}
+
+/// Resolve the default agent for a project, applying the documented priority:
+/// `config.agent_overrides[project] > config.default_agent > CC fallback`.
+/// The picker UI calls this on open to pre-select the right entry.
+#[tauri::command]
+pub fn resolve_default_agent(project_path: String) -> Result<String, String> {
+    let cfg = crate::config::Config::load();
+    Ok(cfg
+        .resolve_agent_for_project(std::path::Path::new(&project_path))
+        .unwrap_or_else(|| AgentId::claude_code().as_str().to_string()))
 }

@@ -38,6 +38,18 @@ uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"
 regex = "1"
 
+# Agent-agnostic foundation: bitflags for capability sets, async-trait for
+# dyn AgentAdapter, dashmap for per-session agent_id cache (sync hot path),
+# parking_lot for lock-free aggregator state, dunce for cross-platform path
+# canonicalization, thiserror for AdapterError, which for binary lookup.
+bitflags = "2"
+async-trait = "0.1"
+dashmap = "6"
+parking_lot = "0.12"
+dunce = "1"
+thiserror = "1"
+which = "6"
+
 # Terminal VT emulation (Phase 1 of replace-xterm-with-wezterm).
 # wezterm-term / termwiz are not published on crates.io — they only live inside
 # the wezterm workspace. Pinned to the last stable tag (Feb 2024); the core VT

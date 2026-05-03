@@ -1,3 +1,4 @@
+pub mod agents;
 mod claude;
 mod commands;
 pub mod config;

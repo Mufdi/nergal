@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
 
-use crate::claude::cost::CostSummary;
+use crate::agents::claude_code::cost::CostSummary;
 use crate::models::{Session, SessionStatus, Workspace};
 use crate::tasks::{Task, TaskStatus};
 

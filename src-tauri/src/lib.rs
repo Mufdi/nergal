@@ -1,10 +1,10 @@
 pub mod agents;
-mod claude;
 mod commands;
 pub mod config;
 mod db;
 pub mod hooks;
 mod models;
+mod openspec;
 mod plan_state;
 mod pty;
 pub mod scratchpad;
@@ -13,9 +13,9 @@ mod tasks;
 mod terminal;
 mod worktree;
 
-use claude::openspec::OpenSpecWatcher;
-use claude::plan::PlanWatcher;
-use claude::transcript::TranscriptWatcher;
+use agents::claude_code::plan::PlanWatcher;
+use agents::claude_code::transcript::TranscriptWatcher;
+use openspec::OpenSpecWatcher;
 use config::Config;
 use db::Database;
 use hooks::server::start_hook_server;

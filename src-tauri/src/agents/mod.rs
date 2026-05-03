@@ -15,6 +15,7 @@
 //! - [`SessionCostAggregator`] — owns running per-session token totals; agents
 //!   only emit raw per-line cost via [`TranscriptEvent::Cost`] (Decision 6).
 
+pub mod claude_code;
 pub mod cost_aggregator;
 pub mod registry;
 

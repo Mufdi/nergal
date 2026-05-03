@@ -79,6 +79,16 @@ impl AgentRegistry {
     }
 }
 
+/// Register every adapter that ships with cluihud. Subsequent agent changes
+/// (opencode-adapter, pi-adapter, codex-adapter) extend this function with
+/// their own registrations. Called once at app startup.
+pub fn default_registrations(reg: &AgentRegistry) -> Result<(), AdapterError> {
+    reg.register(Arc::new(
+        crate::agents::claude_code::ClaudeCodeAdapter::new(),
+    ))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

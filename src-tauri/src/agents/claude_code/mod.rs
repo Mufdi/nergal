@@ -7,7 +7,10 @@
 //! lands in a follow-up commit; this module exists today only to host the
 //! moved files at their new path.
 
+pub mod adapter;
 pub mod cost;
 pub mod plan;
 pub mod tasks_parser;
 pub mod transcript;
+
+pub use adapter::ClaudeCodeAdapter;

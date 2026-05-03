@@ -151,11 +151,19 @@ impl AgentAdapter for ClaudeCodeAdapter {
         let binary = which::which("claude")
             .map_err(|e| AdapterError::Transport(anyhow::anyhow!("claude not on PATH: {e}")))?;
         let mut args: Vec<String> = Vec::new();
-        // Current pty.rs uses `--continue` for resume; preserve that semantics.
-        // `resume_from`'s exact value (when not None) is reserved for future
-        // `--resume <id>` plumbing once the runtime tracks CC session IDs.
-        if ctx.resume_from.is_some() {
-            args.push("--continue".into());
+        // Three resume modes — the caller chooses which by what it puts in
+        // `resume_from`:
+        //   - "continue"    → `claude --continue`     (latest session)
+        //   - "resume_pick" → `claude --resume`       (Claude prompts to pick)
+        //   - "<any other>" → `claude --resume <id>`  (specific CC session id)
+        match ctx.resume_from {
+            None => {}
+            Some("continue") => args.push("--continue".into()),
+            Some("resume_pick") => args.push("--resume".into()),
+            Some(id) => {
+                args.push("--resume".into());
+                args.push(id.to_string());
+            }
         }
         let mut env = HashMap::new();
         env.insert("CLUIHUD_SESSION_ID".into(), ctx.session_id.to_string());
@@ -297,17 +305,33 @@ mod tests {
     }
 
     #[test]
-    fn spawn_adds_continue_flag_when_resume_requested() {
+    fn spawn_resume_modes_map_to_correct_cc_flags() {
         let a = ClaudeCodeAdapter::new();
         let cwd = Path::new("/tmp");
-        let ctx = SpawnContext {
+        let mk = |resume: Option<&'static str>| SpawnContext {
             session_id: "s",
             cwd,
-            resume_from: Some("ignored-by-cc-today"),
+            resume_from: resume,
             initial_prompt: None,
         };
-        if let Ok(spec) = a.spawn(&ctx) {
-            assert!(spec.args.iter().any(|a| a == "--continue"));
+        // None → no resume flag
+        if let Ok(spec) = a.spawn(&mk(None)) {
+            assert!(spec.args.is_empty());
+        }
+        // "continue" → --continue
+        if let Ok(spec) = a.spawn(&mk(Some("continue"))) {
+            assert_eq!(spec.args, vec!["--continue".to_string()]);
+        }
+        // "resume_pick" → bare --resume (CC then prompts)
+        if let Ok(spec) = a.spawn(&mk(Some("resume_pick"))) {
+            assert_eq!(spec.args, vec!["--resume".to_string()]);
+        }
+        // arbitrary id → --resume <id>
+        if let Ok(spec) = a.spawn(&mk(Some("abc-123"))) {
+            assert_eq!(
+                spec.args,
+                vec!["--resume".to_string(), "abc-123".to_string()]
+            );
         }
     }
 

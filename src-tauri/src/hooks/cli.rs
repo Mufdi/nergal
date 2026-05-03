@@ -7,6 +7,22 @@ use anyhow::{Context, Result};
 
 use crate::hooks::state::HookState;
 
+/// Send a `{"kind":"control","op":"rescan_agents"}` control message to the
+/// hook socket. The running cluihud picks it up and re-scans the registry,
+/// updating the available agents view. No-op (best effort) if cluihud isn't
+/// running — the connection error is surfaced to the caller.
+pub fn send_rescan_agents(socket_path: &Path) -> Result<()> {
+    let payload = r#"{"kind":"control","op":"rescan_agents"}"#;
+    let mut stream = UnixStream::connect(socket_path)
+        .with_context(|| format!("connecting to {}", socket_path.display()))?;
+    stream
+        .write_all(payload.as_bytes())
+        .context("writing control message")?;
+    stream.write_all(b"\n").context("writing newline")?;
+    stream.flush().context("flushing socket")?;
+    Ok(())
+}
+
 /// Reads stdin JSON, validates it, sends to the hook socket as a single line.
 pub fn send_hook_event(socket_path: &Path) -> Result<()> {
     let mut input = String::new();

@@ -199,13 +199,28 @@ pub async fn start_hook_server(
             let mut lines = reader.lines();
 
             while let Ok(Some(line)) = lines.next_line().await {
-                let cluihud_sid = serde_json::from_str::<serde_json::Value>(&line)
-                    .ok()
-                    .and_then(|v| {
-                        v.get("cluihud_session_id")
-                            .and_then(|s| s.as_str())
-                            .map(String::from)
-                    });
+                // Peek at the `kind` discriminator so control messages
+                // (e.g. {"kind":"control","op":"rescan_agents"}) don't fall
+                // into the hook-event parser. Missing `kind` is treated as
+                // `hook_event` for backward compat with installed CC hook
+                // pipelines (Decision 14).
+                let parsed = serde_json::from_str::<serde_json::Value>(&line).ok();
+                let kind = parsed
+                    .as_ref()
+                    .and_then(|v| v.get("kind"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("hook_event");
+
+                if kind == "control" {
+                    process_control_message(&app, &agent_state, parsed.as_ref()).await;
+                    continue;
+                }
+
+                let cluihud_sid = parsed.as_ref().and_then(|v| {
+                    v.get("cluihud_session_id")
+                        .and_then(|s| s.as_str())
+                        .map(String::from)
+                });
 
                 match serde_json::from_str::<HookEvent>(&line) {
                     Ok(event) => {
@@ -224,6 +239,50 @@ pub async fn start_hook_server(
                 }
             }
         });
+    }
+}
+
+/// Handle a `kind=control` message off the hook socket. Today the only op is
+/// `rescan_agents`: re-runs the registry's filesystem detection and emits an
+/// `agents:detected` event to the frontend with the fresh list. Future ops
+/// (shutdown, status, …) extend the match.
+async fn process_control_message(
+    app: &AppHandle,
+    agent_state: &AgentRuntimeState,
+    payload: Option<&serde_json::Value>,
+) {
+    let op = payload
+        .and_then(|v| v.get("op"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    match op {
+        "rescan_agents" => {
+            let detections = agent_state.registry.scan().await;
+            #[derive(Clone, serde::Serialize)]
+            struct Entry {
+                id: String,
+                installed: bool,
+                binary_path: Option<String>,
+                config_path: Option<String>,
+                version: Option<String>,
+            }
+            let payload: Vec<Entry> = detections
+                .into_iter()
+                .map(|(id, det)| Entry {
+                    id: id.as_str().to_string(),
+                    installed: det.installed,
+                    binary_path: det.binary_path.map(|p| p.display().to_string()),
+                    config_path: det.config_path.map(|p| p.display().to_string()),
+                    version: det.version,
+                })
+                .collect();
+            let _ = app.emit("agents:detected", payload);
+            tracing::info!("rescan-agents: emitted agents:detected");
+        }
+        other => {
+            tracing::warn!(op = other, "unknown control op; ignoring");
+        }
     }
 }
 

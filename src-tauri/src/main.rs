@@ -16,6 +16,10 @@ enum Commands {
         #[command(subcommand)]
         action: HookAction,
     },
+    /// Re-run filesystem detection for installed agents and refresh the
+    /// running cluihud's view of available adapters. Sends a `control`
+    /// message to the hook socket; no effect if cluihud is not running.
+    RescanAgents,
 }
 
 #[derive(Subcommand)]
@@ -76,6 +80,16 @@ fn main() {
                         std::process::exit(1);
                     }
                 }
+            }
+        }
+
+        Some(Commands::RescanAgents) => {
+            let config = cluihud::config::Config::load();
+            if let Err(e) =
+                cluihud::hooks::cli::send_rescan_agents(&config.hook_socket_path)
+            {
+                eprintln!("cluihud rescan-agents: {e:#}");
+                std::process::exit(1);
             }
         }
     }

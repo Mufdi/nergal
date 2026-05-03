@@ -655,6 +655,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-notification",
  "tauri-plugin-shell",
+ "tempfile",
  "termwiz",
  "thiserror 1.0.69",
  "tokio",

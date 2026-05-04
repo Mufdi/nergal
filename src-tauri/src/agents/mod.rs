@@ -17,6 +17,7 @@
 
 pub mod claude_code;
 pub mod cost_aggregator;
+pub mod opencode;
 pub mod registry;
 pub mod state;
 

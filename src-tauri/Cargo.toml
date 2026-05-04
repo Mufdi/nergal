@@ -50,6 +50,14 @@ dunce = "1"
 thiserror = "1"
 which = "6"
 
+# OpenCode adapter: HTTP client for permission REST POSTs + SSE event stream
+# from `opencode serve`. eventsource-stream parses framed SSE; reqwest
+# provides the underlying HTTP/streaming client; futures-util gives us
+# StreamExt::next on the response body.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+eventsource-stream = "0.2"
+futures-util = "0.3"
+
 # Terminal VT emulation (Phase 1 of replace-xterm-with-wezterm).
 # wezterm-term / termwiz are not published on crates.io — they only live inside
 # the wezterm workspace. Pinned to the last stable tag (Feb 2024); the core VT

@@ -85,9 +85,7 @@ fn main() {
 
         Some(Commands::RescanAgents) => {
             let config = cluihud::config::Config::load();
-            if let Err(e) =
-                cluihud::hooks::cli::send_rescan_agents(&config.hook_socket_path)
-            {
+            if let Err(e) = cluihud::hooks::cli::send_rescan_agents(&config.hook_socket_path) {
                 eprintln!("cluihud rescan-agents: {e:#}");
                 std::process::exit(1);
             }

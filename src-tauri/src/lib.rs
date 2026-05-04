@@ -238,14 +238,8 @@ pub fn run() {
             let hook_plan = plan_state.clone();
             let hook_agents = agent_state.clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = start_hook_server(
-                    &socket_path,
-                    hook_app,
-                    hook_db,
-                    hook_plan,
-                    hook_agents,
-                )
-                .await
+                if let Err(e) =
+                    start_hook_server(&socket_path, hook_app, hook_db, hook_plan, hook_agents).await
                 {
                     tracing::error!("hook server error: {e}");
                 }

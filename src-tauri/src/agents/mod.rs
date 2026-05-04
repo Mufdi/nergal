@@ -327,11 +327,8 @@ pub trait AgentAdapter: Send + Sync {
     /// watchers (Decision 12); OpenCode starts an SSE subscription; Pi starts
     /// a JSONL tail. The shared Unix socket for hook events runs outside the
     /// adapter (it belongs to the runtime).
-    async fn start_event_pump(
-        &self,
-        session_id: &str,
-        sink: EventSink,
-    ) -> Result<(), AdapterError>;
+    async fn start_event_pump(&self, session_id: &str, sink: EventSink)
+    -> Result<(), AdapterError>;
 
     /// Stops any background tasks started by `start_event_pump`. Idempotent.
     /// Default impl is a no-op for adapters that don't start anything.
@@ -356,7 +353,9 @@ pub trait AgentAdapter: Send + Sync {
         _session_id: &str,
         _answers: serde_json::Value,
     ) -> Result<(), AdapterError> {
-        Err(AdapterError::NotSupported(AgentCapability::ASK_USER_BLOCKING))
+        Err(AdapterError::NotSupported(
+            AgentCapability::ASK_USER_BLOCKING,
+        ))
     }
 }
 
@@ -375,13 +374,13 @@ mod tests {
     fn agent_id_rejects_invalid_inputs() {
         for s in [
             "",
-            "1abc",            // starts with digit
-            "Abc",             // uppercase
-            "abc_def",         // underscore
-            "abc.def",         // dot
-            "abc/def",         // slash
+            "1abc",    // starts with digit
+            "Abc",     // uppercase
+            "abc_def", // underscore
+            "abc.def", // dot
+            "abc/def", // slash
             "../../etc/passwd",
-            &"a".repeat(33),   // length 33 > 32
+            &"a".repeat(33), // length 33 > 32
         ] {
             assert!(AgentId::new(s).is_err(), "expected error for {s:?}");
         }

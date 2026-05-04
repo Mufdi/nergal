@@ -28,7 +28,7 @@ use dashmap::DashMap;
 
 use crate::agents::{
     AdapterError, AgentAdapter, AgentCapabilities, AgentCapability, AgentId, DetectionResult,
-    EventSink, PlanDecision, SpawnContext, SpawnSpec, Transport, TranscriptEvent,
+    EventSink, PlanDecision, SpawnContext, SpawnSpec, TranscriptEvent, Transport,
 };
 
 use super::cost;
@@ -299,8 +299,10 @@ mod tests {
         // returns Transport(NotFound). Either way, the session_id env wiring
         // is a contract we can assert on the success path only.
         if let Ok(spec) = a.spawn(&ctx) {
-            assert_eq!(spec.env.get("CLUIHUD_SESSION_ID").map(String::as_str),
-                       Some("abc-123"));
+            assert_eq!(
+                spec.env.get("CLUIHUD_SESSION_ID").map(String::as_str),
+                Some("abc-123")
+            );
         }
     }
 

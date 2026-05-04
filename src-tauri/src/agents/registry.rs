@@ -95,8 +95,8 @@ pub fn register_supplementary_adapters(_reg: &AgentRegistry) -> Result<(), Adapt
 mod tests {
     use super::*;
     use crate::agents::{
-        AgentCapabilities, AgentCapability, EventSink, SpawnContext, SpawnSpec, Transport,
-        TranscriptEvent,
+        AgentCapabilities, AgentCapability, EventSink, SpawnContext, SpawnSpec, TranscriptEvent,
+        Transport,
     };
     use std::path::PathBuf;
 
@@ -166,7 +166,8 @@ mod tests {
     fn register_and_get_round_trips() {
         let reg = AgentRegistry::new();
         let id = AgentId::claude_code();
-        reg.register(Arc::new(StubAdapter::new(id.clone()))).unwrap();
+        reg.register(Arc::new(StubAdapter::new(id.clone())))
+            .unwrap();
         assert!(reg.get(&id).is_some());
     }
 
@@ -174,7 +175,8 @@ mod tests {
     fn duplicate_registration_is_rejected() {
         let reg = AgentRegistry::new();
         let id = AgentId::claude_code();
-        reg.register(Arc::new(StubAdapter::new(id.clone()))).unwrap();
+        reg.register(Arc::new(StubAdapter::new(id.clone())))
+            .unwrap();
         let err = reg
             .register(Arc::new(StubAdapter::new(id.clone())))
             .unwrap_err();

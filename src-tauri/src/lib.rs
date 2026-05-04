@@ -81,6 +81,13 @@ pub fn run() {
         agents::opencode::server_supervisor::ServerSupervisor::cleanup_orphans().await;
     });
 
+    // Take the EventSink receiver from the bootstrap'd runtime state — the
+    // consumer task is spawned from the Tauri setup callback below where
+    // AppHandle is available.
+    let agent_event_rx = agent_state
+        .take_event_receiver()
+        .expect("event receiver must be available exactly once at startup");
+
     let scratchpad_root = config
         .scratchpad_path
         .clone()
@@ -252,6 +259,18 @@ pub fn run() {
                     tracing::error!("hook server error: {e}");
                 }
             });
+
+            // Drain HookEvents emitted by adapter event pumps (OpenCode SSE,
+            // Pi JSONL tail) through the same dispatcher used for socket
+            // events, so adapter-emitted events reach the frontend via the
+            // existing Tauri event surface.
+            hooks::server::spawn_adapter_event_consumer(
+                app_handle.clone(),
+                db.clone(),
+                plan_state.clone(),
+                agent_state.clone(),
+                agent_event_rx,
+            );
 
             if plans_dir.exists() {
                 match PlanWatcher::new(&plans_dir, app_handle.clone()) {

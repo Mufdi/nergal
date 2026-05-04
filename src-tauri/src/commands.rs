@@ -642,11 +642,27 @@ pub fn create_session(
 }
 
 #[tauri::command]
-pub fn delete_session(
+pub async fn delete_session(
     db: State<'_, SharedDb>,
     agents: State<'_, AgentRuntimeState>,
     session_id: String,
 ) -> Result<(), String> {
+    // Resolve adapter for stop_event_pump before tearing down the cache /
+    // worktree / DB row, since stop_event_pump may need the adapter's per-
+    // session state to be still intact (e.g. OpenCode supervisor stop kills
+    // the running `opencode serve` child).
+    if let Some(agent_id) = agents.resolve(&session_id)
+        && let Some(adapter) = agents.registry.get(&agent_id)
+        && let Err(e) = adapter.stop_event_pump(&session_id).await
+    {
+        tracing::warn!(
+            session_id = %session_id,
+            agent = %agent_id,
+            error = %e,
+            "adapter.stop_event_pump failed; session teardown continues",
+        );
+    }
+
     let db = db.lock().map_err(|e| e.to_string())?;
 
     // Get session + workspace for worktree cleanup

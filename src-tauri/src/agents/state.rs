@@ -11,10 +11,14 @@
 use std::sync::Arc;
 
 use dashmap::DashMap;
+use parking_lot::Mutex;
+use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use super::AgentId;
+use super::EventSink;
 use super::claude_code::ClaudeCodeAdapter;
 use super::registry::AgentRegistry;
+use crate::hooks::events::HookEvent;
 
 /// Shared agent runtime state. Cheap to clone the inner `Arc`s.
 #[derive(Clone)]
@@ -30,6 +34,15 @@ pub struct AgentRuntimeState {
     /// foundation. Other adapters keep their typed handles in their own
     /// state when they need analogous side-channels.
     pub claude_code: Arc<ClaudeCodeAdapter>,
+    /// Sender that adapter `start_event_pump` calls feed into when emitting
+    /// translated [`HookEvent`]s. The runtime spawns a consumer task at
+    /// startup (lib.rs) that drains the receiver and routes events through
+    /// the existing dispatcher logic so the same Tauri events fire as for
+    /// CC sessions.
+    pub event_sink: EventSink,
+    /// One-shot slot holding the receiver until the runtime takes it. Wrapped
+    /// in a sync mutex (rare access, no need for tokio::Mutex).
+    event_receiver: Arc<Mutex<Option<UnboundedReceiver<HookEvent>>>>,
 }
 
 impl AgentRuntimeState {
@@ -41,11 +54,20 @@ impl AgentRuntimeState {
         let claude_code = Arc::new(ClaudeCodeAdapter::new());
         registry.register(claude_code.clone())?;
         super::registry::register_supplementary_adapters(&registry)?;
+        let (tx, rx) = unbounded_channel();
         Ok(Self {
             registry,
             agent_id_cache: Arc::new(DashMap::new()),
             claude_code,
+            event_sink: tx,
+            event_receiver: Arc::new(Mutex::new(Some(rx))),
         })
+    }
+
+    /// Take the receiver. Called once during app setup; subsequent calls
+    /// return `None`. The consumer task owns the receiver from then on.
+    pub fn take_event_receiver(&self) -> Option<UnboundedReceiver<HookEvent>> {
+        self.event_receiver.lock().take()
     }
 
     /// Record the agent that owns a session. Call this **before** the PTY

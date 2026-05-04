@@ -13,8 +13,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use anyhow::{Context, anyhow};
 use async_trait::async_trait;
 use dashmap::DashMap;
+use tauri::AppHandle;
 
 use super::permission_client::{self, PendingPermission, Reply};
 use super::server_supervisor::ServerSupervisor;
@@ -31,6 +33,18 @@ pub struct OpenCodeAdapter {
     supervisor: Arc<ServerSupervisor>,
     sse_clients: Arc<DashMap<String, SseClient>>,
     pending_permissions: Arc<DashMap<String, PendingPermission>>,
+    /// `cluihud_session_id` → OpenCode session id (returned by `POST /session`).
+    /// Populated by [`Self::start_event_pump`] before the SSE consumer starts
+    /// so prompts and history calls can resolve it synchronously.
+    session_ids: Arc<DashMap<String, String>>,
+    /// `cluihud_session_id` → bound port. Cached so the `send_prompt` and
+    /// `list_messages` paths don't need to re-query the supervisor.
+    session_ports: Arc<DashMap<String, u16>>,
+    /// Tauri handle, set once during app setup. The SSE client uses it to
+    /// emit chat events (`opencode:message-updated`, `opencode:message-part-updated`)
+    /// directly to the frontend — those are too rich for the [`HookEvent`]
+    /// enum and they only matter to the OpenCode chat panel.
+    app_handle: parking_lot::RwLock<Option<AppHandle>>,
 }
 
 impl Default for OpenCodeAdapter {
@@ -61,12 +75,121 @@ impl OpenCodeAdapter {
             supervisor: Arc::new(ServerSupervisor::new()),
             sse_clients: Arc::new(DashMap::new()),
             pending_permissions: Arc::new(DashMap::new()),
+            session_ids: Arc::new(DashMap::new()),
+            session_ports: Arc::new(DashMap::new()),
+            app_handle: parking_lot::RwLock::new(None),
         }
     }
 
     fn cached_binary(&self) -> Option<PathBuf> {
         self.binary_path.read().clone()
     }
+
+    /// Set the Tauri app handle. Called once during app setup so the SSE
+    /// client can emit chat events directly. Idempotent — replaces any
+    /// previous handle (the runtime keeps one for the lifetime of the app
+    /// in practice).
+    pub fn set_app_handle(&self, handle: AppHandle) {
+        *self.app_handle.write() = Some(handle);
+    }
+
+    fn app_handle(&self) -> Option<AppHandle> {
+        self.app_handle.read().clone()
+    }
+
+    /// Submit a user prompt to the OpenCode session bound to `cluihud_session_id`.
+    /// Returns `SessionLocked` if the session has no event pump running yet
+    /// (the OpenCode session id is created by `start_event_pump`).
+    pub async fn send_prompt(
+        &self,
+        cluihud_session_id: &str,
+        text: &str,
+    ) -> Result<(), AdapterError> {
+        let oc_session = self
+            .session_ids
+            .get(cluihud_session_id)
+            .map(|r| r.clone())
+            .ok_or(AdapterError::SessionLocked)?;
+        let port = self
+            .session_ports
+            .get(cluihud_session_id)
+            .map(|r| *r)
+            .ok_or(AdapterError::SessionLocked)?;
+
+        let url = format!("http://127.0.0.1:{port}/session/{oc_session}/prompt_async");
+        let body = serde_json::json!({ "text": text });
+        reqwest::Client::new()
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .with_context(|| format!("POST {url}"))
+            .map_err(AdapterError::Transport)?
+            .error_for_status()
+            .with_context(|| format!("non-2xx from {url}"))
+            .map_err(AdapterError::Transport)?;
+        Ok(())
+    }
+
+    /// List historical messages for a session. Used to populate the chat
+    /// panel on first render (e.g. after `--resume`).
+    pub async fn list_messages(
+        &self,
+        cluihud_session_id: &str,
+    ) -> Result<serde_json::Value, AdapterError> {
+        let oc_session = self
+            .session_ids
+            .get(cluihud_session_id)
+            .map(|r| r.clone())
+            .ok_or(AdapterError::SessionLocked)?;
+        let port = self
+            .session_ports
+            .get(cluihud_session_id)
+            .map(|r| *r)
+            .ok_or(AdapterError::SessionLocked)?;
+
+        let url = format!("http://127.0.0.1:{port}/session/{oc_session}/message");
+        let resp = reqwest::Client::new()
+            .get(&url)
+            .send()
+            .await
+            .with_context(|| format!("GET {url}"))
+            .map_err(AdapterError::Transport)?
+            .error_for_status()
+            .with_context(|| format!("non-2xx from {url}"))
+            .map_err(AdapterError::Transport)?;
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .with_context(|| format!("decoding response from {url}"))
+            .map_err(AdapterError::Transport)?;
+        Ok(json)
+    }
+
+    /// Resolve the OpenCode session id for a cluihud session, if known.
+    /// Frontend code should not need this directly; included for tests.
+    pub fn opencode_session_id(&self, cluihud_session_id: &str) -> Option<String> {
+        self.session_ids.get(cluihud_session_id).map(|r| r.clone())
+    }
+}
+
+/// Create a new OpenCode session via `POST /session` and return its id.
+async fn create_opencode_session(port: u16) -> anyhow::Result<String> {
+    let url = format!("http://127.0.0.1:{port}/session");
+    let resp = reqwest::Client::new()
+        .post(&url)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .with_context(|| format!("POST {url}"))?
+        .error_for_status()
+        .with_context(|| format!("non-2xx from {url}"))?;
+    let v: serde_json::Value = resp.json().await.context("decoding /session response")?;
+    let id = v
+        .get("id")
+        .and_then(|s| s.as_str())
+        .ok_or_else(|| anyhow!("opencode /session returned no id field: {v}"))?;
+    Ok(id.to_string())
 }
 
 #[async_trait]
@@ -170,6 +293,17 @@ impl AgentAdapter for OpenCodeAdapter {
             .await
             .map_err(AdapterError::Transport)?;
 
+        // Create a fresh OpenCode session so prompts and history calls have
+        // an id to address. We wait for this *after* the SSE consumer would
+        // have started in the previous version — order matters because the
+        // chat panel needs the session id to issue its initial GET /message.
+        let oc_session_id = create_opencode_session(port)
+            .await
+            .map_err(AdapterError::Transport)?;
+        self.session_ids
+            .insert(session_id.to_string(), oc_session_id);
+        self.session_ports.insert(session_id.to_string(), port);
+
         let base_url = format!("http://127.0.0.1:{port}");
         let client = SseClient::spawn(
             base_url,
@@ -177,6 +311,7 @@ impl AgentAdapter for OpenCodeAdapter {
             port,
             sink,
             self.pending_permissions.clone(),
+            self.app_handle(),
         );
         self.sse_clients.insert(session_id.to_string(), client);
         Ok(())
@@ -191,6 +326,8 @@ impl AgentAdapter for OpenCodeAdapter {
             .await
             .map_err(AdapterError::Transport)?;
         self.pending_permissions.remove(session_id);
+        self.session_ids.remove(session_id);
+        self.session_ports.remove(session_id);
         Ok(())
     }
 

@@ -294,11 +294,30 @@ pub async fn start_claude_session(
         }
         cmd.push('\n');
 
-        let instances = state.instances.lock().map_err(|e| e.to_string())?;
-        if let Some(instance) = instances.get(&pty_id) {
-            let mut w = instance.writer.lock().map_err(|e| e.to_string())?;
-            w.write_all(cmd.as_bytes()).map_err(|e| e.to_string())?;
-            w.flush().map_err(|e| e.to_string())?;
+        {
+            let instances = state.instances.lock().map_err(|e| e.to_string())?;
+            if let Some(instance) = instances.get(&pty_id) {
+                let mut w = instance.writer.lock().map_err(|e| e.to_string())?;
+                w.write_all(cmd.as_bytes()).map_err(|e| e.to_string())?;
+                w.flush().map_err(|e| e.to_string())?;
+            }
+        }
+
+        // Activate the adapter's event pump. CC + Codex are no-ops here
+        // (their hook events arrive on the shared Unix socket); OpenCode's
+        // SSE consumer spins up here, Pi's JSONL tail starts. Failures are
+        // logged rather than propagated — the session is still usable in
+        // the terminal even if the event pump can't start (e.g. binary
+        // missing for OpenCode); the user just won't see structured
+        // events in the activity drawer.
+        let sink = agents.event_sink.clone();
+        if let Err(e) = adapter.start_event_pump(&session_id, sink).await {
+            tracing::warn!(
+                session_id = %session_id,
+                agent = %agent_id,
+                error = %e,
+                "adapter.start_event_pump failed; session continues without event pump",
+            );
         }
     }
 

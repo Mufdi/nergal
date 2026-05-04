@@ -6,12 +6,13 @@ import { RightPanel } from "./RightPanel";
 import { StatusBar } from "./StatusBar";
 import { Toaster } from "sileo";
 import { TerminalManager } from "@/components/terminal/TerminalManager";
+import { OpenCodeChat } from "@/components/chat/OpenCodeChat";
 import * as terminalService from "@/components/terminal/terminalService";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { ActivityDrawer } from "@/components/activity/ActivityDrawer";
 import { ZenMode } from "@/components/zen/ZenMode";
 import { expandRightPanelAtom, activePanelViewAtom, openTabAction } from "@/stores/rightPanel";
-import { activeSessionIdAtom } from "@/stores/workspace";
+import { activeSessionAtom, activeSessionIdAtom } from "@/stores/workspace";
 import { planReviewStatusMapAtom, planStateMapAtom } from "@/stores/plan";
 import { toggleSidebarAtom, toggleRightPanelAtom, focusZoneAtom } from "@/stores/shortcuts";
 
@@ -43,6 +44,8 @@ export function Workspace() {
   const layoutPreset = useAtomValue(layoutPresetAtom);
   const setSessionPreset = useSetAtom(sessionLayoutPresetAtom);
   const activeSessionId = useAtomValue(activeSessionIdAtom);
+  const activeSession = useAtomValue(activeSessionAtom);
+  const isOpenCodeSession = activeSession?.agent_id === "opencode";
   const setFocusZone = useSetAtom(focusZoneAtom);
 
   const sidebarPanelRef = usePanelRef();
@@ -305,10 +308,14 @@ export function Workspace() {
                 data-focus-zone="terminal"
                 onMouseDown={() => {
                   setFocusZone("terminal");
-                  terminalService.focusActive();
+                  if (!isOpenCodeSession) terminalService.focusActive();
                 }}
               >
-                <TerminalManager />
+                {isOpenCodeSession && activeSessionId ? (
+                  <OpenCodeChat sessionId={activeSessionId} />
+                ) : (
+                  <TerminalManager />
+                )}
               </div>
               <ActivityDrawer />
             </div>

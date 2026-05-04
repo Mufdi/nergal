@@ -2540,3 +2540,34 @@ pub fn resolve_default_agent(project_path: String) -> Result<String, String> {
         .resolve_agent_for_project(std::path::Path::new(&project_path))
         .unwrap_or_else(|| AgentId::claude_code().as_str().to_string()))
 }
+
+/// Send a user prompt to an OpenCode session. The session must already have
+/// its event pump running (i.e., `start_event_pump` has resolved an OpenCode
+/// session id). Returns an error string when the session is unknown or the
+/// HTTP call fails.
+#[tauri::command]
+pub async fn opencode_send_prompt(
+    agents: State<'_, AgentRuntimeState>,
+    session_id: String,
+    text: String,
+) -> Result<(), String> {
+    agents
+        .opencode
+        .send_prompt(&session_id, &text)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// List historical messages for an OpenCode session. The chat panel calls
+/// this once on mount to populate state before subscribing to live SSE events.
+#[tauri::command]
+pub async fn opencode_list_messages(
+    agents: State<'_, AgentRuntimeState>,
+    session_id: String,
+) -> Result<serde_json::Value, String> {
+    agents
+        .opencode
+        .list_messages(&session_id)
+        .await
+        .map_err(|e| e.to_string())
+}

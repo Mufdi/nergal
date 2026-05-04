@@ -11,6 +11,13 @@ export interface Session {
   status: "idle" | "running" | "needs_attention" | "completed";
   created_at: number;
   updated_at: number;
+  /// Identifier of the agent adapter that owns this session. Defaults to
+  /// "claude-code" for legacy rows. Set to "opencode" / "codex" / "pi" for
+  /// non-CC sessions.
+  agent_id?: string;
+  /// Wire-form capability bitset emitted by the backend on session creation
+  /// so the frontend can gate UI synchronously without a separate fetch.
+  agent_capabilities?: string[];
 }
 
 export interface Workspace {

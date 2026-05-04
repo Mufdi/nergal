@@ -13,12 +13,18 @@ use anyhow::{Context, Result, anyhow};
 use dashmap::DashMap;
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
+use tauri::{AppHandle, Emitter};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use super::permission_client::PendingPermission;
 use crate::agents::EventSink;
 use crate::hooks::events::HookEvent;
+
+/// Tauri event names emitted directly to the frontend for the OpenCode chat
+/// panel. Kept here next to the translator so additions stay co-located.
+pub const EVENT_MESSAGE_UPDATED: &str = "opencode:message-updated";
+pub const EVENT_MESSAGE_PART_UPDATED: &str = "opencode:message-part-updated";
 
 /// Handle to a running SSE consumer task. Drop the handle to cancel; or call
 /// [`SseClient::cancel`] to be explicit.
@@ -36,6 +42,7 @@ impl SseClient {
         port: u16,
         sink: EventSink,
         pending: Arc<DashMap<String, PendingPermission>>,
+        app_handle: Option<AppHandle>,
     ) -> Self {
         let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
         let handle = tokio::spawn(async move {
@@ -46,7 +53,14 @@ impl SseClient {
             loop {
                 let connect = tokio::select! {
                     _ = &mut cancel_rx => return,
-                    res = connect_and_stream(&url, &cluihud_session_id, port, &sink, &pending) => res,
+                    res = connect_and_stream(
+                        &url,
+                        &cluihud_session_id,
+                        port,
+                        &sink,
+                        &pending,
+                        app_handle.as_ref(),
+                    ) => res,
                 };
                 match connect {
                     Ok(()) => {
@@ -100,6 +114,7 @@ async fn connect_and_stream(
     port: u16,
     sink: &EventSink,
     pending: &Arc<DashMap<String, PendingPermission>>,
+    app_handle: Option<&AppHandle>,
 ) -> Result<()> {
     let resp = reqwest::Client::new()
         .get(url)
@@ -112,6 +127,12 @@ async fn connect_and_stream(
     let mut stream = resp.bytes_stream().eventsource();
     while let Some(event) = stream.next().await {
         let event = event.map_err(|e| anyhow!("SSE framing error: {e}"))?;
+
+        // Forward chat-rich events (message + message-part) directly to the
+        // frontend. They never become HookEvents — they only matter to the
+        // OpenCode chat panel.
+        forward_chat_event(&event.data, cluihud_session_id, app_handle);
+
         if let Some(translated) = translate_event(&event.data, cluihud_session_id, port, pending)
             && sink.send(translated).is_err()
         {
@@ -120,6 +141,37 @@ async fn connect_and_stream(
         }
     }
     Ok(())
+}
+
+/// Emit chat events to the frontend if they look like `message.updated` or
+/// `message.part.updated`. Best-effort: malformed JSON or a missing app
+/// handle silently drop the event (logged at debug).
+fn forward_chat_event(data: &str, cluihud_session_id: &str, app_handle: Option<&AppHandle>) {
+    let Some(handle) = app_handle else { return };
+    let payload: serde_json::Value = match serde_json::from_str(data) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let Some(event_type) = payload.get("type").and_then(|v| v.as_str()) else {
+        return;
+    };
+    let Some(props) = payload.get("properties") else {
+        return;
+    };
+
+    let event_name = match event_type {
+        "message.updated" => EVENT_MESSAGE_UPDATED,
+        "message.part.updated" => EVENT_MESSAGE_PART_UPDATED,
+        _ => return,
+    };
+
+    let envelope = serde_json::json!({
+        "session_id": cluihud_session_id,
+        "properties": props,
+    });
+    if let Err(e) = handle.emit(event_name, &envelope) {
+        tracing::debug!(error = %e, event = event_name, "failed to emit opencode chat event");
+    }
 }
 
 /// Map an OpenCode SSE payload (the `data:` line, JSON of shape

@@ -144,8 +144,10 @@ mod tests {
 
     #[test]
     fn resolve_falls_back_to_default_agent() {
-        let mut c = Config::default();
-        c.default_agent = Some("codex".into());
+        let c = Config {
+            default_agent: Some("codex".into()),
+            ..Config::default()
+        };
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(
             c.resolve_agent_for_project(dir.path()).as_deref(),

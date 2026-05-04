@@ -73,6 +73,14 @@ pub fn run() {
     let agent_state = AgentRuntimeState::bootstrap()
         .expect("failed to bootstrap agent runtime state with default registrations");
 
+    // Clean up orphaned `opencode serve` children left by a previous cluihud
+    // crash: PID files whose parent_pid no longer maps to a running process
+    // get their child force-killed. Fire-and-forget on a background task so
+    // app boot stays fast.
+    tauri::async_runtime::spawn(async {
+        agents::opencode::server_supervisor::ServerSupervisor::cleanup_orphans().await;
+    });
+
     let scratchpad_root = config
         .scratchpad_path
         .clone()

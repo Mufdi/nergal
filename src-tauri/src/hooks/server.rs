@@ -286,6 +286,26 @@ async fn process_control_message(
     }
 }
 
+/// Drains the EventSink that adapters feed (OpenCode SSE, Pi JSONL tail).
+/// Each translated [`HookEvent`] is routed through [`process_event`] using
+/// the event's own session_id as the cluihud_session_id (adapters embed it
+/// when they construct the event). The task runs for the lifetime of the
+/// app and exits when all senders drop.
+pub fn spawn_adapter_event_consumer(
+    app: AppHandle,
+    db: SharedDb,
+    plan_state: SharedPlanState,
+    agent_state: AgentRuntimeState,
+    mut rx: tokio::sync::mpsc::UnboundedReceiver<HookEvent>,
+) {
+    tokio::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            let csid = event.session_id().to_string();
+            process_event(&app, &event, &db, &plan_state, &agent_state, Some(&csid));
+        }
+    });
+}
+
 fn process_event(
     app: &AppHandle,
     event: &HookEvent,

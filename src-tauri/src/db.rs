@@ -454,6 +454,7 @@ impl Database {
 
     // ── Annotations ──
 
+    #[allow(clippy::too_many_arguments)] // Mirrors the column list 1:1; collapsing to a struct adds noise.
     pub fn save_annotation(
         &self,
         id: &str,
@@ -509,6 +510,7 @@ impl Database {
 
     // ── Spec annotations ──
 
+    #[allow(clippy::too_many_arguments)] // Mirrors the column list 1:1; collapsing to a struct adds noise.
     pub fn save_spec_annotation(
         &self,
         id: &str,

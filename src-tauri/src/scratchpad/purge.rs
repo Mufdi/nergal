@@ -45,10 +45,10 @@ pub fn purge_trash(scratchpad_root: &Path) -> Result<usize> {
         };
         if epoch < cutoff {
             // Symlink check — the trash dir can be tampered with.
-            if let Ok(meta) = fs::symlink_metadata(entry.path()) {
-                if meta.is_symlink() {
-                    continue;
-                }
+            if let Ok(meta) = fs::symlink_metadata(entry.path())
+                && meta.is_symlink()
+            {
+                continue;
             }
             if fs::remove_file(entry.path()).is_ok() {
                 removed += 1;

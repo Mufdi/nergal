@@ -163,10 +163,10 @@ pub fn submit_plan_decision(
     // If plan was edited, save to disk first
     if let Ok(mut mgr) = state.lock() {
         let runtime = mgr.get_or_create(&session_id);
-        if let Some(plan) = &runtime.current_plan {
-            if plan.content != plan.original {
-                let _ = runtime.save_edits(plan.content.clone());
-            }
+        if let Some(plan) = &runtime.current_plan
+            && plan.content != plan.original
+        {
+            let _ = runtime.save_edits(plan.content.clone());
         }
     }
 
@@ -244,7 +244,7 @@ fn scan_plans_dir(dir: &std::path::Path) -> Vec<PlanSummary> {
 #[tauri::command]
 pub fn list_plans(state: State<'_, SharedPlanState>) -> Result<Vec<PlanSummary>, String> {
     let mgr = state.lock().map_err(|e| e.to_string())?;
-    Ok(scan_plans_dir(&mgr.plans_dir()))
+    Ok(scan_plans_dir(mgr.plans_dir()))
 }
 
 #[tauri::command]
@@ -326,6 +326,7 @@ pub fn get_cost(transcript_path: String) -> Result<CostSummary, String> {
 // -- Annotation commands --
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command surface — collapsing to a struct breaks the JS call shape.
 pub fn save_annotation(
     id: String,
     session_id: String,
@@ -381,6 +382,7 @@ pub fn set_pending_annotations(feedback: String) -> Result<(), String> {
 // -- Spec annotation commands --
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command surface — collapsing to a struct breaks the JS call shape.
 pub fn save_spec_annotation(
     id: String,
     spec_key: String,
@@ -1283,10 +1285,8 @@ fn scan_change_dir(dir: &std::path::Path, status: &str) -> Option<OpenSpecChange
         return None;
     }
 
-    let created = dir
-        .join(".openspec.yaml")
-        .exists()
-        .then(|| {
+    let created = if dir.join(".openspec.yaml").exists() {
+        {
             std::fs::read_to_string(dir.join(".openspec.yaml"))
                 .ok()
                 .and_then(|s| {
@@ -1295,8 +1295,10 @@ fn scan_change_dir(dir: &std::path::Path, status: &str) -> Option<OpenSpecChange
                         .map(|l| l.trim_start_matches("created:").trim().to_string())
                 })
                 .unwrap_or_default()
-        })
-        .unwrap_or_default();
+        }
+    } else {
+        Default::default()
+    };
 
     // Scan all .md files in the change directory as artifacts
     let mut artifacts = Vec::new();
@@ -1304,14 +1306,12 @@ fn scan_change_dir(dir: &std::path::Path, status: &str) -> Option<OpenSpecChange
         for entry in entries {
             let Ok(entry) = entry else { continue };
             let path = entry.path();
-            if path.is_file() {
-                if let Some(ext) = path.extension() {
-                    if ext == "md" {
-                        if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
-                            artifacts.push(name.to_string());
-                        }
-                    }
-                }
+            if path.is_file()
+                && let Some(ext) = path.extension()
+                && ext == "md"
+                && let Some(name) = path.file_stem().and_then(|s| s.to_str())
+            {
+                artifacts.push(name.to_string());
             }
         }
     }
@@ -1329,22 +1329,22 @@ fn scan_change_dir(dir: &std::path::Path, status: &str) -> Option<OpenSpecChange
 
     let mut specs = Vec::new();
     let specs_dir = dir.join("specs");
-    if specs_dir.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(&specs_dir) {
-            for entry in entries {
-                let Ok(entry) = entry else { continue };
-                let path = entry.path();
-                if path.is_dir() && path.join("spec.md").exists() {
-                    let spec_name = path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default();
-                    let spec_path = format!("specs/{spec_name}/spec.md");
-                    specs.push(SpecEntry {
-                        name: spec_name,
-                        path: spec_path,
-                    });
-                }
+    if specs_dir.is_dir()
+        && let Ok(entries) = std::fs::read_dir(&specs_dir)
+    {
+        for entry in entries {
+            let Ok(entry) = entry else { continue };
+            let path = entry.path();
+            if path.is_dir() && path.join("spec.md").exists() {
+                let spec_name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let spec_path = format!("specs/{spec_name}/spec.md");
+                specs.push(SpecEntry {
+                    name: spec_name,
+                    path: spec_path,
+                });
             }
         }
     }
@@ -1391,13 +1391,13 @@ pub fn list_openspec_changes(
 
     // Scan archived changes
     let archive_dir = changes_dir.join("archive");
-    if archive_dir.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(&archive_dir) {
-            for entry in entries {
-                let Ok(entry) = entry else { continue };
-                if let Some(change) = scan_change_dir(&entry.path(), "archived") {
-                    changes.push(change);
-                }
+    if archive_dir.is_dir()
+        && let Ok(entries) = std::fs::read_dir(&archive_dir)
+    {
+        for entry in entries {
+            let Ok(entry) = entry else { continue };
+            if let Some(change) = scan_change_dir(&entry.path(), "archived") {
+                changes.push(change);
             }
         }
     }
@@ -2293,6 +2293,7 @@ pub fn enqueue_conflict_context(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command surface — collapsing to a struct breaks the JS call shape.
 pub fn git_ship(
     app: tauri::AppHandle,
     db: State<'_, SharedDb>,

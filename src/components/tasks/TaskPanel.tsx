@@ -1,5 +1,6 @@
 import { useAtomValue, useSetAtom } from "jotai";
 import { activeSessionTasksAtom, clearCompletedTasksAtom } from "@/stores/tasks";
+import { hasCapabilityAtom } from "@/stores/agent";
 import { TaskItem } from "./TaskItem";
 import { Trash2 } from "lucide-react";
 import {
@@ -9,8 +10,19 @@ import {
 } from "@/components/ui/tooltip";
 
 export function TaskPanel() {
+  const supportsTaskList = useAtomValue(hasCapabilityAtom("TASK_LIST"));
   const tasks = useAtomValue(activeSessionTasksAtom);
   const clearCompleted = useSetAtom(clearCompletedTasksAtom);
+
+  if (!supportsTaskList) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <p className="text-xs text-muted-foreground">
+          The active agent does not expose task lists.
+        </p>
+      </div>
+    );
+  }
 
   const hasCompleted = tasks.some((t) => t.status === "completed");
 

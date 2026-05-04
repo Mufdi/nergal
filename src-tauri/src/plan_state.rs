@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use crate::claude::plan::PlanManager;
+use crate::agents::claude_code::plan::PlanManager;
 
 /// Thread-safe plan state managed as Tauri state.
 pub type SharedPlanState = Arc<Mutex<PlanStateManager>>;

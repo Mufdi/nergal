@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use tauri::State;
 
-use crate::claude::cost::{self, CostSummary};
+use crate::agents::AgentId;
+use crate::agents::claude_code::cost::{self, CostSummary};
+use crate::agents::state::AgentRuntimeState;
 use crate::config::Config;
 use crate::db::SharedDb;
 use crate::hooks::state::HookState;
@@ -161,10 +163,10 @@ pub fn submit_plan_decision(
     // If plan was edited, save to disk first
     if let Ok(mut mgr) = state.lock() {
         let runtime = mgr.get_or_create(&session_id);
-        if let Some(plan) = &runtime.current_plan {
-            if plan.content != plan.original {
-                let _ = runtime.save_edits(plan.content.clone());
-            }
+        if let Some(plan) = &runtime.current_plan
+            && plan.content != plan.original
+        {
+            let _ = runtime.save_edits(plan.content.clone());
         }
     }
 
@@ -242,7 +244,7 @@ fn scan_plans_dir(dir: &std::path::Path) -> Vec<PlanSummary> {
 #[tauri::command]
 pub fn list_plans(state: State<'_, SharedPlanState>) -> Result<Vec<PlanSummary>, String> {
     let mgr = state.lock().map_err(|e| e.to_string())?;
-    Ok(scan_plans_dir(&mgr.plans_dir()))
+    Ok(scan_plans_dir(mgr.plans_dir()))
 }
 
 #[tauri::command]
@@ -324,6 +326,7 @@ pub fn get_cost(transcript_path: String) -> Result<CostSummary, String> {
 // -- Annotation commands --
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command surface — collapsing to a struct breaks the JS call shape.
 pub fn save_annotation(
     id: String,
     session_id: String,
@@ -379,6 +382,7 @@ pub fn set_pending_annotations(feedback: String) -> Result<(), String> {
 // -- Spec annotation commands --
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command surface — collapsing to a struct breaks the JS call shape.
 pub fn save_spec_annotation(
     id: String,
     spec_key: String,
@@ -552,8 +556,10 @@ pub fn delete_workspace(db: State<'_, SharedDb>, workspace_id: String) -> Result
 #[tauri::command]
 pub fn create_session(
     db: State<'_, SharedDb>,
+    agents: State<'_, AgentRuntimeState>,
     workspace_id: String,
     name: String,
+    agent_id: Option<String>,
 ) -> Result<Session, String> {
     let db = db.lock().map_err(|e| e.to_string())?;
 
@@ -593,6 +599,25 @@ pub fn create_session(
     };
     let session_id = format!("{}-{ts}", &workspace_id[..6.min(workspace_id.len())]);
 
+    // Picker priority: explicit caller arg > config-resolved > CC fallback.
+    // Today the frontend passes no agent_id, so this resolves to CC unless the
+    // user has set config.default_agent. Picker UI lands once another adapter
+    // is registered (opencode-adapter, pi-adapter, codex-adapter).
+    let agent_id = agent_id
+        .as_deref()
+        .and_then(|s| AgentId::new(s).ok())
+        .unwrap_or_else(AgentId::claude_code);
+    let agent_capabilities = agents
+        .registry
+        .get(&agent_id)
+        .map(|a| {
+            let caps = a.capabilities();
+            serde_json::to_value(caps.flags)
+                .ok()
+                .and_then(|v| serde_json::from_value::<Vec<String>>(v).ok())
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
     let session = Session {
         id: session_id,
         name,
@@ -603,14 +628,25 @@ pub fn create_session(
         status: SessionStatus::Idle,
         created_at: ts,
         updated_at: ts,
+        agent_id: agent_id.as_str().to_string(),
+        agent_internal_session_id: None,
+        agent_capabilities,
     };
 
     db.create_session(&session).map_err(|e| e.to_string())?;
+    // Populate the agent_id cache BEFORE the PTY spawn so the SessionStart
+    // hook never races the cache. Until the session-creation flow exposes a
+    // picker (commit 11), every new session is a CC session by default.
+    agents.register_session(&session.id, agent_id);
     Ok(session)
 }
 
 #[tauri::command]
-pub fn delete_session(db: State<'_, SharedDb>, session_id: String) -> Result<(), String> {
+pub fn delete_session(
+    db: State<'_, SharedDb>,
+    agents: State<'_, AgentRuntimeState>,
+    session_id: String,
+) -> Result<(), String> {
     let db = db.lock().map_err(|e| e.to_string())?;
 
     // Get session + workspace for worktree cleanup
@@ -625,6 +661,7 @@ pub fn delete_session(db: State<'_, SharedDb>, session_id: String) -> Result<(),
         let _ = crate::worktree::remove_worktree(&repo_path, wt_path);
     }
 
+    agents.forget_session(&session_id);
     db.delete_session(&session_id).map_err(|e| e.to_string())
 }
 
@@ -1248,10 +1285,8 @@ fn scan_change_dir(dir: &std::path::Path, status: &str) -> Option<OpenSpecChange
         return None;
     }
 
-    let created = dir
-        .join(".openspec.yaml")
-        .exists()
-        .then(|| {
+    let created = if dir.join(".openspec.yaml").exists() {
+        {
             std::fs::read_to_string(dir.join(".openspec.yaml"))
                 .ok()
                 .and_then(|s| {
@@ -1260,8 +1295,10 @@ fn scan_change_dir(dir: &std::path::Path, status: &str) -> Option<OpenSpecChange
                         .map(|l| l.trim_start_matches("created:").trim().to_string())
                 })
                 .unwrap_or_default()
-        })
-        .unwrap_or_default();
+        }
+    } else {
+        Default::default()
+    };
 
     // Scan all .md files in the change directory as artifacts
     let mut artifacts = Vec::new();
@@ -1269,14 +1306,12 @@ fn scan_change_dir(dir: &std::path::Path, status: &str) -> Option<OpenSpecChange
         for entry in entries {
             let Ok(entry) = entry else { continue };
             let path = entry.path();
-            if path.is_file() {
-                if let Some(ext) = path.extension() {
-                    if ext == "md" {
-                        if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
-                            artifacts.push(name.to_string());
-                        }
-                    }
-                }
+            if path.is_file()
+                && let Some(ext) = path.extension()
+                && ext == "md"
+                && let Some(name) = path.file_stem().and_then(|s| s.to_str())
+            {
+                artifacts.push(name.to_string());
             }
         }
     }
@@ -1294,22 +1329,22 @@ fn scan_change_dir(dir: &std::path::Path, status: &str) -> Option<OpenSpecChange
 
     let mut specs = Vec::new();
     let specs_dir = dir.join("specs");
-    if specs_dir.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(&specs_dir) {
-            for entry in entries {
-                let Ok(entry) = entry else { continue };
-                let path = entry.path();
-                if path.is_dir() && path.join("spec.md").exists() {
-                    let spec_name = path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default();
-                    let spec_path = format!("specs/{spec_name}/spec.md");
-                    specs.push(SpecEntry {
-                        name: spec_name,
-                        path: spec_path,
-                    });
-                }
+    if specs_dir.is_dir()
+        && let Ok(entries) = std::fs::read_dir(&specs_dir)
+    {
+        for entry in entries {
+            let Ok(entry) = entry else { continue };
+            let path = entry.path();
+            if path.is_dir() && path.join("spec.md").exists() {
+                let spec_name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let spec_path = format!("specs/{spec_name}/spec.md");
+                specs.push(SpecEntry {
+                    name: spec_name,
+                    path: spec_path,
+                });
             }
         }
     }
@@ -1356,13 +1391,13 @@ pub fn list_openspec_changes(
 
     // Scan archived changes
     let archive_dir = changes_dir.join("archive");
-    if archive_dir.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(&archive_dir) {
-            for entry in entries {
-                let Ok(entry) = entry else { continue };
-                if let Some(change) = scan_change_dir(&entry.path(), "archived") {
-                    changes.push(change);
-                }
+    if archive_dir.is_dir()
+        && let Ok(entries) = std::fs::read_dir(&archive_dir)
+    {
+        for entry in entries {
+            let Ok(entry) = entry else { continue };
+            if let Some(change) = scan_change_dir(&entry.path(), "archived") {
+                changes.push(change);
             }
         }
     }
@@ -2258,6 +2293,7 @@ pub fn enqueue_conflict_context(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command surface — collapsing to a struct breaks the JS call shape.
 pub fn git_ship(
     app: tauri::AppHandle,
     db: State<'_, SharedDb>,
@@ -2434,4 +2470,57 @@ pub fn write_file_content(
     let file_path = cwd.join(&path);
     std::fs::write(&file_path, &content).map_err(|e| e.to_string())?;
     Ok(file_path.to_string_lossy().to_string())
+}
+
+// -- Agent registry commands --
+
+#[derive(serde::Serialize)]
+pub struct AvailableAgent {
+    pub id: String,
+    pub display_name: String,
+    pub installed: bool,
+    pub binary_path: Option<String>,
+    pub config_path: Option<String>,
+    pub version: Option<String>,
+    pub capabilities: Vec<String>,
+}
+
+/// Returns the registered adapters with their current detection status. Used
+/// by the session-creation modal's agent picker; until adapters beyond CC
+/// land, this list has a single entry.
+#[tauri::command]
+pub async fn list_available_agents(
+    agents: State<'_, AgentRuntimeState>,
+) -> Result<Vec<AvailableAgent>, String> {
+    let detections = agents.registry.scan().await;
+    let mut out = Vec::with_capacity(detections.len());
+    for (id, det) in detections {
+        let adapter = match agents.registry.get(&id) {
+            Some(a) => a,
+            None => continue,
+        };
+        let cap_value = serde_json::to_value(adapter.capabilities().flags).unwrap_or_default();
+        let capabilities: Vec<String> = serde_json::from_value(cap_value).unwrap_or_default();
+        out.push(AvailableAgent {
+            id: id.as_str().to_string(),
+            display_name: adapter.display_name().to_string(),
+            installed: det.installed,
+            binary_path: det.binary_path.map(|p| p.display().to_string()),
+            config_path: det.config_path.map(|p| p.display().to_string()),
+            version: det.version,
+            capabilities,
+        });
+    }
+    Ok(out)
+}
+
+/// Resolve the default agent for a project, applying the documented priority:
+/// `config.agent_overrides[project] > config.default_agent > CC fallback`.
+/// The picker UI calls this on open to pre-select the right entry.
+#[tauri::command]
+pub fn resolve_default_agent(project_path: String) -> Result<String, String> {
+    let cfg = crate::config::Config::load();
+    Ok(cfg
+        .resolve_agent_for_project(std::path::Path::new(&project_path))
+        .unwrap_or_else(|| AgentId::claude_code().as_str().to_string()))
 }

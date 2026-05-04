@@ -6,6 +6,8 @@ use tokio::io::AsyncBufReadExt;
 use tokio::net::UnixListener;
 
 use super::events::HookEvent;
+use crate::agents::AgentId;
+use crate::agents::state::AgentRuntimeState;
 use crate::db::SharedDb;
 use crate::plan_state::SharedPlanState;
 
@@ -176,6 +178,7 @@ pub async fn start_hook_server(
     app: AppHandle,
     db: SharedDb,
     plan_state: SharedPlanState,
+    agent_state: AgentRuntimeState,
 ) -> Result<()> {
     if socket_path.exists() {
         std::fs::remove_file(socket_path)?;
@@ -189,23 +192,46 @@ pub async fn start_hook_server(
         let app = app.clone();
         let db = db.clone();
         let plan_state = plan_state.clone();
+        let agent_state = agent_state.clone();
 
         tokio::spawn(async move {
             let reader = tokio::io::BufReader::new(stream);
             let mut lines = reader.lines();
 
             while let Ok(Some(line)) = lines.next_line().await {
-                let cluihud_sid = serde_json::from_str::<serde_json::Value>(&line)
-                    .ok()
-                    .and_then(|v| {
-                        v.get("cluihud_session_id")
-                            .and_then(|s| s.as_str())
-                            .map(String::from)
-                    });
+                // Peek at the `kind` discriminator so control messages
+                // (e.g. {"kind":"control","op":"rescan_agents"}) don't fall
+                // into the hook-event parser. Missing `kind` is treated as
+                // `hook_event` for backward compat with installed CC hook
+                // pipelines (Decision 14).
+                let parsed = serde_json::from_str::<serde_json::Value>(&line).ok();
+                let kind = parsed
+                    .as_ref()
+                    .and_then(|v| v.get("kind"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("hook_event");
+
+                if kind == "control" {
+                    process_control_message(&app, &agent_state, parsed.as_ref()).await;
+                    continue;
+                }
+
+                let cluihud_sid = parsed.as_ref().and_then(|v| {
+                    v.get("cluihud_session_id")
+                        .and_then(|s| s.as_str())
+                        .map(String::from)
+                });
 
                 match serde_json::from_str::<HookEvent>(&line) {
                     Ok(event) => {
-                        process_event(&app, &event, &db, &plan_state, cluihud_sid.as_deref());
+                        process_event(
+                            &app,
+                            &event,
+                            &db,
+                            &plan_state,
+                            &agent_state,
+                            cluihud_sid.as_deref(),
+                        );
                     }
                     Err(e) => {
                         tracing::warn!("failed to parse hook event: {e}");
@@ -216,17 +242,78 @@ pub async fn start_hook_server(
     }
 }
 
+/// Handle a `kind=control` message off the hook socket. Today the only op is
+/// `rescan_agents`: re-runs the registry's filesystem detection and emits an
+/// `agents:detected` event to the frontend with the fresh list. Future ops
+/// (shutdown, status, …) extend the match.
+async fn process_control_message(
+    app: &AppHandle,
+    agent_state: &AgentRuntimeState,
+    payload: Option<&serde_json::Value>,
+) {
+    let op = payload
+        .and_then(|v| v.get("op"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    match op {
+        "rescan_agents" => {
+            let detections = agent_state.registry.scan().await;
+            #[derive(Clone, serde::Serialize)]
+            struct Entry {
+                id: String,
+                installed: bool,
+                binary_path: Option<String>,
+                config_path: Option<String>,
+                version: Option<String>,
+            }
+            let payload: Vec<Entry> = detections
+                .into_iter()
+                .map(|(id, det)| Entry {
+                    id: id.as_str().to_string(),
+                    installed: det.installed,
+                    binary_path: det.binary_path.map(|p| p.display().to_string()),
+                    config_path: det.config_path.map(|p| p.display().to_string()),
+                    version: det.version,
+                })
+                .collect();
+            let _ = app.emit("agents:detected", payload);
+            tracing::info!("rescan-agents: emitted agents:detected");
+        }
+        other => {
+            tracing::warn!(op = other, "unknown control op; ignoring");
+        }
+    }
+}
+
 fn process_event(
     app: &AppHandle,
     event: &HookEvent,
     db: &SharedDb,
     plan_state: &SharedPlanState,
+    agent_state: &AgentRuntimeState,
     cluihud_session_id: Option<&str>,
 ) {
     if cluihud_session_id.is_none() {
         tracing::debug!("ignoring hook event without cluihud_session_id");
         return;
     }
+
+    // Resolve the owning adapter for this session (cache → DB-fallback path
+    // lands once the DB schema carries agent_id; until then unknown sessions
+    // are tagged claude-code defensively to preserve current behavior). Drop
+    // events whose session is fully unknown — they are orphans.
+    if let Some(csid) = cluihud_session_id
+        && agent_state.resolve(csid).is_none()
+    {
+        tracing::warn!(
+            cluihud_session_id = %csid,
+            event_type = ?std::any::type_name_of_val(event),
+            "hook event for session not in agent cache; assuming claude-code (foundation transitional)"
+        );
+        agent_state.register_session(csid, AgentId::claude_code());
+    }
+
     let mut frontend_event = FrontendHookEvent::from_hook(event);
     frontend_event.cluihud_session_id = cluihud_session_id.map(String::from);
     let _ = app.emit("hook:event", &frontend_event);
@@ -287,7 +374,9 @@ fn process_event(
                                 let local_plans = cwd.join(".claude").join("plans");
                                 if local_plans.exists() {
                                     let local_mgr =
-                                        crate::claude::plan::PlanManager::new(local_plans);
+                                        crate::agents::claude_code::plan::PlanManager::new(
+                                            local_plans,
+                                        );
                                     return local_mgr.find_latest_plan().ok().flatten();
                                 }
                             }
@@ -336,8 +425,9 @@ fn process_event(
             transcript_path: Some(path),
             ..
         } => {
-            let cost =
-                crate::claude::cost::parse_cost_from_transcript(&std::path::PathBuf::from(path));
+            let cost = crate::agents::claude_code::cost::parse_cost_from_transcript(
+                &std::path::PathBuf::from(path),
+            );
 
             // Store cost in DB
             if let Ok(db_guard) = db.lock() {
@@ -392,6 +482,18 @@ fn process_event(
         } => {
             tracing::debug!("PlanReview: fifo_path={fifo_path}");
 
+            // Hand the FIFO path to the CC adapter so future
+            // adapter.submit_plan_decision() calls know where to unblock the
+            // plan-review CLI. Today the production path still goes through
+            // the legacy commands::submit_plan_decision (which receives the
+            // FIFO from the frontend); this registration is the seam used
+            // when the call site flips to the trait method.
+            if let Some(csid) = cluihud_session_id {
+                agent_state
+                    .claude_code
+                    .register_pending_plan_fifo(csid, std::path::PathBuf::from(fifo_path));
+            }
+
             if let Ok(mut state) = plan_state.lock() {
                 let runtime = state.get_or_create(session_id);
                 let plan_path = tool_input
@@ -413,7 +515,9 @@ fn process_event(
                                 let local_plans = cwd.join(".claude").join("plans");
                                 if local_plans.exists() {
                                     let local_mgr =
-                                        crate::claude::plan::PlanManager::new(local_plans);
+                                        crate::agents::claude_code::plan::PlanManager::new(
+                                            local_plans,
+                                        );
                                     return local_mgr.find_latest_plan().ok().flatten();
                                 }
                             }
@@ -574,6 +678,12 @@ fn process_event(
             fifo_path,
         } => {
             tracing::debug!("AskUser: fifo_path={fifo_path}");
+
+            if let Some(csid) = cluihud_session_id {
+                agent_state
+                    .claude_code
+                    .register_pending_ask_fifo(csid, std::path::PathBuf::from(fifo_path));
+            }
 
             #[derive(Clone, serde::Serialize)]
             struct AskUserQuestion {

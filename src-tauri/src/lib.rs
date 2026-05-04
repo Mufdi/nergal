@@ -1,9 +1,10 @@
-mod claude;
+pub mod agents;
 mod commands;
 pub mod config;
 mod db;
 pub mod hooks;
 mod models;
+mod openspec;
 mod plan_state;
 mod pty;
 pub mod scratchpad;
@@ -12,12 +13,13 @@ mod tasks;
 mod terminal;
 mod worktree;
 
-use claude::openspec::OpenSpecWatcher;
-use claude::plan::PlanWatcher;
-use claude::transcript::TranscriptWatcher;
+use agents::claude_code::plan::PlanWatcher;
+use agents::claude_code::transcript::TranscriptWatcher;
+use agents::state::AgentRuntimeState;
 use config::Config;
 use db::Database;
 use hooks::server::start_hook_server;
+use openspec::OpenSpecWatcher;
 use plan_state::PlanStateManager;
 use pty::PtyManager;
 use scratchpad::commands::ScratchpadState;
@@ -68,6 +70,9 @@ pub fn run() {
         PlanStateManager::new(config.plans_directory.clone()),
     ));
 
+    let agent_state = AgentRuntimeState::bootstrap()
+        .expect("failed to bootstrap agent runtime state with default registrations");
+
     let scratchpad_root = config
         .scratchpad_path
         .clone()
@@ -97,6 +102,7 @@ pub fn run() {
         .manage(PtyManager::new(config.terminal_kitty_keyboard))
         .manage(db.clone())
         .manage(plan_state.clone())
+        .manage(agent_state.clone())
         .manage(ScratchpadState::new(scratchpad_root.clone()))
         .invoke_handler(tauri::generate_handler![
             // PTY commands
@@ -203,6 +209,8 @@ pub fn run() {
             commands::list_directory,
             commands::read_file_content,
             commands::write_file_content,
+            commands::list_available_agents,
+            commands::resolve_default_agent,
             pty::write_to_session_pty,
             // Scratchpad commands
             scratchpad::commands::scratchpad_get_path,
@@ -228,8 +236,10 @@ pub fn run() {
             let hook_app = app_handle.clone();
             let hook_db = db.clone();
             let hook_plan = plan_state.clone();
+            let hook_agents = agent_state.clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = start_hook_server(&socket_path, hook_app, hook_db, hook_plan).await
+                if let Err(e) =
+                    start_hook_server(&socket_path, hook_app, hook_db, hook_plan, hook_agents).await
                 {
                     tracing::error!("hook server error: {e}");
                 }

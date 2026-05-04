@@ -85,6 +85,7 @@ src/                              # React frontend (TypeScript)
 │   ├── files.ts, activity.ts     # File browser + activity drawer
 │   ├── askUser.ts, toast.ts      # Modals + sileo toasts
 │   ├── session.ts, config.ts     # Session + app config
+│   ├── agent.ts                  # Agent metadata + capability gating (sync, no async fetch)
 │   └── buddy.ts                  # Buddy widget (frozen — disconnected from UI)
 ├── hooks/                        # React hooks (useKeyboardShortcuts)
 └── lib/                          # tauri.ts, types.ts, utils.ts
@@ -105,12 +106,20 @@ src-tauri/src/                    # Rust backend
 │   ├── server.rs                 # async socket listener + dispatch
 │   ├── events.rs                 # event payloads
 │   └── state.rs                  # in-memory hook state
-├── claude/                       # Transcript watcher + plan + cost + openspec
-│   ├── transcript.rs             # `.jsonl` parser with notify
-│   ├── plan.rs                   # plan file watcher
-│   ├── cost.rs                   # cost extraction from transcript
-│   └── openspec.rs               # OpenSpec artifact reader
-├── tasks/                        # Task parsing (TodoWrite + transcript fallback)
+├── agents/                       # Agent-agnostic foundation (CC + future OpenCode/Pi/Codex)
+│   ├── mod.rs                    # AgentAdapter trait + AgentId + AgentCapability bitflags + Transport
+│   ├── registry.rs               # AgentRegistry: register/get/scan + priority list
+│   ├── state.rs                  # AgentRuntimeState (registry + cache + typed CC handle)
+│   ├── cost_aggregator.rs        # SessionCostAggregator (per-session running totals)
+│   └── claude_code/              # First adapter wrapping CC-specific logic
+│       ├── mod.rs                # re-exports ClaudeCodeAdapter
+│       ├── adapter.rs            # ClaudeCodeAdapter implementing AgentAdapter
+│       ├── transcript.rs         # `.jsonl` watcher with notify
+│       ├── plan.rs               # plan file watcher + PlanManager
+│       ├── cost.rs               # parse_cost_from_transcript (legacy) + parse_cost_line + legacy_usd_for_sonnet4
+│       └── tasks_parser.rs       # transcript → TaskStore parser
+├── openspec.rs                   # OpenSpec artifact reader (workspace-scoped, agent-agnostic)
+├── tasks/                        # TaskStore types (TodoWrite-driven, CC-specific today)
 └── terminal/                     # wezterm-term VT session + grid emitter + input
     ├── session.rs                # PTY ↔ VT bridge, grid state
     ├── emitter.rs                # coalesced `terminal:grid-update` events

@@ -65,6 +65,7 @@ pub struct StartClaudeResult {
 
 /// Internal: spawn a PTY, attach a wezterm-term session, spawn the emitter
 /// task, wire up the reader thread, store the instance.
+#[allow(clippy::too_many_arguments)] // Internal helper — every arg is required state for PTY init.
 fn spawn_pty(
     app: &AppHandle,
     state: &PtyManager,
@@ -189,12 +190,17 @@ fn resize_pty(state: &PtyManager, pty_id: &str, cols: u16, rows: u16) -> Result<
     Ok(())
 }
 
-/// Creates a PTY, waits for shell ready, writes `claude\n`, returns pty_id.
-/// Idempotent: if session already has a PTY, returns the existing one.
+/// Creates a PTY, waits for shell ready, writes the agent's spawn command,
+/// returns pty_id. Idempotent: if session already has a PTY, returns the
+/// existing one. The exact command (`claude`, `opencode`, `codex`, …) is
+/// produced by the adapter resolved for the session — defaults to the
+/// CC adapter for sessions whose agent has not been picked yet (transitional).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command surface — collapsing to a struct breaks the JS call shape.
 pub async fn start_claude_session(
     app: AppHandle,
     state: State<'_, PtyManager>,
+    agents: State<'_, crate::agents::state::AgentRuntimeState>,
     session_id: String,
     cwd: Option<String>,
     cols: u16,
@@ -238,7 +244,7 @@ pub async fn start_claude_session(
         .session_ptys
         .lock()
         .map_err(|e| e.to_string())?
-        .insert(session_id, pty_id.clone());
+        .insert(session_id.clone(), pty_id.clone());
 
     // Wait for shell to produce first output (ready), with timeout
     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), ready_rx).await;
@@ -248,13 +254,45 @@ pub async fn start_claude_session(
 
     {
         // Leading space guards against first-byte loss from PTY race conditions
-        // (SIGWINCH during readline init). If lost, the space is sacrificed, not the "c".
+        // (SIGWINCH during readline init). If lost, the space is sacrificed, not the binary's first byte.
         // If not lost, zsh treats leading-space commands normally (just skips history).
-        let cmd = match resume.as_deref() {
-            Some("continue") => " claude --continue\n".to_string(),
-            Some("resume_pick") => " claude --resume\n".to_string(),
-            _ => " claude\n".to_string(),
+        let agent_id = agents
+            .resolve(&session_id)
+            .unwrap_or_else(crate::agents::AgentId::claude_code);
+        let adapter = agents
+            .registry
+            .get(&agent_id)
+            .ok_or_else(|| format!("no adapter registered for {agent_id}"))?;
+
+        let cwd_path = cwd
+            .as_deref()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let spawn_ctx = crate::agents::SpawnContext {
+            session_id: &session_id,
+            cwd: &cwd_path,
+            resume_from: resume.as_deref(),
+            initial_prompt: None,
         };
+        let spec = adapter.spawn(&spawn_ctx).map_err(|e| e.to_string())?;
+
+        let mut cmd = format!(" {}", spec.binary.display());
+        for arg in &spec.args {
+            // Quote args containing whitespace/special chars; for the args we
+            // emit today (`--continue`, `--resume`, plain UUIDs) this is a
+            // no-op pass-through, but it keeps us safe against future args.
+            if arg
+                .chars()
+                .any(|c| c.is_whitespace() || matches!(c, '"' | '\'' | '$' | '`' | '\\'))
+            {
+                let escaped = arg.replace('\'', "'\\''");
+                cmd.push_str(&format!(" '{escaped}'"));
+            } else {
+                cmd.push(' ');
+                cmd.push_str(arg);
+            }
+        }
+        cmd.push('\n');
 
         let instances = state.instances.lock().map_err(|e| e.to_string())?;
         if let Some(instance) = instances.get(&pty_id) {

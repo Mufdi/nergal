@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -26,6 +27,19 @@ pub struct Config {
     /// `scratchpad_set_path`; the new value is persisted here.
     #[serde(default)]
     pub scratchpad_path: Option<PathBuf>,
+    /// Global default agent for new sessions. When `None`, the picker falls
+    /// back to `AgentRegistry::priority_list()` (CC > Codex > OpenCode > Pi).
+    /// Stored as the agent's string id (e.g. "claude-code").
+    #[serde(default)]
+    pub default_agent: Option<String>,
+    /// Per-project default agent overrides. Keyed by canonicalized
+    /// repository path; lookup priority is
+    /// `agent_overrides[project] > default_agent > priority_list`.
+    /// Paths are canonicalized via [`Config::canonicalize_project_path`] on
+    /// both write and read so symlinks / `.` segments / trailing slashes
+    /// don't produce phantom entries.
+    #[serde(default)]
+    pub agent_overrides: HashMap<String, String>,
 }
 
 impl Default for Config {
@@ -44,6 +58,8 @@ impl Default for Config {
             preferred_editor: String::new(),
             terminal_kitty_keyboard: true,
             scratchpad_path: None,
+            default_agent: None,
+            agent_overrides: HashMap::new(),
         }
     }
 }
@@ -74,5 +90,91 @@ impl Config {
         let json = serde_json::to_string_pretty(self)?;
         std::fs::write(&path, json)?;
         Ok(())
+    }
+
+    /// Canonicalize a project path so [`Self::agent_overrides`] is keyed
+    /// consistently regardless of how the caller spells the path. Uses
+    /// `dunce::canonicalize` (cross-platform; on Windows avoids extended
+    /// `\\?\` prefixes). For non-existent paths, returns the lossy display
+    /// string as a stable fallback so config writes don't fail when a path
+    /// briefly disappears (e.g. mid-checkout).
+    pub fn canonicalize_project_path(p: &Path) -> String {
+        match dunce::canonicalize(p) {
+            Ok(canonical) => canonical.display().to_string(),
+            Err(_) => p.display().to_string(),
+        }
+    }
+
+    /// Resolve which agent to use for a project. Implements the documented
+    /// priority: `agent_overrides[project] > default_agent > registry default`.
+    /// Returns `None` if neither config nor caller fallback resolved one.
+    pub fn resolve_agent_for_project(&self, project_path: &Path) -> Option<String> {
+        let key = Self::canonicalize_project_path(project_path);
+        self.agent_overrides
+            .get(&key)
+            .cloned()
+            .or_else(|| self.default_agent.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_have_no_agent_preferences() {
+        let c = Config::default();
+        assert!(c.default_agent.is_none());
+        assert!(c.agent_overrides.is_empty());
+    }
+
+    #[test]
+    fn resolve_returns_override_when_present() {
+        let mut c = Config::default();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path();
+        let key = Config::canonicalize_project_path(path);
+        c.agent_overrides.insert(key, "opencode".into());
+        c.default_agent = Some("codex".into());
+        assert_eq!(
+            c.resolve_agent_for_project(path).as_deref(),
+            Some("opencode")
+        );
+    }
+
+    #[test]
+    fn resolve_falls_back_to_default_agent() {
+        let mut c = Config::default();
+        c.default_agent = Some("codex".into());
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            c.resolve_agent_for_project(dir.path()).as_deref(),
+            Some("codex")
+        );
+    }
+
+    #[test]
+    fn resolve_returns_none_when_nothing_configured() {
+        let c = Config::default();
+        let dir = tempfile::tempdir().unwrap();
+        assert!(c.resolve_agent_for_project(dir.path()).is_none());
+    }
+
+    #[test]
+    fn canonicalize_handles_nonexistent_paths() {
+        let phantom = Path::new("/definitely/does/not/exist/and/should/stay/string");
+        let s = Config::canonicalize_project_path(phantom);
+        assert!(!s.is_empty());
+    }
+
+    #[test]
+    fn canonicalize_resolves_dot_segments() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("sub");
+        std::fs::create_dir_all(&nested).unwrap();
+        let with_dot = dir.path().join("./sub");
+        let resolved_a = Config::canonicalize_project_path(&nested);
+        let resolved_b = Config::canonicalize_project_path(&with_dot);
+        assert_eq!(resolved_a, resolved_b);
     }
 }

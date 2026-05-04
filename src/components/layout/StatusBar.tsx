@@ -4,6 +4,7 @@ import { activeSessionIdAtom, activeModeAtom, activeCwdAtom, activeStatusLineAto
 import { activeGitInfoAtom, refreshGitInfoAtom } from "@/stores/git";
 import { loadSessionFilesAtom } from "@/stores/files";
 import { activitySummaryAtom, activityDrawerOpenAtom } from "@/stores/activity";
+import { activeAgentMetadataAtom } from "@/stores/agent";
 import { Badge } from "@/components/ui/badge";
 import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock } from "lucide-react";
 import {
@@ -58,6 +59,7 @@ export function StatusBar() {
   const summary = useAtomValue(activitySummaryAtom);
   const setDrawerOpen = useSetAtom(activityDrawerOpenAtom);
   const sl = useAtomValue(activeStatusLineAtom);
+  const agentMeta = useAtomValue(activeAgentMetadataAtom);
 
   useEffect(() => {
     if (sessionId) {
@@ -76,6 +78,16 @@ export function StatusBar() {
     >
       {/* Left: git info + cwd + mode */}
       <div className="flex items-center gap-2 text-muted-foreground">
+        {agentMeta && (
+          <Tooltip>
+            <TooltipTrigger className="cursor-default">
+              <Badge variant="outline" className="h-4 px-1.5 text-[9px] font-medium uppercase tracking-wider">
+                {agentMeta.display_name}
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent>Active agent: {agentMeta.id}</TooltipContent>
+          </Tooltip>
+        )}
         {gitInfo && (
           <div className="flex items-center gap-1">
             <GitBranch className="size-3 shrink-0" />

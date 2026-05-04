@@ -368,10 +368,10 @@ pub fn diff_shortstat(cwd: &Path) -> Result<DiffShortstat> {
             if let Some(n) = part.split_whitespace().next().and_then(|s| s.parse().ok()) {
                 added = n;
             }
-        } else if part.contains("deletion") {
-            if let Some(n) = part.split_whitespace().next().and_then(|s| s.parse().ok()) {
-                removed = n;
-            }
+        } else if part.contains("deletion")
+            && let Some(n) = part.split_whitespace().next().and_then(|s| s.parse().ok())
+        {
+            removed = n;
         }
     }
 

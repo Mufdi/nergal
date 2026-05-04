@@ -32,7 +32,14 @@ impl SessionStatus {
     }
 }
 
-/// A single Claude Code conversation, optionally backed by a git worktree.
+/// A single agent conversation, optionally backed by a git worktree.
+///
+/// `agent_id` identifies which adapter owns the session (CC, OpenCode, Pi,
+/// Codex, …). `agent_capabilities` is the wire-form bitset emitted by the
+/// adapter so the frontend can gate UI synchronously without a separate
+/// invoke (Decision 7). `agent_internal_session_id` carries the agent's own
+/// session token when distinct from cluihud's id (Pi/Codex UUIDs); CC
+/// resumes via `--continue` and so leaves it `None`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
@@ -44,6 +51,21 @@ pub struct Session {
     pub status: SessionStatus,
     pub created_at: u64,
     pub updated_at: u64,
+    #[serde(default = "default_agent_id_string")]
+    pub agent_id: String,
+    #[serde(default)]
+    pub agent_internal_session_id: Option<String>,
+    /// Wire-form capability bitset (`Vec<&'static str>` per
+    /// [`crate::agents::AgentCapability::serialize`]). Populated from the
+    /// adapter the session belongs to; emitted on `session:created` /
+    /// `session:activated` so the frontend doesn't need to fetch it
+    /// separately.
+    #[serde(default)]
+    pub agent_capabilities: Vec<String>,
+}
+
+fn default_agent_id_string() -> String {
+    "claude-code".to_string()
 }
 
 /// A workspace tied to a git repository root.

@@ -7,6 +7,22 @@ use anyhow::{Context, Result};
 
 use crate::hooks::state::HookState;
 
+/// Send a `{"kind":"control","op":"rescan_agents"}` control message to the
+/// hook socket. The running cluihud picks it up and re-scans the registry,
+/// updating the available agents view. No-op (best effort) if cluihud isn't
+/// running — the connection error is surfaced to the caller.
+pub fn send_rescan_agents(socket_path: &Path) -> Result<()> {
+    let payload = r#"{"kind":"control","op":"rescan_agents"}"#;
+    let mut stream = UnixStream::connect(socket_path)
+        .with_context(|| format!("connecting to {}", socket_path.display()))?;
+    stream
+        .write_all(payload.as_bytes())
+        .context("writing control message")?;
+    stream.write_all(b"\n").context("writing newline")?;
+    stream.flush().context("flushing socket")?;
+    Ok(())
+}
+
 /// Reads stdin JSON, validates it, sends to the hook socket as a single line.
 pub fn send_hook_event(socket_path: &Path) -> Result<()> {
     let mut input = String::new();
@@ -17,13 +33,13 @@ pub fn send_hook_event(socket_path: &Path) -> Result<()> {
     let mut json: serde_json::Value =
         serde_json::from_str(input.trim()).context("stdin is not valid JSON")?;
 
-    if let Some(obj) = json.as_object_mut() {
-        if let Ok(cluihud_id) = std::env::var("CLUIHUD_SESSION_ID") {
-            obj.insert(
-                "cluihud_session_id".to_string(),
-                serde_json::Value::String(cluihud_id),
-            );
-        }
+    if let Some(obj) = json.as_object_mut()
+        && let Ok(cluihud_id) = std::env::var("CLUIHUD_SESSION_ID")
+    {
+        obj.insert(
+            "cluihud_session_id".to_string(),
+            serde_json::Value::String(cluihud_id),
+        );
     }
 
     let payload = serde_json::to_string(&json).context("serializing JSON")?;
@@ -258,10 +274,10 @@ pub fn ask_user(socket_path: &Path) -> Result<()> {
 
     // Build updatedInput: echo back original questions + add answers map
     let mut updated_input = tool_input;
-    if let Some(obj) = updated_input.as_object_mut() {
-        if let Some(answers) = answer_json.get("answers") {
-            obj.insert("answers".to_string(), answers.clone());
-        }
+    if let Some(obj) = updated_input.as_object_mut()
+        && let Some(answers) = answer_json.get("answers")
+    {
+        obj.insert("answers".to_string(), answers.clone());
     }
 
     let output = serde_json::json!({

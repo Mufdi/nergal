@@ -1,0 +1,103 @@
+//! Runtime state shared between the hook dispatcher, session lifecycle
+//! commands, and (eventually) the frontend bridge: a registry of installed
+//! adapters plus a cache of `cluihud_session_id → AgentId` mappings.
+//!
+//! The cache is the hot-path resolution mechanism. Hook events arrive with a
+//! `cluihud_session_id` and the dispatcher needs to know which adapter the
+//! session belongs to without round-tripping the DB on every event. The cache
+//! is populated by [`SessionLifecycle::register_session`] **before** the PTY
+//! spawn (Decision 9), so the SessionStart hook never races the entry.
+
+use std::sync::Arc;
+
+use dashmap::DashMap;
+
+use super::AgentId;
+use super::claude_code::ClaudeCodeAdapter;
+use super::registry::AgentRegistry;
+
+/// Shared agent runtime state. Cheap to clone the inner `Arc`s.
+#[derive(Clone)]
+pub struct AgentRuntimeState {
+    pub registry: Arc<AgentRegistry>,
+    /// `cluihud_session_id` (the UUID cluihud assigns to a session) → adapter id.
+    pub agent_id_cache: Arc<DashMap<String, AgentId>>,
+    /// Typed handle to the CC adapter. The hook dispatcher and a few CC-
+    /// specific commands need to call CC-only methods (registering pending
+    /// FIFO paths from PlanReview / AskUser hook events). Going through
+    /// `Arc<dyn AgentAdapter>` would require downcasting; keeping a typed
+    /// `Arc<ClaudeCodeAdapter>` here is the ergonomic alternative for the
+    /// foundation. Other adapters keep their typed handles in their own
+    /// state when they need analogous side-channels.
+    pub claude_code: Arc<ClaudeCodeAdapter>,
+}
+
+impl AgentRuntimeState {
+    /// Build a fresh runtime state with the default set of adapters
+    /// registered. The CC adapter ships in the foundation; OpenCode, Pi and
+    /// Codex append themselves in their respective changes.
+    pub fn bootstrap() -> Result<Self, super::AdapterError> {
+        let registry = Arc::new(AgentRegistry::new());
+        let claude_code = Arc::new(ClaudeCodeAdapter::new());
+        registry.register(claude_code.clone())?;
+        super::registry::register_supplementary_adapters(&registry)?;
+        Ok(Self {
+            registry,
+            agent_id_cache: Arc::new(DashMap::new()),
+            claude_code,
+        })
+    }
+
+    /// Record the agent that owns a session. Call this **before** the PTY
+    /// spawn so the SessionStart hook always finds the entry.
+    pub fn register_session(&self, cluihud_session_id: &str, agent_id: AgentId) {
+        self.agent_id_cache
+            .insert(cluihud_session_id.to_string(), agent_id);
+    }
+
+    /// Drop the cache entry for a session. Idempotent.
+    pub fn forget_session(&self, cluihud_session_id: &str) {
+        self.agent_id_cache.remove(cluihud_session_id);
+    }
+
+    /// Resolve a session to its agent id. Cache-only — the DB-fallback path
+    /// belongs to the dispatcher (which has access to `SharedDb`); putting it
+    /// here would muddy the separation between agent state and DB state.
+    pub fn resolve(&self, cluihud_session_id: &str) -> Option<AgentId> {
+        self.agent_id_cache
+            .get(cluihud_session_id)
+            .map(|r| r.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bootstrap_registers_claude_code_adapter() {
+        let state = AgentRuntimeState::bootstrap().unwrap();
+        assert!(state.registry.get(&AgentId::claude_code()).is_some());
+    }
+
+    #[test]
+    fn register_then_resolve_round_trips() {
+        let state = AgentRuntimeState::bootstrap().unwrap();
+        state.register_session("session-1", AgentId::claude_code());
+        assert_eq!(state.resolve("session-1"), Some(AgentId::claude_code()));
+    }
+
+    #[test]
+    fn forget_removes_cache_entry() {
+        let state = AgentRuntimeState::bootstrap().unwrap();
+        state.register_session("s", AgentId::claude_code());
+        state.forget_session("s");
+        assert!(state.resolve("s").is_none());
+    }
+
+    #[test]
+    fn unknown_session_resolves_to_none() {
+        let state = AgentRuntimeState::bootstrap().unwrap();
+        assert!(state.resolve("never-registered").is_none());
+    }
+}

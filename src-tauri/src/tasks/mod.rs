@@ -1,6 +1,4 @@
 #![allow(dead_code)]
-pub mod transcript_parser;
-
 use serde::Serialize;
 
 /// Status of a task in the task list.
@@ -140,10 +138,10 @@ impl TaskStore {
     /// Import an existing task (from DB). Updates next_id if needed.
     pub fn import_task(&mut self, task: Task) {
         let prefix = task.id.split('-').next().unwrap_or("");
-        if let Ok(id_num) = prefix.parse::<u32>() {
-            if id_num >= self.next_id {
-                self.next_id = id_num + 1;
-            }
+        if let Ok(id_num) = prefix.parse::<u32>()
+            && id_num >= self.next_id
+        {
+            self.next_id = id_num + 1;
         }
         self.tasks.push(task);
     }

@@ -17,6 +17,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 use super::AgentId;
 use super::EventSink;
 use super::claude_code::ClaudeCodeAdapter;
+use super::opencode::OpenCodeAdapter;
 use super::registry::AgentRegistry;
 use crate::hooks::events::HookEvent;
 
@@ -34,6 +35,11 @@ pub struct AgentRuntimeState {
     /// foundation. Other adapters keep their typed handles in their own
     /// state when they need analogous side-channels.
     pub claude_code: Arc<ClaudeCodeAdapter>,
+    /// Typed handle to the OpenCode adapter. Tauri commands for the chat
+    /// panel (`opencode_send_prompt`, `opencode_list_messages`) route through
+    /// it without going via the trait object — keeping the call sites concrete
+    /// avoids dynamic-dispatch detours through downcasting.
+    pub opencode: Arc<OpenCodeAdapter>,
     /// Sender that adapter `start_event_pump` calls feed into when emitting
     /// translated [`HookEvent`]s. The runtime spawns a consumer task at
     /// startup (lib.rs) that drains the receiver and routes events through
@@ -53,12 +59,15 @@ impl AgentRuntimeState {
         let registry = Arc::new(AgentRegistry::new());
         let claude_code = Arc::new(ClaudeCodeAdapter::new());
         registry.register(claude_code.clone())?;
-        super::registry::register_supplementary_adapters(&registry)?;
+        let opencode = Arc::new(OpenCodeAdapter::new());
+        registry.register(opencode.clone())?;
+        super::registry::register_supplementary_adapters_excluding_opencode(&registry)?;
         let (tx, rx) = unbounded_channel();
         Ok(Self {
             registry,
             agent_id_cache: Arc::new(DashMap::new()),
             claude_code,
+            opencode,
             event_sink: tx,
             event_receiver: Arc::new(Mutex::new(Some(rx))),
         })

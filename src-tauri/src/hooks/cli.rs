@@ -33,13 +33,13 @@ pub fn send_hook_event(socket_path: &Path) -> Result<()> {
     let mut json: serde_json::Value =
         serde_json::from_str(input.trim()).context("stdin is not valid JSON")?;
 
-    if let Some(obj) = json.as_object_mut() {
-        if let Ok(cluihud_id) = std::env::var("CLUIHUD_SESSION_ID") {
-            obj.insert(
-                "cluihud_session_id".to_string(),
-                serde_json::Value::String(cluihud_id),
-            );
-        }
+    if let Some(obj) = json.as_object_mut()
+        && let Ok(cluihud_id) = std::env::var("CLUIHUD_SESSION_ID")
+    {
+        obj.insert(
+            "cluihud_session_id".to_string(),
+            serde_json::Value::String(cluihud_id),
+        );
     }
 
     let payload = serde_json::to_string(&json).context("serializing JSON")?;
@@ -274,10 +274,10 @@ pub fn ask_user(socket_path: &Path) -> Result<()> {
 
     // Build updatedInput: echo back original questions + add answers map
     let mut updated_input = tool_input;
-    if let Some(obj) = updated_input.as_object_mut() {
-        if let Some(answers) = answer_json.get("answers") {
-            obj.insert("answers".to_string(), answers.clone());
-        }
+    if let Some(obj) = updated_input.as_object_mut()
+        && let Some(answers) = answer_json.get("answers")
+    {
+        obj.insert("answers".to_string(), answers.clone());
     }
 
     let output = serde_json::json!({

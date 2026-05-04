@@ -65,6 +65,7 @@ pub struct StartClaudeResult {
 
 /// Internal: spawn a PTY, attach a wezterm-term session, spawn the emitter
 /// task, wire up the reader thread, store the instance.
+#[allow(clippy::too_many_arguments)] // Internal helper — every arg is required state for PTY init.
 fn spawn_pty(
     app: &AppHandle,
     state: &PtyManager,
@@ -195,6 +196,7 @@ fn resize_pty(state: &PtyManager, pty_id: &str, cols: u16, rows: u16) -> Result<
 /// produced by the adapter resolved for the session — defaults to the
 /// CC adapter for sessions whose agent has not been picked yet (transitional).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command surface — collapsing to a struct breaks the JS call shape.
 pub async fn start_claude_session(
     app: AppHandle,
     state: State<'_, PtyManager>,

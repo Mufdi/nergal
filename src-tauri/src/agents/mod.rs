@@ -16,6 +16,7 @@
 //!   only emit raw per-line cost via [`TranscriptEvent::Cost`] (Decision 6).
 
 pub mod claude_code;
+pub mod codex;
 pub mod cost_aggregator;
 pub mod opencode;
 pub mod pi;

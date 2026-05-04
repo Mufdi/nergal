@@ -88,6 +88,7 @@ impl AgentRegistry {
 pub fn register_supplementary_adapters(reg: &AgentRegistry) -> Result<(), AdapterError> {
     reg.register(Arc::new(crate::agents::opencode::OpenCodeAdapter::new()))?;
     reg.register(Arc::new(crate::agents::pi::PiAdapter::new()))?;
+    reg.register(Arc::new(crate::agents::codex::CodexAdapter::new()))?;
     Ok(())
 }
 

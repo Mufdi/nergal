@@ -55,9 +55,7 @@ impl SessionCostAggregator {
         t.input_tokens = t.input_tokens.saturating_add(raw.input_tokens);
         t.output_tokens = t.output_tokens.saturating_add(raw.output_tokens);
         t.cache_read_tokens = t.cache_read_tokens.saturating_add(raw.cache_read_tokens);
-        t.cache_write_tokens = t
-            .cache_write_tokens
-            .saturating_add(raw.cache_write_tokens);
+        t.cache_write_tokens = t.cache_write_tokens.saturating_add(raw.cache_write_tokens);
         t.messages_counted = t.messages_counted.saturating_add(1);
         if raw.model_id.is_some() {
             t.last_model_id = raw.model_id.clone();

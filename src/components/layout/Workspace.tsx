@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { useAtomValue, useSetAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import { settingsOpenAtom } from "@/stores/config";
 import { TopBar } from "./TopBar";
 import { Sidebar } from "./Sidebar";
 import { RightPanel } from "./RightPanel";
@@ -29,12 +30,12 @@ import {
 } from "@/components/ui/resizable";
 import { usePanelRef } from "react-resizable-panels";
 
-const COLLAPSED_SIZE_PX = 28;
+const COLLAPSED_SIZE_PX = 0;
 
 export function Workspace() {
   useKeyboardShortcuts();
 
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useAtom(settingsOpenAtom);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(true);
   const expandSignal = useAtomValue(expandRightPanelAtom);
@@ -314,7 +315,7 @@ export function Workspace() {
             </div>
           </ResizablePanel>
 
-          <ResizableHandle />
+          {!rightCollapsed && <ResizableHandle />}
 
           {/* Right panel */}
           <ResizablePanel
@@ -329,10 +330,7 @@ export function Workspace() {
               setRightCollapsed(size.inPixels <= COLLAPSED_SIZE_PX);
             }}
           >
-            <RightPanel
-              collapsed={rightCollapsed}
-              onToggle={handleToggleRight}
-            />
+            <RightPanel collapsed={rightCollapsed} />
           </ResizablePanel>
         </ResizablePanelGroup>
       </div>

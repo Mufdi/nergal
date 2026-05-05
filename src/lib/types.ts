@@ -40,6 +40,17 @@ export interface Config {
   preferred_editor: string;
   terminal_kitty_keyboard: boolean;
   scratchpad_path: string | null;
+  default_agent: string | null;
+  agent_overrides: Record<string, string>;
+}
+
+export interface PathValidation {
+  exists: boolean;
+  is_dir: boolean;
+  is_file: boolean;
+  is_executable: boolean;
+  resolved_path: string | null;
+  error: string | null;
 }
 
 // ── wezterm-term renderer IPC types (Phase 4) ─────────────────────────

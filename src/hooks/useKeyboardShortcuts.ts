@@ -36,6 +36,7 @@ const KEY_TO_CODE: Record<string, string> = {
   pagedown: "PageDown", pageup: "PageUp",
   home: "Home", end: "End",
   ñ: "Semicolon",
+  ",": "Comma", ".": "Period", "/": "Slash",
 };
 
 interface ParsedShortcut {

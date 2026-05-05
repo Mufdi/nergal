@@ -44,6 +44,105 @@ pub fn save_config(config: Config) -> Result<(), String> {
     config.save().map_err(|e| e.to_string())
 }
 
+/// Validate that a configured path resolves to something usable.
+/// `kind` accepts: `dir` (must exist + be directory), `file` (must exist),
+/// `executable` (PATH lookup OR absolute path that's executable).
+#[derive(Clone, serde::Serialize)]
+pub struct PathValidation {
+    pub exists: bool,
+    pub is_dir: bool,
+    pub is_file: bool,
+    pub is_executable: bool,
+    pub resolved_path: Option<String>,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub fn validate_path(path: String, kind: String) -> PathValidation {
+    fn expand_home(input: &str) -> PathBuf {
+        if let Some(rest) = input.strip_prefix("~/") {
+            if let Some(home) = dirs::home_dir() {
+                return home.join(rest);
+            }
+        }
+        PathBuf::from(input)
+    }
+
+    if path.trim().is_empty() {
+        return PathValidation {
+            exists: false,
+            is_dir: false,
+            is_file: false,
+            is_executable: false,
+            resolved_path: None,
+            error: Some("path is empty".into()),
+        };
+    }
+
+    if kind == "executable" && !path.contains('/') {
+        let ok = std::process::Command::new("which")
+            .arg(&path)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if ok {
+            let resolved = std::process::Command::new("which")
+                .arg(&path)
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|s| s.trim().to_string());
+            return PathValidation {
+                exists: true,
+                is_dir: false,
+                is_file: true,
+                is_executable: true,
+                resolved_path: resolved,
+                error: None,
+            };
+        }
+        return PathValidation {
+            exists: false,
+            is_dir: false,
+            is_file: false,
+            is_executable: false,
+            resolved_path: None,
+            error: Some(format!("'{path}' not found in PATH")),
+        };
+    }
+
+    let resolved = expand_home(&path);
+    let metadata = std::fs::metadata(&resolved);
+    match metadata {
+        Ok(meta) => {
+            let is_dir = meta.is_dir();
+            let is_file = meta.is_file();
+            let is_executable = if cfg!(unix) {
+                use std::os::unix::fs::PermissionsExt;
+                meta.permissions().mode() & 0o111 != 0
+            } else {
+                is_file
+            };
+            PathValidation {
+                exists: true,
+                is_dir,
+                is_file,
+                is_executable,
+                resolved_path: Some(resolved.display().to_string()),
+                error: None,
+            }
+        }
+        Err(e) => PathValidation {
+            exists: false,
+            is_dir: false,
+            is_file: false,
+            is_executable: false,
+            resolved_path: Some(resolved.display().to_string()),
+            error: Some(e.to_string()),
+        },
+    }
+}
+
 // -- Task commands --
 
 #[tauri::command]

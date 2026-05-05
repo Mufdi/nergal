@@ -126,6 +126,7 @@ pub fn run() {
             // Config commands
             commands::get_config,
             commands::save_config,
+            commands::validate_path,
             // Task commands
             commands::get_tasks,
             // Plan commands

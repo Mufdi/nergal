@@ -201,6 +201,7 @@ pub async fn start_claude_session(
     app: AppHandle,
     state: State<'_, PtyManager>,
     agents: State<'_, crate::agents::state::AgentRuntimeState>,
+    db: State<'_, crate::db::SharedDb>,
     session_id: String,
     cwd: Option<String>,
     cols: u16,
@@ -256,8 +257,30 @@ pub async fn start_claude_session(
         // Leading space guards against first-byte loss from PTY race conditions
         // (SIGWINCH during readline init). If lost, the space is sacrificed, not the binary's first byte.
         // If not lost, zsh treats leading-space commands normally (just skips history).
+        //
+        // Resolve order:
+        //   1. In-memory cache (set on session creation; lives until app exit)
+        //   2. DB session row (covers app restart — cache is gone but row persists)
+        //   3. CC fallback (defensive — every legacy row has agent_id="claude-code")
+        // Without (2), resuming a Pi/OpenCode session after a cluihud restart
+        // would silently spawn `claude --continue` because the cache miss
+        // falls straight to the default.
         let agent_id = agents
             .resolve(&session_id)
+            .or_else(|| {
+                let stored = db
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.find_session(&session_id).ok().flatten())
+                    .map(|s| s.agent_id);
+                let parsed = stored.and_then(|s| crate::agents::AgentId::new(&s).ok());
+                if let Some(ref id) = parsed {
+                    // Re-populate the cache so subsequent hook events route
+                    // through the right adapter without another DB hit.
+                    agents.register_session(&session_id, id.clone());
+                }
+                parsed
+            })
             .unwrap_or_else(crate::agents::AgentId::claude_code);
         let adapter = agents
             .registry
@@ -268,15 +291,42 @@ pub async fn start_claude_session(
             .as_deref()
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
+        // For "continue" intent, prefer the agent-internal session id (e.g. Pi
+        // UUID, Codex rollout id) the adapter previously harvested and the
+        // runtime persisted to the DB. Some agents' generic `--continue` flag
+        // doesn't reliably resolve a session by cwd alone, so passing the
+        // exact id avoids "No conversation found" surprises after a cluihud
+        // restart.
+        let resume_owned: Option<String> = match resume.as_deref() {
+            Some("continue") => {
+                let stored = db
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.find_session(&session_id).ok().flatten())
+                    .and_then(|s| s.agent_internal_session_id);
+                Some(stored.unwrap_or_else(|| "continue".to_string()))
+            }
+            other => other.map(|s| s.to_string()),
+        };
         let spawn_ctx = crate::agents::SpawnContext {
             session_id: &session_id,
             cwd: &cwd_path,
-            resume_from: resume.as_deref(),
+            resume_from: resume_owned.as_deref(),
             initial_prompt: None,
         };
         let spec = adapter.spawn(&spawn_ctx).map_err(|e| e.to_string())?;
 
-        let mut cmd = format!(" {}", spec.binary.display());
+        // Force the cwd at the shell prompt before invoking the agent.
+        // `cmd.cwd()` on the spawned shell only sets the *initial* cwd;
+        // login shells (`zsh -l`) frequently change directory via .zprofile
+        // / .zshrc / chpwd hooks. When that happens, agents like `pi` and
+        // `opencode` — which scope sessions by cwd — fail to find a previous
+        // conversation on `--continue`. Anchoring the cwd via an explicit
+        // `cd` right before the binary closes that gap.
+        let cwd_str = cwd_path.display().to_string();
+        let cwd_escaped = cwd_str.replace('\'', "'\\''");
+        let mut cmd = format!(" cd '{cwd_escaped}' && {}", spec.binary.display());
         for arg in &spec.args {
             // Quote args containing whitespace/special chars; for the args we
             // emit today (`--continue`, `--resume`, plain UUIDs) this is a
@@ -318,6 +368,38 @@ pub async fn start_claude_session(
                 error = %e,
                 "adapter.start_event_pump failed; session continues without event pump",
             );
+        }
+
+        // The adapter harvests the agent-internal session id (Pi UUID from
+        // JSONL header; OpenCode session id from SSE event) asynchronously,
+        // so a synchronous read right after start_event_pump usually misses.
+        // Spawn a background poller that waits up to ~6s and persists once
+        // the id appears. Resuming after a cluihud restart then prefers
+        // `--session <id>` over the agent's `--continue` heuristic.
+        {
+            let adapter_for_persist = adapter.clone();
+            let session_id_for_persist = session_id.clone();
+            let db_for_persist: crate::db::SharedDb = (*db).clone();
+            tauri::async_runtime::spawn(async move {
+                for _ in 0..30 {
+                    if let Some(id) =
+                        adapter_for_persist.agent_internal_session_id(&session_id_for_persist)
+                    {
+                        if let Ok(g) = db_for_persist.lock()
+                            && let Err(e) =
+                                g.update_agent_internal_session_id(&session_id_for_persist, &id)
+                        {
+                            tracing::warn!(
+                                session_id = %session_id_for_persist,
+                                error = %e,
+                                "failed to persist agent_internal_session_id",
+                            );
+                        }
+                        return;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                }
+            });
         }
     }
 

@@ -73,14 +73,6 @@ pub fn run() {
     let agent_state = AgentRuntimeState::bootstrap()
         .expect("failed to bootstrap agent runtime state with default registrations");
 
-    // Clean up orphaned `opencode serve` children left by a previous cluihud
-    // crash: PID files whose parent_pid no longer maps to a running process
-    // get their child force-killed. Fire-and-forget on a background task so
-    // app boot stays fast.
-    tauri::async_runtime::spawn(async {
-        agents::opencode::server_supervisor::ServerSupervisor::cleanup_orphans().await;
-    });
-
     // Take the EventSink receiver from the bootstrap'd runtime state — the
     // consumer task is spawned from the Tauri setup callback below where
     // AppHandle is available.
@@ -226,8 +218,6 @@ pub fn run() {
             commands::write_file_content,
             commands::list_available_agents,
             commands::resolve_default_agent,
-            commands::opencode_send_prompt,
-            commands::opencode_list_messages,
             pty::write_to_session_pty,
             // Scratchpad commands
             scratchpad::commands::scratchpad_get_path,
@@ -249,12 +239,6 @@ pub fn run() {
             let socket_path = config.hook_socket_path.clone();
             let plans_dir = config.plans_directory.clone();
             let transcripts_dir = config.transcripts_directory.clone();
-
-            // Hand the OpenCode adapter a handle so its SSE consumer can
-            // emit chat events (`opencode:message-updated`, etc.) directly
-            // to the frontend. Set once — subsequent sessions reuse the
-            // same handle.
-            agent_state.opencode.set_app_handle(app_handle.clone());
 
             let hook_app = app_handle.clone();
             let hook_db = db.clone();

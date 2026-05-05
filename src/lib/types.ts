@@ -119,3 +119,13 @@ export interface DiffLine {
   content: string;
   line_number?: number;
 }
+
+export interface AvailableAgent {
+  id: string;
+  display_name: string;
+  installed: boolean;
+  binary_path: string | null;
+  config_path: string | null;
+  version: string | null;
+  capabilities: string[];
+}

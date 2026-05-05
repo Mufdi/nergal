@@ -35,7 +35,8 @@ impl CodexAdapter {
                     | AgentCapability::TOOL_CALL_EVENTS
                     | AgentCapability::STRUCTURED_TRANSCRIPT
                     | AgentCapability::RAW_COST_PER_MESSAGE
-                    | AgentCapability::SESSION_RESUME,
+                    | AgentCapability::SESSION_RESUME
+                    | AgentCapability::SESSION_PICKER,
                 supported_models: vec![],
             },
         }
@@ -83,8 +84,11 @@ impl AgentAdapter for CodexAdapter {
         let config_dir = home.join(".codex");
         let binary_path = which::which("codex").ok();
         let trusted_for_project = read_trust_for_cwd().await;
+        // The binary on PATH is the authoritative install signal. Lingering
+        // `~/.codex` from a previous install would otherwise mark the agent
+        // as available even after the binary has been removed.
         DetectionResult {
-            installed: config_dir.exists() || binary_path.is_some(),
+            installed: binary_path.is_some(),
             binary_path,
             config_path: if config_dir.exists() {
                 Some(config_dir)
@@ -110,9 +114,21 @@ impl AgentAdapter for CodexAdapter {
         let binary = which::which("codex")
             .map_err(|e| AdapterError::Transport(anyhow::anyhow!("codex not on PATH: {e}")))?;
         let mut args: Vec<String> = Vec::new();
-        if let Some(uuid) = ctx.resume_from {
-            args.push("resume".into());
-            args.push(uuid.to_string());
+        // Sentinels shared with the rest of the adapters:
+        //   - "continue"    → `codex resume --last`     (latest session)
+        //   - "resume_pick" → `codex resume`            (Codex shows a picker)
+        //   - "<any other>" → `codex resume <id>`       (specific Codex session)
+        match ctx.resume_from {
+            None => {}
+            Some("continue") => {
+                args.push("resume".into());
+                args.push("--last".into());
+            }
+            Some("resume_pick") => args.push("resume".into()),
+            Some(id) => {
+                args.push("resume".into());
+                args.push(id.to_string());
+            }
         }
         let mut env = HashMap::new();
         env.insert("CLUIHUD_SESSION_ID".into(), ctx.session_id.to_string());
@@ -198,5 +214,32 @@ mod tests {
     fn requires_cluihud_setup_is_true_for_codex() {
         let a = CodexAdapter::new();
         assert!(a.requires_cluihud_setup());
+    }
+
+    #[test]
+    fn spawn_resume_modes_map_to_correct_codex_flags() {
+        let a = CodexAdapter::new();
+        let cwd = std::path::Path::new("/tmp");
+        let mk = |resume: Option<&'static str>| SpawnContext {
+            session_id: "s",
+            cwd,
+            resume_from: resume,
+            initial_prompt: None,
+        };
+        if let Ok(spec) = a.spawn(&mk(None)) {
+            assert!(spec.args.is_empty());
+        }
+        if let Ok(spec) = a.spawn(&mk(Some("continue"))) {
+            assert_eq!(spec.args, vec!["resume".to_string(), "--last".to_string()]);
+        }
+        if let Ok(spec) = a.spawn(&mk(Some("resume_pick"))) {
+            assert_eq!(spec.args, vec!["resume".to_string()]);
+        }
+        if let Ok(spec) = a.spawn(&mk(Some("abc-uuid"))) {
+            assert_eq!(
+                spec.args,
+                vec!["resume".to_string(), "abc-uuid".to_string()]
+            );
+        }
     }
 }

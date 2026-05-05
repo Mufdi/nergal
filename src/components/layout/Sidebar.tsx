@@ -15,9 +15,10 @@ import { openTabAction } from "@/stores/rightPanel";
 import { toastsAtom } from "@/stores/toast";
 import { SessionRow } from "@/components/session/SessionRow";
 import { SessionIndicator } from "@/components/session/SessionIndicator";
-import { ResumeModal } from "@/components/session/ResumeModal";
 import { CommitModal } from "@/components/session/CommitModal";
 import { ProjectPickerModal } from "@/components/session/ProjectPickerModal";
+import { AgentPickerModal } from "@/components/session/AgentPickerModal";
+import type { AvailableAgent } from "@/lib/types";
 import { invoke } from "@/lib/tauri";
 import { open } from "@tauri-apps/plugin-dialog";
 import * as terminalService from "@/components/terminal/terminalService";
@@ -106,7 +107,7 @@ export function Sidebar({ collapsed }: SidebarProps) {
         </div>
       )}
 
-      {/* Always render WorkspacesView hidden when collapsed so modals (ResumeModal) still work */}
+      {/* Always render WorkspacesView hidden when collapsed so modals (CommitModal, AgentPickerModal) still work */}
       {collapsed && (
         <div className="hidden">
           <WorkspacesView />
@@ -114,6 +115,24 @@ export function Sidebar({ collapsed }: SidebarProps) {
       )}
     </div>
   );
+}
+
+// Maps the cluihud "rename" action to the per-agent slash command sent into
+// the live PTY. Returning `null` means cluihud should only persist the new
+// name in its own DB without poking the agent's TUI (used for OpenCode,
+// which only supports rename via a Ctrl+R modal that's not safe to drive
+// by injecting keystrokes mid-session).
+function renameCommandFor(agentId: string): string | null {
+  switch (agentId) {
+    case "claude-code":
+    case "codex":
+      return "/rename";
+    case "pi":
+      return "/name";
+    case "opencode":
+    default:
+      return null;
+  }
 }
 
 function CollapsedSidebar() {
@@ -171,9 +190,12 @@ function WorkspacesView() {
   const [addingSessionFor, setAddingSessionFor] = useState<string | null>(null);
   const [newSessionName, setNewSessionName] = useState("");
 
-  const [resumeModal, setResumeModal] = useState<{ session: Session } | null>(null);
   const [commitModal, setCommitModal] = useState<{ session: Session } | null>(null);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+  const [agentPicker, setAgentPicker] = useState<
+    | { workspaceId: string; sessionName: string; agents: AvailableAgent[]; defaultId: string | null }
+    | null
+  >(null);
   const triggerResumeId = useAtomValue(triggerResumeSessionAtom);
   const setTriggerResume = useSetAtom(triggerResumeSessionAtom);
   const triggerNewSession = useAtomValue(triggerNewSessionAtom);
@@ -198,7 +220,8 @@ function WorkspacesView() {
     for (const ws of workspaces) {
       const session = ws.sessions.find((s) => s.id === triggerResumeId);
       if (session) {
-        setResumeModal({ session });
+        setLaunchMode((prev) => ({ ...prev, [session.id]: "continue" }));
+        setActiveSessionId(session.id);
         setTriggerResume(null);
         return;
       }
@@ -303,18 +326,17 @@ function WorkspacesView() {
       openTab({ tab: { id: `transcript-${session.id}`, type: "transcript", label: `Transcript: ${session.name}`, data: { sessionId: session.id } }, isPinned: true });
       return;
     }
+    // Reopening an idle session always resumes that session's own
+    // conversation. The backend (pty.rs) swaps the "continue" sentinel for
+    // the stored agent_internal_session_id when one is on the session row,
+    // so this resolves to `claude --resume <uuid>` / `pi --session <uuid>` /
+    // `codex resume <id>` / `opencode --session <id>`. When no UUID is
+    // persisted (very short sessions, crash before capture) the adapters
+    // fall back to their `--continue` equivalents.
     if (!freshSessions.has(session.id) && !terminalService.hasTerminal(session.id)) {
-      setResumeModal({ session });
-      return;
+      setLaunchMode((prev) => ({ ...prev, [session.id]: "continue" }));
     }
     setActiveSessionId(session.id);
-  }
-
-  function handleResume(mode: "continue" | "resume_pick") {
-    if (!resumeModal) return;
-    setLaunchMode((prev) => ({ ...prev, [resumeModal.session.id]: mode }));
-    setActiveSessionId(resumeModal.session.id);
-    setResumeModal(null);
   }
 
   function handleCommitConfirm(lang: string) {
@@ -327,12 +349,12 @@ function WorkspacesView() {
       .catch(() => {});
   }
 
-  async function handleCreateSession(workspaceId: string) {
-    if (!newSessionName.trim()) return;
+  async function spawnSession(workspaceId: string, sessionName: string, agentId: string | null) {
     try {
       const session = await invoke<Session>("create_session", {
         workspaceId,
-        name: newSessionName.trim(),
+        name: sessionName,
+        agentId,
       });
 
       setWorkspaces((prev) =>
@@ -342,6 +364,14 @@ function WorkspacesView() {
             : w,
         ),
       );
+      // Keep the workspace expanded so the new row stays visible and the
+      // numeric switch-session shortcuts (Ctrl+1..9) keep targeting it.
+      setExpandedIds((prev) => {
+        if (prev.has(workspaceId)) return prev;
+        const next = new Set(prev);
+        next.add(workspaceId);
+        return next;
+      });
       setFreshSessions((prev: Set<string>) => new Set([...prev, session.id]));
       setActiveSessionId(session.id);
       setAddingSessionFor(null);
@@ -349,6 +379,46 @@ function WorkspacesView() {
     } catch {
       // handled by toast in future
     }
+  }
+
+  async function handleCreateSession(workspaceId: string) {
+    const sessionName = newSessionName.trim();
+    if (!sessionName) return;
+
+    // Detect installed agents. If only one is available, skip the picker for
+    // zero-friction (matches today's CC-only behavior). Otherwise open the
+    // picker pre-selected on the resolved default.
+    let agents: AvailableAgent[] = [];
+    try {
+      agents = await invoke<AvailableAgent[]>("list_available_agents");
+    } catch {
+      agents = [];
+    }
+    const installed = agents.filter((a) => a.installed);
+    if (installed.length <= 1) {
+      const onlyId = installed[0]?.id ?? null;
+      await spawnSession(workspaceId, sessionName, onlyId);
+      return;
+    }
+
+    const ws = workspaces.find((w) => w.id === workspaceId);
+    let defaultId: string | null = null;
+    try {
+      if (ws?.repo_path) {
+        defaultId = await invoke<string>("resolve_default_agent", {
+          projectPath: ws.repo_path,
+        });
+      }
+    } catch {
+      defaultId = null;
+    }
+
+    setAgentPicker({
+      workspaceId,
+      sessionName,
+      agents: installed,
+      defaultId,
+    });
   }
 
   return (
@@ -439,7 +509,10 @@ function WorkspacesView() {
                       invoke("rename_session", { sessionId: s.id, name: newName })
                         .then(() => {
                           if (terminalService.hasTerminal(s.id)) {
-                            terminalService.writeToSession(s.id, `/rename ${newName}\r`).catch(() => {});
+                            const cmd = renameCommandFor(s.agent_id ?? "claude-code");
+                            if (cmd) {
+                              terminalService.writeToSession(s.id, `${cmd} ${newName}\r`).catch(() => {});
+                            }
                           }
                           setWorkspaces((prev) =>
                             prev.map((w) => ({
@@ -510,14 +583,6 @@ function WorkspacesView() {
         </div>
       )}
 
-      {resumeModal && (
-        <ResumeModal
-          open={true}
-          onOpenChange={(o) => { if (!o) setResumeModal(null); }}
-          sessionName={resumeModal.session.name}
-          onSelect={handleResume}
-        />
-      )}
       {/* MergeModal is now hosted in GitPanel (single entry point). The
           Ctrl+Shift+M shortcut still triggers it via triggerMergeAtom which
           GitPanel listens to. */}
@@ -543,6 +608,20 @@ function WorkspacesView() {
           }, 50);
         }}
       />
+      {agentPicker && (
+        <AgentPickerModal
+          open={true}
+          onOpenChange={(o) => { if (!o) setAgentPicker(null); }}
+          agents={agentPicker.agents}
+          sessionName={agentPicker.sessionName}
+          preselectedId={agentPicker.defaultId}
+          onPick={(agentId) => {
+            const { workspaceId, sessionName } = agentPicker;
+            setAgentPicker(null);
+            void spawnSession(workspaceId, sessionName, agentId);
+          }}
+        />
+      )}
     </div>
   );
 }

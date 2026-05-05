@@ -48,7 +48,8 @@ impl PiAdapter {
                 flags: AgentCapability::TOOL_CALL_EVENTS
                     | AgentCapability::STRUCTURED_TRANSCRIPT
                     | AgentCapability::RAW_COST_PER_MESSAGE
-                    | AgentCapability::SESSION_RESUME,
+                    | AgentCapability::SESSION_RESUME
+                    | AgentCapability::SESSION_PICKER,
                 supported_models: vec![],
             },
             binary_path: parking_lot::RwLock::new(which::which("pi").ok()),
@@ -57,15 +58,6 @@ impl PiAdapter {
             tails: Arc::new(DashMap::new()),
             session_uuids: Arc::new(DashMap::new()),
         }
-    }
-
-    /// Pi-internal session UUID, if known. Set after the JSONL header is
-    /// parsed in start_event_pump. The runtime can persist it as
-    /// `agent_internal_session_id` for resume.
-    pub fn agent_internal_session_id(&self, cluihud_session_id: &str) -> Option<String> {
-        self.session_uuids
-            .get(cluihud_session_id)
-            .map(|r| r.clone())
     }
 }
 
@@ -100,7 +92,9 @@ impl AgentAdapter for PiAdapter {
             .clone()
             .or_else(|| which::which("pi").ok());
         DetectionResult {
-            installed: self.state_dir.exists() || binary_path.is_some(),
+            // PATH lookup is authoritative — leftover `~/.pi/agent/` from a
+            // previous install shouldn't mark the agent as installed.
+            installed: binary_path.is_some(),
             binary_path,
             config_path: if self.state_dir.exists() {
                 Some(self.state_dir.clone())
@@ -135,9 +129,20 @@ impl AgentAdapter for PiAdapter {
             .insert(ctx.session_id.to_string(), ctx.cwd.to_path_buf());
 
         let mut args: Vec<String> = Vec::new();
-        if let Some(uuid) = ctx.resume_from {
-            args.push("--resume".into());
-            args.push(uuid.to_string());
+        // Sentinels shared with the rest of the adapters:
+        //   - "continue"    → `pi --continue`           (latest session)
+        //   - "resume_pick" → `pi --resume`             (Pi shows a picker)
+        //   - "<any other>" → `pi --session <uuid>`    (specific Pi session)
+        // `--session` (not `--resume <id>`) is the by-id flag per `pi --help`;
+        // the earlier `--resume <uuid>` form silently launched the picker.
+        match ctx.resume_from {
+            None => {}
+            Some("continue") => args.push("--continue".into()),
+            Some("resume_pick") => args.push("--resume".into()),
+            Some(id) => {
+                args.push("--session".into());
+                args.push(id.to_string());
+            }
         }
         let mut env = HashMap::new();
         env.insert("CLUIHUD_SESSION_ID".into(), ctx.session_id.to_string());
@@ -153,6 +158,17 @@ impl AgentAdapter for PiAdapter {
         session_id: &str,
         sink: EventSink,
     ) -> Result<(), AdapterError> {
+        // Idempotent: if a tail is already active for this session, return
+        // early. Without this guard, a second call (e.g. React StrictMode
+        // double-mount in dev, or any future caller bug) starts a second
+        // tail whose initial catch-up scans the JSONL from offset 0, so
+        // every prior tool call emits twice — duplicates show up in the
+        // Modified Files panel. `stop_event_pump` is the documented way to
+        // tear a tail down before restarting it.
+        if self.tails.contains_key(session_id) {
+            return Ok(());
+        }
+
         let cwd = self
             .session_cwds
             .get(session_id)
@@ -175,7 +191,7 @@ impl AgentAdapter for PiAdapter {
         }
 
         let parser: LineParser = Arc::new(parse_transcript_line);
-        let handle = start_tail(jsonl, session_id.to_string(), sink, parser);
+        let handle = start_tail(jsonl, cwd, session_id.to_string(), sink, parser);
         self.tails.insert(session_id.to_string(), handle);
         Ok(())
     }
@@ -188,6 +204,12 @@ impl AgentAdapter for PiAdapter {
         // session_uuids stays — the runtime persists it onto the session row
         // as part of session teardown so resume continues to work.
         Ok(())
+    }
+
+    fn agent_internal_session_id(&self, cluihud_session_id: &str) -> Option<String> {
+        self.session_uuids
+            .get(cluihud_session_id)
+            .map(|r| r.clone())
     }
 }
 
@@ -230,5 +252,34 @@ mod tests {
     fn requires_cluihud_setup_is_false_for_pi() {
         let a = PiAdapter::new();
         assert!(!a.requires_cluihud_setup());
+    }
+
+    #[test]
+    fn spawn_resume_modes_map_to_correct_pi_flags() {
+        // `pi` may not be on PATH in CI; the test only asserts on the success
+        // path (mirrors the CC adapter's pattern).
+        let a = PiAdapter::new();
+        let cwd = std::path::Path::new("/tmp");
+        let mk = |resume: Option<&'static str>| SpawnContext {
+            session_id: "s",
+            cwd,
+            resume_from: resume,
+            initial_prompt: None,
+        };
+        if let Ok(spec) = a.spawn(&mk(None)) {
+            assert!(spec.args.is_empty());
+        }
+        if let Ok(spec) = a.spawn(&mk(Some("continue"))) {
+            assert_eq!(spec.args, vec!["--continue".to_string()]);
+        }
+        if let Ok(spec) = a.spawn(&mk(Some("resume_pick"))) {
+            assert_eq!(spec.args, vec!["--resume".to_string()]);
+        }
+        if let Ok(spec) = a.spawn(&mk(Some("abc-uuid"))) {
+            assert_eq!(
+                spec.args,
+                vec!["--session".to_string(), "abc-uuid".to_string()]
+            );
+        }
     }
 }

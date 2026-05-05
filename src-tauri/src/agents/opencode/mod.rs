@@ -1,19 +1,10 @@
-//! OpenCode adapter — wraps `opencode serve` (HTTP+SSE).
+//! OpenCode adapter — runs the `opencode` TUI inside the cluihud terminal.
 //!
-//! Unlike CC's file-config hooks, OpenCode runs a long-lived HTTP server
-//! per-session and emits SSE events on `/event`. cluihud's adapter:
-//! 1. Spawns `opencode serve --port 0` per session via [`server_supervisor`].
-//! 2. Parses the chosen port from stdout.
-//! 3. Subscribes to `/event` via [`sse_client`] and translates events into
-//!    the runtime's `EventSink`.
-//! 4. Handles permission prompts by stashing pending requests in a map and
-//!    POSTing the user's reply through [`permission_client`].
-//!
-//! Schema reference: `docs/agents/opencode-sse-schema.md`.
+//! Earlier versions wrapped `opencode serve` (HTTP+SSE) and routed the UI
+//! through a chat panel; that's been removed in favor of the terminal flow
+//! shared with CC/Pi/Codex. See `adapter` for the current implementation.
 
 pub mod adapter;
-pub mod permission_client;
-pub mod server_supervisor;
 pub mod sse_client;
 
 pub use adapter::OpenCodeAdapter;

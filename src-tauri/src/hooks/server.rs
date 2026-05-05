@@ -298,7 +298,7 @@ pub fn spawn_adapter_event_consumer(
     agent_state: AgentRuntimeState,
     mut rx: tokio::sync::mpsc::UnboundedReceiver<HookEvent>,
 ) {
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         while let Some(event) = rx.recv().await {
             let csid = event.session_id().to_string();
             process_event(&app, &event, &db, &plan_state, &agent_state, Some(&csid));
@@ -769,18 +769,22 @@ fn process_event(
     }
 }
 
-/// Extracts file_path from Write/Edit/MultiEdit tools and emits files:modified.
+/// Extracts file_path from any tool whose input names a file and emits
+/// files:modified. Detection is permissive (presence of `file_path` /
+/// `filePath` / `path` in the input) rather than a hardcoded tool-name
+/// allowlist, so non-CC agents (Pi, Codex) — whose tools are named
+/// differently — still surface their file edits.
 fn process_file_event(
     app: &AppHandle,
     tool_name: &str,
     tool_input: &serde_json::Value,
     session_id: &str,
 ) {
-    let is_file_tool = matches!(
-        tool_name,
-        "Write" | "Edit" | "MultiEdit" | "NotebookEdit" | "Create"
-    );
-    if !is_file_tool {
+    // Skip read-only tools so the panel doesn't flood with files we only
+    // looked at. Anything not on this list and that exposes a file_path is
+    // assumed to be a write.
+    let is_read_only = matches!(tool_name, "Read" | "Glob" | "Grep" | "LS");
+    if is_read_only {
         return;
     }
 

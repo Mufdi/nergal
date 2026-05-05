@@ -35,7 +35,7 @@ export function TerminalManager() {
     if (!activeSessionId || !activeSession || !activeWorkspace) return;
     if (activeSession.status === "completed") return;
 
-    let mode: "new" | "continue" | "resume_pick";
+    let mode: "new" | "continue";
     if (launchModes[activeSessionId]) {
       mode = launchModes[activeSessionId];
     } else if (freshSessions.has(activeSessionId)) {

@@ -93,7 +93,7 @@ export function setHost(el: HTMLDivElement | null): void {
 export async function show(
   sessionId: string,
   cwd: string,
-  mode: "new" | "continue" | "resume_pick" = "new",
+  mode: "new" | "continue" = "new",
 ): Promise<void> {
   activeId = sessionId;
 

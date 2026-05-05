@@ -526,9 +526,37 @@ pub fn create_workspace(db: State<'_, SharedDb>, repo_path: String) -> Result<Wo
 }
 
 #[tauri::command]
-pub fn get_workspaces(db: State<'_, SharedDb>) -> Result<Vec<Workspace>, String> {
+pub fn get_workspaces(
+    db: State<'_, SharedDb>,
+    agents: State<'_, AgentRuntimeState>,
+) -> Result<Vec<Workspace>, String> {
     let db = db.lock().map_err(|e| e.to_string())?;
-    db.get_workspaces().map_err(|e| e.to_string())
+    let mut workspaces = db.get_workspaces().map_err(|e| e.to_string())?;
+    // DB rows don't persist capabilities — they're a runtime property of the
+    // adapter. Fill them in here so the frontend has the bitset to gate UI
+    // (ResumeModal options, picker affordances) without an extra round-trip.
+    for ws in &mut workspaces {
+        for session in &mut ws.sessions {
+            session.agent_capabilities = capabilities_for_agent_id(&agents, &session.agent_id);
+        }
+    }
+    Ok(workspaces)
+}
+
+/// Lookup the wire-form capability list for an agent id, falling back to
+/// an empty list if the adapter is unregistered (defensive — config drift).
+fn capabilities_for_agent_id(agents: &AgentRuntimeState, agent_id: &str) -> Vec<String> {
+    let Ok(parsed) = AgentId::new(agent_id) else {
+        return Vec::new();
+    };
+    let Some(adapter) = agents.registry.get(&parsed) else {
+        return Vec::new();
+    };
+    let value = match serde_json::to_value(adapter.capabilities().flags) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    serde_json::from_value::<Vec<String>>(value).unwrap_or_default()
 }
 
 #[tauri::command]
@@ -607,17 +635,7 @@ pub fn create_session(
         .as_deref()
         .and_then(|s| AgentId::new(s).ok())
         .unwrap_or_else(AgentId::claude_code);
-    let agent_capabilities = agents
-        .registry
-        .get(&agent_id)
-        .map(|a| {
-            let caps = a.capabilities();
-            serde_json::to_value(caps.flags)
-                .ok()
-                .and_then(|v| serde_json::from_value::<Vec<String>>(v).ok())
-                .unwrap_or_default()
-        })
-        .unwrap_or_default();
+    let agent_capabilities = capabilities_for_agent_id(&agents, agent_id.as_str());
     let session = Session {
         id: session_id,
         name,
@@ -2539,35 +2557,4 @@ pub fn resolve_default_agent(project_path: String) -> Result<String, String> {
     Ok(cfg
         .resolve_agent_for_project(std::path::Path::new(&project_path))
         .unwrap_or_else(|| AgentId::claude_code().as_str().to_string()))
-}
-
-/// Send a user prompt to an OpenCode session. The session must already have
-/// its event pump running (i.e., `start_event_pump` has resolved an OpenCode
-/// session id). Returns an error string when the session is unknown or the
-/// HTTP call fails.
-#[tauri::command]
-pub async fn opencode_send_prompt(
-    agents: State<'_, AgentRuntimeState>,
-    session_id: String,
-    text: String,
-) -> Result<(), String> {
-    agents
-        .opencode
-        .send_prompt(&session_id, &text)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// List historical messages for an OpenCode session. The chat panel calls
-/// this once on mount to populate state before subscribing to live SSE events.
-#[tauri::command]
-pub async fn opencode_list_messages(
-    agents: State<'_, AgentRuntimeState>,
-    session_id: String,
-) -> Result<serde_json::Value, String> {
-    agents
-        .opencode
-        .list_messages(&session_id)
-        .await
-        .map_err(|e| e.to_string())
 }

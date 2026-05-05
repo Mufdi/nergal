@@ -335,6 +335,17 @@ impl Database {
         Ok(())
     }
 
+    /// Persist the agent-internal session id (e.g. Pi UUID, Codex rollout id)
+    /// so resume flows can pass it back via `--session <id>` after a cluihud
+    /// restart. Idempotent.
+    pub fn update_agent_internal_session_id(&self, id: &str, internal_id: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE sessions SET agent_internal_session_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![internal_id, now_secs(), id],
+        )?;
+        Ok(())
+    }
+
     pub fn delete_session(&self, id: &str) -> Result<()> {
         self.conn
             .execute("DELETE FROM sessions WHERE id = ?1", [id])?;

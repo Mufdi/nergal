@@ -79,14 +79,12 @@ impl AgentRegistry {
     }
 }
 
-/// Register the Pi/Codex adapters that don't need a typed handle in
-/// [`crate::agents::state::AgentRuntimeState`]. The CC and OpenCode adapters
-/// are registered directly by `AgentRuntimeState::bootstrap` because the
-/// runtime keeps typed `Arc<…>` handles for them (CC for FIFO registration
-/// side-channels; OpenCode for chat-panel Tauri commands).
-pub fn register_supplementary_adapters_excluding_opencode(
-    reg: &AgentRegistry,
-) -> Result<(), AdapterError> {
+/// Register the Pi/Codex/OpenCode adapters that don't need a typed handle in
+/// [`crate::agents::state::AgentRuntimeState`]. The CC adapter is registered
+/// directly by `AgentRuntimeState::bootstrap` because the runtime keeps a
+/// typed `Arc<ClaudeCodeAdapter>` for FIFO registration side-channels.
+pub fn register_supplementary_adapters(reg: &AgentRegistry) -> Result<(), AdapterError> {
+    reg.register(Arc::new(crate::agents::opencode::OpenCodeAdapter::new()))?;
     reg.register(Arc::new(crate::agents::pi::PiAdapter::new()))?;
     reg.register(Arc::new(crate::agents::codex::CodexAdapter::new()))?;
     Ok(())

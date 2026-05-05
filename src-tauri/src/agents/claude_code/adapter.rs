@@ -57,6 +57,7 @@ impl ClaudeCodeAdapter {
                     | AgentCapability::RAW_COST_PER_MESSAGE
                     | AgentCapability::TASK_LIST
                     | AgentCapability::SESSION_RESUME
+                    | AgentCapability::SESSION_PICKER
                     | AgentCapability::ANNOTATIONS_INJECT,
                 supported_models: vec![],
             },
@@ -123,7 +124,9 @@ impl AgentAdapter for ClaudeCodeAdapter {
         let home = dirs::home_dir().unwrap_or_default();
         let config_dir = home.join(".claude");
         let binary_path = which::which("claude").ok();
-        let installed = config_dir.exists() || binary_path.is_some();
+        // PATH lookup is authoritative — config dir alone (a leftover from a
+        // prior install) shouldn't mark the agent as installed.
+        let installed = binary_path.is_some();
         DetectionResult {
             installed,
             binary_path,

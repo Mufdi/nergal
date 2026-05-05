@@ -1,98 +1,121 @@
-//! SSE event consumer for `opencode serve`.
+//! Minimal SSE consumer for the OpenCode TUI's embedded Hono server.
 //!
-//! Connects to `GET /event`, frames events with `eventsource-stream`,
-//! translates them into the runtime's `EventSink`, and stashes pending
-//! permission requests for later REST replies. Reconnects with backoff on
-//! transport failure — the lifetime of the SSE client matches the
-//! `start_event_pump` / `stop_event_pump` calls.
+//! The TUI runs the same HTTP server as `opencode serve`; spawning with
+//! `--port <X>` pins it to a known address. This module connects to
+//! `http://127.0.0.1:<X>/event`, listens for the events cluihud cares about
+//! (tool/file-edit lifecycle), and forwards them as [`HookEvent`]s onto the
+//! adapter event sink. Translated events flow through the same dispatcher
+//! that handles CC's socket hooks, so panels (Modified Files, Activity)
+//! light up identically.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
 use dashmap::DashMap;
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
-use tauri::{AppHandle, Emitter};
+use serde::Deserialize;
+use serde_json::Value;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
-use super::permission_client::PendingPermission;
 use crate::agents::EventSink;
 use crate::hooks::events::HookEvent;
 
-/// Tauri event names emitted directly to the frontend for the OpenCode chat
-/// panel. Kept here next to the translator so additions stay co-located.
-pub const EVENT_MESSAGE_UPDATED: &str = "opencode:message-updated";
-pub const EVENT_MESSAGE_PART_UPDATED: &str = "opencode:message-part-updated";
+/// Shared map populated by the SSE consumer when it observes a
+/// `session.created` / `session.updated` event. Keyed by the cluihud session
+/// id so the adapter can look up the OpenCode-side id for resume.
+pub type SessionIdMap = Arc<DashMap<String, String>>;
 
-/// Handle to a running SSE consumer task. Drop the handle to cancel; or call
-/// [`SseClient::cancel`] to be explicit.
+/// Handle for a running SSE consumer task. Drop or call [`Self::cancel`].
 pub struct SseClient {
-    handle: Option<JoinHandle<()>>,
     cancel: Option<oneshot::Sender<()>>,
+    join: Option<JoinHandle<()>>,
 }
 
 impl SseClient {
-    /// Start a background task that consumes `<base_url>/event` and emits
-    /// translated events to `sink`. Returns immediately.
-    pub fn spawn(
-        base_url: String,
-        cluihud_session_id: String,
-        port: u16,
-        sink: EventSink,
-        pending: Arc<DashMap<String, PendingPermission>>,
-        app_handle: Option<AppHandle>,
-    ) -> Self {
-        let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
-        let handle = tokio::spawn(async move {
-            let url = format!("{base_url}/event");
-            let mut backoff = Duration::from_millis(250);
-            let max_backoff = Duration::from_secs(10);
-
-            loop {
-                let connect = tokio::select! {
-                    _ = &mut cancel_rx => return,
-                    res = connect_and_stream(
-                        &url,
-                        &cluihud_session_id,
-                        port,
-                        &sink,
-                        &pending,
-                        app_handle.as_ref(),
-                    ) => res,
-                };
-                match connect {
-                    Ok(()) => {
-                        tracing::debug!(session = %cluihud_session_id, "opencode SSE stream ended cleanly; reconnecting");
-                        backoff = Duration::from_millis(250);
-                    }
-                    Err(e) => {
-                        tracing::warn!(session = %cluihud_session_id, error = %e, "opencode SSE error; backing off");
-                    }
-                }
-                // Coarse backoff between attempts, cancellable.
-                tokio::select! {
-                    _ = &mut cancel_rx => return,
-                    _ = tokio::time::sleep(backoff) => {}
-                }
-                backoff = (backoff * 2).min(max_backoff);
-            }
-        });
-
-        Self {
-            handle: Some(handle),
-            cancel: Some(cancel_tx),
-        }
-    }
-
-    /// Signal the task to stop and await its termination.
     pub async fn cancel(mut self) {
         if let Some(tx) = self.cancel.take() {
             let _ = tx.send(());
         }
-        if let Some(h) = self.handle.take() {
+        if let Some(h) = self.join.take() {
             let _ = tokio::time::timeout(Duration::from_secs(2), h).await;
+        }
+    }
+
+    /// Start the consumer. Polls the port for readiness up to 8s, then
+    /// subscribes to `/event`. Logs and exits on terminal errors; the TUI
+    /// stays usable in the terminal independently of this task.
+    pub fn spawn(
+        base_url: String,
+        cluihud_session_id: String,
+        sink: EventSink,
+        session_ids: SessionIdMap,
+    ) -> Self {
+        let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
+        let join = tokio::spawn(async move {
+            // Poll-connect for readiness — the TUI's Hono server starts a
+            // few hundred ms after the binary launches.
+            let event_url = format!("{base_url}/event");
+            // SSE streams are long-lived; an overall request timeout would
+            // close the body mid-stream and surface as `error decoding
+            // response body`. Bound only the connect phase.
+            let client = reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(5))
+                .build()
+                .expect("reqwest client builder");
+
+            let resp = match wait_for_sse(&client, &event_url, &mut cancel_rx).await {
+                Some(r) => r,
+                None => return,
+            };
+
+            let mut stream = resp.bytes_stream().eventsource();
+            loop {
+                tokio::select! {
+                    _ = &mut cancel_rx => break,
+                    next = stream.next() => {
+                        let Some(item) = next else {
+                            tracing::debug!(session = %cluihud_session_id, "opencode SSE stream ended");
+                            break;
+                        };
+                        let event = match item {
+                            Ok(ev) => ev,
+                            Err(e) => {
+                                // Break instead of `continue`: stream errors
+                                // tend to be terminal (TUI exited, server
+                                // closed) and looping spams the log without
+                                // recovering. The next session creation
+                                // will spawn a fresh client.
+                                tracing::warn!(
+                                    session = %cluihud_session_id,
+                                    error = %e,
+                                    "opencode SSE stream error; ending consumer",
+                                );
+                                break;
+                            }
+                        };
+                        // Capture OpenCode's session id from the first
+                        // `session.created` / `session.updated` event so the
+                        // adapter can persist it for resume via `--session <id>`.
+                        if let Some(oc_id) = extract_session_id(&event.data) {
+                            session_ids
+                                .entry(cluihud_session_id.clone())
+                                .or_insert(oc_id);
+                        }
+                        if let Some(hook_event) = translate_event(&cluihud_session_id, &event.data)
+                            && sink.send(hook_event).is_err() {
+                                // Receiver dropped — runtime is shutting down.
+                                break;
+                            }
+                    }
+                }
+            }
+        });
+
+        Self {
+            cancel: Some(cancel_tx),
+            join: Some(join),
         }
     }
 }
@@ -102,173 +125,117 @@ impl Drop for SseClient {
         if let Some(tx) = self.cancel.take() {
             let _ = tx.send(());
         }
-        if let Some(h) = self.handle.take() {
+        if let Some(h) = self.join.take() {
             h.abort();
         }
     }
 }
 
-async fn connect_and_stream(
+/// Probe the `/event` endpoint until a 200 is returned or the cancel token
+/// fires. Returns `None` when cancelled or the server never came up.
+async fn wait_for_sse(
+    client: &reqwest::Client,
     url: &str,
-    cluihud_session_id: &str,
-    port: u16,
-    sink: &EventSink,
-    pending: &Arc<DashMap<String, PendingPermission>>,
-    app_handle: Option<&AppHandle>,
-) -> Result<()> {
-    let resp = reqwest::Client::new()
-        .get(url)
-        .send()
-        .await
-        .with_context(|| format!("connecting to {url}"))?
-        .error_for_status()
-        .with_context(|| format!("non-2xx from {url}"))?;
-
-    let mut stream = resp.bytes_stream().eventsource();
-    while let Some(event) = stream.next().await {
-        let event = event.map_err(|e| anyhow!("SSE framing error: {e}"))?;
-
-        // Forward chat-rich events (message + message-part) directly to the
-        // frontend. They never become HookEvents — they only matter to the
-        // OpenCode chat panel.
-        forward_chat_event(&event.data, cluihud_session_id, app_handle);
-
-        if let Some(translated) = translate_event(&event.data, cluihud_session_id, port, pending)
-            && sink.send(translated).is_err()
-        {
-            tracing::debug!("event sink closed; ending SSE stream");
-            return Ok(());
-        }
-    }
-    Ok(())
-}
-
-/// Emit chat events to the frontend if they look like `message.updated` or
-/// `message.part.updated`. Best-effort: malformed JSON or a missing app
-/// handle silently drop the event (logged at debug).
-fn forward_chat_event(data: &str, cluihud_session_id: &str, app_handle: Option<&AppHandle>) {
-    let Some(handle) = app_handle else { return };
-    let payload: serde_json::Value = match serde_json::from_str(data) {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-    let Some(event_type) = payload.get("type").and_then(|v| v.as_str()) else {
-        return;
-    };
-    let Some(props) = payload.get("properties") else {
-        return;
-    };
-
-    let event_name = match event_type {
-        "message.updated" => EVENT_MESSAGE_UPDATED,
-        "message.part.updated" => EVENT_MESSAGE_PART_UPDATED,
-        _ => return,
-    };
-
-    let envelope = serde_json::json!({
-        "session_id": cluihud_session_id,
-        "properties": props,
-    });
-    if let Err(e) = handle.emit(event_name, &envelope) {
-        tracing::debug!(error = %e, event = event_name, "failed to emit opencode chat event");
-    }
-}
-
-/// Map an OpenCode SSE payload (the `data:` line, JSON of shape
-/// `{type, properties}`) onto a [`HookEvent`] the rest of cluihud understands.
-///
-/// Returns `None` for events we deliberately ignore (TUI, server lifecycle,
-/// etc. — see `docs/agents/opencode-sse-schema.md`). Errors during JSON
-/// parsing are swallowed (logged at debug) so a single malformed event
-/// doesn't tear down the stream.
-pub(crate) fn translate_event(
-    data: &str,
-    cluihud_session_id: &str,
-    port: u16,
-    pending: &Arc<DashMap<String, PendingPermission>>,
-) -> Option<HookEvent> {
-    let payload: serde_json::Value = match serde_json::from_str(data) {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::debug!(error = %e, "skipping unparseable SSE event");
+    cancel: &mut oneshot::Receiver<()>,
+) -> Option<reqwest::Response> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+    loop {
+        if cancel.try_recv().is_ok() {
             return None;
         }
-    };
-    let event_type = payload.get("type")?.as_str()?;
-    let props = payload.get("properties")?;
+        match client.get(url).send().await {
+            Ok(r) if r.status().is_success() => return Some(r),
+            Ok(_) | Err(_) => {
+                if tokio::time::Instant::now() >= deadline {
+                    tracing::warn!(url, "opencode SSE never became ready");
+                    return None;
+                }
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+        }
+    }
+}
 
-    match event_type {
-        "session.idle" => Some(HookEvent::Stop {
-            session_id: cluihud_session_id.to_string(),
-            stop_reason: Some("session.idle".to_string()),
-            transcript_path: None,
-        }),
+/// SSE payload — only the discriminator + properties we care about. Unknown
+/// shapes are ignored.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenCodeEvent {
+    #[serde(rename = "type")]
+    event_type: String,
+    #[serde(default)]
+    properties: Value,
+}
 
-        "permission.asked" => {
-            let permission_id = props.get("id").and_then(|v| v.as_str())?;
-            let opencode_session_id = props.get("sessionID").and_then(|v| v.as_str())?;
-            let prompt_text = props
-                .get("permission")
+/// Pull the OpenCode-side session id out of `session.created` /
+/// `session.updated` events. Returns `None` for any other event type or a
+/// missing id field.
+fn extract_session_id(raw: &str) -> Option<String> {
+    let ev: OpenCodeEvent = serde_json::from_str(raw).ok()?;
+    if !matches!(
+        ev.event_type.as_str(),
+        "session.created" | "session.updated"
+    ) {
+        return None;
+    }
+    // Prefer `info.id` (the canonical session payload); fall back to
+    // `sessionID` for older shapes.
+    ev.properties
+        .pointer("/info/id")
+        .and_then(|v| v.as_str())
+        .or_else(|| ev.properties.get("sessionID").and_then(|v| v.as_str()))
+        .map(String::from)
+}
+
+/// Translate an OpenCode SSE event into a [`HookEvent`] the dispatcher
+/// already understands. Returns `None` for events we don't surface yet.
+///
+/// Event reference (sst/opencode @ dev, `bus/bus-event.ts` + publish sites):
+/// - `file.edited` → `{ file: string }` — fires once per Write/Edit tool.
+/// - `message.part.updated` → `{ sessionID, part: Part, time }` where
+///   `part.type == "tool"` and `part.state.status == "completed"` exposes
+///   `part.tool` (tool name) + `part.state.input` (args, may contain
+///   `filePath`).
+fn translate_event(cluihud_session_id: &str, raw: &str) -> Option<HookEvent> {
+    let ev: OpenCodeEvent = serde_json::from_str(raw).ok()?;
+    match ev.event_type.as_str() {
+        // Direct file-modification signal — the cleanest source for the
+        // Modified Files panel. Synthesise a PostToolUse so the existing
+        // dispatcher path (`process_file_event`) handles it without new code.
+        "file.edited" => {
+            let path = ev.properties.get("file").and_then(|v| v.as_str())?;
+            Some(HookEvent::PostToolUse {
+                session_id: cluihud_session_id.into(),
+                tool_name: "Edit".into(),
+                tool_input: serde_json::json!({ "file_path": path }),
+                tool_result: None,
+            })
+        }
+        // Tool lifecycle — fires for every tool, including non-file ones
+        // (read, grep, bash). We only surface completed tool calls so the
+        // activity log has the canonical shape (`PostToolUse`).
+        "message.part.updated" => {
+            let part = ev.properties.get("part")?;
+            if part.get("type").and_then(|v| v.as_str()) != Some("tool") {
+                return None;
+            }
+            let state = part.get("state")?;
+            if state.get("status").and_then(|v| v.as_str()) != Some("completed") {
+                return None;
+            }
+            let tool_name = part
+                .get("tool")
                 .and_then(|v| v.as_str())
-                .unwrap_or("permission requested")
+                .unwrap_or("")
                 .to_string();
-            let fifo_path = format!("opencode://{cluihud_session_id}/{permission_id}");
-
-            pending.insert(
-                cluihud_session_id.to_string(),
-                PendingPermission {
-                    permission_id: permission_id.to_string(),
-                    opencode_session_id: opencode_session_id.to_string(),
-                    port,
-                },
-            );
-
-            // Reuse the AskUser variant; the frontend already renders this
-            // through the AskUserModal flow. The `tool_input` carries the
-            // human-readable prompt + a single "questions" entry mimicking
-            // the CC AskUserQuestion shape so AskUserModal renders unchanged.
-            let tool_input = serde_json::json!({
-                "questions": [{
-                    "question": prompt_text,
-                    "header": "OpenCode permission",
-                    "options": ["allow once", "allow always", "reject"],
-                    "multi_select": false
-                }]
-            });
-            Some(HookEvent::AskUser {
-                session_id: cluihud_session_id.to_string(),
-                tool_input,
-                fifo_path,
+            let input = state.get("input").cloned().unwrap_or(Value::Null);
+            Some(HookEvent::PostToolUse {
+                session_id: cluihud_session_id.into(),
+                tool_name,
+                tool_input: input,
+                tool_result: None,
             })
         }
-
-        "permission.replied" => {
-            // Confirmation that our reply was applied. Drop the pending entry
-            // (defence in depth — the adapter's submit_ask_answer also
-            // removes it on the success path).
-            pending.remove(cluihud_session_id);
-            None
-        }
-
-        "todo.updated" => {
-            // Forward the first todo as a TaskCreated event so the existing
-            // TaskPanel surfaces it; the rest are best-effort. The richer
-            // wire format (full todo array) is something we can plumb later
-            // when TaskStore is generalised.
-            let todos = props.get("todos").and_then(|v| v.as_array())?;
-            let first = todos.first()?;
-            let subject = first.get("content").and_then(|v| v.as_str())?.to_string();
-            Some(HookEvent::TaskCreated {
-                session_id: cluihud_session_id.to_string(),
-                task_id: None,
-                task_subject: Some(subject),
-                tool_input: serde_json::Value::Null,
-            })
-        }
-
-        // session.status, message.updated, message.part.updated carry rich
-        // chat content the OpenCodeChat panel will render once shipped. Until
-        // that lands we drop them — they're not actionable for the foundation.
         _ => None,
     }
 }
@@ -277,77 +244,88 @@ pub(crate) fn translate_event(
 mod tests {
     use super::*;
 
-    fn fresh_pending() -> Arc<DashMap<String, PendingPermission>> {
-        Arc::new(DashMap::new())
-    }
-
     #[test]
-    fn translate_session_idle_emits_stop() {
-        let data = r#"{"type":"session.idle","properties":{"sessionID":"ses_abc"}}"#;
-        let pending = fresh_pending();
-        let ev = translate_event(data, "cluihud-1", 14096, &pending).unwrap();
+    fn translate_file_edited_emits_synthetic_post_tool_use() {
+        let raw = r#"{"type":"file.edited","properties":{"file":"/tmp/y.rs"}}"#;
+        let ev = translate_event("ses-1", raw).expect("expected Some");
         match ev {
-            HookEvent::Stop { session_id, .. } => assert_eq!(session_id, "cluihud-1"),
-            other => panic!("expected Stop, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn translate_permission_asked_stashes_pending_and_emits_ask_user() {
-        let data = r#"{"type":"permission.asked","properties":{"id":"per_xyz","sessionID":"ses_abc","permission":"run rm -rf","patterns":[],"metadata":{},"always":[]}}"#;
-        let pending = fresh_pending();
-        let ev = translate_event(data, "cluihud-1", 14096, &pending).unwrap();
-        match ev {
-            HookEvent::AskUser { fifo_path, .. } => {
-                assert_eq!(fifo_path, "opencode://cluihud-1/per_xyz");
+            HookEvent::PostToolUse {
+                tool_name,
+                tool_input,
+                ..
+            } => {
+                assert_eq!(tool_name, "Edit");
+                assert_eq!(
+                    tool_input.get("file_path").and_then(|v| v.as_str()),
+                    Some("/tmp/y.rs")
+                );
             }
-            other => panic!("expected AskUser, got {other:?}"),
+            other => panic!("expected PostToolUse, got {other:?}"),
         }
-        let stashed = pending.get("cluihud-1").unwrap().clone();
-        assert_eq!(stashed.permission_id, "per_xyz");
-        assert_eq!(stashed.opencode_session_id, "ses_abc");
-        assert_eq!(stashed.port, 14096);
     }
 
     #[test]
-    fn translate_permission_replied_removes_pending() {
-        let pending = fresh_pending();
-        pending.insert(
-            "cluihud-1".to_string(),
-            PendingPermission {
-                permission_id: "per_xyz".into(),
-                opencode_session_id: "ses_abc".into(),
-                port: 14096,
-            },
-        );
-        let data = r#"{"type":"permission.replied","properties":{"sessionID":"ses_abc","requestID":"per_xyz","reply":"once"}}"#;
-        assert!(translate_event(data, "cluihud-1", 14096, &pending).is_none());
-        assert!(pending.get("cluihud-1").is_none());
-    }
-
-    #[test]
-    fn translate_todo_updated_emits_first_task() {
-        let data = r#"{"type":"todo.updated","properties":{"sessionID":"ses_abc","todos":[{"content":"do the thing","status":"pending","priority":"high"}]}}"#;
-        let pending = fresh_pending();
-        let ev = translate_event(data, "cluihud-1", 14096, &pending).unwrap();
-        match ev {
-            HookEvent::TaskCreated { task_subject, .. } => {
-                assert_eq!(task_subject.as_deref(), Some("do the thing"));
+    fn translate_message_part_updated_completed_tool_emits_post_tool_use() {
+        let raw = r#"{
+            "type":"message.part.updated",
+            "properties":{
+                "sessionID":"ses",
+                "part":{
+                    "type":"tool",
+                    "tool":"Write",
+                    "state":{
+                        "status":"completed",
+                        "input":{"filePath":"/tmp/foo.rs","content":"x"}
+                    }
+                }
             }
-            other => panic!("expected TaskCreated, got {other:?}"),
+        }"#;
+        let ev = translate_event("ses-1", raw).expect("expected Some");
+        match ev {
+            HookEvent::PostToolUse {
+                tool_name,
+                tool_input,
+                ..
+            } => {
+                assert_eq!(tool_name, "Write");
+                assert_eq!(
+                    tool_input.get("filePath").and_then(|v| v.as_str()),
+                    Some("/tmp/foo.rs")
+                );
+            }
+            other => panic!("expected PostToolUse, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn translate_message_part_updated_pending_tool_returns_none() {
+        // Only `completed` should surface — running/pending must not emit.
+        let raw = r#"{
+            "type":"message.part.updated",
+            "properties":{
+                "part":{"type":"tool","tool":"Edit","state":{"status":"running"}}
+            }
+        }"#;
+        assert!(translate_event("ses-1", raw).is_none());
+    }
+
+    #[test]
+    fn translate_message_part_updated_text_part_returns_none() {
+        let raw = r#"{
+            "type":"message.part.updated",
+            "properties":{"part":{"type":"text","content":"hi"}}
+        }"#;
+        assert!(translate_event("ses-1", raw).is_none());
     }
 
     #[test]
     fn translate_unknown_event_returns_none() {
-        let data = r#"{"type":"server.connected","properties":{}}"#;
-        let pending = fresh_pending();
-        assert!(translate_event(data, "cluihud-1", 14096, &pending).is_none());
+        let raw = r#"{"type":"server.connected","properties":{}}"#;
+        assert!(translate_event("ses-1", raw).is_none());
     }
 
     #[test]
-    fn translate_malformed_json_returns_none() {
-        let pending = fresh_pending();
-        assert!(translate_event("not json", "cluihud-1", 14096, &pending).is_none());
+    fn translate_malformed_returns_none() {
+        assert!(translate_event("ses-1", "not json").is_none());
     }
 }

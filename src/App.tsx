@@ -4,7 +4,6 @@ import { Workspace } from "./components/layout/Workspace";
 import { AskUserModal } from "./components/session/AskUserModal";
 import { setupAgentListeners } from "./stores/agent";
 import { setupHookListeners } from "./stores/hooks";
-import { setupOpenCodeChatListeners } from "./stores/opencode";
 import { configAtom } from "./stores/config";
 import { invoke } from "./lib/tauri";
 import type { Config } from "./lib/types";
@@ -58,15 +57,11 @@ export function App() {
   useEffect(() => {
     const unlisteners = setupHookListeners(store);
     const unlistenAgents = setupAgentListeners();
-    const unlistenOpenCode = setupOpenCodeChatListeners();
     return () => {
       unlisteners.then((fns) => {
         for (const fn of fns) fn();
       });
       unlistenAgents.then((fn) => fn());
-      unlistenOpenCode.then((fns) => {
-        for (const fn of fns) fn();
-      });
     };
   }, [store]);
 

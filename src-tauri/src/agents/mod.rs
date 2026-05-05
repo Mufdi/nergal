@@ -99,6 +99,10 @@ bitflags::bitflags! {
         const TASK_LIST             = 1 << 5;
         const SESSION_RESUME        = 1 << 6;
         const ANNOTATIONS_INJECT    = 1 << 7;
+        /// The CLI exposes a built-in interactive picker for "choose a past
+        /// session". CC/Pi/Codex do; OpenCode doesn't. Distinct from
+        /// SESSION_RESUME, which only says the agent can resume by id.
+        const SESSION_PICKER        = 1 << 8;
     }
 }
 
@@ -132,6 +136,9 @@ impl serde::Serialize for AgentCapability {
         if self.contains(Self::ANNOTATIONS_INJECT) {
             names.push("ANNOTATIONS_INJECT");
         }
+        if self.contains(Self::SESSION_PICKER) {
+            names.push("SESSION_PICKER");
+        }
         names.serialize(ser)
     }
 }
@@ -152,6 +159,7 @@ impl<'de> serde::Deserialize<'de> for AgentCapability {
                 "TASK_LIST" => flags |= Self::TASK_LIST,
                 "SESSION_RESUME" => flags |= Self::SESSION_RESUME,
                 "ANNOTATIONS_INJECT" => flags |= Self::ANNOTATIONS_INJECT,
+                "SESSION_PICKER" => flags |= Self::SESSION_PICKER,
                 other => {
                     return Err(serde::de::Error::custom(format!(
                         "unknown agent capability: {other}"
@@ -347,6 +355,15 @@ pub trait AgentAdapter: Send + Sync {
         _decision: PlanDecision,
     ) -> Result<(), AdapterError> {
         Err(AdapterError::NotSupported(AgentCapability::PLAN_REVIEW))
+    }
+
+    /// Agent-internal session id harvested by the adapter (e.g. Pi's session
+    /// UUID extracted from the JSONL header). Returned for the runtime to
+    /// persist on the session row so resume can pass it back via
+    /// `--session <id>` after a cluihud restart. Default returns `None` for
+    /// adapters that don't surface a separate id.
+    fn agent_internal_session_id(&self, _cluihud_session_id: &str) -> Option<String> {
+        None
     }
 
     /// For adapters that declare [`AgentCapability::ASK_USER_BLOCKING`].

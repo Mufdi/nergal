@@ -72,7 +72,7 @@ export const modeMapAtom = atom<Record<string, string>>({});
 export const cwdMapAtom = atom<Record<string, string>>({});
 export const freshSessionsAtom = atom<Set<string>>(new Set<string>());
 export const showCompletedAtom = atom(false);
-export const sessionLaunchModeAtom = atom<Record<string, "new" | "continue" | "resume_pick">>({});
+export const sessionLaunchModeAtom = atom<Record<string, "new" | "continue">>({});
 
 
 const defaultCost: CostSummary = {

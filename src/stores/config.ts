@@ -1,6 +1,8 @@
 import { atom } from "jotai";
 import type { Config } from "@/lib/types";
 
+export const settingsOpenAtom = atom(false);
+
 export const configAtom = atom<Config>({
   claude_binary: "claude",
   plans_directory: "",
@@ -11,4 +13,6 @@ export const configAtom = atom<Config>({
   preferred_editor: "",
   terminal_kitty_keyboard: true,
   scratchpad_path: null,
+  default_agent: null,
+  agent_overrides: {},
 });

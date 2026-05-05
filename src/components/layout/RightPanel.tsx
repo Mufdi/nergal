@@ -3,7 +3,6 @@ import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   activeTabAtom,
   activeTabsAtom,
-  activeTabIdAtom,
   activePanelViewAtom,
   setDirtyAction,
   setTabPathAction,
@@ -30,45 +29,18 @@ import { DagGraph } from "@/components/activity/DagGraph";
 import { openZenModeAtom } from "@/stores/zenMode";
 import { activeSessionFilesAtom } from "@/stores/files";
 import { TabBar } from "@/components/ui/TabBar";
-import {
-  FileText,
-  FileCode,
-  GitCompareArrows,
-  ClipboardList,
-  CheckSquare,
-  GitBranch,
-  ScrollText,
-  FolderOpen,
-} from "lucide-react";
-import {
-  Tooltip,
-  TooltipProvider,
-  TooltipTrigger,
-  TooltipContent,
-} from "@/components/ui/tooltip";
-
-const TAB_ICONS: Record<TabType, typeof FileText> = {
-  plan: FileText,
-  file: FileCode,
-  diff: GitCompareArrows,
-  spec: ClipboardList,
-  tasks: CheckSquare,
-  git: GitBranch,
-  transcript: ScrollText,
-};
+import { FolderOpen } from "lucide-react";
 
 const PICKER_TYPES: TabType[] = ["plan", "file", "diff", "spec"];
 
 interface RightPanelProps {
   collapsed: boolean;
-  onToggle: () => void;
 }
 
-export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
+export function RightPanel({ collapsed }: RightPanelProps) {
   const activeTab = useAtomValue(activeTabAtom);
   const tabs = useAtomValue(activeTabsAtom);
   const activePanelView = useAtomValue(activePanelViewAtom);
-  const setActiveTabId = useSetAtom(activeTabIdAtom);
   const setFocusZone = useSetAtom(focusZoneAtom);
   const setPreviousZone = useSetAtom(previousNonTerminalZoneAtom);
   const [pickerOpen, setPickerOpen] = useAtom(filePickerOpenAtom);
@@ -157,34 +129,7 @@ export function RightPanel({ collapsed, onToggle }: RightPanelProps) {
   }
 
   if (collapsed) {
-    return (
-      <TooltipProvider delay={0}>
-      <div className="flex h-full w-full flex-col items-center gap-0.5 bg-card py-1">
-        {tabs.map((tab) => {
-          const Icon = TAB_ICONS[tab.type];
-          const isActive = tab.id === activeTab?.id;
-          return (
-            <Tooltip key={tab.id}>
-              <TooltipTrigger
-                render={
-                  <button
-                    onClick={() => { setActiveTabId(tab.id); onToggle(); }}
-                    className={`flex size-4 items-center justify-center rounded transition-colors ${
-                      isActive ? "text-foreground bg-secondary" : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-                    }`}
-                    aria-label={tab.label}
-                  />
-                }
-              >
-                <Icon size={12} />
-              </TooltipTrigger>
-              <TooltipContent side="left">{tab.label}</TooltipContent>
-            </Tooltip>
-          );
-        })}
-      </div>
-      </TooltipProvider>
-    );
+    return null;
   }
 
   const hasPicker = activeTab && PICKER_TYPES.includes(activeTab.type);

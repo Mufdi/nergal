@@ -1,7 +1,7 @@
 import { atom } from "jotai";
 import { invoke } from "@/lib/tauri";
 import { appStore } from "./jotaiStore";
-import { configAtom } from "./config";
+import { configAtom, settingsOpenAtom } from "./config";
 import { activeSessionIdAtom, activeWorkspaceAtom, workspacesAtom, freshSessionsAtom, sessionTabIdsAtom } from "./workspace";
 import * as terminalService from "@/components/terminal/terminalService";
 import {
@@ -599,4 +599,5 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
       .catch((err: unknown) => s.set(toastsAtom, { message: "Push failed", description: String(err), type: "error" }));
   }},
   { id: "command-palette", label: "Command Palette", keys: "ctrl+k", category: "navigation", keywords: ["command", "palette", "search", "find"], handler: () => {} },
+  { id: "open-settings", label: "Open Settings", keys: "ctrl+,", category: "navigation", keywords: ["settings", "preferences", "config", "options"], handler: () => store().set(settingsOpenAtom, (prev: boolean) => !prev) },
 ]);

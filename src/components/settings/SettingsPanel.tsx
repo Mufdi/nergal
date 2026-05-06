@@ -416,7 +416,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-3xl w-full [animation:none!important] [&[data-open]]:opacity-100">
+      <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>

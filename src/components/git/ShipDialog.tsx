@@ -324,18 +324,15 @@ export function ShipDialog() {
     });
   }, []);
 
-  // Keyboard nav for the stage picker section. Active when modal is open
-  // AND focus is not in title/body/textarea (those keep their native
-  // typing). Arrow up/down moves cursor, Space toggles, Ctrl+A select-all.
+  // Keyboard nav for the stage picker section. Active only when focus is
+  // inside the picker container itself — keeps Space/arrows from hijacking
+  // footer buttons or the BranchPicker dropdown.
   useEffect(() => {
     if (!state.open || stageEntries.length === 0) return;
     function onStagingKey(e: KeyboardEvent) {
       const target = e.target as HTMLElement | null;
-      const inTextField = target?.tagName === "INPUT"
-        || target?.tagName === "TEXTAREA"
-        || !!target?.closest(".cm-editor")
-        || target?.getAttribute("contenteditable") === "true";
-      if (inTextField) return;
+      const inStagePicker = !!target?.closest("[data-stage-picker]");
+      if (!inStagePicker) return;
 
       if (e.code === "KeyA" && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
         e.preventDefault();
@@ -415,6 +412,35 @@ export function ShipDialog() {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [state.open, shipping, existingPr, armedAction, close, dispatchAction]);
+
+  // BaseUI Dialog's built-in focus trap doesn't always cycle Tab between
+  // our focusables (textarea, branch picker, footer buttons). Override it
+  // with a manual trap: collect all focusables inside the dialog, walk by
+  // index, stopImmediatePropagation to win over BaseUI's capture handler.
+  useEffect(() => {
+    if (!state.open) return;
+    const FOCUSABLE = 'input:not([disabled]):not([aria-disabled="true"]), textarea:not([disabled]):not([aria-disabled="true"]), button:not([disabled]):not([aria-disabled="true"]), [tabindex]:not([tabindex="-1"]):not([disabled]):not([aria-disabled="true"])';
+    function handleTab(e: KeyboardEvent) {
+      if (e.key !== "Tab" || e.ctrlKey || e.altKey || e.metaKey) return;
+      const dialogRoot = document.querySelector<HTMLElement>('[data-slot="dialog-content"]');
+      if (!dialogRoot) return;
+      const target = e.target as HTMLElement | null;
+      if (!target || !dialogRoot.contains(target)) return;
+      const focusables = Array.from(dialogRoot.querySelectorAll<HTMLElement>(FOCUSABLE));
+      if (focusables.length === 0) return;
+      const idx = focusables.indexOf(target);
+      if (idx === -1) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      const nextIdx = e.shiftKey
+        ? (idx === 0 ? focusables.length - 1 : idx - 1)
+        : (idx === focusables.length - 1 ? 0 : idx + 1);
+      focusables[nextIdx].focus();
+    }
+    window.addEventListener("keydown", handleTab, true);
+    return () => window.removeEventListener("keydown", handleTab, true);
+  }, [state.open]);
 
   // Per-action gates. The user's flow assumption: once a commit lands
   // (no more staged/unstaged work), the canonical next step is shipping
@@ -637,7 +663,11 @@ function StagePicker({
   toggle: (path: string) => void;
 }) {
   return (
-    <div className="rounded border border-border/50 bg-background/30 p-2">
+    <div
+      tabIndex={0}
+      data-stage-picker
+      className="rounded border border-border/50 bg-background/30 p-2 outline-none focus-visible:ring-2 focus-visible:ring-orange-500/40"
+    >
       <div className="flex items-center gap-2">
         <FileDiff size={11} className="text-muted-foreground" />
         <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
@@ -724,9 +754,16 @@ function BranchPicker({
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
 
+  // Initialize cursor only when the dropdown opens. Putting cursor in the
+  // listener effect's deps caused an infinite reset loop: arrow → setCursor
+  // → re-run effect → setCursor(initial) → arrows looked dead.
   useEffect(() => {
     if (!open) return;
     setCursor(Math.max(0, branches.indexOf(value)));
+  }, [open, branches, value]);
+
+  useEffect(() => {
+    if (!open) return;
     function onDoc(e: MouseEvent) {
       if (!wrapperRef.current?.contains(e.target as Node)) setOpen(false);
     }
@@ -765,7 +802,7 @@ function BranchPicker({
       document.removeEventListener("mousedown", onDoc);
       document.removeEventListener("keydown", onKey, true);
     };
-  }, [open, branches, value, cursor, onChange]);
+  }, [open, branches, cursor, onChange]);
 
   if (branches.length === 0) {
     return (

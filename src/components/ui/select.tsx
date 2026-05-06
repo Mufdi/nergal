@@ -71,7 +71,7 @@ export function Select({
                   value={opt.value}
                   className={cn(
                     "relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 pr-7 text-sm outline-none",
-                    "data-highlighted:bg-secondary data-highlighted:text-foreground",
+                    "data-highlighted:bg-accent data-highlighted:text-accent-foreground",
                     "data-selected:font-medium",
                   )}
                 >

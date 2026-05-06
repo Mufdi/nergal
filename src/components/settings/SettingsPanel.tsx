@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useAtom, useAtomValue } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { configAtom } from "@/stores/config";
-import { availableAgentsAtom } from "@/stores/agent";
+import { availableAgentsAtom, type AgentDetection } from "@/stores/agent";
 import { invoke } from "@/lib/tauri";
-import type { Config, PathValidation } from "@/lib/types";
+import type { AvailableAgent, Config, PathValidation } from "@/lib/types";
 import {
   Dialog,
   DialogContent,
@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
-import { CheckCircle2, AlertTriangle, XCircle, Info, FolderTree, Bot, Pencil, Palette, Terminal, NotebookText } from "lucide-react";
+import { CheckCircle2, AlertTriangle, XCircle, Info, FolderTree, Bot, Pencil, Palette, Terminal, NotebookText, RefreshCw } from "lucide-react";
 import { scratchpadPathAtom, reloadTabsFromBackend } from "@/stores/scratchpad";
 
 type PathKind = "dir" | "file" | "executable";
@@ -203,14 +203,20 @@ function ScratchpadPathField() {
   );
 }
 
-function DetectedAgentsList() {
+function DetectedAgentsList({ onRescan, rescanning }: { onRescan: () => void; rescanning: boolean }) {
   const agents = useAtomValue(availableAgentsAtom);
   return (
     <div className="grid gap-2">
-      <Label>Detected Agents</Label>
+      <div className="flex items-center justify-between">
+        <Label>Detected Agents</Label>
+        <Button variant="ghost" size="xs" onClick={onRescan} disabled={rescanning}>
+          <RefreshCw size={12} className={rescanning ? "animate-spin" : ""} />
+          {rescanning ? "Scanning…" : "Rescan"}
+        </Button>
+      </div>
       {agents.length === 0 ? (
         <p className="text-xs text-muted-foreground">
-          No detection results yet. Run <code>cluihud rescan-agents</code> to refresh.
+          {rescanning ? "Scanning filesystem…" : "No agents detected. Click Rescan to retry."}
         </p>
       ) : (
         <ul className="space-y-1 text-xs">
@@ -280,20 +286,48 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
   const [editors, setEditors] = useState<EditorInfo[]>([]);
   const [activeSection, setActiveSection] = useState<SectionId>("paths");
   const agents = useAtomValue(availableAgentsAtom);
+  const setAvailableAgents = useSetAtom(availableAgentsAtom);
+  const [rescanning, setRescanning] = useState(false);
+  const navRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const footerRef = useRef<HTMLDivElement>(null);
+
+  const FOCUSABLE_SELECTOR =
+    'input:not([disabled]):not([aria-disabled="true"]), [role="combobox"]:not([disabled]):not([aria-disabled="true"]), textarea:not([disabled]):not([aria-disabled="true"]), button:not([disabled]):not([aria-disabled="true"])';
+
+  const rescanAgents = useCallback(async () => {
+    setRescanning(true);
+    const startedAt = Date.now();
+    try {
+      const result = await invoke<AvailableAgent[]>("list_available_agents");
+      const detections: AgentDetection[] = result.map((a) => ({
+        id: a.id,
+        installed: a.installed,
+        binary_path: a.binary_path,
+        config_path: a.config_path,
+        version: a.version,
+      }));
+      setAvailableAgents(detections);
+    } catch (err) {
+      console.error("[settings] list_available_agents failed:", err);
+    } finally {
+      const elapsed = Date.now() - startedAt;
+      if (elapsed < 450) await new Promise((r) => setTimeout(r, 450 - elapsed));
+      setRescanning(false);
+    }
+  }, [setAvailableAgents]);
 
   useEffect(() => {
     if (open) {
       invoke<EditorInfo[]>("detect_editors").then(setEditors).catch(() => {});
+      rescanAgents();
     }
-  }, [open]);
+  }, [open, rescanAgents]);
 
   useEffect(() => {
     if (!open) return;
     function handleKeyDown(e: KeyboardEvent) {
-      const target = e.target as HTMLElement | null;
-      const isEditing = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.tagName === "SELECT";
-      if (isEditing) return;
+      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
       const idx = parseInt(e.key, 10);
       if (!Number.isNaN(idx) && idx >= 1 && idx <= SECTIONS.length) {
         e.preventDefault();
@@ -305,16 +339,60 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
     return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [open]);
 
-  // When section changes, focus the first input/select in that section so Tab
-  // navigates the form fields directly. Without this, focus stays wherever the
-  // user clicked (often a nav button) and the orange focus-ring sticks there.
+  // Focus the active nav button (not the first input) so Alt+N stays usable
+  // and Tab walks into the form fields naturally.
   useEffect(() => {
-    if (!open || !contentRef.current) return;
-    const target = contentRef.current.querySelector<HTMLElement>(
-      "input:not([disabled]), [role='combobox'], textarea, button",
-    );
-    target?.focus({ preventScroll: true });
+    if (!open || !navRef.current) return;
+    const activeBtn = navRef.current.querySelector<HTMLButtonElement>('button[data-active="true"]');
+    activeBtn?.focus({ preventScroll: true });
   }, [open, activeSection]);
+
+  // BaseUI Dialog runs a focus trap in capture phase that breaks the nav→content
+  // hand-off and the loop back from the footer. We replace it with a manual,
+  // ordered trap (active nav → content → footer → loop). stopImmediatePropagation
+  // wins over BaseUI; events outside our managed regions (close button, select
+  // popup portal) fall through to default browser/BaseUI handling.
+  useEffect(() => {
+    if (!open) return;
+    function getOrderedFocusables(): HTMLElement[] {
+      const list: HTMLElement[] = [];
+      const navActive = navRef.current?.querySelector<HTMLElement>('button[data-active="true"]');
+      if (navActive) list.push(navActive);
+      if (contentRef.current) {
+        list.push(...Array.from(contentRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)));
+      }
+      if (footerRef.current) {
+        list.push(...Array.from(footerRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)));
+      }
+      return list;
+    }
+    function handleTab(e: KeyboardEvent) {
+      if (e.key !== "Tab" || e.ctrlKey || e.altKey || e.metaKey) return;
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+
+      const inManaged =
+        navRef.current?.contains(target) ||
+        contentRef.current?.contains(target) ||
+        footerRef.current?.contains(target);
+      if (!inManaged) return;
+
+      const focusables = getOrderedFocusables();
+      const idx = focusables.indexOf(target);
+      if (idx === -1) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+
+      const nextIdx = e.shiftKey
+        ? (idx === 0 ? focusables.length - 1 : idx - 1)
+        : (idx === focusables.length - 1 ? 0 : idx + 1);
+      focusables[nextIdx].focus();
+    }
+    window.addEventListener("keydown", handleTab, true);
+    return () => window.removeEventListener("keydown", handleTab, true);
+  }, [open]);
 
   function handleTextChange(key: StringConfigKey, value: string) {
     setConfig((prev: Config) => ({ ...prev, [key]: value }));
@@ -338,16 +416,16 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-3xl w-full">
+      <DialogContent className="sm:max-w-3xl w-full [animation:none!important] [&[data-open]]:opacity-100">
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
-            Configure paths and preferences. Press <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">1</kbd>–<kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">{SECTIONS.length}</kbd> to jump between sections, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+,</kbd> to toggle.
+            Configure paths and preferences. Press <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Alt+1</kbd>–<kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Alt+{SECTIONS.length}</kbd> to jump between sections, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Tab</kbd> to enter the form, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+,</kbd> to toggle.
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid grid-cols-[180px_1fr] gap-5 min-h-[420px]">
-          <nav className="flex flex-col gap-0.5 border-r border-border/40 pr-2">
+          <nav ref={navRef} className="flex flex-col gap-0.5 border-r border-border/40 pr-2">
             {SECTIONS.map((section, idx) => {
               const Icon = section.icon;
               const isActive = section.id === activeSection;
@@ -355,9 +433,10 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
                 <button
                   key={section.id}
                   type="button"
-                  tabIndex={-1}
+                  tabIndex={isActive ? 0 : -1}
+                  data-active={isActive}
                   onClick={() => setActiveSection(section.id)}
-                  className={`flex items-center justify-between rounded-md px-2 py-1.5 text-sm outline-none focus:outline-none focus-visible:outline-none transition-colors ${
+                  className={`flex items-center justify-between rounded-md px-2 py-1.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring ${
                     isActive
                       ? "bg-secondary text-foreground"
                       : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
@@ -367,7 +446,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
                     <Icon size={14} className="shrink-0" />
                     <span>{section.label}</span>
                   </span>
-                  <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border border-border/40 text-muted-foreground">{idx + 1}</kbd>
+                  <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border border-border/40 text-muted-foreground">⌥{idx + 1}</kbd>
                 </button>
               );
             })}
@@ -448,7 +527,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
                     Agent used when creating new sessions. "Auto" falls back to the registry priority list (CC &gt; Codex &gt; OpenCode &gt; Pi).
                   </p>
                 </div>
-                <DetectedAgentsList />
+                <DetectedAgentsList onRescan={rescanAgents} rescanning={rescanning} />
               </div>
             )}
 
@@ -511,12 +590,14 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button onClick={handleSave}>
-            Save
-          </Button>
+          <div ref={footerRef} className="contents">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSave}>
+              Save
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

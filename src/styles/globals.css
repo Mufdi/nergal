@@ -2,6 +2,10 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+@import "@fontsource-variable/source-serif-4";
+@import "@fontsource-variable/space-grotesk";
 
 /* Canonical Tailwind v4 dark variant bound to data-theme attribute.
    Matches both the element itself (when it carries data-theme="v1-dark")
@@ -134,6 +138,77 @@
      read as a dark slab dropped onto a white workspace. */
   --terminal-surface: #ffffff;
   --terminal-foreground: #18181b;
+}
+
+/* ── Theme: v3 Crystal — cool dark blue with cyan accent. Inter for
+   chrome (technical/clean feel), Source Serif for markdown (long-form
+   reading), JetBrains Mono for terminal. */
+:root[data-theme="v3-crystal"] {
+  --background: #0c0e16;
+  --foreground: #e2e8f0;
+  --card: #050813;
+  --card-foreground: #e2e8f0;
+  --popover: #1a2030;
+  --popover-foreground: #e2e8f0;
+  --primary: #06b6d4;
+  --primary-foreground: #050813;
+  --secondary: #1a2030;
+  --secondary-foreground: #cbd5e1;
+  --muted: #1a2030;
+  --muted-foreground: #94a3b8;
+  --accent: #06b6d4;
+  --accent-foreground: #050813;
+  --destructive: #f43f5e;
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.12);
+  --ring: #06b6d4;
+  --sidebar: #0c0e16;
+  --sidebar-foreground: #e2e8f0;
+  --sidebar-primary: #06b6d4;
+  --sidebar-primary-foreground: #050813;
+  --sidebar-accent: #1a2030;
+  --sidebar-accent-foreground: #e2e8f0;
+  --sidebar-border: rgba(255, 255, 255, 0.06);
+  --sidebar-ring: #06b6d4;
+
+  --terminal-surface: #050813;
+  --terminal-foreground: #e2e8f0;
+}
+
+/* ── Theme: v4 Brutalist — high-contrast black/yellow with heavier
+   borders. Space Grotesk for chrome AND markdown (geometric grotesk
+   pulls the whole UI toward poster typography), JetBrains Mono for
+   terminal. */
+:root[data-theme="v4-brutalist"] {
+  --background: #1a1a1a;
+  --foreground: #ffffff;
+  --card: #0a0a0a;
+  --card-foreground: #ffffff;
+  --popover: #1a1a1a;
+  --popover-foreground: #ffffff;
+  --primary: #facc15;
+  --primary-foreground: #0a0a0a;
+  --secondary: #2a2a2a;
+  --secondary-foreground: #d4d4d4;
+  --muted: #2a2a2a;
+  --muted-foreground: #888888;
+  --accent: #facc15;
+  --accent-foreground: #0a0a0b;
+  --destructive: #ef4444;
+  --border: rgba(255, 255, 255, 0.15);
+  --input: rgba(255, 255, 255, 0.20);
+  --ring: #facc15;
+  --sidebar: #1a1a1a;
+  --sidebar-foreground: #ffffff;
+  --sidebar-primary: #facc15;
+  --sidebar-primary-foreground: #0a0a0a;
+  --sidebar-accent: #2a2a2a;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: rgba(255, 255, 255, 0.12);
+  --sidebar-ring: #facc15;
+
+  --terminal-surface: #0a0a0a;
+  --terminal-foreground: #ffffff;
 }
 
 /* ── Theme: v2 Editorial — warm-dark surfaces with violet accent and

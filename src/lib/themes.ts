@@ -28,8 +28,13 @@ export interface Theme {
 }
 
 const FONT_GEIST_SANS = '"Geist Variable", "Inter", system-ui, sans-serif';
+const FONT_INTER = '"Inter Variable", "Inter", system-ui, sans-serif';
+const FONT_SPACE_GROTESK =
+  '"Space Grotesk Variable", "Space Grotesk", system-ui, sans-serif';
 const FONT_JETBRAINS_MONO =
-  "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace";
+  '"JetBrains Mono Variable", "JetBrains Mono", "Fira Code", monospace';
+const FONT_SOURCE_SERIF =
+  '"Source Serif 4 Variable", "Source Serif Pro", Georgia, serif';
 const FONT_SYSTEM_SERIF = 'Georgia, "Times New Roman", "Iowan Old Style", serif';
 const FONT_SYSTEM_SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
 
@@ -87,6 +92,42 @@ export const THEMES: Theme[] = [
       interface: FONT_SYSTEM_SANS,
       terminal: FONT_JETBRAINS_MONO,
       markdown: FONT_SYSTEM_SERIF,
+    },
+  },
+  {
+    id: "v3-crystal",
+    label: "v3 Crystal",
+    preview: {
+      background: "#0c0e16",
+      card: "#050813",
+      secondary: "#1a2030",
+      foreground: "#e2e8f0",
+      mutedForeground: "#94a3b8",
+      border: "rgba(255,255,255,0.08)",
+      primary: "#06b6d4",
+    },
+    fonts: {
+      interface: FONT_INTER,
+      terminal: FONT_JETBRAINS_MONO,
+      markdown: FONT_SOURCE_SERIF,
+    },
+  },
+  {
+    id: "v4-brutalist",
+    label: "v4 Brutalist",
+    preview: {
+      background: "#1a1a1a",
+      card: "#0a0a0a",
+      secondary: "#2a2a2a",
+      foreground: "#ffffff",
+      mutedForeground: "#888888",
+      border: "rgba(255,255,255,0.15)",
+      primary: "#facc15",
+    },
+    fonts: {
+      interface: FONT_SPACE_GROTESK,
+      terminal: FONT_JETBRAINS_MONO,
+      markdown: FONT_SPACE_GROTESK,
     },
   },
 ];

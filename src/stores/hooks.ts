@@ -1,5 +1,5 @@
 import { type getDefaultStore } from "jotai";
-import { listen } from "@/lib/tauri";
+import { invoke, listen } from "@/lib/tauri";
 import type { HookEvent, CostSummary, Task, ActivityEntry } from "@/lib/types";
 import { costMapAtom, modeMapAtom, cwdMapAtom, statusLineMapAtom, activeSessionIdAtom, type StatusLineData } from "./workspace";
 import { taskMapAtom } from "./tasks";
@@ -10,6 +10,7 @@ import { openTabAction, expandRightPanelAtom, activePanelViewAtom } from "./righ
 import { refreshGitInfoAtom } from "./git";
 import { addActivityAtom } from "./activity";
 import { toastsAtom } from "./toast";
+import { localhostPortsAtom } from "./browser";
 import { notify } from "@/lib/notifications";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
@@ -208,6 +209,25 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
       notify("Permission denied", `${tool}: ${reason}`);
     }),
   );
+
+  // Live preview browser: localhost dev-server ports detected by the Rust
+  // scanner. Hysteresis is applied backend-side, so here we just mirror the
+  // active set into the atom that the StatusBar chips read.
+  unlisteners.push(
+    await listen<number[]>("localhost:ports-changed", (payload) => {
+      set(localhostPortsAtom, payload ?? []);
+    }),
+  );
+
+  // Cover startup race: the scanner's first emit fires ~4ms after backend
+  // boot, often before this listener is registered, and Tauri events do
+  // not buffer. Query current snapshot once, then deltas keep us in sync.
+  try {
+    const initial = await invoke<number[]>("browser_get_listening_ports");
+    set(localhostPortsAtom, initial);
+  } catch {
+    /* tolerate failure — scanner deltas will eventually populate the atom */
+  }
 
   return unlisteners;
 }

@@ -1,0 +1,54 @@
+{
+  "tier": "L",
+  "tier_source": "user-stated",
+  "rigor_applied": {
+    "discovery_invoked": true,
+    "iprev_rounds": 3,
+    "iprev_evaluator": "claude",
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": "auto-on-capabilities-diff",
+    "gates_phases_run": ["compile", "test", "lint", "security", "deps", "scope"],
+    "per_phase_models": {
+      "design": "claude-opus-4-7",
+      "implementation": "claude-sonnet-4-6",
+      "exploration": "claude-haiku-4-5"
+    }
+  },
+  "spec_target": "live-preview-browser",
+  "interview_answers": {
+    "webview_strategy": "Tauri secondary WebView (recommended)",
+    "scope_mvp": "Core dual-mode + auto-detection de localhost ports + documenta follow-up para design mode + reload-on-save",
+    "spike": "Yes, 20-30min spike for Tauri secondary WebView in Linux WebKitGTK",
+    "reviewers": "Single-sequential (default L)"
+  },
+  "events": [
+    {
+      "ts": "2026-05-06",
+      "type": "discovery-invoked",
+      "reason": "User asked for 'propuesta contundente' — full chain: discovery + iprev 3 rounds + reviewers"
+    },
+    {
+      "ts": "2026-05-06",
+      "type": "iprev-round-1",
+      "verdict": "REVISE",
+      "findings": "12 (2 critical, 3 high, 4 medium, 3 low)",
+      "areas": "capabilities inconsistency, dual-state history, URL scheme validation, session-switch wiring, fallback dead end, bbox scroll sync, double-mount guard, port flap debounce, missing tests, Cmd+L scope, spike cleanup, devtools gating"
+    },
+    {
+      "ts": "2026-05-06",
+      "type": "iprev-round-2",
+      "verdict": "APPROVED",
+      "polish_absorbed": "tokio::sync::Mutex spec + dock placeholder during floating mode"
+    },
+    {
+      "ts": "2026-05-06",
+      "type": "phase-0-spike-pivot",
+      "verdict": "PARTIAL",
+      "decision": "pivot to iframe-in-React-panel",
+      "reason": "Visual validation revealed two BLOQUEANTE issues with Tauri secondary WebView in WebKitGTK: (1) focus capture broke ALL cluihud shortcuts (Cmd+K, alt+nav, ctrl+shift+0); (2) z-order placed webview above React modals/palette/dropdowns. iframe approach avoids both natively.",
+      "scope_change": "REDUCTION — files_estimate 11 → 9, risk_tier medium → low, removed unstable feature dependency, removed secondary webview backend, removed bbox sync, removed design-mode follow-up entirely",
+      "iprev_re_run": "skipped — pivot is scope reduction with cleaner architecture; user reviewed in real-time and approved"
+    }
+  ],
+  "interview_ts": "2026-05-06"
+}

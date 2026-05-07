@@ -86,7 +86,7 @@ export function TerminalManager() {
     >
       {(!hasAnySessions || !activeSessionId) && (
         <div className="flex h-full items-center justify-center">
-          <span className="text-[11px] text-muted-foreground">Select or create a session</span>
+          <span className="text-[11px] text-terminal-foreground/40">Select or create a session</span>
         </div>
       )}
     </div>

@@ -91,7 +91,7 @@ export function DagGraph() {
           ),
         },
         style: {
-          background: "#1c1c1e",
+          background: "var(--card)",
           border: `1px solid ${color}40`,
           borderRadius: "6px",
           padding: "6px 10px",

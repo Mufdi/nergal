@@ -184,7 +184,9 @@ export function FloatingPanel({
 
   if (!mounted) return null;
 
-  const bg = `rgba(10, 10, 11, ${opacity})`;
+  // color-mix lets the floating card track the active theme's `--card` token
+  // while preserving the user-controlled opacity slider.
+  const bg = `color-mix(in srgb, var(--card) ${opacity * 100}%, transparent)`;
 
   return (
     // Outer wrapper covers the viewport but is non-interactive — only the
@@ -198,7 +200,7 @@ export function FloatingPanel({
       <div
         ref={cardRef}
         data-state={visible ? "open" : "closed"}
-        className="pointer-events-auto absolute flex flex-col overflow-hidden rounded-lg border border-border shadow-2xl backdrop-saturate-150 transition-[opacity,transform] duration-100 ease-out will-change-[opacity,transform] data-[state=closed]:opacity-0 data-[state=closed]:scale-[0.97] data-[state=open]:opacity-100 data-[state=open]:scale-100"
+        className="pointer-events-auto absolute flex flex-col overflow-hidden rounded-lg border border-border shadow-lg transition-[opacity,transform] duration-100 ease-out data-[state=closed]:opacity-0 data-[state=closed]:scale-[0.97] data-[state=open]:opacity-100 data-[state=open]:scale-100"
         style={{
           left: effective.x,
           top: effective.y,
@@ -222,7 +224,7 @@ export function FloatingPanel({
               type="button"
               aria-label="Close"
               onClick={onClose}
-              className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-card/50 hover:text-foreground transition-colors"
+              className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground transition-colors"
             >
               <X size={12} />
             </button>

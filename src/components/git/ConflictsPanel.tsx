@@ -3,11 +3,11 @@ import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { EditorView, Decoration, WidgetType, type DecorationSet } from "@codemirror/view";
 import { EditorState, Compartment, RangeSetBuilder } from "@codemirror/state";
 import { basicSetup } from "codemirror";
-import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark";
 import {
   syntaxHighlighting,
   codeFolding,
 } from "@codemirror/language";
+import { currentHighlightStyle, useThemeName } from "@/lib/codemirrorHighlight";
 import { javascript } from "@codemirror/lang-javascript";
 import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
@@ -89,19 +89,19 @@ function getLanguageExtension(filePath: string) {
 }
 
 const cmTheme = EditorView.theme({
-  "&": { backgroundColor: "#0a0a0b", color: "#ededef", height: "100%", fontSize: "11px" },
+  "&": { backgroundColor: "var(--card)", color: "var(--foreground)", height: "100%", fontSize: "11px" },
   ".cm-content": { caretColor: "#f97316", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "#f97316" },
   "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
     backgroundColor: "rgba(249, 115, 22, 0.2)",
   },
-  ".cm-activeLine": { backgroundColor: "rgba(255, 255, 255, 0.03)" },
+  ".cm-activeLine": { backgroundColor: "var(--cm-active-line)" },
   ".cm-gutters": {
-    backgroundColor: "#0a0a0b",
-    color: "#5c5c5f",
-    borderRight: "1px solid rgba(255, 255, 255, 0.08)",
+    backgroundColor: "var(--card)",
+    color: "var(--muted-foreground)",
+    borderRight: "1px solid var(--border)",
   },
-  ".cm-activeLineGutter": { backgroundColor: "rgba(255, 255, 255, 0.05)" },
+  ".cm-activeLineGutter": { backgroundColor: "var(--cm-active-line-gutter)" },
   ".cm-lineNumbers .cm-gutterElement": { padding: "0 6px 0 4px" },
   ".cm-scroller": { overflow: "auto", fontFamily: "inherit" },
   // IntelliJ-style conflict line tints. Cool blue (ours) vs warm rose (theirs)
@@ -138,7 +138,7 @@ const cmTheme = EditorView.theme({
   ".cluihud-accept-bar .btn-theirs:hover": { backgroundColor: "rgba(244, 63, 94, 0.40)" },
   ".cluihud-accept-bar .btn-both": { backgroundColor: "rgba(34, 197, 94, 0.20)", color: "#86efac" },
   ".cluihud-accept-bar .btn-both:hover": { backgroundColor: "rgba(34, 197, 94, 0.35)" },
-}, { dark: true });
+});
 
 /// Block widget rendered above each `<<<<<<<` line in the merged pane. The
 /// three buttons fire `onAccept(regionIdx, choice)` so the user can resolve
@@ -1165,11 +1165,11 @@ function ConflictView({
       {pickerOpen && files.length > 0 && (
         <>
           <div
-            className="absolute inset-0 z-30 backdrop-blur-sm bg-black/30"
+            className="absolute inset-0 z-30 bg-scrim cluihud-blur-sm"
             onClick={() => setPickerOpen(false)}
           />
           <div className="absolute inset-0 z-40 flex items-start justify-center px-6 pt-12 pointer-events-none">
-            <div className="pointer-events-auto w-full max-w-md max-h-[60vh] overflow-y-auto rounded border border-border bg-card shadow-2xl">
+            <div className="pointer-events-auto w-full max-w-md max-h-[60vh] overflow-y-auto rounded border border-border bg-card shadow-lg">
               <div className="sticky top-0 flex items-center justify-between border-b border-border/50 bg-card px-3 py-1.5">
                 <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                   Conflicted files ({files.length})
@@ -1394,8 +1394,13 @@ function CodePane({ title, accent, value, onChange, readOnly, hint, filePath, wr
   // baseline once the user starts resolving regions.
   const onAcceptRef = useRef(onAccept);
   onAcceptRef.current = onAccept;
+  const theme = useThemeName();
 
-  // Initial mount: create the EditorView once per (filePath, readOnly, wrap).
+  // Initial mount: create the EditorView once per (filePath, readOnly, wrap,
+  // theme). The theme dep forces a full rebuild when v1-light <-> v1-dark
+  // toggles so the new highlight style takes effect — `syntaxHighlighting`
+  // is baked into the initial extensions and a Compartment-swap would be
+  // overkill for a manual user toggle.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -1405,7 +1410,7 @@ function CodePane({ title, accent, value, onChange, readOnly, hint, filePath, wr
     const extensions = [
       basicSetup,
       cmTheme,
-      syntaxHighlighting(oneDarkHighlightStyle),
+      syntaxHighlighting(currentHighlightStyle()),
       getLanguageExtension(filePath),
       codeFolding(),
       editableCompartment.current.of(EditorView.editable.of(!readOnly)),
@@ -1434,7 +1439,7 @@ function CodePane({ title, accent, value, onChange, readOnly, hint, filePath, wr
       container.replaceChildren();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filePath, readOnly, wrap]);
+  }, [filePath, readOnly, wrap, theme]);
 
   // Sync external value changes into the editor without losing cursor.
   useEffect(() => {

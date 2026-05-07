@@ -152,7 +152,7 @@ export function GitFullView() {
   if (conflictsZen && sessionId) {
     return (
       <div className="fixed inset-0 z-40 flex overflow-hidden" role="dialog" aria-label="Conflict resolution full view">
-        <div className="absolute inset-0 bg-background/60 backdrop-blur-md" onClick={closeAll} />
+        <div className="absolute inset-0 bg-background/60 cluihud-blur-md" onClick={closeAll} />
         <div className="relative z-10 flex min-w-0 flex-1 flex-col m-3 overflow-hidden rounded-lg bg-card/95 border border-border">
           <ConflictsPanel sessionId={sessionId} inZen onToggleZen={closeAll} />
         </div>
@@ -163,7 +163,7 @@ export function GitFullView() {
   if (prZen) {
     return (
       <div className="fixed inset-0 z-40 flex overflow-hidden" role="dialog" aria-label={`PR #${prZen.prNumber} full view`}>
-        <div className="absolute inset-0 bg-background/60 backdrop-blur-md" onClick={closeAll} />
+        <div className="absolute inset-0 bg-background/60 cluihud-blur-md" onClick={closeAll} />
 
         {/* Viewer */}
         <div
@@ -200,7 +200,7 @@ export function GitFullView() {
     >
       {/* Blur backdrop */}
       <div
-        className="absolute inset-0 bg-background/60 backdrop-blur-md"
+        className="absolute inset-0 bg-background/60 cluihud-blur-md"
         onClick={close}
       />
 

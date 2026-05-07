@@ -20,7 +20,7 @@ import { appStore } from "@/stores/jotaiStore";
 import { toastsAtom } from "@/stores/toast";
 
 import { FontAtlas, measureFont, type FontMetrics } from "./fontAtlas";
-import { TERM_FONT, TERM_THEME, rgbaToCss } from "./theme";
+import { TERM_FONT, TERM_THEME, refreshTermTheme, rgbaToCss } from "./theme";
 
 interface CellCoord {
   col: number;
@@ -73,6 +73,28 @@ const entries = new Map<string, Entry>();
 const pending = new Set<string>();
 let hostElement: HTMLDivElement | null = null;
 let activeId: string | null = null;
+
+// Prime TERM_THEME from CSS tokens before the first session can paint.
+// The atlas keys glyphs by `(ch, fg, …)` so a later color flip lazily
+// rasterizes new variants — no manual cache invalidation needed.
+refreshTermTheme();
+
+if (typeof document !== "undefined") {
+  const observer = new MutationObserver(() => {
+    refreshTermTheme();
+    for (const entry of entries.values()) {
+      // The container's inline `background` was set imperatively at create
+      // time; repoint it so the area outside the canvas (during fit() races)
+      // matches the new surface.
+      entry.container.style.background = TERM_THEME.background;
+      paintAll(entry);
+    }
+  });
+  observer.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["data-theme"],
+  });
+}
 
 // ── Public API ──
 

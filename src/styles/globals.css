@@ -3,7 +3,11 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 
-@custom-variant dark (&:is(.dark *));
+/* Canonical Tailwind v4 dark variant bound to data-theme attribute.
+   Matches both the element itself (when it carries data-theme="v1-dark")
+   and any descendant — same shape as the `[data-theme=dark], [data-theme=dark] *`
+   pattern shown in the Tailwind v4 docs. */
+@custom-variant dark (&:where([data-theme="v1-dark"], [data-theme="v1-dark"] *));
 
 /* ── Linear dark + factory.ai orange + JetBrains Air islands ── */
 :root {
@@ -45,40 +49,85 @@
   --sileo-state-warning: oklch(0.75 0.18 60);
   --sileo-state-info: oklch(0.7 0.15 50);
   --sileo-state-action: oklch(0.7 0.18 50);
+
+  /* Terminal surfaces — track the active theme so the canvas matches the rest
+     of the workspace. Tooltips stay dark across all themes for legibility
+     (matches Linear/Cursor/Warp convention). */
+  --terminal-surface: #0a0a0b;
+  --terminal-foreground: #ededef;
+  --tooltip-background: #1c1c1e;
+  --tooltip-foreground: #ededef;
+  --tooltip-border: rgba(255, 255, 255, 0.10);
+
+  /* Modal/picker scrim — theme-aware so light mode doesn't drown in black. */
+  --scrim: rgba(0, 0, 0, 0.5);
+
+  /* Scrollbar thumb — bumped above --border so the 6px thumb stays visible
+     even after Tailwind opacity modifiers don't apply (raw CSS rule). */
+  --scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.20);
+
+  /* CodeMirror surface tints — separate tokens because EditorView.theme()
+     captures values at theme-build time; using these via var() keeps the
+     active-line/gutter tints theme-reactive without rebuilding the editor. */
+  --cm-active-line: rgba(255, 255, 255, 0.03);
+  --cm-active-line-gutter: rgba(255, 255, 255, 0.05);
 }
 
-.dark {
-  --background: #141415;
-  --foreground: #ededef;
-  --card: #0a0a0b;
-  --card-foreground: #ededef;
-  --popover: #1c1c1e;
-  --popover-foreground: #ededef;
-  --primary: #f97316;
-  --primary-foreground: #0a0a0b;
-  --secondary: #1c1c1e;
-  --secondary-foreground: #a0a0a3;
-  --muted: #1c1c1e;
-  --muted-foreground: #5c5c5f;
-  --accent: #f97316;
-  --accent-foreground: #0a0a0b;
-  --destructive: #ef4444;
-  --border: rgba(255, 255, 255, 0.08);
-  --input: rgba(255, 255, 255, 0.12);
-  --ring: #f97316;
-  --chart-1: #f97316;
-  --chart-2: #fb923c;
-  --chart-3: #3b82f6;
-  --chart-4: #22c55e;
-  --chart-5: #eab308;
-  --sidebar: #141415;
-  --sidebar-foreground: #ededef;
-  --sidebar-primary: #f97316;
-  --sidebar-primary-foreground: #0a0a0b;
-  --sidebar-accent: #1c1c1e;
-  --sidebar-accent-foreground: #ededef;
-  --sidebar-border: rgba(255, 255, 255, 0.06);
-  --sidebar-ring: #f97316;
+/* The legacy `.dark` class block was removed (2026-05-07). `:root` defines
+   the dark default; `:root[data-theme="v1-light"]` overrides for light.
+   data-theme is now the only source of truth — see src/main.tsx. */
+
+/* ── Theme: v1 Light — same identity, inverted surface tiers ──
+   Tier strategy mirrors the dark theme: canvas (background) is one step
+   darker than islands (card) so panels stand out as floating surfaces.
+   In light mode that means: background = soft gray, card = pure white,
+   secondary = visible hover gray. */
+:root[data-theme="v1-light"] {
+  --background: #ebebed;
+  --foreground: #18181b;
+  --card: #ffffff;
+  --card-foreground: #18181b;
+  --popover: #ffffff;
+  --popover-foreground: #18181b;
+  --primary: #ea580c;
+  --primary-foreground: #ffffff;
+  --secondary: #e4e4e7;
+  --secondary-foreground: #3f3f46;
+  --muted: #f4f4f5;
+  --muted-foreground: #52525b;
+  --accent: #ea580c;
+  --accent-foreground: #ffffff;
+  --destructive: #dc2626;
+  --border: rgba(0, 0, 0, 0.14);
+  --input: rgba(0, 0, 0, 0.22);
+  --ring: #ea580c;
+  --sidebar: #ebebed;
+  --sidebar-foreground: #18181b;
+  --sidebar-primary: #ea580c;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e4e4e7;
+  --sidebar-accent-foreground: #18181b;
+  --sidebar-border: rgba(0, 0, 0, 0.08);
+  --sidebar-ring: #ea580c;
+
+  /* Light-theme scrim — softer than dark to avoid an oppressive black wash
+     over a white canvas while still establishing focus on the modal. */
+  --scrim: rgba(0, 0, 0, 0.15);
+
+  /* Light scrollbar — the 6px thumb needs more body than --border can give
+     since Tailwind opacity modifiers don't apply to raw CSS rules. */
+  --scrollbar-thumb: rgba(0, 0, 0, 0.22);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.34);
+
+  /* CodeMirror tints flipped to dark-on-light. */
+  --cm-active-line: rgba(0, 0, 0, 0.04);
+  --cm-active-line-gutter: rgba(0, 0, 0, 0.06);
+
+  /* Terminal canvas tracks the card surface in light mode so it doesn't
+     read as a dark slab dropped onto a white workspace. */
+  --terminal-surface: #ffffff;
+  --terminal-foreground: #18181b;
 }
 
 @theme inline {
@@ -123,6 +172,16 @@
   --color-info: #3b82f6;
   --color-island: var(--card);
 
+  /* Theme-aware semantic surfaces — declared as proper Tailwind tokens so
+     `bg-terminal-surface`, `bg-scrim`, etc. generate real utility classes
+     (the `bg-[var(--…)]` arbitrary syntax doesn't always emit CSS in JIT). */
+  --color-terminal-surface: var(--terminal-surface);
+  --color-terminal-foreground: var(--terminal-foreground);
+  --color-tooltip-background: var(--tooltip-background);
+  --color-tooltip-foreground: var(--tooltip-foreground);
+  --color-tooltip-border: var(--tooltip-border);
+  --color-scrim: var(--scrim);
+
   /* Radius scale */
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
@@ -142,7 +201,15 @@
   }
   html {
     @apply font-sans;
+    /* Grayscale antialiasing avoids the WebKit subpixel-rendering blur that
+       shows up on translucent or themed backgrounds (annotation marks, diff
+       gutters, light theme). Trade: glyphs look ~1px thinner; consistency
+       wins. */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
+
 }
 
 /* ── Layout ── */
@@ -154,15 +221,10 @@ body,
   overflow: hidden;
 }
 
-/* ── xterm.js — fill the gap below integer rows ── */
-.xterm-viewport,
-.xterm-screen {
-  background-color: #0a0a0b !important;
-}
-
-.xterm {
-  padding: 8px 4px 0 8px;
-}
+/* ── Terminal canvas surface — always dark, theme-stable
+   The wezterm-term canvas paints its own pixels via TERM_THEME; the wrapper
+   chrome uses var(--terminal-surface) so dark/light themes don't bleed
+   through padding/empty-state. */
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar {
@@ -175,8 +237,35 @@ body,
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: var(--scrollbar-thumb);
   border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* ── Backdrop blur (WebKitGTK-safe) ─────────────────────────────────────
+   Tailwind v4's `backdrop-blur-*` utilities chain multiple compositing
+   properties via CSS vars (`--tw-backdrop-blur` etc.). On WebKitGTK
+   (Tauri Linux) this combination triggers tauri/tauri#13157 — phantom
+   "shadow copy" DOM rectangles in random positions. Direct
+   `backdrop-filter: blur(Npx)` rules avoid the var-chain and render
+   cleanly. Use these classes instead of Tailwind's `backdrop-blur-*`
+   anywhere the wrapper might layer over interactive content (modals,
+   pickers, zen overlays). Keep both vendor-prefixed and unprefixed for
+   older WebKit. */
+.cluihud-blur-xs {
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+.cluihud-blur-sm {
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+.cluihud-blur-md {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .scrollbar-none::-webkit-scrollbar {
@@ -369,6 +458,31 @@ mark[data-ws-hidden] {
 .annotatable-plan mark.annotation-replace { background: #34d399 !important; color: #0a0a0b !important; font-weight: 600 !important; }
 .annotatable-plan mark.annotation-delete { background: #ef4444 !important; text-decoration: line-through; color: #0a0a0b !important; font-weight: 600 !important; }
 .annotatable-plan mark.annotation-insert { background: #4ade80 !important; color: #0a0a0b !important; font-weight: 600 !important; }
+
+/* Light-theme annotations: softer tints with saturated text for readability
+   on white card surfaces. Saturated marks on white read as harsh slabs and
+   amplify subpixel render artifacts. */
+:root[data-theme="v1-light"] .annotatable-plan mark.annotation-highlight,
+:root[data-theme="v1-light"] .annotatable-plan mark[data-highlight-id] {
+  background: #fef08a !important;
+  color: #713f12 !important;
+}
+:root[data-theme="v1-light"] .annotatable-plan mark.annotation-comment {
+  background: #dbeafe !important;
+  color: #1e40af !important;
+}
+:root[data-theme="v1-light"] .annotatable-plan mark.annotation-replace {
+  background: #d1fae5 !important;
+  color: #065f46 !important;
+}
+:root[data-theme="v1-light"] .annotatable-plan mark.annotation-insert {
+  background: #dcfce7 !important;
+  color: #166534 !important;
+}
+:root[data-theme="v1-light"] .annotatable-plan mark.annotation-delete {
+  background: #fee2e2 !important;
+  color: #991b1b !important;
+}
 
 /* ── File picker keyboard navigation ── */
 [data-nav-selected] {

@@ -1,5 +1,6 @@
 import { atom } from "jotai";
 import type { Config } from "@/lib/types";
+import { DEFAULT_THEME_ID } from "@/lib/themes";
 
 export const settingsOpenAtom = atom(false);
 
@@ -9,7 +10,7 @@ export const configAtom = atom<Config>({
   transcripts_directory: "",
   hook_socket_path: "",
   default_shell: "/bin/bash",
-  theme_mode: "dark",
+  theme_mode: DEFAULT_THEME_ID,
   preferred_editor: "",
   terminal_kitty_keyboard: true,
   scratchpad_path: null,

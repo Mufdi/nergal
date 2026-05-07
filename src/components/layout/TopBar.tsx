@@ -337,8 +337,8 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
               onDrop={(e) => handleDrop(tabId, e)}
               className={`group relative flex h-6 max-w-44 items-center gap-1.5 rounded px-2 text-[11px] transition-all ${
                 isActive
-                  ? "bg-card text-foreground"
-                  : "text-muted-foreground hover:bg-card/50 hover:text-foreground/80"
+                  ? "bg-secondary text-foreground"
+                  : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground/80"
               } ${dragOverId === tabId && dropSideRef.current === "left" ? "border-l-2 border-l-primary/60" : ""} ${dragOverId === tabId && dropSideRef.current === "right" ? "border-r-2 border-r-primary/60" : ""}`}
             >
               {/* Status indicator */}
@@ -386,7 +386,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
           <div className="relative flex items-center mr-1.5">
             <button
               onClick={() => openEditor(preferred.id)}
-              className="flex h-6 items-center gap-1.5 rounded-l border border-border/40 bg-card/40 px-2 text-[11px] text-muted-foreground hover:text-foreground hover:bg-card/60 transition-colors"
+              className="flex h-6 items-center gap-1.5 rounded-l border border-border/40 bg-transparent px-2 text-[11px] text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors"
               aria-label={`Open in ${preferred.name}`}
             >
               <EditorIcon editorId={preferred.id} size={13} />
@@ -395,7 +395,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
             {available.length > 1 ? (
               <button
                 onClick={() => setDropdownOpen(!dropdownOpen)}
-                className="flex h-6 items-center rounded-r border border-l-0 border-border/40 bg-card/40 px-1 text-muted-foreground/40 hover:text-foreground hover:bg-card/60 transition-colors"
+                className="flex h-6 items-center rounded-r border border-l-0 border-border/40 bg-transparent px-1 text-muted-foreground/40 hover:text-foreground hover:bg-secondary/60 transition-colors"
                 aria-label="Choose editor"
               >
                 <ChevronDown size={10} />
@@ -464,7 +464,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
                         setCommitBusy(false);
                       }
                     }}
-                    className="flex size-7 items-center justify-center rounded text-muted-foreground hover:bg-card/50 hover:text-foreground transition-colors cursor-pointer"
+                    className="flex size-7 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground transition-colors cursor-pointer"
                     aria-label="Commit"
                   />
                 }
@@ -498,8 +498,8 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
                     }}
                     className={`flex size-7 items-center justify-center rounded transition-colors cursor-pointer ${
                       activeGitInfo && activeGitInfo.ahead > 0
-                        ? "text-foreground hover:bg-card/50"
-                        : "text-muted-foreground/50 hover:bg-card/50 hover:text-foreground"
+                        ? "text-foreground hover:bg-secondary/60"
+                        : "text-muted-foreground/50 hover:bg-secondary/60 hover:text-foreground"
                     }`}
                     aria-label="Push"
                   />
@@ -534,7 +534,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
                       <div
                         role="button"
                         onClick={() => setTriggerMerge((p) => p + 1)}
-                        className="flex size-7 items-center justify-center rounded text-muted-foreground hover:bg-card/50 hover:text-foreground transition-colors cursor-pointer"
+                        className="flex size-7 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground transition-colors cursor-pointer"
                         aria-label="Merge"
                       />
                     }
@@ -562,7 +562,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
                     className={`flex size-7 items-center justify-center rounded transition-colors cursor-pointer ${
                       isActive
                         ? "text-foreground bg-card"
-                        : "text-muted-foreground hover:bg-card/50 hover:text-foreground"
+                        : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
                     }`}
                     aria-label={btn.label}
                   />
@@ -581,21 +581,21 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
         <div className="flex items-center ml-1.5 pl-1.5 border-l border-border/30">
           <button
             onClick={() => getCurrentWindow().minimize()}
-            className="flex size-7 items-center justify-center rounded text-amber-500/60 hover:bg-amber-500/10 hover:text-amber-400 transition-colors"
+            className="flex size-7 items-center justify-center rounded text-amber-600 hover:bg-amber-500/15 hover:text-amber-700 dark:text-amber-500/70 dark:hover:text-amber-400 transition-colors"
             aria-label="Minimize"
           >
             <MinimizeIcon size={13} />
           </button>
           <button
             onClick={() => getCurrentWindow().toggleMaximize()}
-            className="flex size-7 items-center justify-center rounded text-green-500/60 hover:bg-green-500/10 hover:text-green-400 transition-colors"
+            className="flex size-7 items-center justify-center rounded text-emerald-600 hover:bg-emerald-500/15 hover:text-emerald-700 dark:text-green-500/70 dark:hover:text-green-400 transition-colors"
             aria-label={isMaximized ? "Restore" : "Maximize"}
           >
             {isMaximized ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
           </button>
           <button
             onClick={() => getCurrentWindow().close()}
-            className="flex size-7 items-center justify-center rounded text-red-500/60 hover:bg-red-500/10 hover:text-red-400 transition-colors"
+            className="flex size-7 items-center justify-center rounded text-red-600 hover:bg-red-500/15 hover:text-red-700 dark:text-red-500/70 dark:hover:text-red-400 transition-colors"
             aria-label="Close"
           >
             <X size={13} />

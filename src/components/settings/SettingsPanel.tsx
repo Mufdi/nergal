@@ -16,8 +16,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
-import { CheckCircle2, AlertTriangle, XCircle, Info, FolderTree, Bot, Pencil, Palette, Terminal, NotebookText, RefreshCw } from "lucide-react";
+import { CheckCircle2, AlertTriangle, XCircle, Info, FolderTree, Bot, Pencil, Palette, Terminal, NotebookText, RefreshCw, Check } from "lucide-react";
 import { scratchpadPathAtom, reloadTabsFromBackend } from "@/stores/scratchpad";
+import { THEMES, normalizeThemeId, type Theme } from "@/lib/themes";
 
 type PathKind = "dir" | "file" | "executable";
 
@@ -265,10 +266,102 @@ const TOGGLE_FIELDS: { key: BooleanConfigKey; label: string; help: string }[] = 
   },
 ];
 
-const THEME_OPTIONS: { value: string; label: string }[] = [
-  { value: "dark", label: "Dark" },
-  { value: "light", label: "Light" },
-];
+function ThemePreviewCard({
+  theme,
+  selected,
+  onSelect,
+}: {
+  theme: Theme;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const { preview } = theme;
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+      data-theme-card
+      data-theme-id={theme.id}
+      className={`group relative flex flex-col gap-2 rounded-md border p-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
+        selected
+          ? "border-orange-500 bg-orange-500/10"
+          : "border-border bg-card hover:border-border/80 hover:bg-secondary/40"
+      }`}
+    >
+      <div
+        className="relative h-20 overflow-hidden rounded"
+        style={{
+          backgroundColor: preview.background,
+          boxShadow: `inset 0 0 0 1px ${preview.border}`,
+        }}
+      >
+        <div
+          className="absolute rounded-sm"
+          style={{
+            left: 6,
+            top: 6,
+            bottom: 6,
+            width: 22,
+            backgroundColor: preview.card,
+            boxShadow: `inset 0 0 0 1px ${preview.border}`,
+          }}
+        />
+        <div
+          className="absolute rounded-sm"
+          style={{
+            left: 34,
+            right: 6,
+            top: 6,
+            height: 8,
+            backgroundColor: preview.secondary,
+          }}
+        />
+        <div
+          className="absolute rounded-sm"
+          style={{
+            left: 34,
+            top: 20,
+            width: 40,
+            height: 6,
+            backgroundColor: preview.foreground,
+            opacity: 0.85,
+          }}
+        />
+        <div
+          className="absolute rounded-sm"
+          style={{
+            left: 34,
+            top: 30,
+            width: 56,
+            height: 4,
+            backgroundColor: preview.mutedForeground,
+            opacity: 0.7,
+          }}
+        />
+        <div
+          className="absolute rounded-sm"
+          style={{
+            left: 34,
+            bottom: 6,
+            width: 36,
+            height: 12,
+            backgroundColor: preview.primary,
+          }}
+        />
+      </div>
+      <div className="flex items-center justify-between px-0.5">
+        <span className="text-xs font-medium text-foreground">{theme.label}</span>
+        {selected && (
+          <span className="flex size-4 items-center justify-center rounded-full bg-orange-500 text-white">
+            <Check size={10} strokeWidth={3} />
+          </span>
+        )}
+      </div>
+    </button>
+  );
+}
+
 
 type SectionId = "paths" | "agents" | "editor" | "appearance" | "terminal" | "scratchpad";
 
@@ -347,6 +440,59 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
     activeBtn?.focus({ preventScroll: true });
   }, [open, activeSection]);
 
+  // Appearance section is a 2-col grid of buttons (no form fields), so the
+  // nav-button-only focus leaves the user one Tab away from interaction with
+  // poor discoverability. Hand off focus to the selected (or first) theme card
+  // after the nav-button effect runs. rAF lets the section render first.
+  useEffect(() => {
+    if (!open || activeSection !== "appearance") return;
+    const handle = requestAnimationFrame(() => {
+      const cards = contentRef.current?.querySelectorAll<HTMLButtonElement>("[data-theme-card]");
+      if (!cards || cards.length === 0) return;
+      const selectedId = normalizeThemeId(config.theme_mode);
+      const target =
+        Array.from(cards).find((c) => c.dataset.themeId === selectedId) ?? cards[0];
+      target.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(handle);
+  }, [open, activeSection, config.theme_mode]);
+
+  // Arrow-key navigation between theme cards. Only fires when focus is on a
+  // theme card, so it never interferes with form fields in other sections.
+  // Capture phase + stopPropagation prevents BaseUI Dialog from intercepting.
+  useEffect(() => {
+    if (!open) return;
+    function handleArrows(e: KeyboardEvent) {
+      if (
+        e.key !== "ArrowRight" &&
+        e.key !== "ArrowLeft" &&
+        e.key !== "ArrowDown" &&
+        e.key !== "ArrowUp"
+      ) {
+        return;
+      }
+      if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      const target = e.target as HTMLElement | null;
+      if (!target || !target.closest("[data-theme-card]")) return;
+
+      const cards = contentRef.current?.querySelectorAll<HTMLButtonElement>("[data-theme-card]");
+      if (!cards || cards.length === 0) return;
+      const list = Array.from(cards);
+      const current = target.closest<HTMLButtonElement>("[data-theme-card]");
+      const idx = current ? list.indexOf(current) : -1;
+      if (idx === -1) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      const forward = e.key === "ArrowRight" || e.key === "ArrowDown";
+      const nextIdx = forward ? (idx + 1) % list.length : (idx - 1 + list.length) % list.length;
+      list[nextIdx].focus();
+    }
+    window.addEventListener("keydown", handleArrows, true);
+    return () => window.removeEventListener("keydown", handleArrows, true);
+  }, [open]);
+
   // BaseUI Dialog runs a focus trap in capture phase that breaks the nav→content
   // hand-off and the loop back from the footer. We replace it with a manual,
   // ordered trap (active nav → content → footer → loop). stopImmediatePropagation
@@ -411,6 +557,24 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
     onOpenChange(false);
   }
 
+  // Ctrl/Cmd+Enter saves from anywhere in the dialog. Skip when focus is in a
+  // textarea so multi-line inputs (future-proof) keep their newline behavior.
+  useEffect(() => {
+    if (!open) return;
+    function handleSaveShortcut(e: KeyboardEvent) {
+      if (e.key !== "Enter") return;
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (e.altKey || e.shiftKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.tagName === "TEXTAREA") return;
+      e.preventDefault();
+      e.stopPropagation();
+      handleSave();
+    }
+    window.addEventListener("keydown", handleSaveShortcut, true);
+    return () => window.removeEventListener("keydown", handleSaveShortcut, true);
+  }, [open, config]);
+
   const availableEditors = editors.filter((e) => e.available);
   const installedAgents = agents.filter((a) => a.installed);
 
@@ -420,7 +584,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
-            Configure paths and preferences. Press <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Alt+1</kbd>–<kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Alt+{SECTIONS.length}</kbd> to jump between sections, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Tab</kbd> to enter the form, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+,</kbd> to toggle.
+            Configure paths and preferences. Press <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Alt+1</kbd>–<kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Alt+{SECTIONS.length}</kbd> to jump between sections, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Tab</kbd> to enter the form, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+Enter</kbd> to save, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+,</kbd> to toggle.
           </DialogDescription>
         </DialogHeader>
 
@@ -554,13 +718,20 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
             {activeSection === "appearance" && (
               <div className="space-y-4">
                 <div className="grid gap-2">
-                  <Label htmlFor="setting-theme_mode">Theme</Label>
-                  <Select
-                    id="setting-theme_mode"
-                    value={config.theme_mode}
-                    onValueChange={(v) => handleTextChange("theme_mode", v)}
-                    options={THEME_OPTIONS}
-                  />
+                  <Label>Theme</Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {THEMES.map((theme) => (
+                      <ThemePreviewCard
+                        key={theme.id}
+                        theme={theme}
+                        selected={normalizeThemeId(config.theme_mode) === theme.id}
+                        onSelect={() => handleTextChange("theme_mode", theme.id)}
+                      />
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Applied immediately. Click <strong>Save</strong> to persist across sessions.
+                  </p>
                 </div>
               </div>
             )}

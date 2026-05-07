@@ -112,7 +112,7 @@ export function AgentPickerModal({
                     ? "border-border/40 bg-card/40 text-muted-foreground/50 cursor-not-allowed"
                     : selected
                       ? "border-orange-500 bg-orange-500/10 text-foreground"
-                      : "border-border bg-card text-foreground/80 hover:bg-[#1c1c1e] hover:text-foreground"
+                      : "border-border bg-card text-foreground/80 hover:bg-secondary hover:text-foreground"
                 }`}
               >
                 {logo ? (

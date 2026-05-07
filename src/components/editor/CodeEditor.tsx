@@ -2,28 +2,28 @@ import { useEffect, useRef, useState } from "react";
 import { EditorView, keymap } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { basicSetup } from "codemirror";
-import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark";
 import { syntaxHighlighting } from "@codemirror/language";
+import { currentHighlightStyle, useThemeName } from "@/lib/codemirrorHighlight";
 
 const cluihudTheme = EditorView.theme({
   "&": {
-    backgroundColor: "#0a0a0b",
-    color: "#ededef",
+    backgroundColor: "var(--card)",
+    color: "var(--foreground)",
   },
   ".cm-content": { caretColor: "#f97316" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "#f97316" },
   "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
     backgroundColor: "rgba(249, 115, 22, 0.2)",
   },
-  ".cm-activeLine": { backgroundColor: "rgba(255, 255, 255, 0.03)" },
+  ".cm-activeLine": { backgroundColor: "var(--cm-active-line)" },
   ".cm-gutters": {
-    backgroundColor: "#0a0a0b",
-    color: "#5c5c5f",
-    borderRight: "1px solid rgba(255, 255, 255, 0.08)",
+    backgroundColor: "var(--card)",
+    color: "var(--muted-foreground)",
+    borderRight: "1px solid var(--border)",
   },
-  ".cm-activeLineGutter": { backgroundColor: "rgba(255, 255, 255, 0.05)" },
+  ".cm-activeLineGutter": { backgroundColor: "var(--cm-active-line-gutter)" },
   ".cm-lineNumbers .cm-gutterElement": { padding: "0 8px 0 4px" },
-}, { dark: true });
+});
 import { javascript } from "@codemirror/lang-javascript";
 import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
@@ -76,6 +76,12 @@ export function CodeEditor({ filePath, sessionId, readOnly = false }: CodeEditor
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const theme = useThemeName();
+  // Survives the destroy/recreate cycle triggered by a theme swap so the
+  // user doesn't lose unsaved edits when toggling v1-light <-> v1-dark.
+  // Keyed by file identity — when filePath/sessionId change we drop the
+  // stash and re-read from disk.
+  const docStashRef = useRef<{ key: string; doc: string } | null>(null);
 
   function saveFromView(v: EditorView) {
     if (readOnly) return;
@@ -107,6 +113,7 @@ export function CodeEditor({ filePath, sessionId, readOnly = false }: CodeEditor
     if (!container) return;
 
     let cancelled = false;
+    const stashKey = `${sessionId}::${filePath}`;
 
     // Destroy any leftover EditorView in the container
     if (viewRef.current) {
@@ -115,58 +122,70 @@ export function CodeEditor({ filePath, sessionId, readOnly = false }: CodeEditor
     }
     container.replaceChildren();
 
-    invoke<string>("read_file_content", { sessionId, path: filePath })
-      .then((content) => {
-        if (cancelled) return;
-
-        const saveKeymap = keymap.of([
-          {
-            key: "Mod-s",
-            run: (v) => {
-              saveFromView(v);
-              return true;
-            },
+    function buildView(content: string) {
+      if (cancelled || !container) return;
+      const saveKeymap = keymap.of([
+        {
+          key: "Mod-s",
+          run: (v) => {
+            saveFromView(v);
+            return true;
           },
-        ]);
+        },
+      ]);
 
-        const state = EditorState.create({
-          doc: content,
-          extensions: [
-            saveKeymap,
-            basicSetup,
-            cluihudTheme,
-            syntaxHighlighting(oneDarkHighlightStyle),
-            getLanguageExtension(filePath),
-            keymap.of([indentWithTab, ...searchKeymap]),
-            EditorView.editable.of(!readOnly),
-            EditorView.theme({
-              "&": { height: "100%", fontSize: "12px" },
-              ".cm-scroller": { overflow: "auto" },
-            }),
-          ],
-        });
-
-        const view = new EditorView({ state, parent: container });
-        viewRef.current = view;
-        view.focus();
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(String(err));
-          setLoading(false);
-        }
+      const state = EditorState.create({
+        doc: content,
+        extensions: [
+          saveKeymap,
+          basicSetup,
+          cluihudTheme,
+          syntaxHighlighting(currentHighlightStyle()),
+          getLanguageExtension(filePath),
+          keymap.of([indentWithTab, ...searchKeymap]),
+          EditorView.editable.of(!readOnly),
+          EditorView.theme({
+            "&": { height: "100%", fontSize: "12px" },
+            ".cm-scroller": { overflow: "auto" },
+          }),
+        ],
       });
+
+      const view = new EditorView({ state, parent: container });
+      viewRef.current = view;
+      view.focus();
+      setLoading(false);
+    }
+
+    const stashed = docStashRef.current;
+    if (stashed && stashed.key === stashKey) {
+      docStashRef.current = null;
+      buildView(stashed.doc);
+    } else {
+      docStashRef.current = null;
+      invoke<string>("read_file_content", { sessionId, path: filePath })
+        .then((content) => buildView(content))
+        .catch((err) => {
+          if (!cancelled) {
+            setError(String(err));
+            setLoading(false);
+          }
+        });
+    }
 
     return () => {
       cancelled = true;
       if (viewRef.current) {
+        docStashRef.current = {
+          key: stashKey,
+          doc: viewRef.current.state.doc.toString(),
+        };
         viewRef.current.destroy();
         viewRef.current = null;
       }
       container.replaceChildren();
     };
-  }, [filePath, sessionId, readOnly]);
+  }, [filePath, sessionId, readOnly, theme]);
 
   if (error) {
     return (

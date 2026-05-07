@@ -70,7 +70,7 @@ export function ProjectPickerModal({ open, onOpenChange, workspaces, preselected
               className={`flex items-center gap-2 rounded-md px-3 py-2 text-left text-[11px] transition-colors ${
                 i === selectedIdx
                   ? "border border-orange-500 bg-orange-500/10 text-foreground"
-                  : "border border-border bg-card text-foreground/70 hover:bg-[#1c1c1e] hover:text-foreground"
+                  : "border border-border bg-card text-foreground/70 hover:bg-secondary hover:text-foreground"
               }`}
             >
               {i < 9 && (

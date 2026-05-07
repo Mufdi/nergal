@@ -7,6 +7,17 @@ fn default_true() -> bool {
     true
 }
 
+/// Map legacy theme ids ("dark"/"light") to the namespaced ones used by the
+/// theme registry. Unknown values fall back to "v1-dark".
+fn normalize_theme_mode(value: &str) -> String {
+    match value {
+        "v1-dark" | "v1-light" => value.to_string(),
+        "dark" | "" => "v1-dark".to_string(),
+        "light" => "v1-light".to_string(),
+        _ => "v1-dark".to_string(),
+    }
+}
+
 /// Application configuration with persistence support.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -54,7 +65,7 @@ impl Default for Config {
             transcripts_directory: claude_dir.join("projects"),
             hook_socket_path: std::env::temp_dir().join("cluihud.sock"),
             default_shell: shell,
-            theme_mode: "dark".into(),
+            theme_mode: "v1-dark".into(),
             preferred_editor: String::new(),
             terminal_kitty_keyboard: true,
             scratchpad_path: None,
@@ -75,10 +86,12 @@ impl Config {
     /// Load config from disk, falling back to defaults.
     pub fn load() -> Self {
         let path = Self::config_path();
-        match std::fs::read_to_string(&path) {
+        let mut cfg: Self = match std::fs::read_to_string(&path) {
             Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
             Err(_) => Self::default(),
-        }
+        };
+        cfg.theme_mode = normalize_theme_mode(&cfg.theme_mode);
+        cfg
     }
 
     /// Save config to disk.

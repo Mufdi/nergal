@@ -19,8 +19,6 @@ export default defineConfig({
       "react",
       "react-dom",
       "react/jsx-runtime",
-      "@xterm/xterm",
-      "@xterm/addon-fit",
       "react-markdown",
       "remark-gfm",
       "jotai",

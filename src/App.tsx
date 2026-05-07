@@ -1,11 +1,12 @@
 import { useEffect, Component, type ReactNode } from "react";
-import { useSetAtom, useStore } from "jotai";
+import { useAtomValue, useSetAtom, useStore } from "jotai";
 import { Workspace } from "./components/layout/Workspace";
 import { AskUserModal } from "./components/session/AskUserModal";
 import { setupAgentListeners } from "./stores/agent";
 import { setupHookListeners } from "./stores/hooks";
 import { configAtom } from "./stores/config";
 import { invoke } from "./lib/tauri";
+import { applyTheme } from "./lib/themes";
 import type { Config } from "./lib/types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -43,6 +44,7 @@ class ErrorBoundary extends Component<
 export function App() {
   const store = useStore();
   const setConfig = useSetAtom(configAtom);
+  const themeMode = useAtomValue(configAtom).theme_mode;
 
   useEffect(() => {
     getCurrentWindow().show().catch(() => {});
@@ -53,6 +55,10 @@ export function App() {
       .then((cfg) => setConfig(cfg))
       .catch(() => {});
   }, [setConfig]);
+
+  useEffect(() => {
+    applyTheme(themeMode);
+  }, [themeMode]);
 
   useEffect(() => {
     const unlisteners = setupHookListeners(store);

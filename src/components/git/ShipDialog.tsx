@@ -473,13 +473,13 @@ export function ShipDialog() {
         )}
 
         {!loading && (
-          <div className="rounded border border-orange-500/40 bg-orange-500/10 px-3 py-2 text-[11px] text-orange-200">
+          <div className="rounded border border-orange-500/40 bg-orange-500/10 px-3 py-2 text-[11px] text-orange-900 dark:text-orange-200">
             <div className="flex items-start gap-2">
-              <AlertTriangle size={14} className="mt-0.5 shrink-0 text-orange-400" />
+              <AlertTriangle size={14} className="mt-0.5 shrink-0 text-orange-600 dark:text-orange-400" />
               <p>
                 Ship leads to: commit → push → PR → review → merge. Once the PR is merged,
                 this session is deleted (worktree, branch). Plans are archived to{" "}
-                <code className="font-mono text-[10px] bg-background/30 px-1 rounded">.claude/plans/archive/</code>{" "}
+                <code className="font-mono text-[10px] bg-secondary/60 px-1 rounded">.claude/plans/archive/</code>{" "}
                 first.
               </p>
             </div>

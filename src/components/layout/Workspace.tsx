@@ -303,8 +303,7 @@ export function Workspace() {
           >
             <div className="flex h-full flex-col gap-1 overflow-hidden">
               <div
-                className="flex-1 overflow-hidden rounded"
-                style={{ background: "#0a0a0b" }}
+                className="flex-1 overflow-hidden rounded bg-terminal-surface"
                 data-focus-zone="terminal"
                 onMouseDown={() => {
                   setFocusZone("terminal");

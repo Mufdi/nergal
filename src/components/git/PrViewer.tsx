@@ -1011,11 +1011,11 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
         {pickerOpen && prFiles.length > 0 && (
           <>
             <div
-              className="absolute inset-0 z-30 backdrop-blur-sm bg-black/30"
+              className="absolute inset-0 z-30 bg-scrim cluihud-blur-sm"
               onClick={() => setPickerOpen(false)}
             />
             <div className="absolute inset-0 z-40 flex items-start justify-center px-6 pt-12 pointer-events-none">
-              <div className="pointer-events-auto w-full max-w-md max-h-[60vh] overflow-y-auto rounded border border-border bg-card shadow-2xl">
+              <div className="pointer-events-auto w-full max-w-md max-h-[60vh] overflow-y-auto rounded border border-border bg-card shadow-lg">
                 <div className="sticky top-0 flex items-center justify-between border-b border-border/50 bg-card px-3 py-1.5">
                   <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                     PR files ({prFiles.length})

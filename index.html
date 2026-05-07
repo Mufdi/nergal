@@ -5,7 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>cluihud</title>
     <style>
-      body { background: #1a1a2e; margin: 0; }
+      /* Pre-mount body bg falls back to dark splash; once Tailwind loads the
+         body rule from globals.css applies var(--background) via the active
+         theme. The fallback hex matches `--background` in v1-dark so the
+         brief splash-to-mount transition is invisible. */
+      body { background: var(--background, #141415); margin: 0; }
       #splash {
         display: flex;
         align-items: center;

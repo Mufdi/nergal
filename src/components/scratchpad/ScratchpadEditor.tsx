@@ -5,7 +5,7 @@ import { EditorView, keymap } from "@codemirror/view";
 import { basicSetup } from "codemirror";
 import { markdown } from "@codemirror/lang-markdown";
 import { syntaxHighlighting } from "@codemirror/language";
-import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark";
+import { currentHighlightStyle, useThemeName } from "@/lib/codemirrorHighlight";
 import { searchKeymap } from "@codemirror/search";
 import { indentWithTab } from "@codemirror/commands";
 import {
@@ -21,31 +21,28 @@ import { appStore } from "@/stores/jotaiStore";
 
 const AUTOSAVE_DEBOUNCE_MS = 300;
 
-const editorTheme = EditorView.theme(
-  {
-    "&": {
-      background: "transparent",
-      color: "#ededef",
-      height: "100%",
-    },
-    ".cm-scroller": {
-      fontFamily: "var(--font-sans)",
-      fontSize: "13px",
-      lineHeight: "1.55",
-    },
-    ".cm-content": {
-      caretColor: "#f97316",
-      padding: "10px 14px",
-    },
-    ".cm-cursor": { borderLeftColor: "#f97316" },
-    "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
-      backgroundColor: "rgba(249, 115, 22, 0.2)",
-    },
-    ".cm-activeLine": { backgroundColor: "transparent" },
-    ".cm-gutters": { display: "none" },
+const editorTheme = EditorView.theme({
+  "&": {
+    background: "transparent",
+    color: "var(--foreground)",
+    height: "100%",
   },
-  { dark: true },
-);
+  ".cm-scroller": {
+    fontFamily: "var(--font-sans)",
+    fontSize: "13px",
+    lineHeight: "1.55",
+  },
+  ".cm-content": {
+    caretColor: "#f97316",
+    padding: "10px 14px",
+  },
+  ".cm-cursor": { borderLeftColor: "#f97316" },
+  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
+    backgroundColor: "rgba(249, 115, 22, 0.2)",
+  },
+  ".cm-activeLine": { backgroundColor: "transparent" },
+  ".cm-gutters": { display: "none" },
+});
 
 interface ScratchpadEditorProps {
   tabId: string;
@@ -60,6 +57,7 @@ export function ScratchpadEditor({ tabId }: ScratchpadEditorProps) {
   const conflictMap = useAtomValue(scratchpadConflictAtom);
   const conflict = conflictMap[tabId] ?? false;
   const focusSignal = useAtomValue(scratchpadFocusSignalAtom);
+  const theme = useThemeName();
 
   // Keep an up-to-date ref so the autosave closure (created once) sees the
   // current tab — important when the user switches tabs without unmounting.
@@ -101,7 +99,7 @@ export function ScratchpadEditor({ tabId }: ScratchpadEditorProps) {
           basicSetup,
           editorTheme,
           markdown(),
-          syntaxHighlighting(oneDarkHighlightStyle),
+          syntaxHighlighting(currentHighlightStyle()),
           keymap.of([indentWithTab, ...searchKeymap]),
           updateListener,
           EditorView.lineWrapping,
@@ -121,18 +119,24 @@ export function ScratchpadEditor({ tabId }: ScratchpadEditorProps) {
       }
       if (viewRef.current) {
         // Flush any pending edits synchronously to avoid losing the last
-        // few keystrokes when the user switches tab mid-typing.
+        // few keystrokes when the user switches tab mid-typing or toggles
+        // the theme (which forces a remount). We seed the in-memory buffer
+        // immediately so the next mount can read the live doc without
+        // racing the async persistTabContent disk round-trip.
         const view = viewRef.current;
         const content = view.state.doc.toString();
         const id = tabIdRef.current;
         const dirty = appStore.get(scratchpadDirtyAtom)[id] ?? false;
-        if (dirty) void persistTabContent(id, content);
+        if (dirty) {
+          appStore.set(scratchpadContentAtom, (prev) => ({ ...prev, [id]: content }));
+          void persistTabContent(id, content);
+        }
         view.destroy();
         viewRef.current = null;
       }
       setSelection("");
     };
-  }, [tabId, setSelection]);
+  }, [tabId, theme, setSelection]);
 
   // Re-focus the editor when the panel signals it (open, restored, etc.).
   // Skips the initial render — the mount effect already focused the view.

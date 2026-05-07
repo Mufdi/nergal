@@ -131,7 +131,11 @@ export function RightPanel({ collapsed }: RightPanelProps) {
   }
 
   if (collapsed) {
-    return null;
+    // Render an empty bg-card island so the ResizablePanel slot shows the
+    // theme's card surface instead of letting the workspace canvas
+    // (--background) bleed through. Without this, light theme leaks a gray
+    // vertical strip across the right column.
+    return <div className="h-full w-full rounded bg-card" />;
   }
 
   const hasPicker = activeTab && PICKER_TYPES.includes(activeTab.type);
@@ -303,7 +307,7 @@ function NavigablePickerContainer({ type, className }: { type: TabType; classNam
   return (
     <div
       ref={containerRef}
-      className={`w-full max-w-xs max-h-[70%] overflow-y-auto rounded border border-border bg-card shadow-2xl outline-none ${className ?? ""}`}
+      className={`w-full max-w-xs max-h-[70%] overflow-y-auto rounded border border-border bg-card shadow-lg outline-none ${className ?? ""}`}
       data-nav-container
       tabIndex={-1}
       onKeyDown={handleKeyDown}
@@ -316,7 +320,7 @@ function NavigablePickerContainer({ type, className }: { type: TabType; classNam
 function FilePickerOverlay({ type, onClose }: { type: TabType; onClose: () => void }) {
   return (
     <>
-      <div className="absolute inset-0 z-30 backdrop-blur-sm bg-black/20" onClick={onClose} />
+      <div className="absolute inset-0 z-30 bg-scrim cluihud-blur-sm" onClick={onClose} />
       <div className="absolute inset-0 z-40 flex items-center justify-center px-6 pointer-events-none">
         <NavigablePickerContainer type={type} className="pointer-events-auto" />
       </div>

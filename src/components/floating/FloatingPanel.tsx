@@ -35,6 +35,10 @@ interface FloatingPanelProps {
   /// Minimum dimensions during resize.
   minWidth?: number;
   minHeight?: number;
+  /// Override the wrapper's z-index (default 40). Use a higher value for
+  /// utility panels that must always sit above other floating overlays
+  /// (e.g. scratchpad on top of the browser host iframe).
+  zIndex?: number;
 }
 
 const DEFAULT_MIN_WIDTH = 320;
@@ -61,6 +65,7 @@ export function FloatingPanel({
   toolbar,
   minWidth = DEFAULT_MIN_WIDTH,
   minHeight = DEFAULT_MIN_HEIGHT,
+  zIndex = 40,
 }: FloatingPanelProps) {
   const cardRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragSession | null>(null);
@@ -187,7 +192,8 @@ export function FloatingPanel({
     // through to the workspace below.
     <div
       data-floating-panel-id={panelId}
-      className="pointer-events-none fixed inset-0 z-40"
+      className="pointer-events-none fixed inset-0"
+      style={{ zIndex }}
     >
       <div
         ref={cardRef}

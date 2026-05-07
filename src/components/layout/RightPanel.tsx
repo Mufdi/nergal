@@ -26,6 +26,8 @@ import { GitPanel } from "@/components/git/GitPanel";
 import { FileBrowser } from "@/components/files/FileBrowser";
 import { CodeEditor } from "@/components/editor/CodeEditor";
 import { DagGraph } from "@/components/activity/DagGraph";
+import { DOCK_SLOT_ATTR } from "@/components/browser/BrowserHost";
+import { browserModeForSessionAtom, browserSetModeAction } from "@/stores/browser";
 import { openZenModeAtom } from "@/stores/zenMode";
 import { activeSessionFilesAtom } from "@/stores/files";
 import { TabBar } from "@/components/ui/TabBar";
@@ -348,6 +350,7 @@ function viewPanelLabel(view: TabType): string {
     tasks: "Tasks",
     git: "Git",
     transcript: "Transcript",
+    browser: "Browser",
   };
   return labels[view];
 }
@@ -369,6 +372,8 @@ function ViewPanelContent({ view }: { view: TabType }) {
       return null;
     case "transcript":
       return <DagGraph />;
+    case "browser":
+      return <BrowserDockSlot />;
     default:
       return null;
   }
@@ -408,9 +413,38 @@ function DocumentContent({ tab }: { tab: Tab }) {
         ? <CodeEditor key={tab.id} filePath={filePath} sessionId={fileSession} />
         : <PlaceholderView label={`File: ${filePath ?? "unknown"}`} />;
     }
+    case "browser":
+      return <BrowserDockSlot />;
     default:
       return null;
   }
+}
+
+/// When the user has the browser tab active in the dock, render the slot
+/// that BrowserHost portals BrowserPanel into. When mode === "floating",
+/// the iframe lives inside the FloatingPanel chrome; the dock slot shows a
+/// placeholder card with a "Return to dock" affordance so the tab is never
+/// visually empty.
+function BrowserDockSlot() {
+  const mode = useAtomValue(browserModeForSessionAtom);
+  const sessionId = useAtomValue(activeSessionIdAtom);
+  const setMode = useSetAtom(browserSetModeAction);
+  if (mode === "floating") {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 bg-background p-6 text-center text-xs text-muted-foreground">
+        <p>Browser is in floating mode.</p>
+        <button
+          type="button"
+          onClick={() => sessionId && setMode({ sessionId, mode: "dock" })}
+          disabled={!sessionId}
+          className="rounded-md border border-border/60 px-3 py-1.5 text-foreground transition hover:bg-secondary/60 disabled:opacity-40"
+        >
+          Return to dock
+        </button>
+      </div>
+    );
+  }
+  return <div className="relative h-full w-full" {...{ [DOCK_SLOT_ATTR]: "" }} />;
 }
 
 function PlanContentWrapper({ path }: { tabId: string; path: string }) {

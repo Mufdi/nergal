@@ -81,6 +81,7 @@ export function ScratchpadPanel() {
         void saveScratchpadGeometry(next, opacity);
       }}
       opacity={opacity}
+      zIndex={55}
       title={
         <>
           <span className="font-medium">Scratchpad</span>

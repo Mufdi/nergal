@@ -145,6 +145,15 @@ export function useKeyboardShortcuts() {
         }
       }
 
+      // Browser-panel reserved shortcuts (Ctrl+T/Ctrl+W/Ctrl+Tab/Ctrl+R/F5/
+      // Ctrl+Shift+0/Ctrl+Shift+R) are now intercepted at the Tauri
+      // runtime layer when the browser panel is visible — see
+      // src-tauri/src/browser.rs::RESERVED_SHORTCUTS. That avoids the
+      // cross-origin iframe focus trap so they fire even when the user is
+      // clicking around inside the embedded SPA. The previous JS-level
+      // hijack on this hook was redundant once OS-level capture took
+      // over.
+
       if (paletteOpen) return;
 
       // Modal-open guard: when any dialog is mounted, the modal owns its

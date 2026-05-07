@@ -31,6 +31,7 @@ import {
   GitCompareArrows,
   ClipboardList,
   GitBranch,
+  Globe,
   ChevronDown,
   ExternalLink,
   ChevronDown as MinimizeIcon,
@@ -105,6 +106,7 @@ const PANEL_BUTTONS: { type: TabType; label: string; shortcut: string; icon: typ
   { type: "diff", label: "Diff", shortcut: "Ctrl+Shift+D", icon: GitCompareArrows },
   { type: "spec", label: "Spec", shortcut: "Ctrl+Shift+S", icon: ClipboardList },
   { type: "git", label: "Git", shortcut: "Ctrl+Shift+G", icon: GitBranch },
+  { type: "browser", label: "Browser", shortcut: "Ctrl+Alt+B", icon: Globe },
 ];
 
 

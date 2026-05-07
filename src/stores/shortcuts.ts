@@ -26,6 +26,7 @@ import { toastsAtom } from "./toast";
 import { softCloseSessionAction, undoSessionCloseAction, hasPendingSessionCloseAtom } from "./sessionTabs";
 import { invoke as invokeCmd } from "@/lib/tauri";
 import { scratchpadOpenAtom } from "./scratchpad";
+import { browserToggleModeAction } from "./browser";
 
 export type FocusZone = "sidebar" | "terminal" | "panel";
 
@@ -395,6 +396,10 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   { id: "open-diff", label: "Open Diff Panel", keys: "ctrl+shift+d", category: "panel", keywords: ["diff", "changes", "panel"], handler: () => togglePanel("diff", "Diff") },
   { id: "open-spec", label: "Open Spec Panel", keys: "ctrl+shift+s", category: "panel", keywords: ["spec", "openspec", "panel"], handler: () => togglePanel("spec", "Spec") },
   { id: "open-git", label: "Open Git Panel", keys: "ctrl+shift+g", category: "panel", keywords: ["git", "branch", "panel"], handler: () => togglePanel("git", "Git") },
+  { id: "open-browser", label: "Open Browser Panel", keys: "ctrl+alt+b", category: "panel", keywords: ["browser", "preview", "web", "iframe", "localhost", "panel"], handler: () => togglePanel("browser", "Browser") },
+  { id: "browser-focus-url", label: "Focus Browser URL Bar", keys: "ctrl+l", category: "panel", keywords: ["browser", "url", "focus", "address"], handler: () => {
+    document.dispatchEvent(new CustomEvent("cluihud:browser-focus-url"));
+  }},
   { id: "toggle-file-picker", label: "Toggle File Picker", keys: "ctrl+shift+k", category: "panel", keywords: ["file", "picker", "browse", "explorer"], handler: () => {
     document.dispatchEvent(new CustomEvent("cluihud:toggle-file-picker"));
   }},
@@ -452,7 +457,7 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     document.dispatchEvent(new CustomEvent("cluihud:toggle-annotation-mode"));
   }},
 
-  { id: "expand-zen", label: "Expand active panel to Zen", keys: "ctrl+shift+0", category: "navigation", keywords: ["zen", "expand", "maximize", "fullscreen"], handler: () => {
+  { id: "expand-zen", label: "Expand active panel to Zen", keys: "ctrl+shift+0", category: "navigation", keywords: ["zen", "expand", "maximize", "fullscreen", "browser", "floating"], handler: () => {
     const s = store();
     const sessionId = s.get(activeSessionIdAtom);
     if (!sessionId) return;
@@ -464,6 +469,10 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     // Conflicts chips can't trigger Zen because no tab is ever created.
     const panelType = tab?.type ?? panelView;
     if (!panelType) return;
+    if (panelType === "browser") {
+      s.set(browserToggleModeAction, sessionId);
+      return;
+    }
     if (panelType === "diff" || panelType === "file") {
       const filePath = tab?.data?.path as string | undefined;
       if (filePath) document.dispatchEvent(new CustomEvent("cluihud:expand-zen", { detail: { filePath, sessionId } }));

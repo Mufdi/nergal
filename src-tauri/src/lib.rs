@@ -1,4 +1,5 @@
 pub mod agents;
+mod browser;
 mod commands;
 pub mod config;
 mod db;
@@ -106,6 +107,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(PtyManager::new(config.terminal_kitty_keyboard))
         .manage(db.clone())
         .manage(plan_state.clone())
@@ -234,6 +236,11 @@ pub fn run() {
             scratchpad::commands::scratchpad_get_geometry,
             scratchpad::commands::scratchpad_set_geometry,
             scratchpad::commands::scratchpad_reveal_in_file_manager,
+            // Live preview browser
+            browser::browser_validate_url,
+            browser::browser_get_listening_ports,
+            browser::browser_register_shortcuts,
+            browser::browser_unregister_shortcuts,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
@@ -264,6 +271,14 @@ pub fn run() {
                 agent_state.clone(),
                 agent_event_rx,
             );
+
+            // Live preview browser: localhost port scanner with hysteresis.
+            // Emits `localhost:ports-changed` to the frontend; chips in the
+            // status bar surface listening dev servers.
+            let browser_app = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                browser::run_port_scanner(browser_app).await;
+            });
 
             if plans_dir.exists() {
                 match PlanWatcher::new(&plans_dir, app_handle.clone()) {

@@ -5,8 +5,14 @@ import { activeGitInfoAtom, refreshGitInfoAtom } from "@/stores/git";
 import { loadSessionFilesAtom } from "@/stores/files";
 import { activitySummaryAtom, activityDrawerOpenAtom } from "@/stores/activity";
 import { activeAgentMetadataAtom } from "@/stores/agent";
+import {
+  browserNewTabAction,
+  browserSetModeAction,
+  localhostPortsAtom,
+} from "@/stores/browser";
+import { openTabAction } from "@/stores/rightPanel";
 import { Badge } from "@/components/ui/badge";
-import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock } from "lucide-react";
+import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock, Globe } from "lucide-react";
 import {
   Tooltip,
   TooltipTrigger,
@@ -128,7 +134,7 @@ export function StatusBar() {
         </Badge>
       </div>
 
-      {/* Center: activity summary */}
+      {/* Center: activity summary + localhost ports */}
       <div className="flex items-center gap-3">
         <button
           type="button"
@@ -150,6 +156,7 @@ export function StatusBar() {
           <ChevronUp className="ml-1 size-3 shrink-0" />
         </button>
 
+        <LocalhostPortChips />
       </div>
 
       {/* Right: context %, rate limits, model, duration */}
@@ -224,5 +231,49 @@ export function StatusBar() {
         )}
       </div>
     </footer>
+  );
+}
+
+/// Renders one chip per localhost port detected by the Rust scanner. Click
+/// opens (or focuses) the browser panel and navigates to that port.
+function LocalhostPortChips() {
+  const ports = useAtomValue(localhostPortsAtom);
+  const sessionId = useAtomValue(activeSessionIdAtom);
+  const newTab = useSetAtom(browserNewTabAction);
+  const setMode = useSetAtom(browserSetModeAction);
+  const openTab = useSetAtom(openTabAction);
+
+  if (ports.length === 0) return null;
+
+  async function openPort(port: number) {
+    if (!sessionId) return;
+    setMode({ sessionId, mode: "dock" });
+    openTab({
+      tab: { id: `browser:${sessionId}`, type: "browser", label: "Browser" },
+    });
+    try {
+      await newTab({ sessionId, url: `http://localhost:${port}` });
+    } catch {
+      /* validate_url fails on a sane localhost URL only if the user fed us
+         garbage — ignore here. */
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <Globe className="size-3 shrink-0 text-muted-foreground/60" />
+      {ports.map((port) => (
+        <button
+          key={port}
+          type="button"
+          onClick={() => openPort(port)}
+          disabled={!sessionId}
+          title={`Open http://localhost:${port}`}
+          className="rounded border border-border/40 px-1.5 py-0 font-mono text-[10px] text-muted-foreground transition-colors hover:border-primary/40 hover:bg-secondary hover:text-foreground disabled:opacity-40"
+        >
+          :{port}
+        </button>
+      ))}
+    </div>
   );
 }

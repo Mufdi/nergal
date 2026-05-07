@@ -17,6 +17,7 @@ import {
   GitBranch,
   FileCode,
   ScrollText,
+  Globe,
   MoreHorizontal,
   X,
 } from "lucide-react";
@@ -29,6 +30,7 @@ const TAB_ICONS: Record<TabType, typeof FileText> = {
   tasks: CheckSquare,
   git: GitBranch,
   transcript: ScrollText,
+  browser: Globe,
 };
 
 export function TabBar() {

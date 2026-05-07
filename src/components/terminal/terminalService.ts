@@ -82,11 +82,37 @@ refreshTermTheme();
 if (typeof document !== "undefined") {
   const observer = new MutationObserver(() => {
     refreshTermTheme();
+    const dpr = window.devicePixelRatio || 1;
     for (const entry of entries.values()) {
       // The container's inline `background` was set imperatively at create
       // time; repoint it so the area outside the canvas (during fit() races)
       // matches the new surface.
       entry.container.style.background = TERM_THEME.background;
+      // If the theme also swapped the terminal font family, the cached
+      // metrics + atlas were keyed to the previous family. Rebuild both
+      // and refit the canvas so glyphs render at the right cell size.
+      const nextMetrics = measureFont(
+        TERM_FONT.family,
+        TERM_FONT.size,
+        TERM_FONT.lineHeight,
+        dpr,
+      );
+      // Different font families almost always produce different cell
+      // metrics — using metrics as the change signal avoids tracking the
+      // previous family string explicitly.
+      const fontChanged =
+        nextMetrics.cellWidth !== entry.metrics.cellWidth ||
+        nextMetrics.cellHeight !== entry.metrics.cellHeight;
+      if (fontChanged) {
+        entry.metrics = nextMetrics;
+        entry.atlas = new FontAtlas(
+          nextMetrics,
+          TERM_FONT.family,
+          TERM_FONT.size,
+          dpr,
+        );
+        fit(entry);
+      }
       paintAll(entry);
     }
   });

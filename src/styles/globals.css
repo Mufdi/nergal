@@ -72,6 +72,12 @@
      active-line/gutter tints theme-reactive without rebuilding the editor. */
   --cm-active-line: rgba(255, 255, 255, 0.03);
   --cm-active-line-gutter: rgba(255, 255, 255, 0.05);
+
+  /* Theme-driven font stacks. JS sets these per-theme via applyTheme();
+     the fallbacks here keep the default v1-dark visual if anything fails. */
+  --theme-font-interface: "Geist Variable", "Inter", system-ui, sans-serif;
+  --theme-font-terminal: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+  --theme-font-markdown: "Geist Variable", "Inter", system-ui, sans-serif;
 }
 
 /* The legacy `.dark` class block was removed (2026-05-07). `:root` defines
@@ -130,8 +136,44 @@
   --terminal-foreground: #18181b;
 }
 
+/* ── Theme: v2 Editorial — warm-dark surfaces with violet accent and
+   font-driven personality (system sans for chrome, mono for terminal,
+   serif for markdown reader). Demonstrates the theme-aware font system. */
+:root[data-theme="v2-editorial"] {
+  --background: #1a1625;
+  --foreground: #e9e6ee;
+  --card: #15111f;
+  --card-foreground: #e9e6ee;
+  --popover: #221c30;
+  --popover-foreground: #e9e6ee;
+  --primary: #a78bfa;
+  --primary-foreground: #15111f;
+  --secondary: #2a2438;
+  --secondary-foreground: #b9b3c7;
+  --muted: #2a2438;
+  --muted-foreground: #867d99;
+  --accent: #a78bfa;
+  --accent-foreground: #15111f;
+  --destructive: #f87171;
+  --border: rgba(255, 255, 255, 0.07);
+  --input: rgba(255, 255, 255, 0.10);
+  --ring: #a78bfa;
+  --sidebar: #1a1625;
+  --sidebar-foreground: #e9e6ee;
+  --sidebar-primary: #a78bfa;
+  --sidebar-primary-foreground: #15111f;
+  --sidebar-accent: #2a2438;
+  --sidebar-accent-foreground: #e9e6ee;
+  --sidebar-border: rgba(255, 255, 255, 0.05);
+  --sidebar-ring: #a78bfa;
+
+  --terminal-surface: #15111f;
+  --terminal-foreground: #e9e6ee;
+}
+
 @theme inline {
-  --font-sans: "Geist Variable", "Inter", system-ui, sans-serif;
+  --font-sans: var(--theme-font-interface);
+  --font-mono: var(--theme-font-terminal);
 
   /* shadcn semantic colors */
   --color-background: var(--background);
@@ -357,6 +399,10 @@ body,
 }
 
 /* ── Plan annotation ── */
+.annotatable-plan {
+  font-family: var(--theme-font-markdown);
+}
+
 .annotatable-plan.annotation-mode-active {
   cursor: crosshair;
 }

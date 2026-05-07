@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { CheckCircle2, AlertTriangle, XCircle, Info, FolderTree, Bot, Pencil, Palette, Terminal, NotebookText, RefreshCw, Check } from "lucide-react";
 import { scratchpadPathAtom, reloadTabsFromBackend } from "@/stores/scratchpad";
-import { THEMES, normalizeThemeId, type Theme } from "@/lib/themes";
+import { VISIBLE_THEMES, normalizeThemeId, type Theme } from "@/lib/themes";
 
 type PathKind = "dir" | "file" | "executable";
 
@@ -357,6 +357,14 @@ function ThemePreviewCard({
             <Check size={10} strokeWidth={3} />
           </span>
         )}
+      </div>
+      {/* Font sample row: each "Aa" uses one of the theme's fonts so the
+          card surfaces the typographic personality (interface / markdown /
+          terminal) at a glance. */}
+      <div className="flex items-center gap-2 px-0.5 text-[11px] text-muted-foreground">
+        <span style={{ fontFamily: theme.fonts.interface }} title="Interface font">Aa</span>
+        <span style={{ fontFamily: theme.fonts.markdown }} title="Markdown font">Aa</span>
+        <span style={{ fontFamily: theme.fonts.terminal }} title="Terminal font">Aa</span>
       </div>
     </button>
   );
@@ -720,7 +728,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
                 <div className="grid gap-2">
                   <Label>Theme</Label>
                   <div className="grid grid-cols-2 gap-2">
-                    {THEMES.map((theme) => (
+                    {VISIBLE_THEMES.map((theme) => (
                       <ThemePreviewCard
                         key={theme.id}
                         theme={theme}

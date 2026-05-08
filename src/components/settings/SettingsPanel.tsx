@@ -495,11 +495,14 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
     };
   }, [open, activeSection, config.theme_mode]);
 
-  // Arrow-key navigation between theme cards. Only fires when focus is on a
-  // theme card, so it never interferes with form fields in other sections.
+  // Arrow-key navigation between theme cards. The grid is 2 columns wide
+  // (`grid-cols-2` on the parent), so arrow handling is genuinely 2D:
+  // Right/Left walk within a row, Down/Up jump between rows. We clamp at
+  // edges (no wrap) so the user feels the boundary instead of teleporting.
   // Capture phase + stopPropagation prevents BaseUI Dialog from intercepting.
   useEffect(() => {
     if (!open) return;
+    const COLS = 2;
     function handleArrows(e: KeyboardEvent) {
       if (
         e.key !== "ArrowRight" &&
@@ -520,11 +523,29 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
       const idx = current ? list.indexOf(current) : -1;
       if (idx === -1) return;
 
+      const row = Math.floor(idx / COLS);
+      const col = idx % COLS;
+      const lastIdx = list.length - 1;
+      const lastRow = Math.floor(lastIdx / COLS);
+      let nextIdx = idx;
+      switch (e.key) {
+        case "ArrowRight":
+          if (col < COLS - 1 && idx + 1 <= lastIdx) nextIdx = idx + 1;
+          break;
+        case "ArrowLeft":
+          if (col > 0) nextIdx = idx - 1;
+          break;
+        case "ArrowDown":
+          if (row < lastRow && idx + COLS <= lastIdx) nextIdx = idx + COLS;
+          break;
+        case "ArrowUp":
+          if (row > 0) nextIdx = idx - COLS;
+          break;
+      }
+      if (nextIdx === idx) return;
+
       e.preventDefault();
       e.stopPropagation();
-
-      const forward = e.key === "ArrowRight" || e.key === "ArrowDown";
-      const nextIdx = forward ? (idx + 1) % list.length : (idx - 1 + list.length) % list.length;
       list[nextIdx].focus();
     }
     window.addEventListener("keydown", handleArrows, true);
@@ -756,7 +777,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
             {activeSection === "appearance" && (
               <div className="space-y-4">
                 <div className="grid gap-2">
-                  <Label>Theme</Label>
+                  <Label>Skin</Label>
                   <div className="grid grid-cols-2 gap-2">
                     {VISIBLE_THEMES.map((theme) => (
                       <ThemePreviewCard

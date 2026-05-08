@@ -462,23 +462,33 @@ body,
   background-position: 0 0;
 }
 
-/* ── Canvas depth — visual stand-in for transparency that Linux Tauri
-   can't deliver reliably (tauri/tauri#14924, #12800). Layers a soft
-   primary-tinted radial spotlight over a sparse dot grid. The dots
-   share rhythm with the sidebar (radial-gradient dot family) but at
-   wider spacing (22px vs 14px) so the canvas reads as ambient noise
-   rather than a continuation of the rail. The radial tint pulls the
-   theme's accent into the canvas without overpowering it. */
+/* ── Canvas shimmer — slow diagonal sweep of the theme's --primary at
+   low alpha, animated across the workspace canvas. Replaces the
+   transparency effect we can't get reliably from Linux Tauri. The
+   gradient lives off-screen at both keyframe ends so the loop snap
+   is invisible; visible "wave" passes through every cycle. */
+@keyframes cluihud-canvas-shimmer {
+  0% { background-position: -150% 0; }
+  100% { background-position: 250% 0; }
+}
+
 .cluihud-canvas-depth {
-  background-image:
-    radial-gradient(
-      ellipse 80% 60% at 50% 0%,
-      color-mix(in srgb, var(--primary) 7%, transparent) 0%,
-      transparent 60%
-    ),
-    radial-gradient(circle at 1px 1px, var(--border) 1px, transparent 0);
-  background-size: 100% 100%, 22px 22px;
-  background-position: 0 0, 0 0;
+  background-image: linear-gradient(
+    115deg,
+    transparent 38%,
+    color-mix(in srgb, var(--primary) 18%, transparent) 50%,
+    transparent 62%
+  );
+  background-size: 220% 100%;
+  background-repeat: no-repeat;
+  animation: cluihud-canvas-shimmer 16s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cluihud-canvas-depth {
+    animation: none;
+    background-image: none;
+  }
 }
 
 /* ── Backdrop blur (WebKitGTK-safe) ─────────────────────────────────────

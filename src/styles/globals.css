@@ -6,6 +6,9 @@
 @import "@fontsource-variable/jetbrains-mono";
 @import "@fontsource-variable/source-serif-4";
 @import "@fontsource-variable/space-grotesk";
+@import "@fontsource-variable/doto";
+@import "@fontsource/space-mono/400.css";
+@import "@fontsource/space-mono/700.css";
 
 /* Canonical Tailwind v4 dark variant bound to data-theme attribute.
    Matches both the element itself (when it carries data-theme="v1-dark")
@@ -138,6 +141,51 @@
      read as a dark slab dropped onto a white workspace. */
   --terminal-surface: #ffffff;
   --terminal-foreground: #18181b;
+}
+
+/* ── Theme: v6 Nothing — adapted from R0122 nothing-design-skill.
+   OLED-black canvas (#000 first-class, not derivative), Nothing red as
+   interrupt-only accent (#D71921), monochrome surface ladder. Space
+   Grotesk for chrome + markdown, Space Mono for terminal (matches the
+   "data as beauty" mechanical voice). Doto dot-matrix font loaded for
+   hero-moment overrides — apply as `font-family: var(--theme-font-display)`
+   on a specific element to invoke. */
+:root[data-theme="v6-nothing"] {
+  --background: #000000;
+  --foreground: #e8e8e8;
+  --card: #111111;
+  --card-foreground: #e8e8e8;
+  --popover: #1a1a1a;
+  --popover-foreground: #e8e8e8;
+  --primary: #d71921;
+  --primary-foreground: #ffffff;
+  --secondary: #1a1a1a;
+  --secondary-foreground: #999999;
+  --muted: #1a1a1a;
+  --muted-foreground: #999999;
+  --accent: #d71921;
+  --accent-foreground: #ffffff;
+  --destructive: #d71921;
+  --border: rgba(255, 255, 255, 0.13);
+  --input: rgba(255, 255, 255, 0.20);
+  --ring: #d71921;
+  --sidebar: #000000;
+  --sidebar-foreground: #e8e8e8;
+  --sidebar-primary: #d71921;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1a1a1a;
+  --sidebar-accent-foreground: #e8e8e8;
+  --sidebar-border: rgba(255, 255, 255, 0.10);
+  --sidebar-ring: #d71921;
+
+  --terminal-surface: #000000;
+  --terminal-foreground: #e8e8e8;
+
+  /* Hero-moment dot-matrix font, available to specific elements via
+     `font-family: var(--theme-font-display)`. Reserved per the skill
+     guidance ("Doto only for hero moments") — the rest of the chrome
+     stays in Space Grotesk / Space Mono. */
+  --theme-font-display: "Doto Variable", "Space Mono", monospace;
 }
 
 /* ── Theme: v5 Raycast — adapted from VoltAgent/awesome-design-md.

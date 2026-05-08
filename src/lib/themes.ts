@@ -31,6 +31,8 @@ const FONT_GEIST_SANS = '"Geist Variable", "Inter", system-ui, sans-serif';
 const FONT_INTER = '"Inter Variable", "Inter", system-ui, sans-serif';
 const FONT_SPACE_GROTESK =
   '"Space Grotesk Variable", "Space Grotesk", system-ui, sans-serif';
+const FONT_SPACE_MONO =
+  '"Space Mono", "JetBrains Mono Variable", "Menlo", monospace';
 const FONT_JETBRAINS_MONO =
   '"JetBrains Mono Variable", "JetBrains Mono", "Fira Code", monospace';
 const FONT_SOURCE_SERIF =
@@ -149,6 +151,28 @@ export const THEMES: Theme[] = [
       interface: FONT_INTER,
       terminal: FONT_JETBRAINS_MONO,
       markdown: FONT_INTER,
+    },
+  },
+  {
+    /** Adapted from R0122 dominikmartn/nothing-design-skill (Nothing OS).
+     *  OLED black canvas, Nothing red interrupt accent, Space Grotesk
+     *  workhorse + Space Mono for terminal/data. Doto dot-matrix font is
+     *  loaded for future hero-moment use (see globals.css). */
+    id: "v6-nothing",
+    label: "v6 Nothing",
+    preview: {
+      background: "#000000",
+      card: "#111111",
+      secondary: "#1a1a1a",
+      foreground: "#e8e8e8",
+      mutedForeground: "#999999",
+      border: "rgba(255,255,255,0.13)",
+      primary: "#d71921",
+    },
+    fonts: {
+      interface: FONT_SPACE_GROTESK,
+      terminal: FONT_SPACE_MONO,
+      markdown: FONT_SPACE_GROTESK,
     },
   },
 ];

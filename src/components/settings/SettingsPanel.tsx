@@ -680,7 +680,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
             })}
           </nav>
 
-          <div ref={contentRef} className="overflow-y-auto px-1 max-h-[60vh]">
+          <div ref={contentRef} className="overflow-y-auto px-1 max-h-[60vh] scroll-py-3">
             {activeSection === "paths" && (
               <div className="space-y-4">
                 <ValidatedPathField

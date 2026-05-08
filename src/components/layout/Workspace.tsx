@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { settingsOpenAtom } from "@/stores/config";
+import { configAtom, settingsOpenAtom } from "@/stores/config";
+import { useFocusPulse } from "@/hooks/useFocusPulse";
 import { TopBar } from "./TopBar";
 import { Sidebar } from "./Sidebar";
 import { RightPanel } from "./RightPanel";
@@ -48,7 +49,11 @@ export function Workspace() {
   const activeSessionId = useAtomValue(activeSessionIdAtom);
   const setFocusZone = useSetAtom(focusZoneAtom);
   const focusZone = useAtomValue(focusZoneAtom);
-  const terminalBorderClass = focusZone === "terminal" ? "border-primary" : "border-border";
+  const focusPulseEnabled = useAtomValue(configAtom).panel_focus_pulse;
+  const isTerminalFocused = focusZone === "terminal";
+  const terminalPulsing = useFocusPulse(isTerminalFocused);
+  const terminalShowAccent = focusPulseEnabled ? terminalPulsing : isTerminalFocused;
+  const terminalBorderClass = terminalShowAccent ? "border-primary" : "border-border";
 
   const sidebarPanelRef = usePanelRef();
   const centerPanelRef = usePanelRef();
@@ -305,7 +310,7 @@ export function Workspace() {
           >
             <div className="flex h-full flex-col gap-2 overflow-hidden">
               <div
-                className={`flex-1 overflow-hidden rounded-xl border ${terminalBorderClass} bg-terminal-surface p-2 transition-colors`}
+                className={`flex-1 overflow-hidden rounded-lg border-2 ${terminalBorderClass} bg-terminal-surface p-2 cluihud-panel-focus`}
                 data-focus-zone="terminal"
                 onMouseDown={() => {
                   setFocusZone("terminal");

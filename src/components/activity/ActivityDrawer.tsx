@@ -53,7 +53,7 @@ export function ActivityDrawer() {
   }
 
   return (
-    <div className="flex flex-col rounded bg-card" style={{ maxHeight: "30vh" }}>
+    <div className="flex flex-col rounded-lg border-2 border-border bg-card" style={{ maxHeight: "30vh" }}>
       {/* Header */}
       <div className="flex h-8 items-center justify-between border-b border-border px-3">
         <div className="flex items-center gap-2">

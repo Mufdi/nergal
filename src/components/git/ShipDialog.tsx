@@ -473,13 +473,13 @@ export function ShipDialog() {
         )}
 
         {!loading && (
-          <div className="rounded border border-orange-500/40 bg-orange-500/10 px-3 py-2 text-[11px] text-orange-900 dark:text-orange-200">
+          <div className="rounded border border-orange-500/60 bg-orange-500/15 px-3 py-2 text-[11px] text-orange-100">
             <div className="flex items-start gap-2">
-              <AlertTriangle size={14} className="mt-0.5 shrink-0 text-orange-600 dark:text-orange-400" />
+              <AlertTriangle size={14} className="mt-0.5 shrink-0 text-orange-300" />
               <p>
                 Ship leads to: commit → push → PR → review → merge. Once the PR is merged,
                 this session is deleted (worktree, branch). Plans are archived to{" "}
-                <code className="font-mono text-[10px] bg-secondary/60 px-1 rounded">.claude/plans/archive/</code>{" "}
+                <code className="font-mono text-[10px] bg-background/40 px-1 rounded">.claude/plans/archive/</code>{" "}
                 first.
               </p>
             </div>
@@ -602,17 +602,18 @@ export function ShipDialog() {
           </div>
         )}
 
-        <DialogFooter className="flex-wrap gap-1.5">
-          <Button variant="secondary" onClick={close} disabled={shipping || pushing}>
+        <DialogFooter className="flex-nowrap gap-1.5">
+          <Button size="sm" variant="secondary" onClick={close} disabled={shipping || pushing}>
             Cancel <Kbd keys="esc" className="ml-1.5" />
           </Button>
           {existingPr ? (
-            <Button onClick={pushOnly} disabled={pushing || shipping || loading}>
+            <Button size="sm" onClick={pushOnly} disabled={pushing || shipping || loading}>
               {pushing ? (<><Loader2 size={12} className="mr-1 animate-spin" />Pushing…</>) : "Push (update PR)"}
             </Button>
           ) : (
             <>
               <Button
+                size="sm"
                 variant="secondary"
                 onClick={runCommit}
                 onMouseEnter={() => setArmedAction("commit")}
@@ -622,6 +623,7 @@ export function ShipDialog() {
                 Commit <Kbd keys="ctrl+1" className="ml-1.5" />
               </Button>
               <Button
+                size="sm"
                 variant="secondary"
                 onClick={runCommitPush}
                 onMouseEnter={() => setArmedAction("commit-push")}
@@ -631,6 +633,7 @@ export function ShipDialog() {
                 Commit + Push <Kbd keys="ctrl+2" className="ml-1.5" />
               </Button>
               <Button
+                size="sm"
                 onClick={runCommitPushPr}
                 onMouseEnter={() => setArmedAction("commit-push-pr")}
                 onFocus={() => setArmedAction("commit-push-pr")}

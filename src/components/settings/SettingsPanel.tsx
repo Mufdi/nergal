@@ -15,6 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Select } from "@/components/ui/select";
 import { CheckCircle2, AlertTriangle, XCircle, Info, FolderTree, Bot, Pencil, Palette, Terminal, NotebookText, RefreshCw, Check } from "lucide-react";
 import { scratchpadPathAtom, reloadTabsFromBackend } from "@/stores/scratchpad";
@@ -817,25 +818,53 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
                     Applied immediately. Click <strong>Save</strong> to persist across sessions.
                   </p>
                 </div>
+
+                <div className="flex items-start gap-3 text-sm">
+                  <Switch
+                    id="setting-sidebar_dot_grid"
+                    checked={config.sidebar_dot_grid}
+                    onCheckedChange={(v) => handleToggleChange("sidebar_dot_grid", v)}
+                    aria-label="Sidebar dot grid"
+                    className="mt-0.5"
+                  />
+                  <label htmlFor="setting-sidebar_dot_grid" className="flex flex-col gap-0.5 cursor-pointer">
+                    <span className="font-medium">Sidebar dot grid</span>
+                    <span className="text-xs text-muted-foreground">Radial dot texture behind the left sidebar islands.</span>
+                  </label>
+                </div>
+
+                <div className="flex items-start gap-3 text-sm">
+                  <Switch
+                    id="setting-panel_focus_pulse"
+                    checked={config.panel_focus_pulse}
+                    onCheckedChange={(v) => handleToggleChange("panel_focus_pulse", v)}
+                    aria-label="Pulse focus border"
+                    className="mt-0.5"
+                  />
+                  <label htmlFor="setting-panel_focus_pulse" className="flex flex-col gap-0.5 cursor-pointer">
+                    <span className="font-medium">Pulse focus border</span>
+                    <span className="text-xs text-muted-foreground">Brief accent flash on focus change instead of a permanent accent border (legacy v3-ux behavior).</span>
+                  </label>
+                </div>
               </div>
             )}
 
             {activeSection === "terminal" && (
               <div className="space-y-4">
                 {TOGGLE_FIELDS.map(({ key, label, help }) => (
-                  <label key={key} className="flex items-start gap-3 text-sm">
-                    <input
+                  <div key={key} className="flex items-start gap-3 text-sm">
+                    <Switch
                       id={`setting-${key}`}
-                      type="checkbox"
                       checked={config[key]}
-                      onChange={(e) => handleToggleChange(key, e.target.checked)}
-                      className="mt-0.5 h-4 w-4"
+                      onCheckedChange={(v) => handleToggleChange(key, v)}
+                      aria-label={label}
+                      className="mt-0.5"
                     />
-                    <span className="flex flex-col gap-0.5">
+                    <label htmlFor={`setting-${key}`} className="flex flex-col gap-0.5 cursor-pointer">
                       <span className="font-medium">{label}</span>
                       <span className="text-xs text-muted-foreground">{help}</span>
-                    </span>
-                  </label>
+                    </label>
+                  </div>
                 ))}
               </div>
             )}

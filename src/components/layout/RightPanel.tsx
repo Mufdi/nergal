@@ -12,6 +12,8 @@ import {
   type TabType,
 } from "@/stores/rightPanel";
 import { focusZoneAtom, previousNonTerminalZoneAtom } from "@/stores/shortcuts";
+import { configAtom } from "@/stores/config";
+import { useFocusPulse } from "@/hooks/useFocusPulse";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { AnnotationsDrawer } from "@/components/plan/AnnotationsDrawer";
 import { PlanPanel } from "@/components/plan/PlanPanel";
@@ -46,7 +48,11 @@ export function RightPanel({ collapsed }: RightPanelProps) {
   const setFocusZone = useSetAtom(focusZoneAtom);
   const setPreviousZone = useSetAtom(previousNonTerminalZoneAtom);
   const focusZone = useAtomValue(focusZoneAtom);
-  const borderClass = focusZone === "panel" ? "border-primary" : "border-border";
+  const isFocused = focusZone === "panel";
+  const focusPulseEnabled = useAtomValue(configAtom).panel_focus_pulse;
+  const isPulsing = useFocusPulse(isFocused);
+  const showAccent = focusPulseEnabled ? isPulsing : isFocused;
+  const borderClass = showAccent ? "border-primary" : "border-border";
   const [pickerOpen, setPickerOpen] = useAtom(filePickerOpenAtom);
   const [annotationsDrawerOpen, setAnnotationsDrawerOpen] = useState(false);
 
@@ -137,7 +143,7 @@ export function RightPanel({ collapsed }: RightPanelProps) {
     // theme's card surface instead of letting the workspace canvas
     // (--background) bleed through. Without this, light theme leaks a gray
     // vertical strip across the right column.
-    return <div className="h-full w-full rounded-xl border border-border bg-card transition-colors" />;
+    return <div className="h-full w-full rounded-lg border-2 border-border bg-card cluihud-panel-focus" />;
   }
 
   const hasPicker = activeTab && PICKER_TYPES.includes(activeTab.type);
@@ -146,7 +152,7 @@ export function RightPanel({ collapsed }: RightPanelProps) {
     const showAnnotationsDrawer = activeTab.type === "plan" || activeTab.type === "spec";
     return (
       <div className="flex h-full flex-col gap-1 overflow-hidden">
-        <div className={`relative flex flex-1 flex-col overflow-hidden rounded-xl border ${borderClass} bg-card transition-colors`} data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus} onKeyDown={handlePanelKeyDown}>
+        <div className={`relative flex flex-1 flex-col overflow-hidden rounded-lg border-2 ${borderClass} bg-card cluihud-panel-focus`} data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus} onKeyDown={handlePanelKeyDown}>
           {/* Level 1: Tabs + actions */}
           <div className="flex shrink-0 items-center border-b border-border/50">
             <div className="flex-1 overflow-hidden">
@@ -193,7 +199,7 @@ export function RightPanel({ collapsed }: RightPanelProps) {
   if (activePanelView) {
     const hasPanelPicker = PICKER_TYPES.includes(activePanelView);
     return (
-      <div className={`relative flex h-full flex-col overflow-hidden rounded-xl border ${borderClass} bg-card transition-colors`} data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
+      <div className={`relative flex h-full flex-col overflow-hidden rounded-lg border-2 ${borderClass} bg-card cluihud-panel-focus`} data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
         {tabs.length > 0 ? (
           <div className="flex shrink-0 items-center border-b border-border/50">
             <div className="flex-1 overflow-hidden">
@@ -221,7 +227,7 @@ export function RightPanel({ collapsed }: RightPanelProps) {
   }
 
   return (
-    <div className={`flex h-full flex-col rounded-xl border ${borderClass} bg-card transition-colors`}>
+    <div className={`flex h-full flex-col rounded-lg border-2 ${borderClass} bg-card cluihud-panel-focus`}>
       {tabs.length > 0 && (
         <div className="flex shrink-0 items-center border-b border-border/50">
           <div className="flex-1 overflow-hidden">

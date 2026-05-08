@@ -203,15 +203,6 @@ function focusZone(zone: FocusZone) {
       if (items[0]) items[0].setAttribute("data-nav-selected", "true");
     }
   }
-  flashZone(el);
-}
-
-function flashZone(el: HTMLElement | null) {
-  if (!el) return;
-  el.classList.remove("zone-flash");
-  void el.offsetWidth;
-  el.classList.add("zone-flash");
-  el.addEventListener("animationend", () => el.classList.remove("zone-flash"), { once: true });
 }
 
 function navigateItems(direction: "up" | "down") {

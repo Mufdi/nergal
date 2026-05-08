@@ -13,6 +13,8 @@ export const configAtom = atom<Config>({
   theme_mode: DEFAULT_THEME_ID,
   preferred_editor: "",
   terminal_kitty_keyboard: true,
+  sidebar_dot_grid: false,
+  panel_focus_pulse: false,
   scratchpad_path: null,
   default_agent: null,
   agent_overrides: {},

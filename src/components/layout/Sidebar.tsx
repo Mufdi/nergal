@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
+import { configAtom } from "@/stores/config";
+import { useFocusPulse } from "@/hooks/useFocusPulse";
 import { focusZoneAtom, previousNonTerminalZoneAtom, triggerResumeSessionAtom, triggerNewSessionAtom, triggerAddWorkspaceAtom, triggerCommitAtom, triggerMergeAtom, triggerJumpToProjectAtom, sidebarSelectedIdxAtom, focusedWorkspaceIdAtom } from "@/stores/shortcuts";
 import {
   workspacesAtom,
@@ -42,7 +44,11 @@ export function Sidebar({ collapsed }: SidebarProps) {
   const setSidebarSelectedIdx = useSetAtom(sidebarSelectedIdxAtom);
   const focusZone = useAtomValue(focusZoneAtom);
   const isActive = focusZone === "sidebar";
-  const borderClass = isActive ? "border-primary" : "border-border";
+  const config = useAtomValue(configAtom);
+  const isPulsing = useFocusPulse(isActive);
+  const showAccent = config.panel_focus_pulse ? isPulsing : isActive;
+  const borderClass = showAccent ? "border-primary" : "border-border";
+  const dotGridClass = config.sidebar_dot_grid ? "cluihud-dot-grid" : "";
 
   function handleSidebarFocus() {
     setFocusZone("sidebar");
@@ -95,7 +101,7 @@ export function Sidebar({ collapsed }: SidebarProps) {
       ) : (
         <div className="flex flex-1 flex-col gap-1">
           {/* Workspaces card */}
-          <div className={`flex flex-1 flex-col overflow-hidden rounded-xl border ${borderClass} bg-card cluihud-dot-grid transition-colors`}>
+          <div className={`flex flex-1 flex-col overflow-hidden rounded-lg border-2 ${borderClass} bg-card ${dotGridClass} cluihud-panel-focus`}>
             <div className="flex h-9 shrink-0 items-center px-3">
               <span className="flex-1 text-[11px] font-medium text-foreground/80">Workspaces</span>
             </div>
@@ -143,7 +149,12 @@ function CollapsedSidebar() {
   const activeSessionId = useAtomValue(activeSessionIdAtom);
   const setActiveSessionId = useSetAtom(activeSessionIdAtom);
   const focusZone = useAtomValue(focusZoneAtom);
-  const borderClass = focusZone === "sidebar" ? "border-primary" : "border-border";
+  const isActive = focusZone === "sidebar";
+  const config = useAtomValue(configAtom);
+  const isPulsing = useFocusPulse(isActive);
+  const showAccent = config.panel_focus_pulse ? isPulsing : isActive;
+  const borderClass = showAccent ? "border-primary" : "border-border";
+  const dotGridClass = config.sidebar_dot_grid ? "cluihud-dot-grid" : "";
 
   const sessionsWithWs = workspaces.flatMap((w) =>
     w.sessions
@@ -153,7 +164,7 @@ function CollapsedSidebar() {
 
   return (
     <TooltipProvider delay={0}>
-    <div className={`flex h-full w-full flex-col items-center gap-0.5 rounded-xl border ${borderClass} bg-card cluihud-dot-grid py-1 transition-colors`}>
+    <div className={`flex h-full w-full flex-col items-center gap-0.5 rounded-lg border-2 ${borderClass} bg-card ${dotGridClass} py-1 cluihud-panel-focus`}>
       {sessionsWithWs.map(({ session: s, workspaceName }) => (
         <Tooltip key={s.id}>
           <TooltipTrigger

@@ -92,7 +92,7 @@ export function Sidebar({ collapsed }: SidebarProps) {
       ) : (
         <div className="flex flex-1 flex-col gap-1">
           {/* Workspaces card */}
-          <div className="flex flex-1 flex-col overflow-hidden rounded bg-card">
+          <div className="flex flex-1 flex-col overflow-hidden rounded bg-card cluihud-dot-grid">
             <div className="flex h-9 shrink-0 items-center px-3">
               <span className="flex-1 text-[11px] font-medium text-foreground/80">Workspaces</span>
             </div>

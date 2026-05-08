@@ -130,6 +130,27 @@ export const THEMES: Theme[] = [
       markdown: FONT_SPACE_GROTESK,
     },
   },
+  {
+    /** Adapted from VoltAgent/awesome-design-md → raycast/DESIGN.md.
+     *  Surface ladder Canvas/Surface/SurfaceCard, Hairline borders, Inter
+     *  with `ss03` stylistic set, and Accent Blue as the brand color. */
+    id: "v5-raycast",
+    label: "v5 Raycast",
+    preview: {
+      background: "#07080a",
+      card: "#121212",
+      secondary: "#18191a",
+      foreground: "#f4f4f6",
+      mutedForeground: "#9c9c9d",
+      border: "rgba(255,255,255,0.08)",
+      primary: "#57c1ff",
+    },
+    fonts: {
+      interface: FONT_INTER,
+      terminal: FONT_JETBRAINS_MONO,
+      markdown: FONT_INTER,
+    },
+  },
 ];
 
 export const DEFAULT_THEME_ID = "v1-dark";

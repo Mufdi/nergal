@@ -448,45 +448,34 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
     return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [open]);
 
-  // Focus the active nav button (not the first input) so Alt+N stays usable
-  // and Tab walks into the form fields naturally. Double-rAF defers past
-  // BaseUI Dialog's capture-phase focus trap, which would otherwise win on
-  // reopen and leave focus on the close button (breaking arrow-key nav in
-  // the appearance grid on the second open).
+  // Keyboard-first focus: on open or section change, land focus directly in
+  // the content (first form field, or the selected/first theme card on the
+  // appearance section). The active nav button still receives focus on the
+  // tab-trap loop (see below) and Alt+1-6 still switches sections globally,
+  // so the user can navigate everything from the keyboard without an extra
+  // Tab to leave the rail. Double-rAF defers past BaseUI Dialog's
+  // capture-phase focus trap that would otherwise reclaim focus on reopen.
   useEffect(() => {
     if (!open) return;
     let raf2: number | null = null;
     const raf1 = requestAnimationFrame(() => {
       raf2 = requestAnimationFrame(() => {
-        const activeBtn = navRef.current?.querySelector<HTMLButtonElement>(
-          'button[data-active="true"]',
+        if (activeSection === "appearance") {
+          const cards = contentRef.current?.querySelectorAll<HTMLButtonElement>(
+            "[data-theme-card]",
+          );
+          if (cards && cards.length > 0) {
+            const selectedId = normalizeThemeId(config.theme_mode);
+            const target =
+              Array.from(cards).find((c) => c.dataset.themeId === selectedId) ?? cards[0];
+            target.focus({ preventScroll: true });
+            return;
+          }
+        }
+        const focusable = contentRef.current?.querySelector<HTMLElement>(
+          FOCUSABLE_SELECTOR,
         );
-        activeBtn?.focus({ preventScroll: true });
-      });
-    });
-    return () => {
-      cancelAnimationFrame(raf1);
-      if (raf2 !== null) cancelAnimationFrame(raf2);
-    };
-  }, [open, activeSection]);
-
-  // Appearance section is a 2-col grid of buttons (no form fields), so the
-  // nav-button-only focus leaves the user one Tab away from interaction with
-  // poor discoverability. Hand off focus to the selected (or first) theme
-  // card. Double-rAF for the same BaseUI override reason as above.
-  useEffect(() => {
-    if (!open || activeSection !== "appearance") return;
-    let raf2: number | null = null;
-    const raf1 = requestAnimationFrame(() => {
-      raf2 = requestAnimationFrame(() => {
-        const cards = contentRef.current?.querySelectorAll<HTMLButtonElement>(
-          "[data-theme-card]",
-        );
-        if (!cards || cards.length === 0) return;
-        const selectedId = normalizeThemeId(config.theme_mode);
-        const target =
-          Array.from(cards).find((c) => c.dataset.themeId === selectedId) ?? cards[0];
-        target.focus({ preventScroll: true });
+        focusable?.focus({ preventScroll: true });
       });
     });
     return () => {

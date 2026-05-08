@@ -546,7 +546,12 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
 
       e.preventDefault();
       e.stopPropagation();
-      list[nextIdx].focus();
+      const next = list[nextIdx];
+      next.focus();
+      // Pull the newly focused card into view if it's partially behind the
+      // scroll edge — `block: "nearest"` doesn't overscroll when the card
+      // is already visible.
+      next.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
     window.addEventListener("keydown", handleArrows, true);
     return () => window.removeEventListener("keydown", handleArrows, true);
@@ -675,7 +680,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
             })}
           </nav>
 
-          <div ref={contentRef} className="overflow-y-auto pr-1 max-h-[60vh]">
+          <div ref={contentRef} className="overflow-y-auto px-1 max-h-[60vh]">
             {activeSection === "paths" && (
               <div className="space-y-4">
                 <ValidatedPathField

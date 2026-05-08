@@ -268,7 +268,7 @@ export function Workspace() {
   }
 
   return (
-    <div className="flex h-full flex-col bg-background">
+    <div className="flex h-full flex-col bg-background cluihud-canvas-depth">
       <TopBar onOpenSettings={() => setSettingsOpen(true)} rightPanelVisible={!rightCollapsed} />
 
       <div className="flex flex-1 overflow-hidden p-2">

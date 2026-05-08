@@ -308,7 +308,7 @@ export function Workspace() {
             defaultSize="42%"
             minSize="25%"
           >
-            <div className="flex h-full flex-col gap-2 overflow-hidden">
+            <div className="flex h-full flex-col gap-2">
               <div
                 className={`flex-1 overflow-hidden rounded-lg border-2 ${terminalBorderClass} bg-terminal-surface p-2 cluihud-panel-focus`}
                 data-focus-zone="terminal"

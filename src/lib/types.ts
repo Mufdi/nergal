@@ -41,9 +41,25 @@ export interface Config {
   terminal_kitty_keyboard: boolean;
   sidebar_dot_grid: boolean;
   panel_focus_pulse: boolean;
+  panel_glow: boolean;
   scratchpad_path: string | null;
   default_agent: string | null;
   agent_overrides: Record<string, string>;
+  custom_themes: CustomTheme[];
+}
+
+export interface CustomThemeFonts {
+  interface: string;
+  terminal: string;
+  markdown: string;
+}
+
+export interface CustomTheme {
+  id: string;
+  label: string;
+  base_id: string;
+  primary: string;
+  fonts: CustomThemeFonts;
 }
 
 export interface PathValidation {

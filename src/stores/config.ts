@@ -15,7 +15,9 @@ export const configAtom = atom<Config>({
   terminal_kitty_keyboard: true,
   sidebar_dot_grid: false,
   panel_focus_pulse: false,
+  panel_glow: false,
   scratchpad_path: null,
   default_agent: null,
   agent_overrides: {},
+  custom_themes: [],
 });

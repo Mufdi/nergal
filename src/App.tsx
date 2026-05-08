@@ -44,7 +44,9 @@ class ErrorBoundary extends Component<
 export function App() {
   const store = useStore();
   const setConfig = useSetAtom(configAtom);
-  const themeMode = useAtomValue(configAtom).theme_mode;
+  const config = useAtomValue(configAtom);
+  const themeMode = config.theme_mode;
+  const customThemes = config.custom_themes;
 
   useEffect(() => {
     getCurrentWindow().show().catch(() => {});
@@ -57,8 +59,12 @@ export function App() {
   }, [setConfig]);
 
   useEffect(() => {
-    applyTheme(themeMode);
-  }, [themeMode]);
+    applyTheme(themeMode, customThemes);
+  }, [themeMode, customThemes]);
+
+  useEffect(() => {
+    document.documentElement.dataset.panelGlow = config.panel_glow ? "on" : "off";
+  }, [config.panel_glow]);
 
   useEffect(() => {
     const unlisteners = setupHookListeners(store);

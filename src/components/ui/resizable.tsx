@@ -4,8 +4,16 @@ import * as ResizablePrimitive from "react-resizable-panels"
 
 import { cn } from "@/lib/utils"
 
+// react-resizable-panels v4 inlines `overflow: hidden` on the Group and
+// `overflow: auto` on the inner div of each Panel. Both clip our panel
+// glow's outer halo into rectangular shapes at the corners. Spreading
+// `style: { overflow: "visible" }` overrides those inline values (the
+// library spreads user style AFTER its own defaults, so `overflow`
+// takes precedence). Children panels keep their own `overflow-hidden`
+// to clip their content — only the wrapping containers go visible.
 function ResizablePanelGroup({
   className,
+  style,
   ...props
 }: ResizablePrimitive.GroupProps) {
   return (
@@ -15,13 +23,20 @@ function ResizablePanelGroup({
         "flex h-full w-full",
         className
       )}
+      style={{ overflow: "visible", ...style }}
       {...props}
     />
   )
 }
 
-function ResizablePanel({ ...props }: ResizablePrimitive.PanelProps) {
-  return <ResizablePrimitive.Panel data-slot="resizable-panel" {...props} />
+function ResizablePanel({ style, ...props }: ResizablePrimitive.PanelProps) {
+  return (
+    <ResizablePrimitive.Panel
+      data-slot="resizable-panel"
+      style={{ overflow: "visible", ...style }}
+      {...props}
+    />
+  )
 }
 
 function ResizableHandle({

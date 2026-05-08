@@ -44,6 +44,10 @@ pub struct Config {
     /// active panel keeps a permanent accent border (Omarchy-style).
     #[serde(default)]
     pub panel_focus_pulse: bool,
+    /// When true, an accent-color glow halo wraps the active panel borders.
+    /// Off by default — opt-in for users who want the Hyprland-y emphasis.
+    #[serde(default)]
+    pub panel_glow: bool,
     /// Path where scratchpad notes (`.md` files) live. Defaults to
     /// `~/.config/cluihud/scratchpad/`. Can be changed at runtime via
     /// `scratchpad_set_path`; the new value is persisted here.
@@ -62,6 +66,30 @@ pub struct Config {
     /// don't produce phantom entries.
     #[serde(default)]
     pub agent_overrides: HashMap<String, String>,
+    /// User-defined themes forked from a builtin base. Override accent
+    /// color and font stacks while inheriting the base's surface tokens
+    /// (background, card, border, etc.) via `data-theme=<base_id>`.
+    #[serde(default)]
+    pub custom_themes: Vec<CustomTheme>,
+}
+
+/// Custom theme — forked from a builtin via Settings → Appearance →
+/// Customize. Inherits surface CSS tokens from `base_id` and overrides
+/// the accent + fonts. See `src/lib/themes.ts` for the apply pipeline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomTheme {
+    pub id: String,
+    pub label: String,
+    pub base_id: String,
+    pub primary: String,
+    pub fonts: CustomThemeFonts,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomThemeFonts {
+    pub interface: String,
+    pub terminal: String,
+    pub markdown: String,
 }
 
 impl Default for Config {
@@ -81,9 +109,11 @@ impl Default for Config {
             terminal_kitty_keyboard: true,
             sidebar_dot_grid: false,
             panel_focus_pulse: false,
+            panel_glow: false,
             scratchpad_path: None,
             default_agent: None,
             agent_overrides: HashMap::new(),
+            custom_themes: Vec::new(),
         }
     }
 }

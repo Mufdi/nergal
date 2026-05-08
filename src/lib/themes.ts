@@ -27,20 +27,66 @@ export interface Theme {
   fonts: ThemeFonts;
 }
 
-const FONT_GEIST_SANS = '"Geist Variable", "Inter", system-ui, sans-serif';
-const FONT_INTER = '"Inter Variable", "Inter", system-ui, sans-serif';
-const FONT_SPACE_GROTESK =
+import type { CustomTheme } from "./types";
+
+export const FONT_GEIST_SANS = '"Geist Variable", "Inter", system-ui, sans-serif';
+export const FONT_INTER = '"Inter Variable", "Inter", system-ui, sans-serif';
+export const FONT_SPACE_GROTESK =
   '"Space Grotesk Variable", "Space Grotesk", system-ui, sans-serif';
-const FONT_SPACE_MONO =
+export const FONT_SPACE_MONO =
   '"Space Mono", "JetBrains Mono Variable", "Menlo", monospace';
-const FONT_JETBRAINS_MONO =
+export const FONT_JETBRAINS_MONO =
   '"JetBrains Mono Variable", "JetBrains Mono", "Fira Code", monospace';
-const FONT_SOURCE_SERIF =
+export const FONT_SOURCE_SERIF =
   '"Source Serif 4 Variable", "Source Serif Pro", Georgia, serif';
-const FONT_SYSTEM_SERIF = 'Georgia, "Times New Roman", "Iowan Old Style", serif';
-const FONT_SYSTEM_SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
-const FONT_BLACKLETTER =
+export const FONT_SYSTEM_SERIF = 'Georgia, "Times New Roman", "Iowan Old Style", serif';
+export const FONT_SYSTEM_SANS =
+  '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+export const FONT_BLACKLETTER =
   '"UnifrakturCook", "Cloister Black", "Old English Text MT", "UnifrakturMaguntia", serif';
+
+/// Curated font stacks exposed in the custom-theme editor. Keeping the list
+/// closed (vs. an open text input) avoids users picking fonts the bundle
+/// doesn't ship — every entry here is either bundled via `@fontsource*`
+/// imports in `globals.css` or relies on system fallbacks.
+export interface FontOption {
+  id: string;
+  label: string;
+  stack: string;
+}
+
+export const INTERFACE_FONTS: FontOption[] = [
+  { id: "geist", label: "Geist", stack: FONT_GEIST_SANS },
+  { id: "inter", label: "Inter", stack: FONT_INTER },
+  { id: "space-grotesk", label: "Space Grotesk", stack: FONT_SPACE_GROTESK },
+  { id: "system-sans", label: "System Sans", stack: FONT_SYSTEM_SANS },
+  { id: "blackletter", label: "Blackletter", stack: FONT_BLACKLETTER },
+];
+
+export const TERMINAL_FONTS: FontOption[] = [
+  { id: "jetbrains-mono", label: "JetBrains Mono", stack: FONT_JETBRAINS_MONO },
+  { id: "space-mono", label: "Space Mono", stack: FONT_SPACE_MONO },
+];
+
+export const MARKDOWN_FONTS: FontOption[] = [
+  { id: "geist", label: "Geist", stack: FONT_GEIST_SANS },
+  { id: "inter", label: "Inter", stack: FONT_INTER },
+  { id: "space-grotesk", label: "Space Grotesk", stack: FONT_SPACE_GROTESK },
+  { id: "source-serif", label: "Source Serif", stack: FONT_SOURCE_SERIF },
+  { id: "system-serif", label: "System Serif", stack: FONT_SYSTEM_SERIF },
+  { id: "blackletter", label: "Blackletter", stack: FONT_BLACKLETTER },
+];
+
+/// Accent presets exposed as quick swatches in the custom-theme editor.
+/// Pulled from existing builtin theme palettes so customs blend visually.
+export const ACCENT_PRESETS: { label: string; value: string }[] = [
+  { label: "Orange", value: "#f97316" },
+  { label: "Cyan", value: "#22d3ee" },
+  { label: "Violet", value: "#a78bfa" },
+  { label: "Yellow", value: "#facc15" },
+  { label: "Blue", value: "#06b6d4" },
+  { label: "Red", value: "#d71921" },
+];
 
 export const THEMES: Theme[] = [
   {
@@ -201,6 +247,87 @@ export const THEMES: Theme[] = [
     },
   },
   {
+    /** Dracula — classic palette by Zeno Rocha. Purple-violet canvas with
+     *  pink/magenta accent. Soft on the eyes, popular across editors. */
+    id: "v9-dracula",
+    label: "v9 Dracula",
+    preview: {
+      background: "#282a36",
+      card: "#21222c",
+      secondary: "#44475a",
+      foreground: "#f8f8f2",
+      mutedForeground: "#9aa0b6",
+      border: "rgba(255,255,255,0.10)",
+      primary: "#ff79c6",
+    },
+    fonts: {
+      interface: FONT_INTER,
+      terminal: FONT_JETBRAINS_MONO,
+      markdown: FONT_INTER,
+    },
+  },
+  {
+    /** Monokai — by Wimer Hazenberg. Warm dark canvas with neon-green
+     *  signature. Iconic since TextMate; ported everywhere. */
+    id: "v10-monokai",
+    label: "v10 Monokai",
+    preview: {
+      background: "#272822",
+      card: "#1d1e19",
+      secondary: "#3e3d32",
+      foreground: "#f8f8f2",
+      mutedForeground: "#a59f85",
+      border: "rgba(255,255,255,0.10)",
+      primary: "#a6e22e",
+    },
+    fonts: {
+      interface: FONT_INTER,
+      terminal: FONT_JETBRAINS_MONO,
+      markdown: FONT_INTER,
+    },
+  },
+  {
+    /** Tokyo Night — by Enkia. Deep blue canvas, cyan-blue accent, calm
+     *  and high-contrast. Modern editor staple. */
+    id: "v11-tokyo-night",
+    label: "v11 Tokyo Night",
+    preview: {
+      background: "#1a1b26",
+      card: "#16161e",
+      secondary: "#24283b",
+      foreground: "#c0caf5",
+      mutedForeground: "#7a88cf",
+      border: "rgba(255,255,255,0.08)",
+      primary: "#7aa2f7",
+    },
+    fonts: {
+      interface: FONT_INTER,
+      terminal: FONT_JETBRAINS_MONO,
+      markdown: FONT_INTER,
+    },
+  },
+  {
+    /** Mono Vampire — v7 Mono surfaces and fonts (JetBrains Mono across the
+     *  board) with a deep blood-red accent in place of cyan. Reads like a
+     *  monospace terminal painted in arterial red. */
+    id: "v12-mono-vampire",
+    label: "v12 Mono Vampire",
+    preview: {
+      background: "#0d0d0d",
+      card: "#050505",
+      secondary: "#1a1a1a",
+      foreground: "#e5e5e5",
+      mutedForeground: "#808080",
+      border: "rgba(255,255,255,0.10)",
+      primary: "#7f1d1d",
+    },
+    fonts: {
+      interface: FONT_JETBRAINS_MONO,
+      terminal: FONT_JETBRAINS_MONO,
+      markdown: FONT_JETBRAINS_MONO,
+    },
+  },
+  {
     /** Adapted from R0122 dominikmartn/nothing-design-skill (Nothing OS).
      *  OLED black canvas, Nothing red interrupt accent, Space Grotesk
      *  workhorse + Space Mono for terminal/data. Doto dot-matrix font is
@@ -245,39 +372,165 @@ export function getTheme(id: string): Theme {
   return THEMES.find((t) => t.id === id) ?? THEMES[0];
 }
 
-/// Key under which the active theme id is mirrored in localStorage so the
-/// next boot can apply it synchronously before React mounts (avoids the
-/// default-theme flash while waiting on `get_config` over IPC).
+/// Find a custom theme by id (returns `undefined` for builtins).
+export function findCustomTheme(
+  id: string,
+  customs: CustomTheme[] | undefined,
+): CustomTheme | undefined {
+  return customs?.find((c) => c.id === id);
+}
+
+/// Convert a `CustomTheme` (overrides on a base) into a flat `Theme` for the
+/// picker grid + previews. The base supplies surface tokens (background /
+/// card / etc.) and the custom replaces accent + fonts.
+export function resolveCustomTheme(custom: CustomTheme): Theme {
+  const base = getTheme(custom.base_id);
+  return {
+    id: custom.id,
+    label: custom.label,
+    preview: { ...base.preview, primary: custom.primary },
+    fonts: { ...custom.fonts },
+  };
+}
+
+/// All themes the picker should expose: visible builtins + customs.
+export function visibleThemesWithCustoms(customs: CustomTheme[]): Theme[] {
+  return [...VISIBLE_THEMES, ...customs.map(resolveCustomTheme)];
+}
+
+/// Allocate a unique custom theme id (slug-safe).
+function newCustomThemeId(): string {
+  const random = Math.random().toString(36).slice(2, 8);
+  return `custom-${Date.now().toString(36)}-${random}`;
+}
+
+/// Auto-generate a label like "v7 Mono Custom", "v7 Mono Custom 2", etc.
+function newCustomThemeLabel(baseLabel: string, customs: CustomTheme[]): string {
+  const prefix = `${baseLabel} Custom`;
+  const taken = new Set(customs.map((c) => c.label));
+  if (!taken.has(prefix)) return prefix;
+  for (let n = 2; ; n++) {
+    const candidate = `${prefix} ${n}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
+
+/// Build a `CustomTheme` forked from a builtin. Used by the "Customize"
+/// action in Settings → Appearance.
+export function forkBuiltinTheme(
+  baseId: string,
+  existingCustoms: CustomTheme[],
+): CustomTheme {
+  const base = getTheme(baseId);
+  return {
+    id: newCustomThemeId(),
+    label: newCustomThemeLabel(base.label, existingCustoms),
+    base_id: base.id,
+    primary: base.preview.primary,
+    fonts: { ...base.fonts },
+  };
+}
+
+/// Snapshot persisted to localStorage for synchronous boot. Stores the
+/// fully resolved apply state so we don't need to round-trip through
+/// `get_config` to render the right theme on the first paint.
+interface ThemeSnapshot {
+  /// Theme id — builtin id or custom id (informational).
+  id: string;
+  /// Drives `data-theme` on `<html>` for surface tokens.
+  base: string;
+  /// Optional accent override. `null` means "use the CSS default" (clears
+  /// any leftover inline `--primary` from a previous custom theme).
+  primary: string | null;
+  /// Fonts always apply explicitly (CSS vars), independent of base.
+  fonts: ThemeFonts;
+}
+
+/// Key under which the active theme snapshot is mirrored in localStorage.
 export const THEME_CACHE_KEY = "cluihud:theme";
 
-export function applyTheme(themeId: string): void {
-  const id = normalizeThemeId(themeId);
-  const theme = getTheme(id);
-  const root = document.documentElement;
-  root.dataset.theme = id;
-  // Set font CSS vars so `--font-sans` (chrome) and the terminal canvas
-  // pick them up. Defaults in globals.css fall back to Geist when unset.
-  root.style.setProperty("--theme-font-interface", theme.fonts.interface);
-  root.style.setProperty("--theme-font-terminal", theme.fonts.terminal);
-  root.style.setProperty("--theme-font-markdown", theme.fonts.markdown);
+function writeCacheSnapshot(snapshot: ThemeSnapshot): void {
   try {
-    localStorage.setItem(THEME_CACHE_KEY, id);
+    localStorage.setItem(THEME_CACHE_KEY, JSON.stringify(snapshot));
   } catch {
     // localStorage unavailable (private mode, quota) — skip the cache;
     // we'll fall back to default on next boot.
   }
 }
 
-/// Synchronous bootstrap — reads the cached theme id (written by the
-/// previous session via `applyTheme`) and applies it before React mounts.
-/// Falls back to `DEFAULT_THEME_ID` on first launch or if the cache is
-/// missing/corrupted.
-export function applyCachedTheme(): void {
-  let cached: string | null = null;
+function readCacheSnapshot(): ThemeSnapshot | null {
+  let raw: string | null = null;
   try {
-    cached = localStorage.getItem(THEME_CACHE_KEY);
+    raw = localStorage.getItem(THEME_CACHE_KEY);
   } catch {
-    cached = null;
+    return null;
   }
-  applyTheme(cached ?? DEFAULT_THEME_ID);
+  if (!raw) return null;
+  // Legacy format was a bare theme id string. Migrate to a snapshot using
+  // the corresponding builtin's fonts so the boot still applies cleanly.
+  if (!raw.startsWith("{")) {
+    const id = normalizeThemeId(raw);
+    const theme = getTheme(id);
+    return { id, base: id, primary: null, fonts: { ...theme.fonts } };
+  }
+  try {
+    return JSON.parse(raw) as ThemeSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+/// Apply the active theme to the DOM. When `themeId` matches a custom in
+/// `customs`, it inherits surface tokens from `custom.base_id` and overrides
+/// `--primary` / `--ring` / `--accent` plus the font stacks.
+export function applyTheme(themeId: string, customs?: CustomTheme[]): void {
+  const root = document.documentElement;
+  const custom = findCustomTheme(themeId, customs);
+
+  let snapshot: ThemeSnapshot;
+  if (custom) {
+    const baseId = normalizeThemeId(custom.base_id);
+    snapshot = {
+      id: custom.id,
+      base: baseId,
+      primary: custom.primary,
+      fonts: { ...custom.fonts },
+    };
+  } else {
+    const id = normalizeThemeId(themeId);
+    const theme = getTheme(id);
+    snapshot = { id, base: id, primary: null, fonts: { ...theme.fonts } };
+  }
+
+  applySnapshot(root, snapshot);
+  writeCacheSnapshot(snapshot);
+}
+
+function applySnapshot(root: HTMLElement, snapshot: ThemeSnapshot): void {
+  root.dataset.theme = snapshot.base;
+  if (snapshot.primary) {
+    root.style.setProperty("--primary", snapshot.primary);
+    root.style.setProperty("--ring", snapshot.primary);
+    root.style.setProperty("--accent", snapshot.primary);
+  } else {
+    root.style.removeProperty("--primary");
+    root.style.removeProperty("--ring");
+    root.style.removeProperty("--accent");
+  }
+  root.style.setProperty("--theme-font-interface", snapshot.fonts.interface);
+  root.style.setProperty("--theme-font-terminal", snapshot.fonts.terminal);
+  root.style.setProperty("--theme-font-markdown", snapshot.fonts.markdown);
+}
+
+/// Synchronous bootstrap — reads the cached snapshot and applies it before
+/// React mounts. Falls back to the default theme on first launch / corrupt
+/// cache. The authoritative theme arrives later via `configAtom` and may
+/// overwrite this if it diverges.
+export function applyCachedTheme(): void {
+  const snapshot = readCacheSnapshot();
+  if (snapshot) {
+    applySnapshot(document.documentElement, snapshot);
+    return;
+  }
+  applyTheme(DEFAULT_THEME_ID);
 }

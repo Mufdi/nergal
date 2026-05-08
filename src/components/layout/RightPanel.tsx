@@ -151,7 +151,7 @@ export function RightPanel({ collapsed }: RightPanelProps) {
   if (activeTab) {
     const showAnnotationsDrawer = activeTab.type === "plan" || activeTab.type === "spec";
     return (
-      <div className="flex h-full flex-col gap-1 overflow-hidden">
+      <div className="flex h-full flex-col gap-1">
         <div className={`relative flex flex-1 flex-col overflow-hidden rounded-lg border-2 ${borderClass} bg-card cluihud-panel-focus`} data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus} onKeyDown={handlePanelKeyDown}>
           {/* Level 1: Tabs + actions */}
           <div className="flex shrink-0 items-center border-b border-border/50">
@@ -315,7 +315,7 @@ function NavigablePickerContainer({ type, className }: { type: TabType; classNam
   return (
     <div
       ref={containerRef}
-      className={`w-full max-w-xs max-h-[70%] overflow-y-auto rounded border border-border bg-card shadow-lg outline-none ${className ?? ""}`}
+      className={`cluihud-glow w-full max-w-xs max-h-[70%] overflow-y-auto rounded-lg border-2 border-primary bg-card shadow-lg outline-none ${className ?? ""}`}
       data-nav-container
       tabIndex={-1}
       onKeyDown={handleKeyDown}

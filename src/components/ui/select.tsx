@@ -37,9 +37,38 @@ export function Select({
     >
       <SelectPrimitive.Trigger
         id={id}
+        // Capture phase so this handler runs BEFORE Base UI Select's own
+        // bubble-phase keydown listener (which would otherwise open the
+        // popup on ArrowDown/Up). preventDefault + stopPropagation here
+        // means Base UI never sees the arrow key.
+        onKeyDownCapture={(e) => {
+          if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+          e.preventDefault();
+          e.stopPropagation();
+          const root =
+            (e.currentTarget as HTMLElement).closest<HTMLElement>(
+              '[data-theme-editor], [data-slot="dialog-content"], [role="dialog"]',
+            ) ?? document.body;
+          // Exclude hidden inputs (Base UI Select renders a form-aware
+          // `type="hidden"` next to the trigger) and tabindex=-1 elements
+          // so ArrowDown/Up don't land on invisible focus targets.
+          const focusables = Array.from(
+            root.querySelectorAll<HTMLElement>(
+              'input:not([type="hidden"]):not([disabled]):not([aria-disabled="true"]):not([tabindex="-1"]), [role="combobox"]:not([disabled]):not([aria-disabled="true"]):not([tabindex="-1"]), button:not([disabled]):not([aria-disabled="true"]):not([tabindex="-1"])',
+            ),
+          );
+          const idx = focusables.indexOf(e.currentTarget as HTMLElement);
+          if (idx === -1) return;
+          const nextIdx =
+            e.key === "ArrowDown"
+              ? Math.min(idx + 1, focusables.length - 1)
+              : Math.max(idx - 1, 0);
+          if (nextIdx === idx) return;
+          focusables[nextIdx].focus({ preventScroll: true });
+          focusables[nextIdx].scrollIntoView({ block: "nearest" });
+        }}
         className={cn(
-          "flex h-9 w-full items-center justify-between rounded-md border border-input bg-secondary text-foreground px-3 py-1 text-sm shadow-xs outline-none transition-colors",
-          "focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40",
+          "cluihud-focus-ring flex h-9 w-full items-center justify-between rounded-md border border-input bg-secondary text-foreground px-3 py-1 text-sm shadow-xs transition-colors",
           "disabled:cursor-not-allowed disabled:opacity-60",
           className,
         )}

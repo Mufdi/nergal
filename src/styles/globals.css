@@ -140,6 +140,49 @@
   --terminal-foreground: #18181b;
 }
 
+/* ── Theme: v5 Raycast — adapted from VoltAgent/awesome-design-md.
+   Surface ladder (Canvas → Surface → Surface Card), Hairline borders,
+   Inter site-wide (with ss03 stylistic set for brand identity), Accent
+   Blue as primary. Mirror Raycast's "no shadows, elevation via surface
+   color" philosophy: shadows already disabled in our island system. */
+:root[data-theme="v5-raycast"] {
+  --background: #07080a;
+  --foreground: #f4f4f6;
+  --card: #121212;
+  --card-foreground: #f4f4f6;
+  --popover: #101111;
+  --popover-foreground: #f4f4f6;
+  --primary: #57c1ff;
+  --primary-foreground: #07080a;
+  --secondary: #18191a;
+  --secondary-foreground: #d3d3d4;
+  --muted: #18191a;
+  --muted-foreground: #9c9c9d;
+  --accent: #57c1ff;
+  --accent-foreground: #07080a;
+  --destructive: #ff6161;
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.16);
+  --ring: #57c1ff;
+  --sidebar: #07080a;
+  --sidebar-foreground: #f4f4f6;
+  --sidebar-primary: #57c1ff;
+  --sidebar-primary-foreground: #07080a;
+  --sidebar-accent: #18191a;
+  --sidebar-accent-foreground: #f4f4f6;
+  --sidebar-border: rgba(255, 255, 255, 0.06);
+  --sidebar-ring: #57c1ff;
+
+  --terminal-surface: #07080a;
+  --terminal-foreground: #cdcdcd;
+}
+
+/* Raycast brand-Inter feature set. Applied at the theme root so it
+   propagates to every Inter-rendered glyph (chrome + markdown). */
+:root[data-theme="v5-raycast"] {
+  font-feature-settings: "calt", "kern", "liga", "ss03";
+}
+
 /* ── Theme: v3 Crystal — cool dark blue with cyan accent. Inter for
    chrome (technical/clean feel), Source Serif for markdown (long-form
    reading), JetBrains Mono for terminal. */

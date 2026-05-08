@@ -85,6 +85,10 @@
   --theme-font-interface: "Geist Variable", "Inter", system-ui, sans-serif;
   --theme-font-terminal: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
   --theme-font-markdown: "Geist Variable", "Inter", system-ui, sans-serif;
+
+  /* Canvas depth vignette tint — overridden per theme below. Used by
+     `.cluihud-canvas-depth` as an inset box-shadow color. */
+  --canvas-vignette: rgba(0, 0, 0, 0.32);
 }
 
 /* The legacy `.dark` class block was removed (2026-05-07). `:root` defines
@@ -141,6 +145,10 @@
      read as a dark slab dropped onto a white workspace. */
   --terminal-surface: #ffffff;
   --terminal-foreground: #18181b;
+
+  /* Light vignette: dark-on-light stays subtle so the canvas doesn't
+     feel grey-washed. */
+  --canvas-vignette: rgba(0, 0, 0, 0.08);
 }
 
 /* ── Theme: v6 Nothing — adapted from R0122 nothing-design-skill.
@@ -460,6 +468,16 @@ body,
   background-image: radial-gradient(circle at 1px 1px, var(--border) 1px, transparent 0);
   background-size: 14px 14px;
   background-position: 0 0;
+}
+
+/* ── Canvas depth vignette — visual stand-in for the transparency effect
+   that Linux WebKitGTK can't deliver reliably (tauri/tauri#14924,
+   #12800). A soft inset darkening at the edges of the workspace canvas
+   suggests recessed depth so the opaque islands feel raised. Theme-aware
+   via the per-theme `--canvas-vignette` token; defaults to a dark
+   ambient cast in `:root`. */
+.cluihud-canvas-depth {
+  box-shadow: inset 0 0 140px var(--canvas-vignette);
 }
 
 /* ── Backdrop blur (WebKitGTK-safe) ─────────────────────────────────────

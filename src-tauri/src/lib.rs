@@ -248,6 +248,17 @@ pub fn run() {
             let plans_dir = config.plans_directory.clone();
             let transcripts_dir = config.transcripts_directory.clone();
 
+            // Linux WebKitGTK doesn't honor `transparent: true` from
+            // tauri.conf.json alone — the GTK window is transparent but
+            // WebKit paints an opaque white default unless we explicitly
+            // clear the webview's bg. macOS/Windows handle the config flag
+            // natively, so this is Linux-gated.
+            #[cfg(target_os = "linux")]
+            if let Some(window) = app.get_webview_window("main") {
+                use tauri::webview::Color;
+                let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
+            }
+
             let hook_app = app_handle.clone();
             let hook_db = db.clone();
             let hook_plan = plan_state.clone();

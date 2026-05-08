@@ -85,10 +85,6 @@
   --theme-font-interface: "Geist Variable", "Inter", system-ui, sans-serif;
   --theme-font-terminal: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
   --theme-font-markdown: "Geist Variable", "Inter", system-ui, sans-serif;
-
-  /* Canvas depth vignette tint — overridden per theme below. Used by
-     `.cluihud-canvas-depth` as an inset box-shadow color. */
-  --canvas-vignette: rgba(0, 0, 0, 0.32);
 }
 
 /* The legacy `.dark` class block was removed (2026-05-07). `:root` defines
@@ -145,10 +141,6 @@
      read as a dark slab dropped onto a white workspace. */
   --terminal-surface: #ffffff;
   --terminal-foreground: #18181b;
-
-  /* Light vignette: dark-on-light stays subtle so the canvas doesn't
-     feel grey-washed. */
-  --canvas-vignette: rgba(0, 0, 0, 0.08);
 }
 
 /* ── Theme: v6 Nothing — adapted from R0122 nothing-design-skill.
@@ -470,14 +462,23 @@ body,
   background-position: 0 0;
 }
 
-/* ── Canvas depth vignette — visual stand-in for the transparency effect
-   that Linux WebKitGTK can't deliver reliably (tauri/tauri#14924,
-   #12800). A soft inset darkening at the edges of the workspace canvas
-   suggests recessed depth so the opaque islands feel raised. Theme-aware
-   via the per-theme `--canvas-vignette` token; defaults to a dark
-   ambient cast in `:root`. */
+/* ── Canvas depth — visual stand-in for transparency that Linux Tauri
+   can't deliver reliably (tauri/tauri#14924, #12800). Layers a soft
+   primary-tinted radial spotlight over a sparse dot grid. The dots
+   share rhythm with the sidebar (radial-gradient dot family) but at
+   wider spacing (22px vs 14px) so the canvas reads as ambient noise
+   rather than a continuation of the rail. The radial tint pulls the
+   theme's accent into the canvas without overpowering it. */
 .cluihud-canvas-depth {
-  box-shadow: inset 0 0 140px var(--canvas-vignette);
+  background-image:
+    radial-gradient(
+      ellipse 80% 60% at 50% 0%,
+      color-mix(in srgb, var(--primary) 7%, transparent) 0%,
+      transparent 60%
+    ),
+    radial-gradient(circle at 1px 1px, var(--border) 1px, transparent 0);
+  background-size: 100% 100%, 22px 22px;
+  background-position: 0 0, 0 0;
 }
 
 /* ── Backdrop blur (WebKitGTK-safe) ─────────────────────────────────────

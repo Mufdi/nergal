@@ -462,35 +462,6 @@ body,
   background-position: 0 0;
 }
 
-/* ── Canvas shimmer — slow diagonal sweep of the theme's --primary at
-   low alpha, animated across the workspace canvas. Replaces the
-   transparency effect we can't get reliably from Linux Tauri. The
-   gradient lives off-screen at both keyframe ends so the loop snap
-   is invisible; visible "wave" passes through every cycle. */
-@keyframes cluihud-canvas-shimmer {
-  0% { background-position: -150% 0; }
-  100% { background-position: 250% 0; }
-}
-
-.cluihud-canvas-depth {
-  background-image: linear-gradient(
-    115deg,
-    transparent 10%,
-    color-mix(in srgb, var(--primary) 14%, transparent) 50%,
-    transparent 90%
-  );
-  background-size: 220% 100%;
-  background-repeat: no-repeat;
-  animation: cluihud-canvas-shimmer 16s linear infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .cluihud-canvas-depth {
-    animation: none;
-    background-image: none;
-  }
-}
-
 /* ── Backdrop blur (WebKitGTK-safe) ─────────────────────────────────────
    Tailwind v4's `backdrop-blur-*` utilities chain multiple compositing
    properties via CSS vars (`--tw-backdrop-blur` etc.). On WebKitGTK

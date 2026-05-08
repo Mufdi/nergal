@@ -268,7 +268,7 @@ export function Workspace() {
   }
 
   return (
-    <div className="flex h-full flex-col bg-background cluihud-canvas-depth">
+    <div className="flex h-full flex-col bg-background">
       <TopBar onOpenSettings={() => setSettingsOpen(true)} rightPanelVisible={!rightCollapsed} />
 
       <div className="flex flex-1 overflow-hidden p-2">
@@ -303,7 +303,7 @@ export function Workspace() {
           >
             <div className="flex h-full flex-col gap-2 overflow-hidden">
               <div
-                className="flex-1 overflow-hidden rounded bg-terminal-surface p-2"
+                className="flex-1 overflow-hidden rounded border border-border bg-terminal-surface p-2 transition-colors focus-within:border-primary"
                 data-focus-zone="terminal"
                 onMouseDown={() => {
                   setFocusZone("terminal");

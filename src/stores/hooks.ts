@@ -1,7 +1,7 @@
 import { type getDefaultStore } from "jotai";
 import { invoke, listen } from "@/lib/tauri";
 import type { HookEvent, CostSummary, Task, ActivityEntry } from "@/lib/types";
-import { costMapAtom, modeMapAtom, cwdMapAtom, statusLineMapAtom, activeSessionIdAtom, type StatusLineData } from "./workspace";
+import { costMapAtom, modeMapAtom, cwdMapAtom, agentStatusMapAtom, activeSessionIdAtom, type AgentStatus } from "./workspace";
 import { taskMapAtom } from "./tasks";
 import { fileMapAtom, type ModifiedFile } from "./files";
 import { planStateMapAtom, planDocumentsAtom, registerPlanAtom, planReviewStatusMapAtom } from "./plan";
@@ -190,11 +190,11 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
   );
 
   unlisteners.push(
-    await listen<StatusLineData & { session_id: string }>("statusline:update", (payload) => {
+    await listen<AgentStatus & { session_id: string }>("agent:status-update", (payload) => {
       const sid = payload.session_id;
       if (!sid) return;
       const { session_id: _, ...data } = payload;
-      set(statusLineMapAtom, (prev) => ({ ...prev, [sid]: data }));
+      set(agentStatusMapAtom, (prev) => ({ ...prev, [sid]: data }));
     }),
   );
 

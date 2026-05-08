@@ -405,11 +405,7 @@
     @apply border-border outline-ring/50;
   }
   body {
-    /* `transparent: true` in tauri.conf.json makes the window bg show the
-       desktop. Body must be transparent so the Workspace outer
-       (bg-background/80) blends with the desktop instead of covering it. */
-    background: transparent;
-    @apply text-foreground;
+    @apply bg-background text-foreground;
   }
   html {
     @apply font-sans;

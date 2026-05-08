@@ -484,14 +484,17 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
     };
   }, [open, activeSection, config.theme_mode]);
 
-  // Arrow-key navigation between theme cards. The grid is 2 columns wide
-  // (`grid-cols-2` on the parent), so arrow handling is genuinely 2D:
-  // Right/Left walk within a row, Down/Up jump between rows. We clamp at
-  // edges (no wrap) so the user feels the boundary instead of teleporting.
-  // Capture phase + stopPropagation prevents BaseUI Dialog from intercepting.
+  // Arrow-key navigation across the dialog content.
+  //   - Theme card grid (`[data-theme-card]`): genuine 2D nav, 2 cols, clamps
+  //     at edges. Right/Left within row, Down/Up between rows.
+  //   - Form fields elsewhere: linear ArrowDown/Up between focusables;
+  //     Left/Right pass through to the field (so cursor nav inside text
+  //     inputs keeps working). Comboboxes (BaseUI Select) and textareas
+  //     keep their native arrow handling — we no-op for those.
+  // Capture + stopPropagation prevents BaseUI Dialog from intercepting.
   useEffect(() => {
     if (!open) return;
-    const COLS = 2;
+    const CARD_COLS = 2;
     function handleArrows(e: KeyboardEvent) {
       if (
         e.key !== "ArrowRight" &&
@@ -503,43 +506,71 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
       }
       if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
       const target = e.target as HTMLElement | null;
-      if (!target || !target.closest("[data-theme-card]")) return;
+      if (!target) return;
 
-      const cards = contentRef.current?.querySelectorAll<HTMLButtonElement>("[data-theme-card]");
-      if (!cards || cards.length === 0) return;
-      const list = Array.from(cards);
-      const current = target.closest<HTMLButtonElement>("[data-theme-card]");
-      const idx = current ? list.indexOf(current) : -1;
+      // Branch 1: theme card 2D nav
+      if (target.closest("[data-theme-card]")) {
+        const cards = contentRef.current?.querySelectorAll<HTMLButtonElement>(
+          "[data-theme-card]",
+        );
+        if (!cards || cards.length === 0) return;
+        const list = Array.from(cards);
+        const current = target.closest<HTMLButtonElement>("[data-theme-card]");
+        const idx = current ? list.indexOf(current) : -1;
+        if (idx === -1) return;
+
+        const row = Math.floor(idx / CARD_COLS);
+        const col = idx % CARD_COLS;
+        const lastIdx = list.length - 1;
+        const lastRow = Math.floor(lastIdx / CARD_COLS);
+        let nextIdx = idx;
+        switch (e.key) {
+          case "ArrowRight":
+            if (col < CARD_COLS - 1 && idx + 1 <= lastIdx) nextIdx = idx + 1;
+            break;
+          case "ArrowLeft":
+            if (col > 0) nextIdx = idx - 1;
+            break;
+          case "ArrowDown":
+            if (row < lastRow && idx + CARD_COLS <= lastIdx) nextIdx = idx + CARD_COLS;
+            break;
+          case "ArrowUp":
+            if (row > 0) nextIdx = idx - CARD_COLS;
+            break;
+        }
+        if (nextIdx === idx) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const next = list[nextIdx];
+        next.focus();
+        next.scrollIntoView({ block: "nearest", inline: "nearest" });
+        return;
+      }
+
+      // Branch 2: form-field linear nav. Skip targets that own arrow keys
+      // natively so the user keeps cursor/option control.
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      const tag = target.tagName;
+      const role = target.getAttribute("role");
+      if (tag === "TEXTAREA" || role === "combobox" || role === "listbox") return;
+      if (!contentRef.current?.contains(target)) return;
+
+      const focusables = Array.from(
+        contentRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+      );
+      const idx = focusables.indexOf(target);
       if (idx === -1) return;
 
-      const row = Math.floor(idx / COLS);
-      const col = idx % COLS;
-      const lastIdx = list.length - 1;
-      const lastRow = Math.floor(lastIdx / COLS);
-      let nextIdx = idx;
-      switch (e.key) {
-        case "ArrowRight":
-          if (col < COLS - 1 && idx + 1 <= lastIdx) nextIdx = idx + 1;
-          break;
-        case "ArrowLeft":
-          if (col > 0) nextIdx = idx - 1;
-          break;
-        case "ArrowDown":
-          if (row < lastRow && idx + COLS <= lastIdx) nextIdx = idx + COLS;
-          break;
-        case "ArrowUp":
-          if (row > 0) nextIdx = idx - COLS;
-          break;
-      }
+      const forward = e.key === "ArrowDown";
+      const nextIdx = forward
+        ? Math.min(idx + 1, focusables.length - 1)
+        : Math.max(idx - 1, 0);
       if (nextIdx === idx) return;
 
       e.preventDefault();
       e.stopPropagation();
-      const next = list[nextIdx];
+      const next = focusables[nextIdx];
       next.focus();
-      // Pull the newly focused card into view if it's partially behind the
-      // scroll edge — `block: "nearest"` doesn't overscroll when the card
-      // is already visible.
       next.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
     window.addEventListener("keydown", handleArrows, true);

@@ -68,26 +68,31 @@ export function BrowserHost() {
 
     function tick() {
       const el = document.querySelector(selector) as HTMLElement | null;
+      let next: BrowserSlotBbox | null = null;
       if (el) {
         const r = el.getBoundingClientRect();
         if (r.width > 0 && r.height > 0) {
-          const next: BrowserSlotBbox = {
+          next = {
             x: Math.round(r.left),
             y: Math.round(r.top),
             w: Math.round(r.width),
             h: Math.round(r.height),
           };
-          if (
-            !last ||
-            last.x !== next.x ||
-            last.y !== next.y ||
-            last.w !== next.w ||
-            last.h !== next.h
-          ) {
-            last = next;
-            setBbox(next);
-          }
         }
+      }
+      // Detect both dimension changes AND collapses: when the slot is
+      // missing or has zero size (e.g. right panel collapsed via splitter
+      // drag or Ctrl+Shift+B), `next` becomes null so the iframe hides
+      // instead of staying overlaid at its last known position.
+      const changed = !last !== !next || (last && next && (
+        last.x !== next.x ||
+        last.y !== next.y ||
+        last.w !== next.w ||
+        last.h !== next.h
+      ));
+      if (changed) {
+        last = next;
+        setBbox(next);
       }
       raf = requestAnimationFrame(tick);
     }

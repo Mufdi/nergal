@@ -31,6 +31,7 @@
     "@fontsource-variable/source-serif-4": "^5.2.9",
     "@fontsource-variable/space-grotesk": "^5.2.10",
     "@fontsource/space-mono": "^5.2.9",
+    "@fontsource/unifrakturcook": "^5.2.8",
     "@lezer/highlight": "^1.2.3",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",

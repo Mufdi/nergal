@@ -8,13 +8,15 @@ fn default_true() -> bool {
 }
 
 /// Map legacy theme ids ("dark"/"light") to the namespaced ones used by the
-/// theme registry. Unknown values fall back to "v1-dark".
+/// theme registry. Unknown / new theme ids pass through unchanged so the
+/// frontend (`normalizeThemeId` in `lib/themes.ts`) is the single source of
+/// truth for the registry — adding a theme there should not require Rust
+/// changes here.
 fn normalize_theme_mode(value: &str) -> String {
     match value {
-        "v1-dark" | "v1-light" => value.to_string(),
-        "dark" | "" => "v1-dark".to_string(),
+        "" | "dark" => "v1-dark".to_string(),
         "light" => "v1-light".to_string(),
-        _ => "v1-dark".to_string(),
+        other => other.to_string(),
     }
 }
 
@@ -33,6 +35,15 @@ pub struct Config {
     /// encode unambiguously so shells can bind them distinctively.
     #[serde(default = "default_true")]
     pub terminal_kitty_keyboard: bool,
+    /// Render the radial dot-grid texture behind the left sidebar islands.
+    /// Disable for plainer surfaces in mono / brutalist themes.
+    #[serde(default)]
+    pub sidebar_dot_grid: bool,
+    /// When true, panel focus is communicated as a brief accent-color pulse
+    /// that fades out (legacy v3-ux behavior). When false (default), the
+    /// active panel keeps a permanent accent border (Omarchy-style).
+    #[serde(default)]
+    pub panel_focus_pulse: bool,
     /// Path where scratchpad notes (`.md` files) live. Defaults to
     /// `~/.config/cluihud/scratchpad/`. Can be changed at runtime via
     /// `scratchpad_set_path`; the new value is persisted here.
@@ -68,6 +79,8 @@ impl Default for Config {
             theme_mode: "v1-dark".into(),
             preferred_editor: String::new(),
             terminal_kitty_keyboard: true,
+            sidebar_dot_grid: false,
+            panel_focus_pulse: false,
             scratchpad_path: None,
             default_agent: None,
             agent_overrides: HashMap::new(),

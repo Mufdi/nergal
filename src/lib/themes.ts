@@ -39,6 +39,8 @@ const FONT_SOURCE_SERIF =
   '"Source Serif 4 Variable", "Source Serif Pro", Georgia, serif';
 const FONT_SYSTEM_SERIF = 'Georgia, "Times New Roman", "Iowan Old Style", serif';
 const FONT_SYSTEM_SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+const FONT_BLACKLETTER =
+  '"UnifrakturCook", "Cloister Black", "Old English Text MT", "UnifrakturMaguntia", serif';
 
 export const THEMES: Theme[] = [
   {
@@ -154,6 +156,51 @@ export const THEMES: Theme[] = [
     },
   },
   {
+    /** True OLED black + white accent, blackletter chrome. Cloister Black
+     *  is proprietary, so UnifrakturCook (OFL) is the runtime fallback —
+     *  closest rounded Schwabacher to Cloister Black. Set the user's local
+     *  "Cloister Black" / "Old English Text MT" first in the stack so it
+     *  wins if installed system-wide. */
+    id: "v8-gothic",
+    label: "v8 Gothic",
+    preview: {
+      background: "#000000",
+      card: "#050505",
+      secondary: "#0d0d0d",
+      foreground: "#f5f5f5",
+      mutedForeground: "#777777",
+      border: "rgba(255,255,255,0.14)",
+      primary: "#ffffff",
+    },
+    fonts: {
+      interface: FONT_BLACKLETTER,
+      terminal: FONT_JETBRAINS_MONO,
+      markdown: FONT_BLACKLETTER,
+    },
+  },
+  {
+    /** Neutral grayscale (no tint) + Omarchy/Hyprland-style cyan accent.
+     *  Pure mono mood: monospace interface, borders & focus all share the
+     *  single cyan token. Dark-only — light variants are blocked by the
+     *  WebKitGTK shadow-copy bug (see Known Platform Limitations). */
+    id: "v7-mono",
+    label: "v7 Mono",
+    preview: {
+      background: "#0d0d0d",
+      card: "#050505",
+      secondary: "#1a1a1a",
+      foreground: "#e5e5e5",
+      mutedForeground: "#808080",
+      border: "rgba(255,255,255,0.10)",
+      primary: "#22d3ee",
+    },
+    fonts: {
+      interface: FONT_JETBRAINS_MONO,
+      terminal: FONT_JETBRAINS_MONO,
+      markdown: FONT_JETBRAINS_MONO,
+    },
+  },
+  {
     /** Adapted from R0122 dominikmartn/nothing-design-skill (Nothing OS).
      *  OLED black canvas, Nothing red interrupt accent, Space Grotesk
      *  workhorse + Space Mono for terminal/data. Doto dot-matrix font is
@@ -198,6 +245,11 @@ export function getTheme(id: string): Theme {
   return THEMES.find((t) => t.id === id) ?? THEMES[0];
 }
 
+/// Key under which the active theme id is mirrored in localStorage so the
+/// next boot can apply it synchronously before React mounts (avoids the
+/// default-theme flash while waiting on `get_config` over IPC).
+export const THEME_CACHE_KEY = "cluihud:theme";
+
 export function applyTheme(themeId: string): void {
   const id = normalizeThemeId(themeId);
   const theme = getTheme(id);
@@ -208,4 +260,24 @@ export function applyTheme(themeId: string): void {
   root.style.setProperty("--theme-font-interface", theme.fonts.interface);
   root.style.setProperty("--theme-font-terminal", theme.fonts.terminal);
   root.style.setProperty("--theme-font-markdown", theme.fonts.markdown);
+  try {
+    localStorage.setItem(THEME_CACHE_KEY, id);
+  } catch {
+    // localStorage unavailable (private mode, quota) — skip the cache;
+    // we'll fall back to default on next boot.
+  }
+}
+
+/// Synchronous bootstrap — reads the cached theme id (written by the
+/// previous session via `applyTheme`) and applies it before React mounts.
+/// Falls back to `DEFAULT_THEME_ID` on first launch or if the cache is
+/// missing/corrupted.
+export function applyCachedTheme(): void {
+  let cached: string | null = null;
+  try {
+    cached = localStorage.getItem(THEME_CACHE_KEY);
+  } catch {
+    cached = null;
+  }
+  applyTheme(cached ?? DEFAULT_THEME_ID);
 }

@@ -39,6 +39,8 @@ export interface Config {
   theme_mode: string;
   preferred_editor: string;
   terminal_kitty_keyboard: boolean;
+  sidebar_dot_grid: boolean;
+  panel_focus_pulse: boolean;
   scratchpad_path: string | null;
   default_agent: string | null;
   agent_overrides: Record<string, string>;

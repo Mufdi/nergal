@@ -153,7 +153,7 @@ export function GitFullView() {
     return (
       <div className="fixed inset-0 z-40 flex overflow-hidden" role="dialog" aria-label="Conflict resolution full view">
         <div className="absolute inset-0 bg-background/60 cluihud-blur-md" onClick={closeAll} />
-        <div className="relative z-10 flex min-w-0 flex-1 flex-col m-3 overflow-hidden rounded-lg bg-card/95 border border-border">
+        <div className="relative z-10 flex min-w-0 flex-1 flex-col m-3 overflow-hidden rounded-lg bg-card/95 border-2 border-border">
           <ConflictsPanel sessionId={sessionId} inZen onToggleZen={closeAll} />
         </div>
       </div>
@@ -168,8 +168,8 @@ export function GitFullView() {
         {/* Viewer */}
         <div
           onMouseDown={() => setZone("viewer")}
-          className={`relative z-10 flex min-w-0 flex-1 flex-col m-3 mr-0 overflow-hidden rounded-lg bg-card/95 border ring-1 transition-colors ${
-            zone === "viewer" ? "ring-primary/40 border-primary/40" : "ring-transparent border-border"
+          className={`relative z-10 flex min-w-0 flex-1 flex-col m-3 mr-0 overflow-hidden rounded-lg bg-card/95 border-2 cluihud-panel-focus ${
+            zone === "viewer" ? "border-primary" : "border-border"
           }`}
         >
           <PrViewer data={prZen} inZen />
@@ -178,8 +178,8 @@ export function GitFullView() {
         {/* PR files sidebar */}
         <div
           onMouseDown={() => setZone("sidebar")}
-          className={`relative z-10 w-72 shrink-0 flex flex-col m-3 ml-1.5 overflow-hidden rounded-lg bg-card/95 border ring-1 transition-colors ${
-            zone === "sidebar" ? "border-primary/40 ring-primary/40" : "border-border ring-transparent"
+          className={`relative z-10 w-72 shrink-0 flex flex-col m-3 ml-1.5 overflow-hidden rounded-lg bg-card/95 border-2 cluihud-panel-focus ${
+            zone === "sidebar" ? "border-primary" : "border-border"
           }`}
         >
           <PrZenSidebar workspaceId={prZen.workspaceId} prNumber={prZen.prNumber} sidebarActive={zone === "sidebar"} />
@@ -207,12 +207,12 @@ export function GitFullView() {
       {/* Diff content area */}
       <div
         onMouseDown={() => setZone("viewer")}
-        className={`relative z-10 flex min-w-0 flex-1 flex-col m-3 mr-0 overflow-hidden ring-1 transition-colors ${
-          zone === "viewer" ? "ring-primary/40" : "ring-transparent"
+        className={`relative z-10 flex min-w-0 flex-1 flex-col m-3 mr-0 overflow-hidden rounded-lg border-2 bg-card/95 cluihud-panel-focus ${
+          zone === "viewer" ? "border-primary" : "border-border"
         }`}
       >
         {/* Header */}
-        <div className="flex h-9 shrink-0 items-center justify-between rounded-t-lg bg-card/95 border border-border px-3">
+        <div className="flex h-9 shrink-0 items-center justify-between border-b border-border/50 px-3">
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -249,7 +249,7 @@ export function GitFullView() {
         </div>
 
         {/* Diff viewer — side by side */}
-        <div className="flex-1 overflow-hidden rounded-b-lg bg-card/95 border border-t-0 border-border">
+        <div className="flex-1 overflow-hidden">
           <DiffView
             key={state.filePath}
             filePath={state.filePath}
@@ -267,8 +267,8 @@ export function GitFullView() {
           a diff: here they only need to switch which file the viewer shows. */}
       <div
         onMouseDown={() => setZone("sidebar")}
-        className={`relative z-10 w-72 shrink-0 flex flex-col m-3 ml-1.5 overflow-hidden rounded-lg bg-card/95 border ring-1 transition-colors ${
-          zone === "sidebar" ? "border-primary/40 ring-primary/40" : "border-border ring-transparent"
+        className={`relative z-10 w-72 shrink-0 flex flex-col m-3 ml-1.5 overflow-hidden rounded-lg bg-card/95 border-2 cluihud-panel-focus ${
+          zone === "sidebar" ? "border-primary" : "border-border"
         }`}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-border/50 px-3 py-1.5">

@@ -71,7 +71,15 @@ function ValidatedPathField({
   }, [value, runValidation]);
 
   const status = (() => {
-    if (validating) return { icon: <Info size={12} className="text-muted-foreground animate-pulse" />, text: "Checking…", tone: "muted" as const };
+    // Show "Checking…" while validating OR while we don't have a result
+    // yet for a non-empty path. Reserves the row's vertical space from
+    // the first paint so the modal doesn't visibly grow when the async
+    // invoke resolves (~300ms after open). Empty paths still get null
+    // (no row) so the layout stays tight on unconfigured fields.
+    const hasPendingValidation = !validation && value.trim().length > 0;
+    if (validating || hasPendingValidation) {
+      return { icon: <Info size={12} className="text-muted-foreground animate-pulse" />, text: "Checking…", tone: "muted" as const };
+    }
     if (!validation) return null;
     if (validation.error || !validation.exists) {
       return { icon: <XCircle size={12} className="text-destructive" />, text: validation.error ?? "Not found", tone: "destructive" as const };
@@ -441,28 +449,50 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
   }, [open]);
 
   // Focus the active nav button (not the first input) so Alt+N stays usable
-  // and Tab walks into the form fields naturally.
+  // and Tab walks into the form fields naturally. Double-rAF defers past
+  // BaseUI Dialog's capture-phase focus trap, which would otherwise win on
+  // reopen and leave focus on the close button (breaking arrow-key nav in
+  // the appearance grid on the second open).
   useEffect(() => {
-    if (!open || !navRef.current) return;
-    const activeBtn = navRef.current.querySelector<HTMLButtonElement>('button[data-active="true"]');
-    activeBtn?.focus({ preventScroll: true });
+    if (!open) return;
+    let raf2: number | null = null;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        const activeBtn = navRef.current?.querySelector<HTMLButtonElement>(
+          'button[data-active="true"]',
+        );
+        activeBtn?.focus({ preventScroll: true });
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (raf2 !== null) cancelAnimationFrame(raf2);
+    };
   }, [open, activeSection]);
 
   // Appearance section is a 2-col grid of buttons (no form fields), so the
   // nav-button-only focus leaves the user one Tab away from interaction with
-  // poor discoverability. Hand off focus to the selected (or first) theme card
-  // after the nav-button effect runs. rAF lets the section render first.
+  // poor discoverability. Hand off focus to the selected (or first) theme
+  // card. Double-rAF for the same BaseUI override reason as above.
   useEffect(() => {
     if (!open || activeSection !== "appearance") return;
-    const handle = requestAnimationFrame(() => {
-      const cards = contentRef.current?.querySelectorAll<HTMLButtonElement>("[data-theme-card]");
-      if (!cards || cards.length === 0) return;
-      const selectedId = normalizeThemeId(config.theme_mode);
-      const target =
-        Array.from(cards).find((c) => c.dataset.themeId === selectedId) ?? cards[0];
-      target.focus({ preventScroll: true });
+    let raf2: number | null = null;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        const cards = contentRef.current?.querySelectorAll<HTMLButtonElement>(
+          "[data-theme-card]",
+        );
+        if (!cards || cards.length === 0) return;
+        const selectedId = normalizeThemeId(config.theme_mode);
+        const target =
+          Array.from(cards).find((c) => c.dataset.themeId === selectedId) ?? cards[0];
+        target.focus({ preventScroll: true });
+      });
     });
-    return () => cancelAnimationFrame(handle);
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (raf2 !== null) cancelAnimationFrame(raf2);
+    };
   }, [open, activeSection, config.theme_mode]);
 
   // Arrow-key navigation between theme cards. Only fires when focus is on a
@@ -588,7 +618,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-3xl">
+      <DialogContent className="sm:max-w-3xl h-[640px]">
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
@@ -596,7 +626,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid grid-cols-[180px_1fr] gap-5 min-h-[420px]">
+        <div className="grid grid-cols-[180px_1fr] gap-5 h-[460px]">
           <nav ref={navRef} className="flex flex-col gap-0.5 border-r border-border/40 pr-2">
             {SECTIONS.map((section, idx) => {
               const Icon = section.icon;
@@ -768,7 +798,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
           </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="-mx-4 -mb-4 bg-transparent border-t-0 px-4 pt-2 pb-4">
           <div ref={footerRef} className="contents">
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               Cancel

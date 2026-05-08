@@ -45,6 +45,8 @@ export function RightPanel({ collapsed }: RightPanelProps) {
   const activePanelView = useAtomValue(activePanelViewAtom);
   const setFocusZone = useSetAtom(focusZoneAtom);
   const setPreviousZone = useSetAtom(previousNonTerminalZoneAtom);
+  const focusZone = useAtomValue(focusZoneAtom);
+  const borderClass = focusZone === "panel" ? "border-primary" : "border-border";
   const [pickerOpen, setPickerOpen] = useAtom(filePickerOpenAtom);
   const [annotationsDrawerOpen, setAnnotationsDrawerOpen] = useState(false);
 
@@ -144,7 +146,7 @@ export function RightPanel({ collapsed }: RightPanelProps) {
     const showAnnotationsDrawer = activeTab.type === "plan" || activeTab.type === "spec";
     return (
       <div className="flex h-full flex-col gap-1 overflow-hidden">
-        <div className="relative flex flex-1 flex-col overflow-hidden rounded border border-border bg-card transition-colors focus-within:border-primary" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus} onKeyDown={handlePanelKeyDown}>
+        <div className={`relative flex flex-1 flex-col overflow-hidden rounded border ${borderClass} bg-card transition-colors`} data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus} onKeyDown={handlePanelKeyDown}>
           {/* Level 1: Tabs + actions */}
           <div className="flex shrink-0 items-center border-b border-border/50">
             <div className="flex-1 overflow-hidden">
@@ -191,7 +193,7 @@ export function RightPanel({ collapsed }: RightPanelProps) {
   if (activePanelView) {
     const hasPanelPicker = PICKER_TYPES.includes(activePanelView);
     return (
-      <div className="relative flex h-full flex-col overflow-hidden rounded border border-border bg-card transition-colors focus-within:border-primary" data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
+      <div className={`relative flex h-full flex-col overflow-hidden rounded border ${borderClass} bg-card transition-colors`} data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
         {tabs.length > 0 ? (
           <div className="flex shrink-0 items-center border-b border-border/50">
             <div className="flex-1 overflow-hidden">
@@ -219,7 +221,7 @@ export function RightPanel({ collapsed }: RightPanelProps) {
   }
 
   return (
-    <div className="flex h-full flex-col rounded border border-border bg-card transition-colors focus-within:border-primary">
+    <div className={`flex h-full flex-col rounded border ${borderClass} bg-card transition-colors`}>
       {tabs.length > 0 && (
         <div className="flex shrink-0 items-center border-b border-border/50">
           <div className="flex-1 overflow-hidden">

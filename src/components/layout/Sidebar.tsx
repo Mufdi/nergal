@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { configAtom } from "@/stores/config";
 import { useFocusPulse } from "@/hooks/useFocusPulse";
+import { confirm as swalConfirm } from "@/lib/swal";
 import { focusZoneAtom, previousNonTerminalZoneAtom, triggerResumeSessionAtom, triggerNewSessionAtom, triggerAddWorkspaceAtom, triggerCommitAtom, triggerMergeAtom, triggerJumpToProjectAtom, sidebarSelectedIdxAtom, focusedWorkspaceIdAtom } from "@/stores/shortcuts";
 import {
   workspacesAtom,
@@ -541,8 +542,16 @@ function WorkspacesView() {
                         })
                         .catch(() => {});
                     }}
-                    onDelete={() => {
-                      if (!window.confirm(`Delete session "${s.name}"?`)) return;
+                    onDelete={async () => {
+                      const ok = await swalConfirm({
+                        title: "Delete session?",
+                        body: `<strong>${s.name}</strong> will be removed and its terminal closed.`,
+                        confirmLabel: "Delete",
+                        cancelLabel: "Cancel",
+                        kind: "warning",
+                        destructive: true,
+                      });
+                      if (!ok) return;
                       terminalService.destroy(s.id);
                       invoke("delete_session", { sessionId: s.id })
                         .then(() => {

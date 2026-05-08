@@ -17,9 +17,23 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select } from "@/components/ui/select";
-import { CheckCircle2, AlertTriangle, XCircle, Info, FolderTree, Bot, Pencil, Palette, Terminal, NotebookText, RefreshCw, Check } from "lucide-react";
+import { CheckCircle2, AlertTriangle, XCircle, Info, FolderTree, Bot, Pencil, Palette, Terminal, NotebookText, RefreshCw, Check, ArrowLeft, Trash2, Sliders } from "lucide-react";
+import { HexColorPicker } from "react-colorful";
 import { scratchpadPathAtom, reloadTabsFromBackend } from "@/stores/scratchpad";
-import { VISIBLE_THEMES, normalizeThemeId, type Theme } from "@/lib/themes";
+import {
+  VISIBLE_THEMES,
+  normalizeThemeId,
+  type Theme,
+  type FontOption,
+  ACCENT_PRESETS,
+  INTERFACE_FONTS,
+  TERMINAL_FONTS,
+  MARKDOWN_FONTS,
+  resolveCustomTheme,
+  forkBuiltinTheme,
+} from "@/lib/themes";
+import type { CustomTheme } from "@/lib/types";
+import { confirm as swalConfirm } from "@/lib/swal";
 
 type PathKind = "dir" | "file" | "executable";
 
@@ -278,11 +292,19 @@ const TOGGLE_FIELDS: { key: BooleanConfigKey; label: string; help: string }[] = 
 function ThemePreviewCard({
   theme,
   selected,
+  isCustom,
   onSelect,
+  onCustomize,
+  onEdit,
+  onDelete,
 }: {
   theme: Theme;
   selected: boolean;
+  isCustom?: boolean;
   onSelect: () => void;
+  onCustomize?: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
 }) {
   const { preview } = theme;
   return (
@@ -360,9 +382,9 @@ function ThemePreviewCard({
         />
       </div>
       <div className="flex items-center justify-between px-0.5">
-        <span className="text-xs font-medium text-foreground">{theme.label}</span>
+        <span className="text-xs font-medium text-foreground truncate">{theme.label}</span>
         {selected && (
-          <span className="flex size-4 items-center justify-center rounded-full bg-orange-500 text-white">
+          <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-orange-500 text-white">
             <Check size={10} strokeWidth={3} />
           </span>
         )}
@@ -370,15 +392,561 @@ function ThemePreviewCard({
       {/* Font sample row: each "Aa" uses one of the theme's fonts so the
           card surfaces the typographic personality (interface / markdown /
           terminal) at a glance. */}
-      <div className="flex items-center gap-2 px-0.5 text-[11px] text-muted-foreground">
-        <span style={{ fontFamily: theme.fonts.interface }} title="Interface font">Aa</span>
-        <span style={{ fontFamily: theme.fonts.markdown }} title="Markdown font">Aa</span>
-        <span style={{ fontFamily: theme.fonts.terminal }} title="Terminal font">Aa</span>
+      <div className="flex items-center justify-between px-0.5">
+        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+          <span style={{ fontFamily: theme.fonts.interface }} title="Interface font">Aa</span>
+          <span style={{ fontFamily: theme.fonts.markdown }} title="Markdown font">Aa</span>
+          <span style={{ fontFamily: theme.fonts.terminal }} title="Terminal font">Aa</span>
+        </div>
+        <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus:opacity-100 group-focus-within:opacity-100">
+          {/* Keyboard hints: "E" enters the editor for the focused card;
+              "D" deletes a custom (only for customs). Visible only on
+              keyboard focus so the chips don't compete with the icons
+              shown on hover. */}
+          <span className="hidden rounded border border-border/60 bg-secondary px-1 font-mono text-[9px] text-muted-foreground group-focus:inline-block group-focus-within:inline-block">
+            E
+          </span>
+          {isCustom && (
+            <span className="hidden rounded border border-border/60 bg-secondary px-1 font-mono text-[9px] text-muted-foreground group-focus:inline-block group-focus-within:inline-block">
+              D
+            </span>
+          )}
+          {isCustom ? (
+            <>
+              {onEdit && (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Edit custom theme"
+                  onClick={(e) => { e.stopPropagation(); onEdit(); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); e.preventDefault(); onEdit(); } }}
+                  className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground"
+                >
+                  <Sliders size={11} />
+                </span>
+              )}
+              {onDelete && (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Delete custom theme"
+                  onClick={(e) => { e.stopPropagation(); onDelete(); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); e.preventDefault(); onDelete(); } }}
+                  className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-destructive"
+                >
+                  <Trash2 size={11} />
+                </span>
+              )}
+            </>
+          ) : (
+            onCustomize && (
+              <span
+                role="button"
+                tabIndex={0}
+                aria-label="Customize theme"
+                onClick={(e) => { e.stopPropagation(); onCustomize(); }}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); e.preventDefault(); onCustomize(); } }}
+                className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground"
+                title="Customize"
+              >
+                <Sliders size={11} />
+              </span>
+            )
+          )}
+        </div>
       </div>
     </button>
   );
 }
 
+function ThemeEditor({
+  custom,
+  onChange,
+  onClose,
+  onDelete,
+}: {
+  custom: CustomTheme;
+  onChange: (next: CustomTheme) => void;
+  onClose: () => void;
+  onDelete: () => void;
+}) {
+  const editorRef = useRef<HTMLDivElement>(null);
+  const interfaceFontId =
+    INTERFACE_FONTS.find((f) => f.stack === custom.fonts.interface)?.id ?? "geist";
+  const terminalFontId =
+    TERMINAL_FONTS.find((f) => f.stack === custom.fonts.terminal)?.id ?? "jetbrains-mono";
+  const markdownFontId =
+    MARKDOWN_FONTS.find((f) => f.stack === custom.fonts.markdown)?.id ?? "geist";
+
+  // Land focus on the Back button so arrow keys navigate from the top.
+  useEffect(() => {
+    const root = editorRef.current;
+    if (!root) return;
+    const back = root.querySelector<HTMLElement>("button");
+    requestAnimationFrame(() => back?.focus({ preventScroll: true }));
+  }, []);
+
+  // Esc returns to the grid. Window-level capture phase + targeted
+  // popup-state detection so an open Select popup absorbs Esc to close
+  // itself first (without leaking to the parent Dialog and closing the
+  // whole modal). Esc only — ArrowLeft would conflict with swatch
+  // navigation, so it's reserved exclusively for left/right movement.
+  useEffect(() => {
+    function findOpenSelectTrigger(): HTMLElement | null {
+      return document.querySelector<HTMLElement>(
+        '[aria-haspopup="listbox"][aria-expanded="true"]',
+      );
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      const isEsc = e.key === "Escape";
+      const isBackspace = e.key === "Backspace";
+      if (!isEsc && !isBackspace) return;
+      const trigger = findOpenSelectTrigger();
+      if (trigger) {
+        // Popup open — close it ourselves by re-clicking the trigger
+        // (Base UI Select toggles open state on click). stopImmediate
+        // also blocks the parent Dialog from closing the whole modal.
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        trigger.click();
+        trigger.focus({ preventScroll: true });
+        return;
+      }
+      // Backspace must not steal the delete-char behavior from text
+      // inputs. Esc has no input-side meaning and always exits.
+      if (isBackspace) {
+        const target = e.target as HTMLElement | null;
+        const inText =
+          target?.tagName === "INPUT" ||
+          target?.tagName === "TEXTAREA" ||
+          target?.getAttribute("contenteditable") === "true";
+        if (inText) return;
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      onClose();
+    }
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [onClose]);
+
+  // Arrow Left/Right within the accent swatches row — common keyboard
+  // pattern for color pickers. ArrowDown/Up is handled by the parent's
+  // linear-focus handler so it walks across all editor rows uniformly.
+  function onSwatchKeyDown(e: React.KeyboardEvent<HTMLButtonElement>) {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    const root = editorRef.current;
+    if (!root) return;
+    const swatches = Array.from(
+      root.querySelectorAll<HTMLButtonElement>("button[data-accent-swatch]"),
+    );
+    const current = e.currentTarget;
+    const idx = swatches.indexOf(current);
+    if (idx === -1) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const nextIdx = e.key === "ArrowRight"
+      ? Math.min(idx + 1, swatches.length - 1)
+      : Math.max(idx - 1, 0);
+    swatches[nextIdx].focus();
+  }
+
+  function patch(fields: Partial<CustomTheme>) {
+    onChange({ ...custom, ...fields });
+  }
+
+  function patchFont(slot: "interface" | "terminal" | "markdown", id: string) {
+    const list =
+      slot === "interface" ? INTERFACE_FONTS : slot === "terminal" ? TERMINAL_FONTS : MARKDOWN_FONTS;
+    const opt = list.find((f) => f.id === id);
+    if (!opt) return;
+    onChange({ ...custom, fonts: { ...custom.fonts, [slot]: opt.stack } });
+  }
+
+  return (
+    <div className="space-y-4" data-theme-editor ref={editorRef}>
+      <div className="flex items-center gap-2">
+        <Button variant="ghost" size="sm" onClick={onClose} title="Back (Esc)">
+          <ArrowLeft size={14} />
+          Back
+        </Button>
+        <Input
+          value={custom.label}
+          onChange={(e) => patch({ label: e.target.value })}
+          className="h-7 max-w-xs text-[12px]"
+          aria-label="Theme name"
+        />
+      </div>
+
+      <section className="grid gap-2">
+        <Label>Accent</Label>
+        <div className="flex flex-wrap items-center gap-2 px-2">
+          {ACCENT_PRESETS.map((p) => {
+            const active = p.value.toLowerCase() === custom.primary.toLowerCase();
+            return (
+              <button
+                key={p.value}
+                type="button"
+                onClick={() => patch({ primary: p.value })}
+                onKeyDown={onSwatchKeyDown}
+                aria-label={p.label}
+                title={p.label}
+                data-accent-swatch
+                className={`cluihud-focus-ring size-6 rounded-full border-2 transition-transform ${active ? "scale-110 border-foreground" : "border-border hover:scale-105"}`}
+                style={{ backgroundColor: p.value }}
+              />
+            );
+          })}
+          <span className="ml-2 flex items-center gap-2">
+            <Input
+              value={custom.primary}
+              onChange={(e) => patch({ primary: e.target.value })}
+              className="h-7 w-28 font-mono text-[11px]"
+              aria-label="Accent hex"
+              placeholder="#22d3ee"
+            />
+            <span
+              className="size-6 shrink-0 rounded-full border border-border"
+              style={{ backgroundColor: custom.primary }}
+              aria-label={`Current accent: ${custom.primary}`}
+              title={custom.primary}
+            />
+          </span>
+        </div>
+        {/* Full color picker pad — saturation/value square + hue slider.
+            react-colorful is keyboard-accessible (Tab into pad, arrows
+            move within it). The wrapper class scopes our local sizing
+            overrides. */}
+        <div className="cluihud-color-picker mt-2 px-2">
+          <HexColorPicker
+            color={normalizeHexForPicker(custom.primary)}
+            onChange={(hex) => patch({ primary: hex })}
+          />
+        </div>
+      </section>
+
+      <section className="grid gap-3">
+        <Label>Fonts</Label>
+        <FontSelectRow
+          label="Interface"
+          options={INTERFACE_FONTS}
+          valueId={interfaceFontId}
+          stack={custom.fonts.interface}
+          onChange={(id) => patchFont("interface", id)}
+        />
+        <FontSelectRow
+          label="Terminal"
+          options={TERMINAL_FONTS}
+          valueId={terminalFontId}
+          stack={custom.fonts.terminal}
+          onChange={(id) => patchFont("terminal", id)}
+        />
+        <FontSelectRow
+          label="Markdown"
+          options={MARKDOWN_FONTS}
+          valueId={markdownFontId}
+          stack={custom.fonts.markdown}
+          onChange={(id) => patchFont("markdown", id)}
+        />
+      </section>
+
+      <div className="flex items-center justify-between border-t border-border/50 pt-3">
+        <span className="text-xs text-muted-foreground">
+          Changes apply live. Click <strong>Save</strong> to persist across sessions.
+        </span>
+        <Button variant="ghost" size="sm" onClick={onDelete} className="text-destructive hover:text-destructive">
+          <Trash2 size={12} />
+          Delete theme
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/// `<input type="color">` only accepts strict 6-digit hex. Strip alpha and
+/// normalize 3-digit shorthand so a CSS color like "#abc" or "#22d3eecc"
+/// still yields a valid swatch instead of an empty picker. Returns the
+/// canonical 6-digit form for the swatch; the source `primary` value (which
+/// may include alpha) is preserved untouched in the actual config.
+function normalizeHexForPicker(value: string): string {
+  const trimmed = value.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(trimmed)) return trimmed.toLowerCase();
+  if (/^#[0-9a-fA-F]{3}$/.test(trimmed)) {
+    const r = trimmed[1], g = trimmed[2], b = trimmed[3];
+    return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+  }
+  if (/^#[0-9a-fA-F]{8}$/.test(trimmed)) return trimmed.slice(0, 7).toLowerCase();
+  return "#000000";
+}
+
+function FontSelectRow({
+  label,
+  options,
+  valueId,
+  stack,
+  onChange,
+}: {
+  label: string;
+  options: FontOption[];
+  valueId: string;
+  stack: string;
+  onChange: (id: string) => void;
+}) {
+  const selectOptions = options.map((o) => ({ value: o.id, label: o.label }));
+  return (
+    <div className="grid grid-cols-[110px_minmax(0,1fr)_60px] items-center gap-2 text-sm">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <Select
+        value={valueId}
+        onValueChange={onChange}
+        options={selectOptions}
+        className="h-8"
+      />
+      <span
+        className="text-[14px] text-muted-foreground"
+        style={{ fontFamily: stack }}
+        title={stack}
+      >
+        Aa Bb
+      </span>
+    </div>
+  );
+}
+
+
+function AppearanceSection({
+  config,
+  setConfig,
+  handleTextChange,
+  handleToggleChange,
+}: {
+  config: Config;
+  setConfig: (updater: (prev: Config) => Config) => void;
+  handleTextChange: (key: StringConfigKey, value: string) => void;
+  handleToggleChange: (key: BooleanConfigKey, value: boolean) => void;
+}) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [returnFocusId, setReturnFocusId] = useState<string | null>(null);
+
+  const customs = config.custom_themes;
+  const editingCustom = editingId
+    ? customs.find((c) => c.id === editingId) ?? null
+    : null;
+
+  const builtinCards = VISIBLE_THEMES;
+  const customCards = customs.map((c) => ({
+    custom: c,
+    theme: resolveCustomTheme(c),
+  }));
+  const activeId = normalizeThemeId(config.theme_mode);
+
+  function selectTheme(id: string) {
+    handleTextChange("theme_mode", id);
+  }
+
+  function customizeBuiltin(baseId: string) {
+    const fork = forkBuiltinTheme(baseId, customs);
+    setConfig((prev) => ({
+      ...prev,
+      custom_themes: [...prev.custom_themes, fork],
+      theme_mode: fork.id,
+    }));
+    setReturnFocusId(fork.id);
+    setEditingId(fork.id);
+  }
+
+  function editCustom(customId: string) {
+    selectTheme(customId);
+    setReturnFocusId(customId);
+    setEditingId(customId);
+  }
+
+  function updateCustom(next: CustomTheme) {
+    setConfig((prev) => ({
+      ...prev,
+      custom_themes: prev.custom_themes.map((c) => (c.id === next.id ? next : c)),
+    }));
+  }
+
+  async function deleteCustom(customId: string, prompt = true) {
+    if (prompt) {
+      const target = customs.find((c) => c.id === customId);
+      const ok = await swalConfirm({
+        title: "Delete custom theme?",
+        body: `<strong>${target?.label ?? "Untitled"}</strong> will be removed permanently. This cannot be undone.`,
+        confirmLabel: "Delete",
+        cancelLabel: "Cancel",
+        kind: "warning",
+        destructive: true,
+      });
+      if (!ok) return;
+    }
+    setConfig((prev) => {
+      const removed = prev.custom_themes.find((c) => c.id === customId);
+      const next: Config = {
+        ...prev,
+        custom_themes: prev.custom_themes.filter((c) => c.id !== customId),
+      };
+      // If the deleted custom was the active theme, fall back to its base
+      // so the picker doesn't render an unselected state.
+      if (prev.theme_mode === customId && removed) {
+        next.theme_mode = removed.base_id;
+      }
+      return next;
+    });
+    if (editingId === customId) setEditingId(null);
+    // Land focus on the first theme card so keyboard nav stays alive
+    // after the deleted card unmounts (otherwise focus falls to body).
+    requestAnimationFrame(() => {
+      const first = document.querySelector<HTMLElement>("[data-theme-card]");
+      first?.focus({ preventScroll: true });
+    });
+  }
+
+  // Keyboard-first: while a theme card is focused, "E" opens the editor
+  // (fork-then-edit for builtins, edit in place for customs) and "D"
+  // deletes the focused custom (with confirm). Both keys are surfaced as
+  // <kbd> chips in the card's hover/focus state.
+  useEffect(() => {
+    if (editingId) return;
+    function onKeyDown(e: KeyboardEvent) {
+      const isE = e.key === "e" || e.key === "E";
+      const isD = e.key === "d" || e.key === "D";
+      if (!isE && !isD) return;
+      if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      const target = document.activeElement as HTMLElement | null;
+      const card = target?.closest<HTMLElement>("[data-theme-card]");
+      if (!card) return;
+      const id = card.dataset.themeId;
+      if (!id) return;
+      const isCustom = customs.some((c) => c.id === id);
+      if (isE) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (isCustom) editCustom(id);
+        else customizeBuiltin(id);
+      } else if (isD && isCustom) {
+        e.preventDefault();
+        e.stopPropagation();
+        void deleteCustom(id);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingId, customs, config.theme_mode]);
+
+  // After exiting the editor, return focus to the matching theme card so
+  // the keyboard flow doesn't strand the user at body.
+  useEffect(() => {
+    if (editingId) return;
+    if (!returnFocusId) return;
+    const id = returnFocusId;
+    setReturnFocusId(null);
+    requestAnimationFrame(() => {
+      const card = document.querySelector<HTMLElement>(
+        `[data-theme-card][data-theme-id="${CSS.escape(id)}"]`,
+      );
+      card?.focus({ preventScroll: true });
+    });
+  }, [editingId, returnFocusId]);
+
+  if (editingCustom) {
+    return (
+      <ThemeEditor
+        custom={editingCustom}
+        onChange={updateCustom}
+        onClose={() => setEditingId(null)}
+        onDelete={() => deleteCustom(editingCustom.id)}
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-2">
+        <Label>Skin</Label>
+        <div className="grid grid-cols-2 gap-2">
+          {builtinCards.map((theme) => (
+            <ThemePreviewCard
+              key={theme.id}
+              theme={theme}
+              selected={activeId === theme.id}
+              onSelect={() => selectTheme(theme.id)}
+              onCustomize={() => customizeBuiltin(theme.id)}
+            />
+          ))}
+        </div>
+
+        {customCards.length > 0 && (
+          <>
+            <Label className="mt-2">Custom</Label>
+            <div className="grid grid-cols-2 gap-2">
+              {customCards.map(({ custom, theme }) => (
+                <ThemePreviewCard
+                  key={theme.id}
+                  theme={theme}
+                  selected={activeId === theme.id}
+                  isCustom
+                  onSelect={() => selectTheme(theme.id)}
+                  onEdit={() => editCustom(custom.id)}
+                  onDelete={() => deleteCustom(custom.id)}
+                />
+              ))}
+            </div>
+          </>
+        )}
+
+        <p className="text-xs text-muted-foreground">
+          <kbd className="rounded border border-border/60 bg-secondary px-1 font-mono text-[10px]">E</kbd> on a focused theme to fork & edit, or click <Sliders size={11} className="inline align-text-bottom" />.
+          Custom themes inherit surfaces from the base and override accent + fonts.
+        </p>
+      </div>
+
+      <div className="flex items-start gap-3 text-sm">
+        <Switch
+          id="setting-sidebar_dot_grid"
+          checked={config.sidebar_dot_grid}
+          onCheckedChange={(v) => handleToggleChange("sidebar_dot_grid", v)}
+          aria-label="Sidebar dot grid"
+          className="mt-0.5"
+        />
+        <label htmlFor="setting-sidebar_dot_grid" className="flex flex-col gap-0.5 cursor-pointer">
+          <span className="font-medium">Sidebar dot grid</span>
+          <span className="text-xs text-muted-foreground">Radial dot texture behind the left sidebar islands.</span>
+        </label>
+      </div>
+
+      <div className="flex items-start gap-3 text-sm">
+        <Switch
+          id="setting-panel_focus_pulse"
+          checked={config.panel_focus_pulse}
+          onCheckedChange={(v) => handleToggleChange("panel_focus_pulse", v)}
+          aria-label="Pulse focus border"
+          className="mt-0.5"
+        />
+        <label htmlFor="setting-panel_focus_pulse" className="flex flex-col gap-0.5 cursor-pointer">
+          <span className="font-medium">Pulse focus border</span>
+          <span className="text-xs text-muted-foreground">Brief accent flash on focus change instead of a permanent accent border (legacy v3-ux behavior).</span>
+        </label>
+      </div>
+
+      <div className="flex items-start gap-3 text-sm">
+        <Switch
+          id="setting-panel_glow"
+          checked={config.panel_glow}
+          onCheckedChange={(v) => handleToggleChange("panel_glow", v)}
+          aria-label="Panel glow"
+          className="mt-0.5"
+        />
+        <label htmlFor="setting-panel_glow" className="flex flex-col gap-0.5 cursor-pointer">
+          <span className="font-medium">Panel glow</span>
+          <span className="text-xs text-muted-foreground">Wrap the active panel border with a soft accent-color halo (Hyprland-style).</span>
+        </label>
+      </div>
+    </div>
+  );
+}
 
 type SectionId = "paths" | "agents" | "editor" | "appearance" | "terminal" | "scratchpad";
 
@@ -403,7 +971,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
   const footerRef = useRef<HTMLDivElement>(null);
 
   const FOCUSABLE_SELECTOR =
-    'input:not([disabled]):not([aria-disabled="true"]), [role="combobox"]:not([disabled]):not([aria-disabled="true"]), textarea:not([disabled]):not([aria-disabled="true"]), button:not([disabled]):not([aria-disabled="true"])';
+    'input:not([type="hidden"]):not([disabled]):not([aria-disabled="true"]):not([tabindex="-1"]), [role="combobox"]:not([disabled]):not([aria-disabled="true"]):not([tabindex="-1"]), textarea:not([disabled]):not([aria-disabled="true"]):not([tabindex="-1"]), button:not([disabled]):not([aria-disabled="true"]):not([tabindex="-1"])';
 
   const rescanAgents = useCallback(async () => {
     setRescanning(true);
@@ -509,51 +1077,60 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
       const target = e.target as HTMLElement | null;
       if (!target) return;
 
-      // Branch 1: theme card 2D nav
+      // Branch 1: theme card 2D nav. When at the edge of the grid in the
+      // requested direction, fall through to Branch 2 so the user can
+      // leave the grid into adjacent fields (switches below, etc.).
       if (target.closest("[data-theme-card]")) {
         const cards = contentRef.current?.querySelectorAll<HTMLButtonElement>(
           "[data-theme-card]",
         );
-        if (!cards || cards.length === 0) return;
-        const list = Array.from(cards);
-        const current = target.closest<HTMLButtonElement>("[data-theme-card]");
-        const idx = current ? list.indexOf(current) : -1;
-        if (idx === -1) return;
-
-        const row = Math.floor(idx / CARD_COLS);
-        const col = idx % CARD_COLS;
-        const lastIdx = list.length - 1;
-        const lastRow = Math.floor(lastIdx / CARD_COLS);
-        let nextIdx = idx;
-        switch (e.key) {
-          case "ArrowRight":
-            if (col < CARD_COLS - 1 && idx + 1 <= lastIdx) nextIdx = idx + 1;
-            break;
-          case "ArrowLeft":
-            if (col > 0) nextIdx = idx - 1;
-            break;
-          case "ArrowDown":
-            if (row < lastRow && idx + CARD_COLS <= lastIdx) nextIdx = idx + CARD_COLS;
-            break;
-          case "ArrowUp":
-            if (row > 0) nextIdx = idx - CARD_COLS;
-            break;
+        if (cards && cards.length > 0) {
+          const list = Array.from(cards);
+          const current = target.closest<HTMLButtonElement>("[data-theme-card]");
+          const idx = current ? list.indexOf(current) : -1;
+          if (idx !== -1) {
+            const row = Math.floor(idx / CARD_COLS);
+            const col = idx % CARD_COLS;
+            const lastIdx = list.length - 1;
+            const lastRow = Math.floor(lastIdx / CARD_COLS);
+            let nextIdx = idx;
+            switch (e.key) {
+              case "ArrowRight":
+                if (col < CARD_COLS - 1 && idx + 1 <= lastIdx) nextIdx = idx + 1;
+                break;
+              case "ArrowLeft":
+                if (col > 0) nextIdx = idx - 1;
+                break;
+              case "ArrowDown":
+                if (row < lastRow && idx + CARD_COLS <= lastIdx) nextIdx = idx + CARD_COLS;
+                break;
+              case "ArrowUp":
+                if (row > 0) nextIdx = idx - CARD_COLS;
+                break;
+            }
+            if (nextIdx !== idx) {
+              e.preventDefault();
+              e.stopPropagation();
+              const next = list[nextIdx];
+              next.focus();
+              next.scrollIntoView({ block: "nearest", inline: "nearest" });
+              return;
+            }
+            // Edge of grid in this direction — fall through to Branch 2
+            // for ArrowDown/Up so we step into the next focusable field.
+          }
         }
-        if (nextIdx === idx) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const next = list[nextIdx];
-        next.focus();
-        next.scrollIntoView({ block: "nearest", inline: "nearest" });
-        return;
       }
 
       // Branch 2: form-field linear nav. Skip targets that own arrow keys
-      // natively so the user keeps cursor/option control.
+      // natively so the user keeps cursor/option control. Comboboxes (our
+      // base-ui Select trigger) intentionally INCLUDED — the trigger has
+      // its own onKeyDown that prevents the popup from opening on arrow
+      // keys, so we treat selects as regular linear-nav stops.
       if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
       const tag = target.tagName;
       const role = target.getAttribute("role");
-      if (tag === "TEXTAREA" || role === "combobox" || role === "listbox") return;
+      if (tag === "TEXTAREA" || role === "listbox") return;
       if (!contentRef.current?.contains(target)) return;
 
       const focusables = Array.from(
@@ -801,52 +1378,12 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
             )}
 
             {activeSection === "appearance" && (
-              <div className="space-y-4">
-                <div className="grid gap-2">
-                  <Label>Skin</Label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {VISIBLE_THEMES.map((theme) => (
-                      <ThemePreviewCard
-                        key={theme.id}
-                        theme={theme}
-                        selected={normalizeThemeId(config.theme_mode) === theme.id}
-                        onSelect={() => handleTextChange("theme_mode", theme.id)}
-                      />
-                    ))}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Applied immediately. Click <strong>Save</strong> to persist across sessions.
-                  </p>
-                </div>
-
-                <div className="flex items-start gap-3 text-sm">
-                  <Switch
-                    id="setting-sidebar_dot_grid"
-                    checked={config.sidebar_dot_grid}
-                    onCheckedChange={(v) => handleToggleChange("sidebar_dot_grid", v)}
-                    aria-label="Sidebar dot grid"
-                    className="mt-0.5"
-                  />
-                  <label htmlFor="setting-sidebar_dot_grid" className="flex flex-col gap-0.5 cursor-pointer">
-                    <span className="font-medium">Sidebar dot grid</span>
-                    <span className="text-xs text-muted-foreground">Radial dot texture behind the left sidebar islands.</span>
-                  </label>
-                </div>
-
-                <div className="flex items-start gap-3 text-sm">
-                  <Switch
-                    id="setting-panel_focus_pulse"
-                    checked={config.panel_focus_pulse}
-                    onCheckedChange={(v) => handleToggleChange("panel_focus_pulse", v)}
-                    aria-label="Pulse focus border"
-                    className="mt-0.5"
-                  />
-                  <label htmlFor="setting-panel_focus_pulse" className="flex flex-col gap-0.5 cursor-pointer">
-                    <span className="font-medium">Pulse focus border</span>
-                    <span className="text-xs text-muted-foreground">Brief accent flash on focus change instead of a permanent accent border (legacy v3-ux behavior).</span>
-                  </label>
-                </div>
-              </div>
+              <AppearanceSection
+                config={config}
+                setConfig={setConfig}
+                handleTextChange={handleTextChange}
+                handleToggleChange={handleToggleChange}
+              />
             )}
 
             {activeSection === "terminal" && (

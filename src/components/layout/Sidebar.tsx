@@ -95,7 +95,7 @@ export function Sidebar({ collapsed }: SidebarProps) {
       ) : (
         <div className="flex flex-1 flex-col gap-1">
           {/* Workspaces card */}
-          <div className={`flex flex-1 flex-col overflow-hidden rounded border ${borderClass} bg-card cluihud-dot-grid transition-colors`}>
+          <div className={`flex flex-1 flex-col overflow-hidden rounded-2xl border ${borderClass} bg-card cluihud-dot-grid transition-colors`}>
             <div className="flex h-9 shrink-0 items-center px-3">
               <span className="flex-1 text-[11px] font-medium text-foreground/80">Workspaces</span>
             </div>
@@ -153,7 +153,7 @@ function CollapsedSidebar() {
 
   return (
     <TooltipProvider delay={0}>
-    <div className={`flex h-full w-full flex-col items-center gap-0.5 rounded border ${borderClass} bg-card cluihud-dot-grid py-1 transition-colors`}>
+    <div className={`flex h-full w-full flex-col items-center gap-0.5 rounded-2xl border ${borderClass} bg-card cluihud-dot-grid py-1 transition-colors`}>
       {sessionsWithWs.map(({ session: s, workspaceName }) => (
         <Tooltip key={s.id}>
           <TooltipTrigger

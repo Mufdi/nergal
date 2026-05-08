@@ -405,7 +405,11 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    /* `transparent: true` in tauri.conf.json makes the window bg show the
+       desktop. Body must be transparent so the Workspace outer
+       (bg-background/80) blends with the desktop instead of covering it. */
+    background: transparent;
+    @apply text-foreground;
   }
   html {
     @apply font-sans;
@@ -451,6 +455,15 @@ body,
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-thumb-hover);
+}
+
+/* ── Dot-grid background — subtle texture for sidebar/rails. Dots use
+   --border so the pattern auto-adapts to each theme. Use on top of
+   bg-card via stacking. */
+.cluihud-dot-grid {
+  background-image: radial-gradient(circle at 1px 1px, var(--border) 1px, transparent 0);
+  background-size: 14px 14px;
+  background-position: 0 0;
 }
 
 /* ── Backdrop blur (WebKitGTK-safe) ─────────────────────────────────────

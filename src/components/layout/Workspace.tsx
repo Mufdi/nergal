@@ -268,10 +268,10 @@ export function Workspace() {
   }
 
   return (
-    <div className="flex h-full flex-col bg-background">
+    <div className="flex h-full flex-col bg-background/80">
       <TopBar onOpenSettings={() => setSettingsOpen(true)} rightPanelVisible={!rightCollapsed} />
 
-      <div className="flex flex-1 overflow-hidden p-1">
+      <div className="flex flex-1 overflow-hidden p-2">
         <ResizablePanelGroup
           orientation="horizontal"
           className="flex-1"
@@ -301,7 +301,7 @@ export function Workspace() {
             defaultSize="42%"
             minSize="25%"
           >
-            <div className="flex h-full flex-col gap-1 overflow-hidden">
+            <div className="flex h-full flex-col gap-2 overflow-hidden">
               <div
                 className="flex-1 overflow-hidden rounded bg-terminal-surface"
                 data-focus-zone="terminal"

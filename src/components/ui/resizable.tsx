@@ -33,8 +33,8 @@ function ResizableHandle({
       data-slot="resizable-handle"
       className={cn(
         "group relative flex shrink-0 items-center justify-center",
-        "aria-[orientation=vertical]:w-1 aria-[orientation=vertical]:cursor-col-resize",
-        "aria-[orientation=horizontal]:h-1 aria-[orientation=horizontal]:w-full aria-[orientation=horizontal]:cursor-row-resize",
+        "aria-[orientation=vertical]:w-2 aria-[orientation=vertical]:cursor-col-resize",
+        "aria-[orientation=horizontal]:h-2 aria-[orientation=horizontal]:w-full aria-[orientation=horizontal]:cursor-row-resize",
         "select-none outline-none",
         className
       )}

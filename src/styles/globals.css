@@ -475,9 +475,9 @@ body,
 .cluihud-canvas-depth {
   background-image: linear-gradient(
     115deg,
-    transparent 38%,
-    color-mix(in srgb, var(--primary) 18%, transparent) 50%,
-    transparent 62%
+    transparent 10%,
+    color-mix(in srgb, var(--primary) 14%, transparent) 50%,
+    transparent 90%
   );
   background-size: 220% 100%;
   background-repeat: no-repeat;

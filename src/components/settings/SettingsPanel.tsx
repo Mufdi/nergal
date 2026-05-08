@@ -291,7 +291,7 @@ function ThemePreviewCard({
       aria-pressed={selected}
       data-theme-card
       data-theme-id={theme.id}
-      className={`group relative flex flex-col gap-2 rounded-md border p-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
+      className={`group relative flex flex-col gap-2 rounded-md border p-2 text-left outline-none transition-colors focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
         selected
           ? "border-orange-500 bg-orange-500/10"
           : "border-border bg-card hover:border-border/80 hover:bg-secondary/40"

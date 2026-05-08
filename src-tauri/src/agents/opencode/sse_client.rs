@@ -196,6 +196,9 @@ fn extract_session_id(raw: &str) -> Option<String> {
 ///   `part.type == "tool"` and `part.state.status == "completed"` exposes
 ///   `part.tool` (tool name) + `part.state.input` (args, may contain
 ///   `filePath`).
+/// - `message.updated` → `{ info: Message, ... }` where `info.modelID`
+///   identifies the assistant model. Surfaced as `AgentStatus` so the
+///   status bar shows the model.
 fn translate_event(cluihud_session_id: &str, raw: &str) -> Option<HookEvent> {
     let ev: OpenCodeEvent = serde_json::from_str(raw).ok()?;
     match ev.event_type.as_str() {
@@ -234,6 +237,28 @@ fn translate_event(cluihud_session_id: &str, raw: &str) -> Option<HookEvent> {
                 tool_name,
                 tool_input: input,
                 tool_result: None,
+            })
+        }
+        "message.updated" => {
+            let info = ev.properties.get("info")?;
+            let model = info
+                .get("modelID")
+                .or_else(|| info.get("model"))
+                .and_then(|v| v.as_str())?
+                .to_string();
+            Some(HookEvent::AgentStatus {
+                session_id: cluihud_session_id.into(),
+                agent_id: Some("opencode".into()),
+                model_id: Some(model.clone()),
+                model_name: Some(model),
+                session_started_at: None,
+                context_used_pct: None,
+                context_window_size: None,
+                rate_5h_pct: None,
+                rate_5h_resets_at: None,
+                rate_7d_pct: None,
+                rate_7d_resets_at: None,
+                effort_level: None,
             })
         }
         _ => None,

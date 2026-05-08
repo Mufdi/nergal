@@ -159,6 +159,9 @@ impl FrontendHookEvent {
                 HookEvent::StatusLine { session_id, .. } => {
                     (session_id.clone(), "statusline", None, None, None, None)
                 }
+                HookEvent::AgentStatus { session_id, .. } => {
+                    (session_id.clone(), "agent_status", None, None, None, None)
+                }
             };
         Self {
             session_id,
@@ -643,51 +646,65 @@ fn process_event(
             model_id,
             model_name,
             context_used_pct,
-            context_remaining_pct,
             context_window_size,
             rate_5h_pct,
             rate_5h_resets_at,
             rate_7d_pct,
             rate_7d_resets_at,
-            duration_ms,
-            api_duration_ms,
-            lines_added,
-            lines_removed,
+            ..
         } => {
-            #[derive(Clone, serde::Serialize)]
-            struct StatusLinePayload {
-                session_id: String,
-                model_id: Option<String>,
-                model_name: Option<String>,
-                context_used_pct: Option<f64>,
-                context_remaining_pct: Option<f64>,
-                context_window_size: Option<u64>,
-                rate_5h_pct: Option<f64>,
-                rate_5h_resets_at: Option<u64>,
-                rate_7d_pct: Option<f64>,
-                rate_7d_resets_at: Option<u64>,
-                duration_ms: Option<u64>,
-                api_duration_ms: Option<u64>,
-                lines_added: Option<u64>,
-                lines_removed: Option<u64>,
-            }
-            let _ = app.emit(
-                "statusline:update",
-                StatusLinePayload {
-                    session_id: cluihud_session_id.unwrap_or(session_id).to_string(),
+            // Legacy CC statusline payload — translate into the agent-agnostic
+            // AgentStatus shape so the frontend has a single listener. Kept
+            // for back-compat while installed statusline scripts still emit
+            // the old hook_event_name.
+            emit_agent_status(
+                app,
+                AgentStatusEmit {
+                    session_id: cluihud_session_id.unwrap_or(session_id),
+                    agent_id: Some("claude-code"),
                     model_id: model_id.clone(),
                     model_name: model_name.clone(),
+                    session_started_at: None,
                     context_used_pct: *context_used_pct,
-                    context_remaining_pct: *context_remaining_pct,
                     context_window_size: *context_window_size,
                     rate_5h_pct: *rate_5h_pct,
                     rate_5h_resets_at: *rate_5h_resets_at,
                     rate_7d_pct: *rate_7d_pct,
                     rate_7d_resets_at: *rate_7d_resets_at,
-                    duration_ms: *duration_ms,
-                    api_duration_ms: *api_duration_ms,
-                    lines_added: *lines_added,
-                    lines_removed: *lines_removed,
+                    effort_level: None,
+                },
+            );
+        }
+
+        HookEvent::AgentStatus {
+            session_id,
+            agent_id,
+            model_id,
+            model_name,
+            session_started_at,
+            context_used_pct,
+            context_window_size,
+            rate_5h_pct,
+            rate_5h_resets_at,
+            rate_7d_pct,
+            rate_7d_resets_at,
+            effort_level,
+        } => {
+            emit_agent_status(
+                app,
+                AgentStatusEmit {
+                    session_id: cluihud_session_id.unwrap_or(session_id),
+                    agent_id: agent_id.as_deref(),
+                    model_id: model_id.clone(),
+                    model_name: model_name.clone(),
+                    session_started_at: *session_started_at,
+                    context_used_pct: *context_used_pct,
+                    context_window_size: *context_window_size,
+                    rate_5h_pct: *rate_5h_pct,
+                    rate_5h_resets_at: *rate_5h_resets_at,
+                    rate_7d_pct: *rate_7d_pct,
+                    rate_7d_resets_at: *rate_7d_resets_at,
+                    effort_level: effort_level.clone(),
                 },
             );
         }
@@ -767,6 +784,61 @@ fn process_event(
             );
         }
     }
+}
+
+/// Inputs for [`emit_agent_status`]. Borrows where it can so the caller
+/// (the dispatcher's match arm) doesn't have to clone everything.
+pub(crate) struct AgentStatusEmit<'a> {
+    pub session_id: &'a str,
+    pub agent_id: Option<&'a str>,
+    pub model_id: Option<String>,
+    pub model_name: Option<String>,
+    pub session_started_at: Option<u64>,
+    pub context_used_pct: Option<f64>,
+    pub context_window_size: Option<u64>,
+    pub rate_5h_pct: Option<f64>,
+    pub rate_5h_resets_at: Option<u64>,
+    pub rate_7d_pct: Option<f64>,
+    pub rate_7d_resets_at: Option<u64>,
+    pub effort_level: Option<String>,
+}
+
+/// Emit `agent:status-update` to the frontend. Single emit path so every
+/// adapter (CC statusline script, Pi/Codex Cost translation, future
+/// OpenCode SSE) reaches the frontend through the same listener.
+pub(crate) fn emit_agent_status(app: &AppHandle, status: AgentStatusEmit<'_>) {
+    #[derive(Clone, serde::Serialize)]
+    struct AgentStatusPayload {
+        session_id: String,
+        agent_id: Option<String>,
+        model_id: Option<String>,
+        model_name: Option<String>,
+        session_started_at: Option<u64>,
+        context_used_pct: Option<f64>,
+        context_window_size: Option<u64>,
+        rate_5h_pct: Option<f64>,
+        rate_5h_resets_at: Option<u64>,
+        rate_7d_pct: Option<f64>,
+        rate_7d_resets_at: Option<u64>,
+        effort_level: Option<String>,
+    }
+    let _ = app.emit(
+        "agent:status-update",
+        AgentStatusPayload {
+            session_id: status.session_id.to_string(),
+            agent_id: status.agent_id.map(str::to_string),
+            model_id: status.model_id,
+            model_name: status.model_name,
+            session_started_at: status.session_started_at,
+            context_used_pct: status.context_used_pct,
+            context_window_size: status.context_window_size,
+            rate_5h_pct: status.rate_5h_pct,
+            rate_5h_resets_at: status.rate_5h_resets_at,
+            rate_7d_pct: status.rate_7d_pct,
+            rate_7d_resets_at: status.rate_7d_resets_at,
+            effort_level: status.effort_level,
+        },
+    );
 }
 
 /// Extracts file_path from any tool whose input names a file and emits

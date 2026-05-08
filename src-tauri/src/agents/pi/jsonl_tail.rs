@@ -186,13 +186,24 @@ fn wrap(session_id: &str, cwd: &Path, ev: TranscriptEvent) -> Option<HookEvent> 
             })
         }
         TranscriptEvent::ToolResult { .. } => None,
-        TranscriptEvent::Cost(_raw) => {
-            // Pi cost surfacing is deferred to the pricing module — we drop
-            // here rather than fabricate a Stop, which has its own semantics
-            // (session end). A future TranscriptEvent → CostUpdate event in
-            // the dispatcher will capture this directly.
-            let _ = _raw;
-            None
+        TranscriptEvent::Cost(raw) => {
+            // Surface only model identity. Token totals are intentionally not
+            // forwarded — the status bar doesn't show cost.
+            let model = raw.model_id?;
+            Some(HookEvent::AgentStatus {
+                session_id: session_id.into(),
+                agent_id: Some("pi".into()),
+                model_id: Some(model.clone()),
+                model_name: Some(model),
+                session_started_at: None,
+                context_used_pct: None,
+                context_window_size: None,
+                rate_5h_pct: None,
+                rate_5h_resets_at: None,
+                rate_7d_pct: None,
+                rate_7d_resets_at: None,
+                effort_level: None,
+            })
         }
         TranscriptEvent::Message { .. } | TranscriptEvent::Other(_) => None,
     }

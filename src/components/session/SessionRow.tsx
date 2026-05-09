@@ -14,6 +14,17 @@ import {
 import type { Session, Workspace } from "@/stores/workspace";
 import { gitInfoMapAtom } from "@/stores/git";
 import { SessionIndicator } from "./SessionIndicator";
+import claudeIcon from "@/assets/agents/claude.svg";
+import codexIcon from "@/assets/agents/codex.svg";
+import opencodeIcon from "@/assets/agents/opencode.svg";
+import piIcon from "@/assets/agents/pi.svg";
+
+const AGENT_ICONS: Record<string, { src: string; label: string }> = {
+  "claude-code": { src: claudeIcon, label: "Claude Code" },
+  codex: { src: codexIcon, label: "Codex" },
+  opencode: { src: opencodeIcon, label: "OpenCode" },
+  pi: { src: piIcon, label: "Pi" },
+};
 
 interface SessionRowProps {
   session: Session;
@@ -74,6 +85,23 @@ export function SessionRow({
           <TooltipContent side="top" className="text-[10px]">Ctrl+{shortcutNumber}</TooltipContent>
         </Tooltip>
       )}
+      {(() => {
+        const agent = AGENT_ICONS[session.agent_id ?? "claude-code"];
+        if (!agent) return null;
+        return (
+          <Tooltip>
+            <TooltipTrigger>
+              <img
+                src={agent.src}
+                alt={agent.label}
+                className="size-3.5 shrink-0"
+                draggable={false}
+              />
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-[10px]">{agent.label}</TooltipContent>
+          </Tooltip>
+        );
+      })()}
       <SessionIndicator sessionId={session.id} sessionStatus={session.status} size="sm" />
 
       {editing ? (

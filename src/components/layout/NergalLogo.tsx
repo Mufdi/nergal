@@ -1,6 +1,17 @@
 import { useCallback, useRef } from "react";
 import growlUrl from "@/assets/nergal-growl.ogg";
 
+/// WebKitGTK's HTML5 <audio> element refuses to load assets served from
+/// Tauri's custom URL scheme on Linux, surfacing as "FormatError" inside
+/// MediaPlayerPrivateGStreamer regardless of file format. Web Audio's
+/// decode + AudioBufferSource path takes a different code branch (a
+/// straight fetch + in-memory decode + direct sink hookup) and works.
+async function loadGrowlBuffer(ctx: AudioContext): Promise<AudioBuffer> {
+  const res = await fetch(growlUrl);
+  const bytes = await res.arrayBuffer();
+  return ctx.decodeAudioData(bytes);
+}
+
 const FAVICON_WEDGES = [
   "1,1 11,1 6,10",
   "1,13 11,13 6,22",
@@ -63,20 +74,33 @@ export function NergalMark({ width, height, className }: NergalMarkProps) {
 }
 
 export function NergalLogo() {
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const ctxRef = useRef<AudioContext | null>(null);
+  const bufferRef = useRef<AudioBuffer | null>(null);
+  const loadingRef = useRef(false);
 
-  const playGrowl = useCallback(() => {
-    if (!audioRef.current) {
-      const audio = new Audio(growlUrl);
-      // WebKitGTK can crash the WebProcess if the underlying GStreamer
-      // pipeline cannot construct an audio sink (missing system plugins).
-      // Listening to "error" silences the failure path so the click never
-      // propagates a NULL-pointer assertion into the renderer.
-      audio.addEventListener("error", () => {});
-      audioRef.current = audio;
+  const playGrowl = useCallback(async () => {
+    try {
+      if (!ctxRef.current) ctxRef.current = new AudioContext();
+      const ctx = ctxRef.current;
+      if (ctx.state === "suspended") await ctx.resume();
+
+      if (!bufferRef.current && !loadingRef.current) {
+        loadingRef.current = true;
+        try {
+          bufferRef.current = await loadGrowlBuffer(ctx);
+        } finally {
+          loadingRef.current = false;
+        }
+      }
+      if (!bufferRef.current) return;
+
+      const source = ctx.createBufferSource();
+      source.buffer = bufferRef.current;
+      source.connect(ctx.destination);
+      source.start(0);
+    } catch {
+      // swallow — audio is decorative, never block the UI on it
     }
-    audioRef.current.currentTime = 0;
-    audioRef.current.play().catch(() => {});
   }, []);
 
   return (

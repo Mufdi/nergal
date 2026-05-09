@@ -26,6 +26,7 @@ import { invoke } from "@/lib/tauri";
 import { open } from "@tauri-apps/plugin-dialog";
 import * as terminalService from "@/components/terminal/terminalService";
 import { TasksIsland } from "@/components/tasks/TasksIsland";
+import { NergalLogo } from "@/components/layout/NergalLogo";
 import { Eye, EyeOff } from "lucide-react";
 import {
   Tooltip,
@@ -104,7 +105,7 @@ export function Sidebar({ collapsed }: SidebarProps) {
           {/* Workspaces card */}
           <div className={`flex flex-1 flex-col overflow-hidden rounded-lg border-2 ${borderClass} bg-card ${dotGridClass} cluihud-panel-focus`}>
             <div className="flex h-9 shrink-0 items-center px-3">
-              <span className="flex-1 text-[11px] font-medium text-foreground/80">Workspaces</span>
+              <NergalLogo />
             </div>
 
             <div className="flex-1 overflow-y-auto">

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 60" fill="currentColor" role="img" aria-label="Nergal">
+  <polygon points="1,1 11,1 6,10"/>
+  <polygon points="1,13 11,13 6,22"/>
+  <polygon points="1,25 11,25 6,34"/>
+  <polygon points="1,37 11,37 6,46"/>
+  <polygon points="1,49 11,49 6,58"/>
+  <polygon points="49,1 59,1 54,10"/>
+  <polygon points="49,13 59,13 54,22"/>
+  <polygon points="49,25 59,25 54,34"/>
+  <polygon points="49,37 59,37 54,46"/>
+  <polygon points="49,49 59,49 54,58"/>
+  <polygon points="13,13 23,13 18,22"/>
+  <polygon points="25,25 35,25 30,34"/>
+  <polygon points="37,37 47,37 42,46"/>
+</svg>

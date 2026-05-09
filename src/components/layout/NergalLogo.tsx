@@ -17,6 +17,24 @@ const FAVICON_WEDGES = [
   "37,37 47,37 42,46",
 ];
 
+export function NergalN({ size = 48 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 60 60"
+      fill="currentColor"
+      role="img"
+      aria-label="Nergal"
+      style={{ color: "var(--primary)" }}
+    >
+      {FAVICON_WEDGES.map((points, i) => (
+        <polygon key={i} points={points} />
+      ))}
+    </svg>
+  );
+}
+
 export function NergalLogo() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -27,20 +45,8 @@ export function NergalLogo() {
   }, []);
 
   return (
-    <div className="flex items-center gap-3 select-none">
-      <svg
-        width="48"
-        height="48"
-        viewBox="0 0 60 60"
-        fill="currentColor"
-        role="img"
-        aria-label="Nergal"
-        style={{ color: "var(--primary)" }}
-      >
-        {FAVICON_WEDGES.map((points, i) => (
-          <polygon key={i} points={points} />
-        ))}
-      </svg>
+    <div className="flex w-full items-center justify-evenly select-none">
+      <NergalN size={48} />
 
       <button
         type="button"

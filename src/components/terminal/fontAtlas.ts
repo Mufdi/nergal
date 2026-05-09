@@ -149,11 +149,17 @@ export class FontAtlas {
       }
     }
 
-    const style = `${italic ? "italic " : ""}${bold ? "bold " : ""}${this.pxSize}px ${this.family}`;
     this.ctx.clearRect(slot.x, slot.y, this.metrics.cellWidth, this.metrics.cellHeight);
-    this.ctx.font = style;
     this.ctx.fillStyle = fg;
     if (EMOJI_RE.test(ch)) {
+      // Emojis at pxSize render roughly square (~pxSize × pxSize), but a
+      // monospace cell is narrower (M-width is ~0.6 × pxSize). Painting at
+      // pxSize would clip the emoji's left/right ~30% to the slot edges.
+      // Scale the emoji font size down to the cell width so the whole glyph
+      // fits, then center it. Wide-cell support (rendering across two cells)
+      // is the proper long-term fix; tracked separately.
+      const emojiSize = Math.min(this.pxSize, this.metrics.cellWidth);
+      this.ctx.font = `${emojiSize}px ${this.family}`;
       this.ctx.textBaseline = "middle";
       this.ctx.textAlign = "center";
       this.ctx.fillText(
@@ -162,6 +168,8 @@ export class FontAtlas {
         slot.y + this.metrics.cellHeight / 2,
       );
     } else {
+      const style = `${italic ? "italic " : ""}${bold ? "bold " : ""}${this.pxSize}px ${this.family}`;
+      this.ctx.font = style;
       this.ctx.textBaseline = "alphabetic";
       this.ctx.textAlign = "start";
       this.ctx.fillText(ch, slot.x, slot.y + this.metrics.baseline);

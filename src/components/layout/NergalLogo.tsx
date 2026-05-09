@@ -1,5 +1,5 @@
 import { useCallback, useRef } from "react";
-import growlUrl from "@/assets/nergal-growl.mp3";
+import growlUrl from "@/assets/nergal-growl.ogg";
 
 const FAVICON_WEDGES = [
   "1,1 11,1 6,10",

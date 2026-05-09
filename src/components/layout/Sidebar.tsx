@@ -167,8 +167,8 @@ function CollapsedSidebar() {
   return (
     <TooltipProvider delay={0}>
     <div className={`flex h-full w-full flex-col items-center gap-0.5 rounded-lg border-2 ${borderClass} bg-card ${dotGridClass} py-1 cluihud-panel-focus`}>
-      <div className="mb-1 flex h-9 shrink-0 items-center justify-center">
-        <NergalN size={26} />
+      <div className="mb-2 mt-1 flex shrink-0 items-center justify-center px-1.5">
+        <NergalN size={20} />
       </div>
       {sessionsWithWs.map(({ session: s, workspaceName }) => (
         <Tooltip key={s.id}>

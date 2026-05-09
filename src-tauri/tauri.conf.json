@@ -27,6 +27,12 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "Linux desktop HUD for AI coding-agent CLIs.",
+    "longDescription": "Nergal is a keyboard-first Linux desktop wrapper around AI coding-agent CLIs. The agent runs in a real PTY at the center of the window; plan, task, git, conflict, and activity panels light up live from the agent's hook stream and transcript. The adapter foundation is agent-agnostic and supports multiple CLIs side by side.",
+    "homepage": "https://github.com/Mufdi/nergal",
+    "publisher": "Nergal contributors",
+    "licenseFile": "../LICENSE",
     "icon": [
       "icons/icon.png",
       "icons/512x512.png",

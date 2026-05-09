@@ -1,7 +1,7 @@
 <div align="center">
   <img src="src-tauri/icons/icon.png" alt="Nergal" width="128" />
   <h1>Nergal</h1>
-  <p><strong>Keyboard-first Linux desktop HUD that wraps the Claude Code CLI.</strong><br />
+  <p><strong>Keyboard-first Linux desktop HUD for AI coding-agent CLIs.</strong><br />
   The agent stays in a real terminal at the center; plan, task, git, and activity panels light up live from the hook stream.</p>
 </div>
 
@@ -9,7 +9,7 @@
 
 ## What is Nergal?
 
-Nergal is a thin, opinionated wrapper around an agent CLI. It does not replace the terminal, the agent, or the editor — it spawns the real `claude` (or any supported agent CLI) inside a PTY and listens to the hook pipeline. Hook events flow into Jotai atoms, transcript JSONL files are tailed with inotify, and `PermissionRequest` / `AskUserQuestion` calls block on FIFOs that the GUI writes back to. The terminal itself is canvas-rendered with `wezterm-term` server-side; there is no `xterm.js` anywhere.
+Nergal is a thin, opinionated wrapper around an AI coding-agent CLI. It does not replace the terminal, the agent, or the editor — it spawns the agent binary inside a PTY and listens to the hook pipeline. Hook events flow into Jotai atoms, transcript JSONL files are tailed with inotify, and `PermissionRequest` / `AskUserQuestion` calls block on FIFOs that the GUI writes back to. The terminal itself is canvas-rendered with `wezterm-term` server-side; there is no `xterm.js` anywhere.
 
 The result is a keyboard-first HUD where the agent stays in the centerpiece terminal and everything around it (plan editing, task tracking, git ops, conflict resolution, live preview) reacts in real time without breaking the agent's flow.
 
@@ -82,7 +82,7 @@ cluihud setup
 
 ## Inspiration
 
-Nergal is shaped by the wider community of Claude Code wrappers, AI pair-programming tools, and worktree managers. A few projects whose work directly informed our thinking:
+Nergal is shaped by the wider community of AI agent CLI wrappers, AI pair-programming tools, and worktree managers. A few projects whose work directly informed our thinking:
 
 - [Plannotator](https://github.com/backnotprop/plannotator) — review UI for agent plans and diffs that intercepts `ExitPlanMode` via hooks.
 - [Aider](https://aider.chat) — long-running benchmark for AI pair programming, codebase-aware coding agents, and `tree-sitter` repo maps.

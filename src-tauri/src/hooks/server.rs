@@ -452,7 +452,6 @@ fn process_event(
                 &std::path::PathBuf::from(path),
             );
 
-            // Store cost in DB
             if let Ok(db_guard) = db.lock() {
                 let _ = db_guard.upsert_cost(session_id, &cost);
             }
@@ -920,7 +919,6 @@ fn process_task_event(
         return;
     }
 
-    // Use in-memory TaskStore for event processing, then persist to DB
     let mut store = crate::tasks::TaskStore::new();
 
     if let Ok(db_guard) = db.lock()

@@ -44,12 +44,10 @@ export function BuddyWidget() {
   const mode = useAtomValue(activeModeAtom);
   const prevModeRef = useRef(mode);
 
-  // Load buddy on mount
   useEffect(() => {
     loadBuddy();
   }, [loadBuddy]);
 
-  // Animation tick
   useEffect(() => {
     const interval = setInterval(() => tick(), TICK_MS);
     return () => clearInterval(interval);
@@ -61,7 +59,6 @@ export function BuddyWidget() {
     prevModeRef.current = mode;
     if (prev === mode) return;
 
-    // 30% chance to react
     if (Math.random() > 0.3) return;
 
     const reactions = MODE_REACTIONS[mode] ?? MODE_REACTIONS.idle!;

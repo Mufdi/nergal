@@ -89,7 +89,6 @@ pub fn start_tail(
         )
         .await;
 
-        // notify the channel on file modifications
         let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
         let watcher_path = path.clone();
         let mut watcher =

@@ -394,7 +394,6 @@ function WorkspacesView() {
       setAddingSessionFor(null);
       setNewSessionName("");
     } catch {
-      // handled by toast in future
     }
   }
 

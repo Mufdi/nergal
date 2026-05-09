@@ -166,7 +166,6 @@ export function renderSprite(species: string, eye: string, hat: string, tick: nu
 
   const lines = frame.map((line) => line.replaceAll("{E}", eyeGlyph));
 
-  // Inject hat on line 0 if blank
   if (hat !== "none" && HAT_LINES[hat] && lines[0]!.trim() === "") {
     lines[0] = HAT_LINES[hat]!;
   }
@@ -376,7 +375,6 @@ export const loadBuddyAtom = atom(null, async (_get, set) => {
 
     const expectedSpecies = inferSpecies(data.soul.personality);
 
-    // Collect all candidate user IDs to try
     const candidateIds: string[] = [];
     if (data.access_token) {
       const accountId = await fetchAccountId(data.access_token);
@@ -384,7 +382,6 @@ export const loadBuddyAtom = atom(null, async (_get, set) => {
     }
     if (data.user_id) candidateIds.push(data.user_id);
 
-    // Try all hash variants × all candidate IDs to find matching bones
     let bones = await findMatchingBones(expectedSpecies, candidateIds);
 
     // No hash matched → use inferred species with default visuals

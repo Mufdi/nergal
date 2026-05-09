@@ -54,7 +54,6 @@ export function CommandPalette() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, selectedIndex, query]);
 
-  // Scroll selected item into view
   useEffect(() => {
     if (!isOpen || !listRef.current) return;
     const selected = listRef.current.querySelector("[data-palette-selected]") as HTMLElement | null;

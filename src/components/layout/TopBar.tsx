@@ -150,7 +150,6 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const dropSideRef = useRef<"left" | "right">("left");
 
-  // Auto-add session to tabs when activated
   useEffect(() => {
     if (!sessionId) return;
     setSessionTabIds((prev) => {
@@ -185,7 +184,6 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
 
   const workspaceName = workspace?.name ?? "cluihud";
 
-  // Resolve session objects for open tabs
   const sessionMap = new Map<string, { session: import("@/stores/workspace").Session; workspaceName: string }>();
   for (const ws of workspaces) {
     for (const s of ws.sessions) {

@@ -57,7 +57,6 @@ export function TabBar() {
     return () => observer.disconnect();
   }, [tabs.length]);
 
-  // Scroll active tab into view when it changes
   useEffect(() => {
     if (!activeTab || !containerRef.current) return;
     const el = containerRef.current.querySelector("[data-tab-active='true']") as HTMLElement | null;

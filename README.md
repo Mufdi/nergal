@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="src-tauri/icons/icon.png" alt="Nergal" width="128" />
+  <img src="src-tauri/icons/icon.png" alt="Nergal" height="128" />&nbsp;&nbsp;<img src="src-tauri/icons/nergal-mark.svg" alt="Nergal mark" height="128" />
   <h1>Nergal</h1>
   <p><strong>Keyboard-first Linux desktop HUD for AI coding-agent CLIs.</strong><br />
   The agent stays in a real terminal at the center; plan, task, git, and activity panels light up live from the hook stream.</p>
@@ -15,27 +15,27 @@ The result is a keyboard-first HUD where the agent stays in the centerpiece term
 
 ## Features
 
-### 🤖 Agent integration
+### Agent integration
 
 - **Multi-session PTY terminal** — Real `claude` (or other registered CLI agent) running in a PTY. Multiple sessions across multiple workspaces, each with its own state indicator (idle / thinking / working / attention / completed).
 - **Plan review with inline annotations** — Blocks `ExitPlanMode`. Surfaces the plan in an annotatable view; approve, or reject with structured feedback that points the agent back to the edited plan file.
 - **Live task tracking** — `TodoWrite` events stream into a session-scoped task panel. State and progress visible without scrolling the transcript.
 - **Multi-agent support** — Adapter foundation for Claude Code, Codex, OpenCode, and Pi. Each adapter declares its capabilities; the UI gates panels accordingly.
 
-### 🌿 Git workflow
+### Git workflow
 
 - **Git panel** — Files / History / Stashes / PRs / Conflicts as chip tabs. Stage, commit, pull, push, stash, browse history, review PRs from one surface.
 - **Atomic ship-flow** — A single action composes commit (if needed) + push + open PR. Editable preview dialog with title, body, commit list, and base..HEAD diff stat.
 - **Three-pane conflict resolution** — Side-by-side ours / theirs / merged editor with one-click "Accept ours / theirs / Ask agent to resolve".
 - **Side-by-side diff viewer** — Keyboard-navigable hunks (`j` / `k`), used for file diffs, commit diffs, and PR review.
 
-### 📝 Code & docs
+### Code & docs
 
 - **File panel with quick editing** — Project tree plus a CodeMirror 6 editor with syntax for TS / JS / JSON / MD / Rust / CSS / HTML. Single-click preview, double-click to pin.
 - **OpenSpec viewer** — Read-only viewer of `openspec/` artifacts (proposals, designs, specs, tasks) with the same annotation engine used for plans.
 - **Live preview browser** — Embedded iframe panel plus a localhost port scanner. Listening dev servers appear as status-bar chips → click opens the URL.
 
-### ✨ Session UX
+### Session UX
 
 - **Floating scratchpad** — Multi-tab notes anchored to a configurable directory. Semi-transparent floating panel that survives across sessions, with content-hash own-write tracking so the watcher does not echo.
 - **Activity timeline + DAG graph** — Timeline strip, event list (thinking blocks expandable inline), and an interactive DAG of tool calls for the active session.

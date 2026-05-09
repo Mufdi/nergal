@@ -104,7 +104,7 @@ export function Sidebar({ collapsed }: SidebarProps) {
         <div className="flex flex-1 flex-col gap-1">
           {/* Workspaces card */}
           <div className={`flex flex-1 flex-col overflow-hidden rounded-lg border-2 ${borderClass} bg-card ${dotGridClass} cluihud-panel-focus`}>
-            <div className="flex h-12 shrink-0 items-center px-3">
+            <div className="flex h-20 shrink-0 items-center px-3 pt-2">
               <NergalLogo />
             </div>
 

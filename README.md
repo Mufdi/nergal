@@ -96,6 +96,10 @@ Nergal is shaped by the wider community of Claude Code wrappers, AI pair-program
 
 Nergal is an **independent, unaffiliated project**. It is not endorsed by, sponsored by, or otherwise connected to Anthropic, Claude, Claude Code, OpenAI, Codex, the `opencode` project, Pi Code, or any other organization. All product names, trademarks, and registered trademarks referenced here are the property of their respective owners and are used only for interoperability and identification.
 
+## Credits
+
+The Nergal growl sound effect (played when you click the mark in the sidebar) is by [dogwolf123](https://pixabay.com/es/users/dogwolf123-53439420/?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=467890), sourced from [Pixabay](https://pixabay.com/sound-effects/?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=467890).
+
 ## License
 
 [BSD Zero Clause License (`0BSD`)](./LICENSE) — copy, modify, redistribute, sell, ship, fork, vendor, repackage. No attribution required.

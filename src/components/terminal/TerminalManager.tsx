@@ -10,6 +10,7 @@ import {
 } from "@/stores/workspace";
 import { focusZoneAtom } from "@/stores/shortcuts";
 import * as terminalService from "./terminalService";
+import { NergalMark } from "@/components/layout/NergalLogo";
 
 /// Thin React wrapper over the canvas terminal service. The service owns all
 /// DOM containers, PTY subscriptions, and render state outside React's
@@ -85,7 +86,8 @@ export function TerminalManager() {
       }}
     >
       {(!hasAnySessions || !activeSessionId) && (
-        <div className="flex h-full items-center justify-center">
+        <div className="flex h-full flex-col items-center justify-center gap-6 select-none">
+          <NergalMark className="h-[min(70%,420px)] w-auto" />
           <span className="text-[11px] text-terminal-foreground/40">Select or create a session</span>
         </div>
       )}

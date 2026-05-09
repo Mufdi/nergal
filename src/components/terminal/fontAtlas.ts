@@ -27,6 +27,14 @@ interface GlyphSlot {
   y: number;
 }
 
+/// Color emojis are rendered by the browser as full-square glyphs centered
+/// on the alphabetic baseline. With a baseline at 78% of cell height that
+/// pushes the emoji's top above the slot rect, and `drawImage` later clips
+/// it back to the slot — the user sees only the bottom sliver. Detecting
+/// pictographics and centering them inside the cell keeps the whole glyph
+/// visible.
+const EMOJI_RE = /\p{Extended_Pictographic}/u;
+
 export function measureFont(
   family: string,
   cssSize: number,
@@ -145,8 +153,19 @@ export class FontAtlas {
     this.ctx.clearRect(slot.x, slot.y, this.metrics.cellWidth, this.metrics.cellHeight);
     this.ctx.font = style;
     this.ctx.fillStyle = fg;
-    this.ctx.textBaseline = "alphabetic";
-    this.ctx.fillText(ch, slot.x, slot.y + this.metrics.baseline);
+    if (EMOJI_RE.test(ch)) {
+      this.ctx.textBaseline = "middle";
+      this.ctx.textAlign = "center";
+      this.ctx.fillText(
+        ch,
+        slot.x + this.metrics.cellWidth / 2,
+        slot.y + this.metrics.cellHeight / 2,
+      );
+    } else {
+      this.ctx.textBaseline = "alphabetic";
+      this.ctx.textAlign = "start";
+      this.ctx.fillText(ch, slot.x, slot.y + this.metrics.baseline);
+    }
 
     this.slots.set(key, slot);
     return slot;

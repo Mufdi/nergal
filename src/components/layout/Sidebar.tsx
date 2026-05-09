@@ -26,7 +26,7 @@ import { invoke } from "@/lib/tauri";
 import { open } from "@tauri-apps/plugin-dialog";
 import * as terminalService from "@/components/terminal/terminalService";
 import { TasksIsland } from "@/components/tasks/TasksIsland";
-import { NergalLogo } from "@/components/layout/NergalLogo";
+import { NergalLogo, NergalN } from "@/components/layout/NergalLogo";
 import { Eye, EyeOff } from "lucide-react";
 import {
   Tooltip,
@@ -167,6 +167,9 @@ function CollapsedSidebar() {
   return (
     <TooltipProvider delay={0}>
     <div className={`flex h-full w-full flex-col items-center gap-0.5 rounded-lg border-2 ${borderClass} bg-card ${dotGridClass} py-1 cluihud-panel-focus`}>
+      <div className="mb-1 flex h-9 shrink-0 items-center justify-center">
+        <NergalN size={26} />
+      </div>
       {sessionsWithWs.map(({ session: s, workspaceName }) => (
         <Tooltip key={s.id}>
           <TooltipTrigger

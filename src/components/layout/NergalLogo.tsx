@@ -27,10 +27,10 @@ export function NergalLogo() {
   }, []);
 
   return (
-    <div className="flex items-center gap-1.5 select-none">
+    <div className="flex items-center gap-2 select-none">
       <svg
-        width="20"
-        height="20"
+        width="32"
+        height="32"
         viewBox="0 0 60 60"
         fill="currentColor"
         role="img"
@@ -49,8 +49,8 @@ export function NergalLogo() {
         aria-label="Play Nergal growl"
       >
         <svg
-          width="14"
-          height="24"
+          width="22"
+          height="38"
           viewBox="0 -10 100 170"
           aria-hidden="true"
         >

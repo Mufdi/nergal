@@ -5,6 +5,8 @@
   The agent stays in a real terminal at the center; plan, task, git, and activity panels light up live from the hook stream.</p>
 </div>
 
+![Nergal — empty state with the bicolor mark](docs/screenshots/hero.png)
+
 ---
 
 ## What is Nergal?
@@ -40,6 +42,35 @@ The result is a keyboard-first HUD where the agent stays in the centerpiece term
 - **Floating scratchpad** — Multi-tab notes anchored to a configurable directory. Semi-transparent floating panel that survives across sessions, with content-hash own-write tracking so the watcher does not echo.
 - **Activity timeline + DAG graph** — Timeline strip, event list (thinking blocks expandable inline), and an interactive DAG of tool calls for the active session.
 - **Theme system** — 13 built-in themes (v1-dark, gothic, dracula, monokai, tokyo-night, …) plus a custom theme editor with live preview.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/plan-annotations.png" alt="Plan review with inline annotations" /><br /><sub>Plan review with inline annotations</sub></td>
+    <td><img src="docs/screenshots/pi-session.png" alt="Multi-agent: a Pi session" /><br /><sub>Multi-agent — a Pi session</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/git-1.png" alt="Git panel with chip tabs" /><br /><sub>Git panel — Files / History / Stashes / PRs / Conflicts chips</sub></td>
+    <td><img src="docs/screenshots/ship-modal.png" alt="Ship-flow modal" /><br /><sub>Atomic ship-flow modal</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/conflicts.png" alt="Three-pane conflict resolution" /><br /><sub>Three-pane conflict resolution</sub></td>
+    <td><img src="docs/screenshots/diff-panel-side-by-side.png" alt="Side-by-side diff viewer" /><br /><sub>Side-by-side diff viewer</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/file-picker.png" alt="File panel with quick editing" /><br /><sub>File panel with quick editing</sub></td>
+    <td><img src="docs/screenshots/specs-annotations.png" alt="OpenSpec viewer" /><br /><sub>OpenSpec viewer with annotations</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/live-preview.png" alt="Live preview browser" /><br /><sub>Live preview browser + localhost port chips</sub></td>
+    <td><img src="docs/screenshots/scratchpad.png" alt="Floating scratchpad" /><br /><sub>Floating scratchpad</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/theme-editor.png" alt="Theme editor" /><br /><sub>Theme editor with live preview</sub></td>
+    <td><img src="docs/screenshots/command-palette.png" alt="Command palette" /><br /><sub>Command palette (Ctrl + K)</sub></td>
+  </tr>
+</table>
 
 ## Stack
 

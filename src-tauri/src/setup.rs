@@ -228,7 +228,6 @@ fn remove_hook(hooks_map: &mut Map<String, Value>, obs: &ObsoleteHook) -> bool {
 
     let removed = arr.len() < before;
 
-    // Clean up empty event arrays
     if arr.is_empty() {
         hooks_map.remove(obs.event);
     }

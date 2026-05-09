@@ -1247,7 +1247,6 @@ pub fn get_transcript(session_id: String) -> Result<Vec<TranscriptEntry>, String
         return Ok(vec![]);
     }
 
-    // Find the transcript file matching the session_id
     for project_entry in std::fs::read_dir(&projects_dir).map_err(|e| e.to_string())? {
         let project_entry = project_entry.map_err(|e| e.to_string())?;
         let project_path = project_entry.path();
@@ -1413,7 +1412,6 @@ fn scan_change_dir(dir: &std::path::Path, status: &str) -> Option<OpenSpecChange
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
 
-    // Skip hidden dirs
     if name.starts_with('.') {
         return None;
     }

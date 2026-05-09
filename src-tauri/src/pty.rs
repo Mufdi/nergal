@@ -240,7 +240,6 @@ pub async fn start_claude_session(
         Some(ready_tx),
     )?;
 
-    // Register session -> pty mapping
     state
         .session_ptys
         .lock()

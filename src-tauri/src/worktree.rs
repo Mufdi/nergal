@@ -581,7 +581,6 @@ pub fn commit(cwd: &Path, message: &str) -> Result<String> {
         };
         anyhow::bail!("{detail}");
     }
-    // Extract short hash from output
     let rev = Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
         .current_dir(cwd)

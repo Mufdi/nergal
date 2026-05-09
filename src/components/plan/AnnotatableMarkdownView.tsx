@@ -214,7 +214,6 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true, an
     });
   }, []);
 
-  // Initialize web-highlighter
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -273,7 +272,6 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true, an
     return () => stop?.();
   }, [annotationMode, annotationsEnabled]);
 
-  // Pinpoint click handler
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -306,7 +304,6 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true, an
     return () => container.removeEventListener("click", handleClick);
   }, [closeToolbar, content, annotationsEnabled]);
 
-  // Hover via mousemove + data-pinpoint-hover attribute
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -357,7 +354,6 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true, an
     return () => window.removeEventListener("keydown", handleKey);
   }, [closeToolbar]);
 
-  // Keyboard element navigation (annotation mode)
   useEffect(() => {
     if (!annotationMode || !annotationsEnabled) return;
     const container = containerRef.current;
@@ -417,7 +413,6 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true, an
     return () => window.removeEventListener("keydown", handleKey, true);
   }, [annotationMode, annotationsEnabled, activatePinpoint]);
 
-  // Reset nav index when exiting annotation mode
   useEffect(() => {
     if (!annotationMode) {
       navIndexRef.current = -1;
@@ -458,7 +453,6 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true, an
     function restoreAnnotations() {
       if (cancelled || !highlighter || !container) return;
 
-      // Wait for markdown to render
       if (!container.querySelector("[data-annotatable]")) {
         requestAnimationFrame(restoreAnnotations);
         return;

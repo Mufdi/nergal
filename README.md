@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="src-tauri/icons/icon.png" alt="Nergal" height="128" />&nbsp;&nbsp;<img src="src-tauri/icons/nergal-mark.svg" alt="Nergal mark" height="128" />
+  <img src="src-tauri/icons/icon.png" alt="Nergal" height="128" />&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;<img src="src-tauri/icons/nergal-mark.svg" alt="Nergal mark" height="128" />
   <h1>Nergal</h1>
   <p><strong>Keyboard-first Linux desktop HUD for AI coding-agent CLIs.</strong><br />
   The agent stays in a real terminal at the center; plan, task, git, and activity panels light up live from the hook stream.</p>
@@ -84,17 +84,16 @@ cluihud setup
 
 Nergal is shaped by the wider community of AI agent CLI wrappers, AI pair-programming tools, and worktree managers. A few projects whose work directly informed our thinking:
 
-- [cmux](https://www.cmux.dev/) — scriptable WebKit live-preview surface, status-bar agent metadata, notification ring patterns.
-- [Conductor](https://www.conductor.build/) — agent-status reporting via lightweight HTTP plus localhost dev-server detection.
-- [dmux](https://dmux.ai/) — multi-agent orchestration with isolated worktrees and lifecycle hooks.
-- [Emdash](https://emdash.sh/) — broad multi-agent CLI coverage and one-click PR + CI monitoring.
-- [Maestro](https://github.com/its-maestro-baby/maestro) — agent-agnostic Tauri 2 + React stack reference.
-- [Orca](https://github.com/stablyai/orca) — browser-as-block paradigm and embedded design-mode experiments.
-- [Plannotator](https://github.com/backnotprop/plannotator) — review UI for agent plans and diffs that intercepts `ExitPlanMode` via hooks.
-- [Spacecake](https://www.spacecake.ai/) — the closest stack analogue (Tauri + React + Rust + WebView terminal); plan WYSIWYG and Spec Kit ergonomics.
-- [Superset](https://superset.sh/) — many-agents-in-parallel UX with worktree-backed sessions.
+- [cmux](https://www.cmux.dev/) — embedded live-preview surface and status-bar agent metadata patterns.
+- [Conductor](https://www.conductor.build/) — localhost dev-server port detection surfaced in the status bar.
+- [dmux](https://dmux.ai/) — multi-agent orchestration backed by isolated worktrees per session.
+- [Emdash](https://emdash.sh/) — PR viewer with CI-checks polling, plus the breadth-of-agent ambition.
+- [Maestro](https://github.com/its-maestro-baby/maestro) — agent-agnostic Tauri 2 + React reference stack.
+- [Plannotator](https://github.com/backnotprop/plannotator) — review UI for agent plans that intercepts `ExitPlanMode` via hooks.
+- [Spacecake](https://www.spacecake.ai/) — closest stack analogue (Tauri + React + Rust); plan and spec WYSIWYG ergonomics.
+- [Superset](https://superset.sh/) — multi-session, multi-agent workflow over per-session worktrees.
 - [T3 Code](https://github.com/t3-oss/t3-code) — one-click git flow (commit / push / PR) and a chip-based git panel layout.
-- [Tamux](https://tamux.app/) — daemon-first persistent terminal sessions and the Execution Canvas DAG of tool-call chains.
+- [Tamux](https://tamux.app/) — Execution Canvas DAG of tool-call chains.
 
 ## Disclaimer
 

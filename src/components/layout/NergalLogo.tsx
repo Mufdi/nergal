@@ -66,7 +66,15 @@ export function NergalLogo() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const playGrowl = useCallback(() => {
-    if (!audioRef.current) audioRef.current = new Audio(growlUrl);
+    if (!audioRef.current) {
+      const audio = new Audio(growlUrl);
+      // WebKitGTK can crash the WebProcess if the underlying GStreamer
+      // pipeline cannot construct an audio sink (missing system plugins).
+      // Listening to "error" silences the failure path so the click never
+      // propagates a NULL-pointer assertion into the renderer.
+      audio.addEventListener("error", () => {});
+      audioRef.current = audio;
+    }
     audioRef.current.currentTime = 0;
     audioRef.current.play().catch(() => {});
   }, []);

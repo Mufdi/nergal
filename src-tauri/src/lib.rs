@@ -243,6 +243,12 @@ pub fn run() {
             browser::browser_unregister_shortcuts,
         ])
         .setup(move |app| {
+            // Force the high-res 1024 PNG as the window icon. The conf-bundle
+            // path lets Linux WMs pick a smaller variant and upscale it.
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_icon(tauri::include_image!("icons/icon.png"));
+            }
+
             let app_handle = app.handle().clone();
             let socket_path = config.hook_socket_path.clone();
             let plans_dir = config.plans_directory.clone();

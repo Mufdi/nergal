@@ -19,7 +19,7 @@ import type { CellSnapshot, GridUpdate, TerminalKeyEvent } from "@/lib/types";
 import { appStore } from "@/stores/jotaiStore";
 import { toastsAtom } from "@/stores/toast";
 
-import { FontAtlas, measureFont, type FontMetrics } from "./fontAtlas";
+import { FontAtlas, isWideCell, measureFont, type FontMetrics } from "./fontAtlas";
 import { TERM_FONT, TERM_THEME, refreshTermTheme, rgbaToCss } from "./theme";
 
 interface CellCoord {
@@ -927,6 +927,8 @@ function paintRow(entry: Entry, y: number): void {
   for (let x = 0; x < cols; x += 1) {
     const cell = row[x];
     const dxCell = x * metrics.cellWidth;
+    const span = isWideCell(cell.ch) ? 2 : 1;
+    const cellPx = metrics.cellWidth * span;
 
     let fg = rgbaToCss(cell.fg, TERM_THEME.foreground);
     let bg = rgbaToCss(cell.bg, TERM_THEME.background);
@@ -938,7 +940,7 @@ function paintRow(entry: Entry, y: number): void {
 
     if (bg !== TERM_THEME.background) {
       ctx.fillStyle = bg;
-      ctx.fillRect(dxCell, dyCell, metrics.cellWidth, metrics.cellHeight);
+      ctx.fillRect(dxCell, dyCell, cellPx, metrics.cellHeight);
     }
 
     if (cell.ch && cell.ch !== " ") {
@@ -950,10 +952,15 @@ function paintRow(entry: Entry, y: number): void {
       ctx.fillRect(
         dxCell,
         dyCell + metrics.baseline + 1,
-        metrics.cellWidth,
+        cellPx,
         Math.max(1, Math.floor(metrics.cellHeight / 16)),
       );
     }
+
+    // Wezterm emits a blank placeholder in the column right after a
+    // wide cell. Skip it so we do not paint over the right half of the
+    // emoji we just drew.
+    if (span === 2) x += 1;
   }
 }
 

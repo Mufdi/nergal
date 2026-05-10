@@ -382,7 +382,7 @@ function wireInput(entry: Entry): void {
     // we cannot block it here anyway because `useKeyboardShortcuts` listens
     // in capture phase, ahead of our bubble-phase listener. Instead, copy
     // is triggered automatically on selection release (see mouseup).
-    if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyV") {
+    if (e.ctrlKey && !e.altKey && e.code === "KeyV") {
       e.preventDefault();
       e.stopPropagation();
       void pasteFromClipboard(entry);
@@ -586,9 +586,14 @@ function mouseToCell(entry: Entry, e: MouseEvent): CellCoord | null {
 
 async function pasteFromClipboard(entry: Entry): Promise<void> {
   try {
-    const text = await readClipboard();
-    if (!text) return;
-    await invoke("terminal_paste", { sessionId: entry.sessionId, text });
+    const text = await readClipboard().catch(() => "");
+    if (text && text.length > 0) {
+      await invoke("terminal_paste", { sessionId: entry.sessionId, text });
+      return;
+    }
+    // No text in clipboard: forward Ctrl+V (\x16) so the underlying agent CLI
+    // can handle non-text payloads (image paste in Claude Code, etc.).
+    await invoke("write_to_session_pty", { sessionId: entry.sessionId, data: "\x16" });
   } catch (err) {
     console.error("clipboard read / paste failed", err);
   }

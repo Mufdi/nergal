@@ -11,6 +11,10 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 
+const OPTION_SEL = "[data-ask-option]";
+const MODAL_SEL = "[data-ask-modal]";
+const FEEDBACK_SEL = "[data-ask-feedback]";
+
 export function AskUserModal() {
   const [askState, setAskState] = useAtom(askUserAtom);
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -26,6 +30,22 @@ export function AskUserModal() {
       setOtherText({});
       setFeedback("");
     }
+  }, [askState]);
+
+  useEffect(() => {
+    if (!askState) return;
+    let raf2: number | null = null;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        const modal = document.querySelector<HTMLElement>(MODAL_SEL);
+        const firstOption = modal?.querySelector<HTMLButtonElement>(OPTION_SEL);
+        firstOption?.focus({ preventScroll: true });
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (raf2 !== null) cancelAnimationFrame(raf2);
+    };
   }, [askState]);
 
   const allAnswered = askState?.questions.every((q) => {
@@ -47,16 +67,93 @@ export function AskUserModal() {
         finalAnswers[q.question] = answers[q.question] ?? "";
       }
     }
-    if (feedback.trim()) {
-      finalAnswers["_feedback"] = feedback.trim();
-    }
     invoke("submit_ask_answer", {
       decisionPath: askState.decisionPath,
       answers: JSON.stringify(finalAnswers),
+      feedback: feedback.trim() || null,
     }).then(() => {
       setAskState(null);
     }).catch(console.error);
   }, [askState, allAnswered, answers, feedback, otherOpen, otherText, setAskState]);
+
+  useEffect(() => {
+    if (!askState) return;
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      const modal = document.querySelector<HTMLElement>(MODAL_SEL);
+      if (!modal || !modal.contains(target)) return;
+      if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+
+      const isArrow =
+        e.key === "ArrowRight" || e.key === "ArrowLeft" ||
+        e.key === "ArrowUp" || e.key === "ArrowDown";
+      const isActivate = e.key === " " || e.key === "Enter";
+      if (!isArrow && !isActivate) return;
+
+      const optionBtn = target.closest<HTMLButtonElement>(OPTION_SEL);
+      const onFeedback = !!target.closest(FEEDBACK_SEL);
+
+      if (isActivate && optionBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        optionBtn.click();
+        return;
+      }
+
+      if (!isArrow) return;
+
+      if (onFeedback) {
+        const ta = target as HTMLTextAreaElement;
+        if (e.key === "ArrowUp" && ta.selectionStart === 0 && ta.selectionEnd === 0) {
+          const options = document.querySelectorAll<HTMLButtonElement>(OPTION_SEL);
+          const last = options[options.length - 1];
+          if (last) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            last.focus();
+          }
+        }
+        return;
+      }
+
+      if (target.tagName === "TEXTAREA") return;
+
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+
+      const options = Array.from(
+        document.querySelectorAll<HTMLButtonElement>(OPTION_SEL),
+      );
+      if (options.length === 0) return;
+
+      if (!optionBtn) {
+        options[0].focus();
+        return;
+      }
+
+      const idx = options.indexOf(optionBtn);
+      const isLast = idx === options.length - 1;
+      const isFirst = idx === 0;
+
+      if (e.key === "ArrowDown" && isLast) {
+        document.querySelector<HTMLElement>(FEEDBACK_SEL)?.focus();
+        return;
+      }
+      if (e.key === "ArrowUp" && isFirst) {
+        document.querySelector<HTMLElement>(FEEDBACK_SEL)?.focus();
+        return;
+      }
+      const delta = (e.key === "ArrowRight" || e.key === "ArrowDown") ? 1 : -1;
+      const next = options[(idx + delta + options.length) % options.length];
+      next?.focus();
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [askState]);
 
   useEffect(() => {
     if (!askState) return;
@@ -100,8 +197,23 @@ export function AskUserModal() {
   }).length;
 
   return (
-    <Dialog open={!!askState} onOpenChange={(open) => { if (!open) setAskState(null); }}>
-      <DialogContent>
+    // Dismissal locked: the CLI hook blocks on a FIFO until the GUI writes an
+    // answer, so any close path other than `handleSubmit` would hang the agent.
+    <Dialog
+      open={!!askState}
+      disablePointerDismissal
+      onOpenChange={(open, details) => {
+        if (open) return;
+        if (details?.reason === "imperative-action") return;
+        details?.cancel();
+      }}
+    >
+      <DialogContent
+        data-ask-modal
+        initialFocus={() =>
+          document.querySelector<HTMLElement>(OPTION_SEL) ?? true
+        }
+      >
         <DialogHeader>
           <DialogTitle className="text-sm">Claude needs your input</DialogTitle>
         </DialogHeader>
@@ -128,6 +240,7 @@ export function AskUserModal() {
                         return (
                           <button
                             key={opt}
+                            data-ask-option
                             type="button"
                             onClick={() => {
                               if (q.multi_select) {
@@ -152,6 +265,7 @@ export function AskUserModal() {
                         );
                       })}
                       <button
+                        data-ask-option
                         type="button"
                         onClick={() => toggleOther(q.question)}
                         className={`rounded-md border px-3 py-1.5 text-[11px] italic transition-colors ${
@@ -176,7 +290,6 @@ export function AskUserModal() {
                   </div>
                 ) : (
                   <textarea
-                    autoFocus
                     value={answers[q.question] ?? ""}
                     onChange={(e) => setFreeText(q.question, e.target.value)}
                     placeholder="Your answer..."
@@ -190,6 +303,7 @@ export function AskUserModal() {
           <div className="flex flex-col gap-1.5 border-t border-border/50 pt-3">
             <span className="text-[11px] text-muted-foreground">Additional feedback (optional)</span>
             <textarea
+              data-ask-feedback
               value={feedback}
               onChange={(e) => setFeedback(e.target.value)}
               placeholder="Any extra context or comments..."

@@ -93,7 +93,7 @@ export function AgentPickerModal({
           ref={listRef}
           tabIndex={0}
           onKeyDown={handleKeyDown}
-          className="flex flex-row gap-2 overflow-x-auto outline-none rounded p-0.5"
+          className="flex flex-row items-start gap-2 overflow-x-auto outline-none rounded p-0.5"
         >
           {agents.map((a, i) => {
             const disabled = !a.installed;

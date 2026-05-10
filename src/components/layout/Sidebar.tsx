@@ -3,7 +3,7 @@ import { useAtomValue, useSetAtom } from "jotai";
 import { configAtom } from "@/stores/config";
 import { useFocusPulse } from "@/hooks/useFocusPulse";
 import { confirm as swalConfirm } from "@/lib/swal";
-import { focusZoneAtom, previousNonTerminalZoneAtom, triggerResumeSessionAtom, triggerNewSessionAtom, triggerAddWorkspaceAtom, triggerCommitAtom, triggerMergeAtom, triggerJumpToProjectAtom, sidebarSelectedIdxAtom, focusedWorkspaceIdAtom } from "@/stores/shortcuts";
+import { focusZoneAtom, previousNonTerminalZoneAtom, triggerResumeSessionAtom, triggerNewSessionAtom, triggerAddWorkspaceAtom, triggerMergeAtom, triggerJumpToProjectAtom, sidebarSelectedIdxAtom, focusedWorkspaceIdAtom } from "@/stores/shortcuts";
 import {
   workspacesAtom,
   activeSessionIdAtom,
@@ -15,10 +15,8 @@ import {
   type Session,
 } from "@/stores/workspace";
 import { openTabAction } from "@/stores/rightPanel";
-import { toastsAtom } from "@/stores/toast";
 import { SessionRow } from "@/components/session/SessionRow";
 import { SessionIndicator } from "@/components/session/SessionIndicator";
-import { CommitModal } from "@/components/session/CommitModal";
 import { ProjectPickerModal } from "@/components/session/ProjectPickerModal";
 import { AgentPickerModal } from "@/components/session/AgentPickerModal";
 import type { AvailableAgent } from "@/lib/types";
@@ -118,7 +116,7 @@ export function Sidebar({ collapsed }: SidebarProps) {
         </div>
       )}
 
-      {/* Always render WorkspacesView hidden when collapsed so modals (CommitModal, AgentPickerModal) still work */}
+      {/* Always render WorkspacesView hidden when collapsed so the AgentPickerModal still mounts */}
       {collapsed && (
         <div className="hidden">
           <WorkspacesView />
@@ -204,14 +202,11 @@ function WorkspacesView() {
   const freshSessions = useAtomValue(freshSessionsAtom);
   const setFreshSessions = useSetAtom(freshSessionsAtom);
   const openTab = useSetAtom(openTabAction);
-  const addToast = useSetAtom(toastsAtom);
-  const triggerCommitSignal = useAtomValue(triggerCommitAtom);
   const triggerMergeSignal = useAtomValue(triggerMergeAtom);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [addingSessionFor, setAddingSessionFor] = useState<string | null>(null);
   const [newSessionName, setNewSessionName] = useState("");
 
-  const [commitModal, setCommitModal] = useState<{ session: Session } | null>(null);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [agentPicker, setAgentPicker] = useState<
     | { workspaceId: string; sessionName: string; agents: AvailableAgent[]; defaultId: string | null }
@@ -263,18 +258,6 @@ function WorkspacesView() {
   useEffect(() => {
     if (triggerAddWorkspace > 0) handleAddWorkspace();
   }, [triggerAddWorkspace]);
-
-  useEffect(() => {
-    if (triggerCommitSignal === 0 || !activeSessionId) return;
-    const session = workspaces.flatMap((w) => w.sessions).find((s) => s.id === activeSessionId);
-    if (!session) return;
-    invoke<{ dirty: boolean; commits_ahead: boolean }>("check_session_has_commits", { sessionId: activeSessionId })
-      .then((status) => {
-        if (status.dirty) setCommitModal({ session });
-        else addToast({ message: "Commit", description: "Nothing to commit", type: "info" });
-      })
-      .catch(() => {});
-  }, [triggerCommitSignal]);
 
   // Merge entry point moved to GitPanel — it owns both the visible button
   // and the Ctrl+Shift+M shortcut handler.
@@ -342,6 +325,38 @@ function WorkspacesView() {
       .catch(() => {});
   }
 
+  async function handleDeleteWorkspace(ws: Workspace) {
+    const sessionCount = ws.sessions.length;
+    const sessionsLine = sessionCount > 0
+      ? `<br /><span class="text-muted-foreground text-[11px]">${sessionCount} session${sessionCount === 1 ? "" : "s"} and their worktrees will be removed.</span>`
+      : "";
+    const ok = await swalConfirm({
+      title: "Remove workspace?",
+      body: `<strong>${ws.name}</strong> will be removed from the sidebar.${sessionsLine}`,
+      confirmLabel: "Remove",
+      cancelLabel: "Cancel",
+      kind: "warning",
+      destructive: true,
+    });
+    if (!ok) return;
+    for (const s of ws.sessions) {
+      terminalService.destroy(s.id);
+    }
+    try {
+      await invoke("delete_workspace", { workspaceId: ws.id });
+      setWorkspaces((prev) => prev.filter((w) => w.id !== ws.id));
+      setExpandedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(ws.id);
+        return next;
+      });
+      if (activeSessionId && ws.sessions.some((s) => s.id === activeSessionId)) {
+        setActiveSessionId(null);
+      }
+    } catch {
+    }
+  }
+
   function handleSessionClick(session: Session) {
     if (session.status === "completed") {
       openTab({ tab: { id: `transcript-${session.id}`, type: "transcript", label: `Transcript: ${session.name}`, data: { sessionId: session.id } }, isPinned: true });
@@ -358,16 +373,6 @@ function WorkspacesView() {
       setLaunchMode((prev) => ({ ...prev, [session.id]: "continue" }));
     }
     setActiveSessionId(session.id);
-  }
-
-  function handleCommitConfirm(lang: string) {
-    if (!commitModal) return;
-    const sid = commitModal.session.id;
-    setActiveSessionId(sid);
-    setCommitModal(null);
-    terminalService.writeToSession(sid, `/commit ${lang}\r`)
-      .then(() => terminalService.focusActive())
-      .catch(() => {});
   }
 
   async function spawnSession(workspaceId: string, sessionName: string, agentId: string | null) {
@@ -493,12 +498,20 @@ function WorkspacesView() {
           const nonCompletedSessions = ws.sessions.filter((s) => s.status !== "completed");
         return (
           <div key={ws.id}>
-            <button
+            <div
+              role="button"
+              tabIndex={0}
               data-nav-item
               data-workspace-id={ws.id}
               data-nav-expanded={isExpanded ? "true" : "false"}
               onClick={() => toggleWorkspace(ws.id)}
-              className="flex w-full items-center gap-1.5 px-3 py-1 text-left hover:bg-secondary/40 transition-colors"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  toggleWorkspace(ws.id);
+                }
+              }}
+              className="group flex w-full items-center gap-1.5 px-3 py-1 text-left hover:bg-secondary/40 transition-colors cursor-pointer"
             >
               <svg
                 width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -510,7 +523,35 @@ function WorkspacesView() {
               <span className="flex-1 truncate text-[11px] font-medium text-foreground/90">
                 {ws.name}
               </span>
-            </button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      aria-label="Remove workspace"
+                      onClick={(e) => { e.stopPropagation(); handleDeleteWorkspace(ws); }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleDeleteWorkspace(ws);
+                        }
+                      }}
+                      className="hidden size-4 shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:bg-secondary hover:text-foreground transition-colors group-hover:flex"
+                    >
+                      <svg
+                        width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                      >
+                        <path d="M18 6 6 18" /><path d="m6 6 12 12" />
+                      </svg>
+                    </span>
+                  }
+                />
+                <TooltipContent side="top" className="text-[10px]">Remove workspace</TooltipContent>
+              </Tooltip>
+            </div>
 
             {isExpanded && (
               <>
@@ -614,13 +655,6 @@ function WorkspacesView() {
       {/* MergeModal is now hosted in GitPanel (single entry point). The
           Ctrl+Shift+M shortcut still triggers it via triggerMergeAtom which
           GitPanel listens to. */}
-      {commitModal && (
-        <CommitModal
-          open={true}
-          onOpenChange={(o) => { if (!o) setCommitModal(null); }}
-          onConfirm={handleCommitConfirm}
-        />
-      )}
       <ProjectPickerModal
         open={projectPickerOpen}
         onOpenChange={setProjectPickerOpen}

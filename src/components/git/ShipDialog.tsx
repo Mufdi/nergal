@@ -120,6 +120,20 @@ export function ShipDialog() {
   // Action arming: default to the most common path, update on hover/focus.
   const [armedAction, setArmedAction] = useState<Action>("commit-push-pr");
 
+  const escapeStagePicker = useCallback((delta: 1 | -1) => {
+    const root = document.querySelector<HTMLElement>('[data-slot="dialog-content"]');
+    if (!root) return;
+    const FOCUSABLE = 'input:not([disabled]):not([aria-disabled="true"]), textarea:not([disabled]):not([aria-disabled="true"]), button:not([disabled]):not([aria-disabled="true"]), [tabindex="0"]:not([disabled]):not([aria-disabled="true"])';
+    const focusables = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE));
+    const stageEl = root.querySelector<HTMLElement>("[data-stage-picker]");
+    if (!stageEl) return;
+    const idx = focusables.indexOf(stageEl);
+    if (idx === -1) return;
+    const next = focusables[(idx + delta + focusables.length) % focusables.length];
+    next?.focus();
+    next?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, []);
+
   useEffect(() => {
     if (trigger.tick === 0) return;
     setState({ open: true, sessionId: trigger.sessionId, inlineMessage: trigger.inlineMessage });
@@ -352,28 +366,34 @@ export function ShipDialog() {
         return;
       }
       if (e.code === "ArrowDown" && !e.ctrlKey && !e.altKey && !e.metaKey) {
-        e.preventDefault();
-        e.stopPropagation();
-        setStageCursor((i) => (i + 1) % stageEntries.length);
+        if (stageCursor < stageEntries.length - 1) {
+          e.preventDefault();
+          e.stopPropagation();
+          setStageCursor((i) => i + 1);
+        } else {
+          escapeStagePicker(1);
+          e.preventDefault();
+          e.stopPropagation();
+        }
         return;
       }
       if (e.code === "ArrowUp" && !e.ctrlKey && !e.altKey && !e.metaKey) {
-        e.preventDefault();
-        e.stopPropagation();
-        setStageCursor((i) => (i - 1 + stageEntries.length) % stageEntries.length);
+        if (stageCursor > 0) {
+          e.preventDefault();
+          e.stopPropagation();
+          setStageCursor((i) => i - 1);
+        } else {
+          escapeStagePicker(-1);
+          e.preventDefault();
+          e.stopPropagation();
+        }
         return;
       }
     }
     window.addEventListener("keydown", onStagingKey, true);
     return () => window.removeEventListener("keydown", onStagingKey, true);
-  }, [state.open, stageEntries, stageCursor, toggleStage]);
+  }, [state.open, stageEntries, stageCursor, toggleStage, escapeStagePicker]);
 
-  // Modal-scoped keyboard:
-  // - Esc closes
-  // - Ctrl+1/2/3 fire the corresponding action (capture phase, so it
-  //   bypasses the global session-switching shortcuts on these key combos)
-  // - Ctrl+Enter fires the currently-armed action (whatever the user
-  //   hovered/focused last)
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (!state.open) return;
@@ -413,6 +433,32 @@ export function ShipDialog() {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [state.open, shipping, existingPr, armedAction, close, dispatchAction]);
 
+  // Double rAF defers past Base UI's capture-phase focus trap; without it
+  // focus parks on the popup wrapper and Space/Enter leak to background panels.
+  useEffect(() => {
+    if (!state.open) return;
+    let raf2: number | null = null;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        const root = document.querySelector<HTMLElement>('[data-slot="dialog-content"]');
+        if (!root) return;
+        const stagePicker = root.querySelector<HTMLElement>("[data-stage-picker]");
+        if (stagePicker) {
+          stagePicker.focus({ preventScroll: true });
+          return;
+        }
+        const firstFocusable = root.querySelector<HTMLElement>(
+          'button:not([disabled]),input:not([disabled]),textarea:not([disabled])',
+        );
+        firstFocusable?.focus({ preventScroll: true });
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (raf2 !== null) cancelAnimationFrame(raf2);
+    };
+  }, [state.open]);
+
   // BaseUI Dialog's built-in focus trap doesn't always cycle Tab between
   // our focusables (textarea, branch picker, footer buttons). Override it
   // with a manual trap: collect all focusables inside the dialog, walk by
@@ -440,6 +486,35 @@ export function ShipDialog() {
     }
     window.addEventListener("keydown", handleTab, true);
     return () => window.removeEventListener("keydown", handleTab, true);
+  }, [state.open]);
+
+  useEffect(() => {
+    if (!state.open) return;
+    const FOCUSABLE = 'input:not([disabled]):not([aria-disabled="true"]), textarea:not([disabled]):not([aria-disabled="true"]), button:not([disabled]):not([aria-disabled="true"]), [tabindex="0"]:not([disabled]):not([aria-disabled="true"])';
+    function handleArrows(e: KeyboardEvent) {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      const root = document.querySelector<HTMLElement>('[data-slot="dialog-content"]');
+      if (!root) return;
+      const target = e.target as HTMLElement | null;
+      if (!target || !root.contains(target)) return;
+      if (target.closest("[data-stage-picker]")) return;
+      if (document.querySelector("[data-branch-picker]")) return;
+      if (target.tagName === "TEXTAREA") return;
+      const focusables = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE));
+      if (focusables.length === 0) return;
+      const idx = focusables.indexOf(target);
+      if (idx === -1) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      const delta = e.key === "ArrowDown" ? 1 : -1;
+      const next = focusables[(idx + delta + focusables.length) % focusables.length];
+      next.focus();
+      next.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+    window.addEventListener("keydown", handleArrows, true);
+    return () => window.removeEventListener("keydown", handleArrows, true);
   }, [state.open]);
 
   // Per-action gates. The user's flow assumption: once a commit lands
@@ -789,7 +864,7 @@ function BranchPicker({
         setCursor((i) => (i - 1 + branches.length) % branches.length);
         return;
       }
-      if (e.key === "Enter") {
+      if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
         e.stopPropagation();
         const picked = branches[cursor];
@@ -830,6 +905,7 @@ function BranchPicker({
       </button>
       {open && (
         <div
+          data-branch-picker
           className="absolute right-0 top-full z-50 mt-1 max-h-56 min-w-[160px] overflow-y-auto rounded border border-border bg-popover shadow-lg"
           role="listbox"
         >

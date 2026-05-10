@@ -48,51 +48,11 @@ const HOOKS: &[HookDef] = &[
         if_condition: None,
     },
     HookDef {
-        event: "TaskCompleted",
-        matcher: None,
-        command: "cluihud hook send task-done",
-        is_async: true,
-        timeout: None,
-        if_condition: None,
-    },
-    HookDef {
-        event: "TaskCreated",
-        matcher: None,
-        command: "cluihud hook send task-created",
-        is_async: true,
-        timeout: None,
-        if_condition: None,
-    },
-    HookDef {
         event: "PreToolUse",
         matcher: Some("AskUserQuestion"),
         command: "cluihud hook ask-user",
         is_async: false,
         timeout: Some(86400),
-        if_condition: None,
-    },
-    HookDef {
-        event: "CwdChanged",
-        matcher: None,
-        command: "cluihud hook send cwd-changed",
-        is_async: true,
-        timeout: None,
-        if_condition: None,
-    },
-    HookDef {
-        event: "FileChanged",
-        matcher: None,
-        command: "cluihud hook send file-changed",
-        is_async: true,
-        timeout: None,
-        if_condition: None,
-    },
-    HookDef {
-        event: "PermissionDenied",
-        matcher: None,
-        command: "cluihud hook send permission-denied",
-        is_async: true,
-        timeout: None,
         if_condition: None,
     },
     HookDef {
@@ -139,6 +99,32 @@ const OBSOLETE_HOOKS: &[ObsoleteHook] = &[
         event: "PostToolUse",
         command: "cluihud hook send tool-done",
         only_without_matcher: true,
+    },
+    // CC never shipped these hook events; CC v2.1.138+ rejects the keys as invalid.
+    ObsoleteHook {
+        event: "CwdChanged",
+        command: "cluihud hook send cwd-changed",
+        only_without_matcher: false,
+    },
+    ObsoleteHook {
+        event: "FileChanged",
+        command: "cluihud hook send file-changed",
+        only_without_matcher: false,
+    },
+    ObsoleteHook {
+        event: "PermissionDenied",
+        command: "cluihud hook send permission-denied",
+        only_without_matcher: false,
+    },
+    ObsoleteHook {
+        event: "TaskCompleted",
+        command: "cluihud hook send task-done",
+        only_without_matcher: false,
+    },
+    ObsoleteHook {
+        event: "TaskCreated",
+        command: "cluihud hook send task-created",
+        only_without_matcher: false,
     },
 ];
 

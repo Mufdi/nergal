@@ -6,7 +6,7 @@ Linux desktop wrapper for the Claude Code CLI. Tauri 2 + React 19. The agent CLI
 
 User-facing brand: **Nergal** (productName, identifier `com.nergal.app`, GitHub repo `Mufdi/nergal`).
 
-Internal name **cluihud** is preserved everywhere else for backward compatibility with the developer machine: binary `cluihud`, hook subcommands (`cluihud hook ...`), env vars (`CLUIHUD_SESSION_ID`, `CLUIHUD_AGENT_ID`), IPC paths (`/tmp/cluihud.sock`, `/tmp/cluihud-plan-*.fifo`, `/tmp/cluihud-ask-*.fifo`), sentinel (`~/.cluihud-active`), config dir (`~/.config/cluihud/`), local repo dir (`cluihud/`). **Do NOT rename internal `cluihud` references.**
+Internal name **cluihud** is preserved everywhere else for backward compatibility with the developer machine: binary `cluihud`, hook subcommands (`cluihud hook ...`), env vars (`CLUIHUD_SESSION_ID`, `CLUIHUD_AGENT_ID`), IPC paths (`/tmp/cluihud.sock`, `/tmp/cluihud-plan-*.fifo`, `/tmp/cluihud-ask-*.fifo`), sentinel (`~/.cluihud-active`), config dir (`~/.config/cluihud/`), local repo dir name (`cluihud/`). **Do NOT rename internal `cluihud` references.**
 
 ## What Nergal is NOT
 
@@ -50,7 +50,3 @@ Read on demand when working in the relevant area:
 - [`docs/hooks.md`](./docs/hooks.md) — hook system, plan-review flow, ask-user interception, settings.json snippet.
 - [`docs/design.md`](./docs/design.md) — design system: tokens, components, decision rules. Read before touching UI.
 - [`openspec/specs/`](./openspec/specs/) — feature contracts. Read the relevant spec before implementing or proposing a change.
-
-## Project hub (external)
-
-`internal vault reference removed`. CLAUDE.md is the source of truth; the vault note is referential.

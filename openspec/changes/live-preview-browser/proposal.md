@@ -60,7 +60,7 @@ Foco cluihud: ambos modos — panel persistente del dock + floating popup — us
 ### Cómo verifico
 
 ```bash
-cd cluihud
+cd <repo-root>
 # Backend gates
 cd src-tauri && cargo clippy -- -D warnings && cargo test && cargo fmt --check
 # Frontend gates

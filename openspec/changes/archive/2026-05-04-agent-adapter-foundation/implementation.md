@@ -8,7 +8,7 @@ Before opening the first commit:
 
 ```bash
 # Confirm you're on a clean feature branch off main
-cd cluihud
+cd <repo-root>
 git checkout main && git pull
 git checkout -b agent-adapter-foundation
 
@@ -544,13 +544,13 @@ Run end-to-end before requesting review:
 
 ```bash
 # Backend — must all pass
-cd cluihud/src-tauri
+cd <repo-root>/src-tauri
 cargo fmt --check
 cargo clippy -- -D warnings
 cargo test 2>&1 | tail -15
 
 # Frontend — must all pass
-cd cluihud
+cd <repo-root>
 npx tsc --noEmit
 pnpm lint 2>&1 | tail -10
 

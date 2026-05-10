@@ -235,13 +235,23 @@ pub fn reject_plan(session_id: String, state: State<'_, SharedPlanState>) -> Res
     Ok(())
 }
 
-/// Writes user answers to the FIFO, unblocking the ask-user CLI.
-/// `answers` is a JSON string mapping question text to selected answer.
 #[tauri::command]
-pub fn submit_ask_answer(decision_path: String, answers: String) -> Result<(), String> {
+pub fn submit_ask_answer(
+    decision_path: String,
+    answers: String,
+    feedback: Option<String>,
+) -> Result<(), String> {
     let answers_value: serde_json::Value =
         serde_json::from_str(&answers).map_err(|e| format!("parsing answers JSON: {e}"))?;
-    let response = serde_json::json!({ "answers": answers_value });
+    let mut response = serde_json::json!({ "answers": answers_value });
+    if let Some(text) = feedback.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty())
+        && let Some(obj) = response.as_object_mut()
+    {
+        obj.insert(
+            "feedback".to_string(),
+            serde_json::Value::String(text.to_string()),
+        );
+    }
     std::fs::write(
         &decision_path,
         serde_json::to_string(&response).map_err(|e| e.to_string())?,

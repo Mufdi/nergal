@@ -201,6 +201,7 @@ export function FilesChip({ sessionId, ahead, inZen = false }: FilesChipProps) {
   useEffect(() => {
     if (!listenerActive) return;
     function onKey(e: KeyboardEvent) {
+      if (document.querySelector('[data-slot="dialog-content"]')) return;
       const flat = flatNavRef.current;
       if (flat.length === 0) return;
       const target = e.target as HTMLElement | null;

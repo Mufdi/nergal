@@ -87,6 +87,10 @@ function baseOptions(kind: CluihudSwalKind, opts: SweetAlertOptions): SweetAlert
     icon: undefined,
     iconHtml: ICON_HTML[kind],
     buttonsStyling: false,
+    // SweetAlert2 default forces `html/body { height: auto !important }`, which
+    // breaks our `h-full` cascade from `#root` and shrinks the main column,
+    // raising StatusBar and leaving a void below while the modal is open.
+    heightAuto: false,
     showClass: { popup: "" },
     hideClass: { popup: "" },
     customClass: {

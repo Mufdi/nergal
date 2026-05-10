@@ -280,13 +280,21 @@ pub fn ask_user(socket_path: &Path) -> Result<()> {
         obj.insert("answers".to_string(), answers.clone());
     }
 
-    let output = serde_json::json!({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "allow",
-            "updatedInput": updated_input
-        }
+    let mut hook_specific = serde_json::json!({
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "allow",
+        "updatedInput": updated_input
     });
+    if let Some(feedback) = answer_json.get("feedback").and_then(|v| v.as_str())
+        && !feedback.is_empty()
+        && let Some(obj) = hook_specific.as_object_mut()
+    {
+        obj.insert(
+            "additionalContext".to_string(),
+            serde_json::Value::String(format!("User feedback alongside answers: {feedback}")),
+        );
+    }
+    let output = serde_json::json!({ "hookSpecificOutput": hook_specific });
     std::io::stdout()
         .write_all(serde_json::to_string(&output)?.as_bytes())
         .context("writing ask-user response to stdout")?;

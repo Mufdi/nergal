@@ -15,7 +15,7 @@ import {
   currentSpecArtifactAtom,
   type TabType,
 } from "@/stores/rightPanel";
-import { toggleRightPanelAtom, triggerCommitAtom, triggerMergeAtom } from "@/stores/shortcuts";
+import { toggleRightPanelAtom, triggerMergeAtom } from "@/stores/shortcuts";
 import { softCloseSessionAction } from "@/stores/sessionTabs";
 import { triggerShipAtom } from "@/stores/ship";
 import { activeGitInfoAtom, refreshGitInfoAtom, conflictedFilesMapAtom, refreshConflictedFilesAtom, activeConflictedFilesAtom } from "@/stores/git";
@@ -38,7 +38,6 @@ import {
   Maximize2,
   Minimize2,
   X,
-  Package,
   Upload,
   Rocket,
   GitMerge,
@@ -126,7 +125,6 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   const setActivePanelView = useSetAtom(activePanelViewAtom);
   const setExpand = useSetAtom(expandRightPanelAtom);
   const setToggleRight = useSetAtom(toggleRightPanelAtom);
-  const setTriggerCommit = useSetAtom(triggerCommitAtom);
   const setTriggerMerge = useSetAtom(triggerMergeAtom);
   const setTriggerShip = useSetAtom(triggerShipAtom);
   const refreshGit = useSetAtom(refreshGitInfoAtom);
@@ -143,7 +141,6 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   const [editors, setEditors] = useState<EditorInfo[]>([]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
-  const [commitBusy, setCommitBusy] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
   const tabsContainerRef = useRef<HTMLDivElement>(null);
   const dragIdRef = useRef<string | null>(null);
@@ -444,34 +441,6 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
         {/* Git session actions */}
         {sessionId && (
           <div className="flex items-center mr-1 gap-0.5 border-r border-border/30 pr-1.5">
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <div
-                    role="button"
-                    onClick={async () => {
-                      if (commitBusy) return;
-                      setCommitBusy(true);
-                      try {
-                        const status = await invoke<{ dirty: boolean; commits_ahead: boolean }>("check_session_has_commits", { sessionId });
-                        if (status.dirty) setTriggerCommit((p) => p + 1);
-                        else addToast({ message: "Commit", description: "Nothing to commit", type: "info" });
-                      } catch {
-                        // silent
-                      } finally {
-                        setCommitBusy(false);
-                      }
-                    }}
-                    className="flex size-7 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground transition-colors cursor-pointer"
-                    aria-label="Commit"
-                  />
-                }
-              >
-                {commitBusy ? <Loader2 size={14} className="animate-spin" /> : <Package size={14} />}
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Commit (Ctrl+Shift+C)</TooltipContent>
-            </Tooltip>
-
             <Tooltip>
               <TooltipTrigger
                 render={

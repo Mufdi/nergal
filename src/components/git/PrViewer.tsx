@@ -573,6 +573,7 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
     if (!listenerActive) return;
     function handleKeyDown(e: KeyboardEvent) {
       if (annotating) return;
+      if (document.querySelector('[data-slot="dialog-content"]')) return;
       const target = e.target as HTMLElement | null;
       const inField = target?.tagName === "INPUT"
         || target?.tagName === "TEXTAREA"

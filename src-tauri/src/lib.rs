@@ -52,6 +52,66 @@ impl Drop for SentinelGuard {
     }
 }
 
+/// Linux desktop launchers hand us a minimal PATH (no nvm, no `~/.opencode/bin`),
+/// so `which::which("pi"|"opencode")` fails, the registry reports only Claude
+/// Code as installed, and the agent picker silently auto-resolves to CC.
+fn augment_path_from_user_shell() {
+    #[cfg(target_os = "linux")]
+    {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+        // `-l -i -c` is required: many users only export PATH from interactive
+        // rc files (`.zshrc`, `.bashrc`), not from login profiles.
+        let output = match std::process::Command::new(&shell)
+            .args(["-l", "-i", "-c", "printf %s \"$PATH\""])
+            .output()
+        {
+            Ok(o) if o.status.success() => o,
+            Ok(o) => {
+                tracing::debug!(
+                    "shell PATH probe exited with {:?}, skipping augment",
+                    o.status.code()
+                );
+                return;
+            }
+            Err(e) => {
+                tracing::debug!("shell PATH probe failed ({e}), skipping augment");
+                return;
+            }
+        };
+        let shell_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if shell_path.is_empty() {
+            return;
+        }
+
+        let current = std::env::var("PATH").unwrap_or_default();
+        let current_set: std::collections::HashSet<&str> = current.split(':').collect();
+        let mut additions: Vec<&str> = Vec::new();
+        for entry in shell_path.split(':') {
+            if !entry.is_empty() && !current_set.contains(entry) {
+                additions.push(entry);
+            }
+        }
+        if additions.is_empty() {
+            return;
+        }
+        let merged = if current.is_empty() {
+            additions.join(":")
+        } else {
+            format!("{}:{}", additions.join(":"), current)
+        };
+        // SAFETY: called once, single-threaded, before any tokio runtime or
+        // child spawn — no other thread can be reading PATH concurrently.
+        unsafe {
+            std::env::set_var("PATH", &merged);
+        }
+        tracing::info!(
+            "PATH augmented with {} entries from {}",
+            additions.len(),
+            shell
+        );
+    }
+}
+
 pub fn run() {
     let _sentinel = SentinelGuard::new();
     tracing_subscriber::fmt()
@@ -60,6 +120,8 @@ pub fn run() {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
+
+    augment_path_from_user_shell();
 
     let config = Config::load();
 

@@ -511,6 +511,7 @@ export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen, i
     if (!listenerActive) return;
 
     function handleKeyDown(e: KeyboardEvent) {
+      if (document.querySelector('[data-slot="dialog-content"]')) return;
       const target = e.target as HTMLElement | null;
       const inField = target?.tagName === "INPUT"
         || target?.tagName === "TEXTAREA"

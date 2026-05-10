@@ -103,6 +103,10 @@ cargo install --path src-tauri --force
 cluihud setup
 ```
 
+## Scope
+
+**Built for one workflow — mine.** Nergal exists because I wanted a HUD that tracks my own way of using AI coding agents: per-session worktrees, ship-flow over GitHub PRs, plan review with annotations, keyboard-first navigation, no mouse hunting. The roadmap follows what I need next, not what would generalize cleanly to every user. If your flow doesn't look like mine, Nergal may or may not fit — and that's fine. Forks and personal customizations are encouraged (0BSD makes that frictionless).
+
 ## Status
 
 **Linux-only.** Tauri's bundle config supports more platforms, but the PTY layer, hook server, FIFO IPC, port scanner, and WebKitGTK chrome assumptions are tested only on Linux today.

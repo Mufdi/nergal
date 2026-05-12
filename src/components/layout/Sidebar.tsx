@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { configAtom } from "@/stores/config";
 import { useFocusPulse } from "@/hooks/useFocusPulse";
@@ -56,6 +56,38 @@ export function Sidebar({ collapsed }: SidebarProps) {
     if (sidebarSelectedIdx < 0) setSidebarSelectedIdx(0);
   }
 
+  // Hover-driven shortcuts need a global listener: the user keeps focus in
+  // the terminal while hovering a session row, so an onKeyDown bound to the
+  // sidebar zone never fires.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      if (e.key !== "d" && e.key !== "D" && e.key !== "r" && e.key !== "R") return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+      const mouseHovered = document.querySelectorAll<HTMLElement>(
+        "[data-focus-zone='sidebar'] [data-nav-item]:hover",
+      );
+      const row =
+        mouseHovered[mouseHovered.length - 1] ??
+        document.querySelector<HTMLElement>(
+          "[data-focus-zone='sidebar'] [data-nav-item][data-nav-selected='true']",
+        );
+      if (!row) return;
+      const isDelete = e.key === "d" || e.key === "D";
+      const action = isDelete
+        ? row.querySelector<HTMLElement>('[aria-label="Delete"]') ??
+          row.querySelector<HTMLElement>('[aria-label="Remove workspace"]')
+        : row.querySelector<HTMLElement>('[aria-label="Rename"]');
+      if (!action) return;
+      e.preventDefault();
+      e.stopPropagation();
+      action.click();
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+
   function updateSidebarSelection(container: HTMLElement, idx: number) {
     const items = Array.from(container.querySelectorAll<HTMLElement>("[data-nav-item]"));
     for (const item of items) item.removeAttribute("data-nav-selected");
@@ -68,8 +100,11 @@ export function Sidebar({ collapsed }: SidebarProps) {
 
   function handleSidebarKeyDown(e: React.KeyboardEvent) {
     if (e.ctrlKey || e.altKey || e.shiftKey) return;
+    const target = e.target as HTMLElement | null;
+    if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
 
     const container = e.currentTarget as HTMLElement;
+
     const items = Array.from(container.querySelectorAll<HTMLElement>("[data-nav-item]"));
     if (items.length === 0) return;
 
@@ -245,15 +280,20 @@ function WorkspacesView() {
     setTriggerResume(null);
   }, [triggerResumeId]);
 
+  // Track the last consumed trigger so a Ctrl+N fired before `workspaces`
+  // finished loading is replayed once the list resolves (otherwise the
+  // first shortcut after app boot is silently dropped).
+  const lastNewSessionTriggerRef = useRef(0);
   useEffect(() => {
-    if (triggerNewSession > 0 && workspaces.length > 0) {
-      if (workspaces.length === 1) {
-        setAddingSessionFor(workspaces[0].id);
-      } else {
-        setProjectPickerOpen(true);
-      }
+    if (triggerNewSession === 0 || workspaces.length === 0) return;
+    if (triggerNewSession <= lastNewSessionTriggerRef.current) return;
+    lastNewSessionTriggerRef.current = triggerNewSession;
+    if (workspaces.length === 1) {
+      setAddingSessionFor(workspaces[0].id);
+    } else {
+      setProjectPickerOpen(true);
     }
-  }, [triggerNewSession]);
+  }, [triggerNewSession, workspaces.length]);
 
   useEffect(() => {
     if (triggerAddWorkspace > 0) handleAddWorkspace();
@@ -373,6 +413,8 @@ function WorkspacesView() {
       setLaunchMode((prev) => ({ ...prev, [session.id]: "continue" }));
     }
     setActiveSessionId(session.id);
+    setFocusZoneDirect("terminal");
+    requestAnimationFrame(() => terminalService.focusActive());
   }
 
   async function spawnSession(workspaceId: string, sessionName: string, agentId: string | null) {
@@ -402,6 +444,8 @@ function WorkspacesView() {
       setActiveSessionId(session.id);
       setAddingSessionFor(null);
       setNewSessionName("");
+      setFocusZoneDirect("terminal");
+      requestAnimationFrame(() => terminalService.focusActive());
     } catch {
     }
   }
@@ -583,6 +627,8 @@ function WorkspacesView() {
                               ),
                             })),
                           );
+                          setFocusZoneDirect("terminal");
+                          requestAnimationFrame(() => terminalService.focusActive());
                         })
                         .catch(() => {});
                     }}

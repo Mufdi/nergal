@@ -150,48 +150,50 @@ export function RightPanel({ collapsed }: RightPanelProps) {
 
   if (activeTab) {
     const showAnnotationsDrawer = activeTab.type === "plan" || activeTab.type === "spec";
-    return (
-      <div className="flex h-full flex-col gap-1">
-        <div className={`relative flex flex-1 flex-col overflow-hidden rounded-lg border-2 ${borderClass} bg-card cluihud-panel-focus`} data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus} onKeyDown={handlePanelKeyDown}>
-          {/* Level 1: Tabs + actions */}
-          <div className="flex shrink-0 items-center border-b border-border/50">
-            <div className="flex-1 overflow-hidden">
-              <TabBar />
-            </div>
-            {hasPicker && (
-              <button
-                onClick={() => setPickerOpen(!pickerOpen)}
-                className={`flex size-7 shrink-0 items-center justify-center transition-colors ${
-                  pickerOpen
-                    ? "text-foreground bg-secondary"
-                    : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-                }`}
-                aria-label={pickerOpen ? "Close file picker" : "Open file picker"}
-              >
-                <FolderOpen size={12} />
-              </button>
-            )}
-          </div>
-
-          {/* Content */}
+    const cardBaseHeight = showAnnotationsDrawer ? "flex-1" : "h-full";
+    const card = (
+      <div className={`relative flex ${cardBaseHeight} flex-col overflow-hidden rounded-lg border-2 ${borderClass} bg-card cluihud-panel-focus`} data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus} onKeyDown={handlePanelKeyDown}>
+        <div className="flex shrink-0 items-center border-b border-border/50">
           <div className="flex-1 overflow-hidden">
-            <DocumentContent tab={activeTab} />
+            <TabBar />
           </div>
-
-          {hasPicker && pickerOpen && (
-            <FilePickerOverlay
-              type={activeTab.type}
-              onClose={() => setPickerOpen(false)}
-            />
+          {hasPicker && (
+            <button
+              onClick={() => setPickerOpen(!pickerOpen)}
+              className={`flex size-7 shrink-0 items-center justify-center transition-colors ${
+                pickerOpen
+                  ? "text-foreground bg-secondary"
+                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+              }`}
+              aria-label={pickerOpen ? "Close file picker" : "Open file picker"}
+            >
+              <FolderOpen size={12} />
+            </button>
           )}
         </div>
 
-        {showAnnotationsDrawer && (
-          <AnnotationsDrawer
-            open={annotationsDrawerOpen}
-            onToggle={() => setAnnotationsDrawerOpen(!annotationsDrawerOpen)}
+        <div className="flex-1 overflow-hidden">
+          <DocumentContent tab={activeTab} />
+        </div>
+
+        {hasPicker && pickerOpen && (
+          <FilePickerOverlay
+            type={activeTab.type}
+            onClose={() => setPickerOpen(false)}
           />
         )}
+      </div>
+    );
+
+    if (!showAnnotationsDrawer) return card;
+
+    return (
+      <div className="flex h-full flex-col">
+        {card}
+        <AnnotationsDrawer
+          open={annotationsDrawerOpen}
+          onToggle={() => setAnnotationsDrawerOpen(!annotationsDrawerOpen)}
+        />
       </div>
     );
   }

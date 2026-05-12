@@ -109,20 +109,18 @@ export function AnnotationsDrawer({ open, onToggle }: AnnotationsDrawerProps) {
     }
   }
 
-  // Reserve the same outer box as the closed-button form even when empty,
-  // so the right-column flex layout stays stable as annotations populate.
-  // Without this reservation, the drawer mounts/unmounts on annotation
-  // count transitions, and WebKitGTK leaks a stale paint of the panel's
-  // bottom border until the user manually toggles the drawer.
+  // Keep an empty placeholder mounted so annotation count transitions don't
+  // trigger the WebKitGTK paint leak that mount/unmount cycles produce.
+  // Zero height so the panel above gets the full column.
   if (annotations.length === 0) {
-    return <div className="h-7 shrink-0 border-2 border-transparent" aria-hidden />;
+    return <div className="h-0 shrink-0" aria-hidden />;
   }
 
   if (!open) {
     return (
       <button
         onClick={onToggle}
-        className="flex h-7 shrink-0 items-center gap-1.5 rounded-lg border-2 border-border bg-card px-3 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+        className="mt-1 flex h-7 shrink-0 items-center gap-1.5 rounded-lg border-2 border-border bg-card px-3 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
       >
         <MessageSquareDashed size={11} className="text-primary" />
         <span>{annotations.length} annotation{annotations.length !== 1 ? "s" : ""}</span>
@@ -133,7 +131,7 @@ export function AnnotationsDrawer({ open, onToggle }: AnnotationsDrawerProps) {
   return (
     <div
       ref={containerRef}
-      className="flex shrink-0 flex-col rounded-lg border-2 border-border bg-card outline-none"
+      className="mt-1 flex shrink-0 flex-col rounded-lg border-2 border-border bg-card outline-none"
       style={{ maxHeight: "30vh" }}
       data-annotations-drawer
       tabIndex={-1}

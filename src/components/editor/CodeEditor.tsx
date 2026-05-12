@@ -9,7 +9,9 @@ const cluihudTheme = EditorView.theme({
   "&": {
     backgroundColor: "var(--card)",
     color: "var(--foreground)",
+    height: "100%",
   },
+  ".cm-scroller": { overflow: "auto" },
   ".cm-content": { caretColor: "#f97316" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "#f97316" },
   "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {

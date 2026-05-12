@@ -49,6 +49,7 @@ pub struct GridSnapshot {
     pub cursor: CursorSnapshot,
     pub title: Option<String>,
     pub scroll_offset: usize,
+    pub is_alt_screen: bool,
 }
 
 /// Delta-ish payload emitted over the `terminal:grid-update` Tauri event.
@@ -70,6 +71,7 @@ pub struct GridUpdate {
     pub cursor: CursorSnapshot,
     pub title: Option<String>,
     pub scroll_offset: usize,
+    pub is_alt_screen: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

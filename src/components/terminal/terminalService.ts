@@ -55,8 +55,20 @@ interface Entry {
   cursor: { x: number; y: number; visible: boolean };
   title: string | null;
   scrollOffset: number;
+  isAltScreen: boolean;
   unlisten: UnlistenFn;
   selection: Selection | null;
+  // scrollOffset at selection time, used by the primary-screen delta sync.
+  selectionScrollOffset: number;
+  // Text of the anchor row at selection time. Lets us re-find the same
+  // content in a later grid (alt-screen TUI redraws have no scrollOffset
+  // change to key off of) and shift the selection to follow it.
+  selectionAnchorText: string | null;
+  // False once the anchor text disappears from the viewport in alt screen;
+  // toggled back on when the content scrolls back into view. paintSelection
+  // skips while false instead of leaving a stale highlight on top of
+  // unrelated content.
+  selectionVisible: boolean;
   isDragging: boolean;
   hoveredHyperlink: string | null;
   composing: boolean;
@@ -250,8 +262,12 @@ export async function show(
       cursor: { x: 0, y: 0, visible: true },
       title: null,
       scrollOffset: 0,
+      isAltScreen: false,
       unlisten: () => {},
       selection: null,
+      selectionScrollOffset: 0,
+      selectionAnchorText: null,
+      selectionVisible: true,
       isDragging: false,
       hoveredHyperlink: null,
       composing: false,
@@ -452,6 +468,9 @@ function wireInput(entry: Entry): void {
     // the mouseup handler below.
     entry.isDragging = true;
     entry.selection = { anchor: cell, head: cell };
+    entry.selectionScrollOffset = entry.scrollOffset;
+    entry.selectionAnchorText = rowText(entry, cell.row);
+    entry.selectionVisible = true;
     paintAll(entry);
   });
 
@@ -460,7 +479,9 @@ function wireInput(entry: Entry): void {
     if (!cell) return;
 
     if (entry.isDragging && entry.selection) {
-      entry.selection = { anchor: entry.selection.anchor, head: cell };
+      const delta = entry.scrollOffset - entry.selectionScrollOffset;
+      const head = { row: cell.row - delta, col: cell.col };
+      entry.selection = { anchor: entry.selection.anchor, head };
       paintAll(entry);
       return;
     }
@@ -537,6 +558,30 @@ function wireInput(entry: Entry): void {
     entry.isDragging = false;
   });
 
+  entry.canvas.addEventListener("dblclick", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const cell = mouseToCell(entry, e);
+    if (!cell) return;
+    const word = wordRangeAt(entry, cell);
+    if (!word) return;
+    entry.selection = {
+      anchor: { row: cell.row, col: word.startCol },
+      head: { row: cell.row, col: word.endCol },
+    };
+    entry.selectionScrollOffset = entry.scrollOffset;
+    entry.selectionAnchorText = rowText(entry, cell.row);
+    entry.selectionVisible = true;
+    paintAll(entry);
+    const text = serializeSelection(entry);
+    if (!text) return;
+    appStore.set(toastsAtom, { message: "Copied to clipboard", type: "success" });
+    invoke("terminal_clipboard_write", { text }).catch((err: unknown) => {
+      console.error("auto-copy failed", err);
+    });
+    entry.textarea.focus({ preventScroll: true });
+  });
+
   // ── Wheel: scrollback (primary screen) or PTY forward (alt screen) ──
   // The viewport is canvas-only — the browser has no native scroll. We
   // translate wheel pixels into terminal lines and let the backend route:
@@ -560,8 +605,6 @@ function wireInput(entry: Entry): void {
       }
       if (lines === 0) return;
       const cell = mouseToCell(entry, e) ?? { col: 0, row: 0 };
-      // Wheel deltaY > 0 = scroll page down = reveal newer content =
-      // backend offset DECREASES.
       invoke("terminal_scroll", {
         sessionId: entry.sessionId,
         delta: -lines,
@@ -571,6 +614,61 @@ function wireInput(entry: Entry): void {
     },
     { passive: false },
   );
+}
+
+function rowText(entry: Entry, row: number): string | null {
+  const cells = entry.grid[row];
+  if (!cells) return null;
+  let text = "";
+  for (const c of cells) text += c.ch ?? " ";
+  return text.replace(/ +$/, "");
+}
+
+function syncSelectionToContent(entry: Entry): void {
+  if (!entry.isAltScreen || !entry.selection || !entry.selectionAnchorText) return;
+  const target = entry.selectionAnchorText;
+  const oldAnchorRow = entry.selection.anchor.row;
+  let bestRow = -1;
+  let bestDistance = Infinity;
+  for (let r = 0; r < entry.rows; r += 1) {
+    if (rowText(entry, r) !== target) continue;
+    const d = Math.abs(r - oldAnchorRow);
+    if (d < bestDistance) {
+      bestDistance = d;
+      bestRow = r;
+    }
+  }
+  if (bestRow === -1) {
+    entry.selectionVisible = false;
+    return;
+  }
+  entry.selectionVisible = true;
+  const delta = bestRow - oldAnchorRow;
+  if (delta === 0) return;
+  entry.selection = {
+    anchor: { row: entry.selection.anchor.row + delta, col: entry.selection.anchor.col },
+    head: { row: entry.selection.head.row + delta, col: entry.selection.head.col },
+  };
+}
+
+function wordRangeAt(entry: Entry, cell: CellCoord): { startCol: number; endCol: number } | null {
+  const row = entry.grid[cell.row];
+  if (!row) return null;
+  const ch = row[cell.col]?.ch;
+  if (!ch || ch === " ") return null;
+  let startCol = cell.col;
+  while (startCol > 0) {
+    const prev = row[startCol - 1]?.ch;
+    if (!prev || prev === " ") break;
+    startCol -= 1;
+  }
+  let endCol = cell.col;
+  while (endCol < entry.cols - 1) {
+    const next = row[endCol + 1]?.ch;
+    if (!next || next === " ") break;
+    endCol += 1;
+  }
+  return { startCol, endCol };
 }
 
 function mouseToCell(entry: Entry, e: MouseEvent): CellCoord | null {
@@ -604,9 +702,11 @@ async function pasteFromClipboard(entry: Entry): Promise<void> {
 function serializeSelection(entry: Entry): string {
   if (!entry.selection) return "";
   const { startRow, endRow, startCol, endCol } = orderSelection(entry.selection);
+  const delta = entry.scrollOffset - entry.selectionScrollOffset;
   const lines: string[] = [];
   for (let row = startRow; row <= endRow; row += 1) {
-    const cells = entry.grid[row];
+    const displayRow = row + delta;
+    const cells = entry.grid[displayRow];
     if (!cells) continue;
     const from = row === startRow ? startCol : 0;
     const to = row === endRow ? endCol : entry.cols - 1;
@@ -881,6 +981,8 @@ function applyUpdate(entry: Entry, update: GridUpdate): void {
     entry.scrollOffset = update.scrollOffset;
     entry.scrollIndicator.style.display = update.scrollOffset > 0 ? "block" : "none";
   }
+  entry.isAltScreen = update.isAltScreen;
+  syncSelectionToContent(entry);
 
   // The cursor area needs repainting whenever the cursor moves, even if the
   // underlying row did not otherwise change.
@@ -971,19 +1073,22 @@ function paintRow(entry: Entry, y: number): void {
 
 function paintSelection(entry: Entry): void {
   if (!entry.selection) return;
-  // Skip zero-size "selections" — one-cell mousedown without a drag.
+  if (!entry.selectionVisible) return;
   const { anchor, head } = entry.selection;
   if (anchor.col === head.col && anchor.row === head.row) return;
 
   const { startRow, endRow, startCol, endCol } = orderSelection(entry.selection);
-  const { ctx, metrics, cols } = entry;
+  const { ctx, metrics, cols, rows } = entry;
+  const delta = entry.scrollOffset - entry.selectionScrollOffset;
 
   ctx.fillStyle = TERM_THEME.selectionBackground;
   for (let row = startRow; row <= endRow; row += 1) {
+    const displayRow = row + delta;
+    if (displayRow < 0 || displayRow >= rows) continue;
     const from = row === startRow ? startCol : 0;
     const to = row === endRow ? endCol : cols - 1;
     const dx = from * metrics.cellWidth;
-    const dy = row * metrics.cellHeight;
+    const dy = displayRow * metrics.cellHeight;
     const width = (to - from + 1) * metrics.cellWidth;
     ctx.fillRect(dx, dy, width, metrics.cellHeight);
   }

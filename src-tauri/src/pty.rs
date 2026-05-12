@@ -536,6 +536,23 @@ pub fn terminal_input(
     let instance = instances.get(&pty_id).ok_or("PTY instance not found")?;
     let handle = &instance.terminal;
 
+    // Shift+Enter → LF. Without this, both Enter and Shift+Enter encode to
+    // `\r` (wezterm only diverges when the app opts into Kitty via
+    // `CSI > 1 u`, which the CLIs we wrap don't reliably do on Linux).
+    if (event.code == "Enter" || event.code == "NumpadEnter")
+        && event.shift
+        && !event.ctrl
+        && !event.alt
+        && !event.meta
+    {
+        let mut w = instance.writer.lock().map_err(|e| e.to_string())?;
+        w.write_all(b"\n").map_err(|e| e.to_string())?;
+        w.flush().map_err(|e| e.to_string())?;
+        drop(w);
+        handle.wake();
+        return Ok(());
+    }
+
     let mut session = handle.session.lock().map_err(|e| e.to_string())?;
     session.key_down(&event).map_err(|e| e.to_string())?;
 

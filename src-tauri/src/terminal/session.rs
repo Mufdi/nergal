@@ -279,12 +279,15 @@ impl TerminalSession {
             Some(raw_title.to_owned())
         };
 
+        let is_alt_screen = self.terminal.is_alt_screen_active();
+
         GridSnapshot {
             cols,
             rows,
             cursor,
             title,
             scroll_offset: self.scroll_offset,
+            is_alt_screen,
         }
     }
 }

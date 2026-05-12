@@ -103,6 +103,7 @@ export interface GridUpdate {
   cursor: CursorSnapshot;
   title: string | null;
   scrollOffset: number;
+  isAltScreen: boolean;
 }
 
 export interface TerminalKeyEvent {

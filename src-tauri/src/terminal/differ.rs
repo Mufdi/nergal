@@ -73,6 +73,7 @@ impl GridDiffer {
                 cursor: snapshot.cursor,
                 title: snapshot.title.clone(),
                 scroll_offset: snapshot.scroll_offset,
+                is_alt_screen: snapshot.is_alt_screen,
             })
         } else {
             None
@@ -120,6 +121,7 @@ mod tests {
             },
             title: None,
             scroll_offset: 0,
+            is_alt_screen: false,
         }
     }
 

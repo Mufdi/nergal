@@ -69,6 +69,12 @@ export const closedScratchTabsAtom = atom<string[]>([]);
 /// can re-focus reliably even when the active tab id hasn't changed.
 export const scratchpadFocusSignalAtom = atom(0);
 
+/// Per-tab caret offset (in document chars) captured at editor unmount.
+/// In-memory only — lost on app restart. Falls back to doc end when missing
+/// so a fresh open lands the cursor at the bottom of the note instead of
+/// jumping to row 0.
+export const scratchpadCursorAtom = atom<Record<string, number>>({});
+
 function pushToast(kind: "info" | "error" | "success", message: string) {
   appStore.set(toastsAtom, { type: kind, message });
 }

@@ -13,6 +13,7 @@ import {
   loadTabContentIfNeeded,
   persistTabContent,
   scratchpadContentAtom,
+  scratchpadCursorAtom,
   scratchpadDirtyAtom,
   scratchpadConflictAtom,
   scratchpadFocusSignalAtom,
@@ -37,8 +38,16 @@ const editorTheme = EditorView.theme({
     padding: "10px 14px",
   },
   ".cm-cursor": { borderLeftColor: "#f97316" },
-  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
-    backgroundColor: "rgba(249, 115, 22, 0.2)",
+  // Match the higher-specificity focused default so the themed orange wins.
+  "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground": {
+    backgroundColor: "rgba(249, 115, 22, 0.55)",
+  },
+  ".cm-selectionLayer .cm-selectionBackground": {
+    backgroundColor: "rgba(249, 115, 22, 0.45)",
+  },
+  ".cm-content ::selection": {
+    backgroundColor: "rgba(249, 115, 22, 0.55)",
+    color: "inherit",
   },
   ".cm-activeLine": { backgroundColor: "transparent" },
   ".cm-gutters": { display: "none" },
@@ -108,6 +117,13 @@ export function ScratchpadEditor({ tabId }: ScratchpadEditorProps) {
 
       const view = new EditorView({ state, parent: container });
       viewRef.current = view;
+      const savedCursor = appStore.get(scratchpadCursorAtom)[tabId];
+      const docLen = view.state.doc.length;
+      const target = savedCursor !== undefined ? Math.min(savedCursor, docLen) : docLen;
+      view.dispatch({
+        selection: { anchor: target, head: target },
+        scrollIntoView: true,
+      });
       view.focus();
     })();
 
@@ -131,6 +147,8 @@ export function ScratchpadEditor({ tabId }: ScratchpadEditorProps) {
           appStore.set(scratchpadContentAtom, (prev) => ({ ...prev, [id]: content }));
           void persistTabContent(id, content);
         }
+        const cursor = view.state.selection.main.head;
+        appStore.set(scratchpadCursorAtom, (prev) => ({ ...prev, [id]: cursor }));
         view.destroy();
         viewRef.current = null;
       }

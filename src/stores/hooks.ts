@@ -5,7 +5,7 @@ import { costMapAtom, modeMapAtom, cwdMapAtom, agentStatusMapAtom, activeSession
 import { taskMapAtom } from "./tasks";
 import { fileMapAtom, type ModifiedFile } from "./files";
 import { planStateMapAtom, planDocumentsAtom, registerPlanAtom, planReviewStatusMapAtom } from "./plan";
-import { askUserAtom } from "./askUser";
+import { pendingAsksAtom } from "./askUser";
 import { openTabAction, expandRightPanelAtom, activePanelViewAtom } from "./rightPanel";
 import { refreshGitInfoAtom } from "./git";
 import { addActivityAtom } from "./activity";
@@ -157,17 +157,25 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
   );
 
   unlisteners.push(
-    await listen<{ session_id: string; questions: Array<{ question: string; header: string; options: string[]; multi_select: boolean }>; decision_path: string }>("ask:user", (payload) => {
+    await listen<{ session_id: string }>("ask:user-pending", (payload) => {
       const sid = payload.session_id;
       if (!sid) return;
-      set(askUserAtom, {
-        questions: payload.questions,
-        decisionPath: payload.decision_path,
-        sessionId: sid,
-      });
-      const firstQ = payload.questions[0]?.question ?? "Claude needs input";
+      set(pendingAsksAtom, (prev) => ({ ...prev, [sid]: true }));
       set(addActivityAtom, { sessionId: sid, entry: createActivity("session", "Claude is asking a question") });
-      notify("Claude needs input", firstQ);
+      notify("Claude needs input", "Answer in the terminal");
+    }),
+  );
+
+  unlisteners.push(
+    await listen<{ session_id: string }>("ask:user-resolved", (payload) => {
+      const sid = payload.session_id;
+      if (!sid) return;
+      set(pendingAsksAtom, (prev) => {
+        if (!(sid in prev)) return prev;
+        const next = { ...prev };
+        delete next[sid];
+        return next;
+      });
     }),
   );
 

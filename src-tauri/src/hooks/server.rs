@@ -439,6 +439,18 @@ fn process_event(
         } => {
             tracing::debug!("PostToolUse: tool_name={tool_name}");
             let csid = cluihud_session_id.unwrap_or(session_id);
+            if tool_name == "AskUserQuestion" {
+                #[derive(Clone, serde::Serialize)]
+                struct AskUserResolvedPayload {
+                    session_id: String,
+                }
+                let _ = app.emit(
+                    "ask:user-resolved",
+                    AskUserResolvedPayload {
+                        session_id: csid.to_string(),
+                    },
+                );
+            }
             process_task_event(app, tool_name, tool_input, csid, db);
             process_file_event(app, tool_name, tool_input, csid);
         }
@@ -710,75 +722,17 @@ fn process_event(
 
         HookEvent::AskUser {
             session_id,
-            tool_input,
-            fifo_path,
+            tool_input: _,
+            fifo_path: _,
         } => {
-            tracing::debug!("AskUser: fifo_path={fifo_path}");
-
-            if let Some(csid) = cluihud_session_id {
-                agent_state
-                    .claude_code
-                    .register_pending_ask_fifo(csid, std::path::PathBuf::from(fifo_path));
-            }
-
             #[derive(Clone, serde::Serialize)]
-            struct AskUserQuestion {
-                question: String,
-                header: String,
-                options: Vec<String>,
-                multi_select: bool,
-            }
-
-            #[derive(Clone, serde::Serialize)]
-            struct AskUserPayload {
+            struct AskUserPendingPayload {
                 session_id: String,
-                questions: Vec<AskUserQuestion>,
-                decision_path: String,
             }
-
-            let mut questions = Vec::new();
-            if let Some(arr) = tool_input.get("questions").and_then(|v| v.as_array()) {
-                for q in arr {
-                    let question = q
-                        .get("question")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let header = q
-                        .get("header")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let multi_select = q
-                        .get("multiSelect")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    let options = q
-                        .get("options")
-                        .and_then(|v| v.as_array())
-                        .map(|opts| {
-                            opts.iter()
-                                .filter_map(|o| {
-                                    o.get("label").and_then(|l| l.as_str()).map(String::from)
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    questions.push(AskUserQuestion {
-                        question,
-                        header,
-                        options,
-                        multi_select,
-                    });
-                }
-            }
-
             let _ = app.emit(
-                "ask:user",
-                AskUserPayload {
+                "ask:user-pending",
+                AskUserPendingPayload {
                     session_id: cluihud_session_id.unwrap_or(session_id).to_string(),
-                    questions,
-                    decision_path: fifo_path.clone(),
                 },
             );
         }

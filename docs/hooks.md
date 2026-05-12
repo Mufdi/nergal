@@ -9,7 +9,7 @@ Nergal observes the agent CLI through its hook pipeline. The CLI calls `cluihud 
 | `cluihud hook send <event>` | async | Forward an event payload to `/tmp/cluihud.sock`. |
 | `cluihud hook inject-edits` | sync | Modify the prompt before submission (used on `UserPromptSubmit`). |
 | `cluihud hook plan-review` | blocking, FIFO | Block on `/tmp/cluihud-plan-{pid}.fifo` until the GUI returns `allow` / `deny`. |
-| `cluihud hook ask-user` | blocking, FIFO | Block on `/tmp/cluihud-ask-{pid}.fifo` until the GUI returns the user's answer. |
+| `cluihud hook ask-user` | async (notifier) | Fire-and-forget signal that AskUserQuestion is pending. CC's TUI owns the question; cluihud only blinks the session tab. |
 | `cluihud setup` | one-shot | Auto-configure hook entries in `~/.claude/settings.json` and per-agent equivalents (e.g., `~/.codex/hooks.json`), conservatively merging with existing user hooks. |
 
 Source: `src-tauri/src/hooks/{cli,server,events,state}.rs`, `src-tauri/src/setup.rs`.
@@ -28,11 +28,11 @@ A user-installed shell wrapper at `~/.claude/hooks/cluihud-conditional.sh` inspe
 
 State machine: `idle → pending_review → submitted` in `src/stores/plan.ts`.
 
-## AskUserQuestion interception
+## AskUserQuestion attention
 
-- `PreToolUse[AskUserQuestion]` invokes `cluihud hook ask-user` (blocking, FIFO).
-- The GUI shows `AskUserModal`; the user picks an option or types a free-text answer.
-- Returns `permissionDecision: "allow"` plus `updatedInput` containing the answer.
+- `PreToolUse[AskUserQuestion]` invokes `cluihud hook ask-user`, which only emits a socket message and exits — CC's TUI renders the prompt natively in the terminal.
+- GUI emits `ask:user-pending` → session tab blinks twice in primary color and stays tinted until `PostToolUse[AskUserQuestion]` clears it via `ask:user-resolved`.
+- `AskUserModal` is retained as `AskUserModalLegacy` in `src/components/session/AskUserModal.tsx`. The exported component returns `null`; restore it by swapping the bodies if we ever want the modal flow back.
 
 ## Project `settings.json` snippet
 

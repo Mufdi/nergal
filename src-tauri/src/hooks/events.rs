@@ -65,6 +65,7 @@ pub enum HookEvent {
         session_id: String,
         #[serde(default)]
         tool_input: serde_json::Value,
+        #[serde(default)]
         fifo_path: String,
     },
     #[serde(rename = "CwdChanged")]

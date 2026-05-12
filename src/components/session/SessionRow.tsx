@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/tooltip";
 import type { Session, Workspace } from "@/stores/workspace";
 import { gitInfoMapAtom } from "@/stores/git";
+import { pendingAsksAtom } from "@/stores/askUser";
 import { SessionIndicator } from "./SessionIndicator";
 import claudeIcon from "@/assets/agents/claude.svg";
 import codexIcon from "@/assets/agents/codex.svg";
@@ -53,6 +54,8 @@ export function SessionRow({
   const linesRemoved = gitInfo?.lines_removed ?? 0;
   const hasLineChanges = linesAdded > 0 || linesRemoved > 0;
   const isCompleted = session.status === "completed";
+  const pendingAsks = useAtomValue(pendingAsksAtom);
+  const isAwaiting = !!pendingAsks[session.id];
 
   function handleRenameSubmit() {
     const trimmed = editName.trim();
@@ -73,7 +76,7 @@ export function SessionRow({
         isActive
           ? "bg-secondary/60 text-foreground shadow-[inset_2px_0_0_0_var(--color-primary)]"
           : "hover:bg-secondary/40 text-foreground/70"
-      } ${isCompleted ? "opacity-50" : ""}`}
+      } ${isCompleted ? "opacity-50" : ""} ${isAwaiting ? "cluihud-ask-pending" : ""}`}
     >
       {shortcutNumber != null && (
         <Tooltip>

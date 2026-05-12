@@ -942,9 +942,20 @@ body,
 @media (prefers-reduced-motion: reduce) {
   .animate-session-thinking,
   .animate-session-working::after,
-  .animate-session-attention::after {
+  .animate-session-attention::after,
+  .cluihud-ask-pending {
     animation: none;
   }
+}
+
+@keyframes cluihud-ask-blink {
+  0%, 100% { background-color: color-mix(in srgb, var(--color-primary) 30%, transparent); }
+  50% { background-color: transparent; }
+}
+
+.cluihud-ask-pending {
+  background-color: color-mix(in srgb, var(--color-primary) 30%, transparent) !important;
+  animation: cluihud-ask-blink 0.4s ease-in-out 2;
 }
 
 /* ── Plan annotation ── */

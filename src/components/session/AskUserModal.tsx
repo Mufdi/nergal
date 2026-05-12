@@ -15,7 +15,13 @@ const OPTION_SEL = "[data-ask-option]";
 const MODAL_SEL = "[data-ask-modal]";
 const FEEDBACK_SEL = "[data-ask-feedback]";
 
+// Hidden: CC's TUI owns the question UX. The legacy body below is dead at
+// runtime but kept around in case we revive the dialog flow.
 export function AskUserModal() {
+  return null;
+}
+
+export function AskUserModalLegacy() {
   const [askState, setAskState] = useAtom(askUserAtom);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [otherOpen, setOtherOpen] = useState<Record<string, boolean>>({});

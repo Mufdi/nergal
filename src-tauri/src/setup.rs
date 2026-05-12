@@ -40,7 +40,7 @@ const HOOKS: &[HookDef] = &[
     HookDef {
         event: "PostToolUse",
         matcher: Some(
-            "Write|Edit|MultiEdit|Bash|TaskCreate|TaskUpdate|TodoWrite|NotebookEdit|Create",
+            "Write|Edit|MultiEdit|Bash|TaskCreate|TaskUpdate|TodoWrite|NotebookEdit|Create|AskUserQuestion",
         ),
         command: "cluihud hook send tool-done",
         is_async: true,

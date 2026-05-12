@@ -13,4 +13,9 @@ export interface AskUserState {
   sessionId: string;
 }
 
+// Retained as a stub to keep the now-hidden AskUserModal and SessionIndicator
+// imports compiling. CC's TUI owns the question UX; cluihud only signals
+// which session is waiting via `pendingAsksAtom` below.
 export const askUserAtom = atom<AskUserState | null>(null);
+
+export const pendingAsksAtom = atom<Record<string, true>>({});

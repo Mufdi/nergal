@@ -2,7 +2,7 @@ import { useAtomValue } from "jotai";
 import { Check } from "lucide-react";
 import { modeMapAtom } from "@/stores/workspace";
 import { planReviewStatusMapAtom } from "@/stores/plan";
-import { askUserAtom } from "@/stores/askUser";
+import { pendingAsksAtom } from "@/stores/askUser";
 
 type IndicatorState = "idle" | "thinking" | "working" | "attention" | "completed";
 
@@ -37,9 +37,9 @@ const SIZE_CLASSES = {
 export function SessionIndicator({ sessionId, sessionStatus, size = "sm" }: SessionIndicatorProps) {
   const modeMap = useAtomValue(modeMapAtom);
   const planReviewMap = useAtomValue(planReviewStatusMapAtom);
-  const askUser = useAtomValue(askUserAtom);
+  const pendingAsks = useAtomValue(pendingAsksAtom);
 
-  const state = resolveState(sessionId, sessionStatus, modeMap, planReviewMap, askUser);
+  const state = resolveState(sessionId, sessionStatus, modeMap, planReviewMap, pendingAsks);
 
   if (state === "completed") {
     return <Check className="size-3 shrink-0 text-muted-foreground/50" />;
@@ -58,10 +58,10 @@ function resolveState(
   sessionStatus: string,
   modeMap: Record<string, string>,
   planReviewMap: Record<string, string>,
-  askUser: { sessionId: string } | null,
+  pendingAsks: Record<string, true>,
 ): IndicatorState {
   if (planReviewMap[sessionId] === "pending_review") return "attention";
-  if (askUser?.sessionId === sessionId) return "attention";
+  if (pendingAsks[sessionId]) return "attention";
   if (sessionStatus === "completed") return "completed";
 
   const mode = modeMap[sessionId] ?? "idle";

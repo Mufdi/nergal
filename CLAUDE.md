@@ -8,13 +8,23 @@ User-facing brand: **Nergal** (productName, identifier `com.nergal.app`, GitHub 
 
 Internal name **cluihud** is preserved everywhere else for backward compatibility with the developer machine: binary `cluihud`, hook subcommands (`cluihud hook ...`), env vars (`CLUIHUD_SESSION_ID`, `CLUIHUD_AGENT_ID`), IPC paths (`/tmp/cluihud.sock`, `/tmp/cluihud-plan-*.fifo`, `/tmp/cluihud-ask-*.fifo`), sentinel (`~/.cluihud-active`), config dir (`~/.config/cluihud/`), local repo dir name (`cluihud/`). **Do NOT rename internal `cluihud` references.**
 
-## What Nergal is NOT
+## Scope — qué es y qué no es Nergal
 
-- **NOT a standalone terminal.** It always runs `claude` (or another supported CLI) underneath. It does not replace bash/zsh/tmux.
-- **NOT a Claude Code reimplementation.** It does not reimplement slash commands, skills, agents, hooks. It **observes** the session and **augments** the surrounding UX.
-- **NOT an agent framework.** No training loops, no skill emergence, no model orchestration.
+Nergal corre **alrededor** del agente CLI, no en su lugar. Esto define el filtro de inspiración, no una lista cerrada de features.
 
-Recommendations should improve the experience of using the agent CLI (plan editing UX, task visibility, session navigation, hook-driven panels, workspace/worktree management). Recommendations that replace agent-native features should be redirected.
+**Estable (no negociable):**
+- Siempre corre `claude` (u otro agent CLI) underneath en un PTY real. No reemplaza bash/zsh/tmux.
+- No reimplementa primitives nativos del agente (slash commands, skills, agents, hooks como motor). Los **observa y augmenta** vía hook pipeline + transcript watchers.
+
+**Abierto (evolutivo):**
+- **Multi-agent / agent-agnostic** ya es estable (4 OpenSpec changes archivados 2026-05-04). BYOA, coordinator patterns, parallel agent comparisons, switching entre CC / Codex / Gemini → bienvenidos.
+- **Surfaces alrededor del ecosistema del agente**: skills marketplace para discovery/install, MCP server propio para que el agente consulte cluihud, usage dashboards, deep-link protocol — todos válidos. La línea está en "no reescribir lo que el agente ya hace", no en "ignorar el ecosistema".
+- **Workflow integrations** (issue trackers, design tools, browser preview, voice input, Docker isolation) son evoluciones naturales si reducen fricción en el loop agente↔humano.
+
+**Filtro para evaluar inspiración:**
+- ¿Replica primitives del agente (tool calling propio, skill emergence, training loops)? → redirigir.
+- ¿Augmenta el loop o organiza el ecosistema alrededor? → evaluar, no descartar por scope-creep.
+- Tooling completamente ajeno (ej. IDEs, design tools, terminal-only utilities) puede aportar **patrones de UX** aplicables aunque la herramienta no se parezca a Nergal. La fuente es señal débil; la idea es la señal fuerte.
 
 ## Critical conventions
 

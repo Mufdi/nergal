@@ -89,11 +89,6 @@ const OBSOLETE_HOOKS: &[ObsoleteHook] = &[
         command: "cluihud hook send plan-ready",
         only_without_matcher: false,
     },
-    ObsoleteHook {
-        event: "UserPromptSubmit",
-        command: "cluihud hook inject-edits",
-        only_without_matcher: false,
-    },
     // PostToolUse without matcher replaced by filtered version
     ObsoleteHook {
         event: "PostToolUse",
@@ -191,6 +186,23 @@ pub fn run() -> Result<()> {
     Ok(())
 }
 
+/// Match a configured hook command against a target `cluihud hook …` command,
+/// accepting both the bare binary form and the user-installed
+/// `cluihud-conditional.sh` wrapper form (see `docs/hooks.md`). Without this,
+/// settings.json entries that route through the wrapper are invisible to
+/// `cluihud hook setup` cleanup and merge logic.
+fn matches_hook_command(cmd: &str, target: &str) -> bool {
+    if cmd == target {
+        return true;
+    }
+    if let Some(args) = target.strip_prefix("cluihud hook ")
+        && cmd.contains("/cluihud-conditional.sh ")
+    {
+        return cmd.ends_with(args);
+    }
+    false
+}
+
 /// Remove an obsolete hook entry. Returns true if removed.
 fn remove_hook(hooks_map: &mut Map<String, Value>, obs: &ObsoleteHook) -> bool {
     let Some(Value::Array(arr)) = hooks_map.get_mut(obs.event) else {
@@ -208,7 +220,7 @@ fn remove_hook(hooks_map: &mut Map<String, Value>, obs: &ObsoleteHook) -> bool {
         !hooks.iter().any(|h| {
             h.get("command")
                 .and_then(|c| c.as_str())
-                .is_some_and(|c| c == obs.command)
+                .is_some_and(|c| matches_hook_command(c, obs.command))
         })
     });
 
@@ -221,7 +233,10 @@ fn remove_hook(hooks_map: &mut Map<String, Value>, obs: &ObsoleteHook) -> bool {
     removed
 }
 
-/// Merge a single hook into the hooks map. Returns true if added, false if already present.
+/// Merge a single hook into the hooks map. Returns true if the map was modified
+/// (added new entry OR upgraded matcher of existing entry), false if already
+/// correct. Matcher upgrade keeps the same command/wrapper choice intact —
+/// only the matcher pattern changes.
 fn merge_hook(hooks_map: &mut Map<String, Value>, def: &HookDef) -> bool {
     let entries = hooks_map
         .entry(def.event)
@@ -231,24 +246,34 @@ fn merge_hook(hooks_map: &mut Map<String, Value>, def: &HookDef) -> bool {
         return false;
     };
 
-    let already_exists = arr.iter().any(|entry| {
-        // Match on both matcher and command to allow multiple hooks per event
-        let entry_matcher = entry.get("matcher").and_then(|m| m.as_str());
-        if entry_matcher != def.matcher {
+    if let Some(idx) = arr.iter().position(|entry| {
+        entry
+            .get("hooks")
+            .and_then(|h| h.as_array())
+            .is_some_and(|hooks| {
+                hooks.iter().any(|h| {
+                    h.get("command")
+                        .and_then(|c| c.as_str())
+                        .is_some_and(|c| matches_hook_command(c, def.command))
+                })
+            })
+    }) {
+        let entry_matcher = arr[idx].get("matcher").and_then(|m| m.as_str());
+        if entry_matcher == def.matcher {
             return false;
         }
-        let Some(hooks) = entry.get("hooks").and_then(|h| h.as_array()) else {
+        let Some(obj) = arr[idx].as_object_mut() else {
             return false;
         };
-        hooks.iter().any(|h| {
-            h.get("command")
-                .and_then(|c| c.as_str())
-                .is_some_and(|c| c == def.command)
-        })
-    });
-
-    if already_exists {
-        return false;
+        match def.matcher {
+            Some(m) => {
+                obj.insert("matcher".into(), Value::String(m.into()));
+            }
+            None => {
+                obj.remove("matcher");
+            }
+        }
+        return true;
     }
 
     let mut hook = json!({
@@ -321,4 +346,140 @@ fn save_settings(path: &PathBuf, settings: &Map<String, Value>) -> Result<()> {
     let json = serde_json::to_string_pretty(&Value::Object(settings.clone()))?;
     std::fs::write(path, json).context("writing settings.json")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matcher_accepts_bare_form() {
+        assert!(matches_hook_command(
+            "cluihud hook send tool-done",
+            "cluihud hook send tool-done",
+        ));
+    }
+
+    #[test]
+    fn matcher_accepts_wrapper_form() {
+        assert!(matches_hook_command(
+            "/home/felipe/.claude/hooks/cluihud-conditional.sh send tool-done",
+            "cluihud hook send tool-done",
+        ));
+    }
+
+    #[test]
+    fn matcher_rejects_unrelated_command() {
+        assert!(!matches_hook_command(
+            "echo send tool-done",
+            "cluihud hook send tool-done",
+        ));
+    }
+
+    #[test]
+    fn matcher_rejects_wrong_args_via_wrapper() {
+        assert!(!matches_hook_command(
+            "/home/felipe/.claude/hooks/cluihud-conditional.sh send cwd-changed",
+            "cluihud hook send tool-done",
+        ));
+    }
+
+    #[test]
+    fn matcher_rejects_lookalike_script_name() {
+        assert!(!matches_hook_command(
+            "/usr/bin/not-cluihud-conditional.sh send tool-done",
+            "cluihud hook send tool-done",
+        ));
+    }
+
+    #[test]
+    fn remove_hook_clears_wrapper_entry_and_drops_empty_event() {
+        let mut hooks_map = Map::new();
+        hooks_map.insert(
+            "CwdChanged".into(),
+            json!([{
+                "hooks": [{
+                    "type": "command",
+                    "command": "/home/felipe/.claude/hooks/cluihud-conditional.sh send cwd-changed",
+                    "async": true,
+                }]
+            }]),
+        );
+
+        let obs = ObsoleteHook {
+            event: "CwdChanged",
+            command: "cluihud hook send cwd-changed",
+            only_without_matcher: false,
+        };
+
+        assert!(remove_hook(&mut hooks_map, &obs));
+        assert!(!hooks_map.contains_key("CwdChanged"));
+    }
+
+    #[test]
+    fn merge_hook_upgrades_matcher_in_place_for_wrapper_entry() {
+        let mut hooks_map = Map::new();
+        hooks_map.insert(
+            "PostToolUse".into(),
+            json!([{
+                "hooks": [{
+                    "type": "command",
+                    "command": "/home/felipe/.claude/hooks/cluihud-conditional.sh send tool-done",
+                    "async": true,
+                }],
+                "matcher": "Write|Edit"
+            }]),
+        );
+
+        let def = HookDef {
+            event: "PostToolUse",
+            matcher: Some("Write|Edit|Bash|AskUserQuestion"),
+            command: "cluihud hook send tool-done",
+            is_async: true,
+            timeout: None,
+            if_condition: None,
+        };
+
+        assert!(merge_hook(&mut hooks_map, &def));
+        let arr = hooks_map["PostToolUse"].as_array().unwrap();
+        assert_eq!(arr.len(), 1, "matcher upgrade must not duplicate");
+        assert_eq!(
+            arr[0].get("matcher").and_then(|m| m.as_str()),
+            Some("Write|Edit|Bash|AskUserQuestion"),
+            "matcher should be upgraded"
+        );
+        let cmd = arr[0]["hooks"][0]["command"].as_str().unwrap();
+        assert!(
+            cmd.contains("/cluihud-conditional.sh "),
+            "wrapper command must be preserved through matcher upgrade"
+        );
+    }
+
+    #[test]
+    fn merge_hook_treats_wrapper_form_as_present() {
+        let mut hooks_map = Map::new();
+        hooks_map.insert(
+            "SessionStart".into(),
+            json!([{
+                "hooks": [{
+                    "type": "command",
+                    "command": "/home/felipe/.claude/hooks/cluihud-conditional.sh send session-start",
+                    "async": true,
+                }]
+            }]),
+        );
+
+        let def = HookDef {
+            event: "SessionStart",
+            matcher: None,
+            command: "cluihud hook send session-start",
+            is_async: true,
+            timeout: None,
+            if_condition: None,
+        };
+
+        assert!(!merge_hook(&mut hooks_map, &def));
+        let arr = hooks_map["SessionStart"].as_array().unwrap();
+        assert_eq!(arr.len(), 1, "should not duplicate when wrapper form already present");
+    }
 }

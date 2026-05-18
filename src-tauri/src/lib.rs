@@ -27,6 +27,65 @@ use scratchpad::commands::ScratchpadState;
 use std::path::PathBuf;
 use tauri::Manager;
 
+/// When launched under systemd (gnome-shell Activities, .desktop entries on
+/// kernel 6.8.0-117+), stdout/stderr are a journald pipe (`JOURNAL_STREAM`
+/// env set). `tracing_subscriber` INFO output + WebKitGTK's stderr noise
+/// saturates the pipe; the resulting `write()` backpressure stalls the main
+/// thread before the frontend reaches `getCurrentWindow().show()`, leaving
+/// a 10x10 invisible ghost window. Mitigation: divert fd 1/2 to a regular
+/// file. No-op when launched from a terminal (no `JOURNAL_STREAM`).
+#[cfg(target_os = "linux")]
+fn redirect_journald_stdio_to_logfile() {
+    if std::env::var_os("JOURNAL_STREAM").is_none() {
+        return;
+    }
+    let log_path = dirs::cache_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("cluihud")
+        .join("cluihud.log");
+    if let Some(parent) = log_path.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        eprintln!("cluihud: log dir {} unavailable: {e}", parent.display());
+        return;
+    }
+    let file = match std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&log_path)
+    {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("cluihud: cannot open log {}: {e}", log_path.display());
+            return;
+        }
+    };
+    use std::os::unix::io::AsRawFd;
+    let fd = file.as_raw_fd();
+    // SAFETY: dup2 with a valid open fd; called once at process start before
+    // any threads or tokio runtime exist, so no concurrent fd access.
+    unsafe {
+        if libc::dup2(fd, libc::STDOUT_FILENO) < 0 {
+            eprintln!(
+                "cluihud: dup2 stdout failed: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        if libc::dup2(fd, libc::STDERR_FILENO) < 0 {
+            eprintln!(
+                "cluihud: dup2 stderr failed: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+    }
+    // `file` drops here, closing the original fd. The duplicated 1/2 keep
+    // the underlying open file description alive.
+}
+
+#[cfg(not(target_os = "linux"))]
+fn redirect_journald_stdio_to_logfile() {}
+
 /// File written to `~/.cluihud-active` while the app is running, so the
 /// `cluihud-conditional.sh` hook wrapper can detect whether forwarding
 /// hook events to `cluihud hook ...` is worth doing. Removed on Drop.
@@ -113,6 +172,7 @@ fn augment_path_from_user_shell() {
 }
 
 pub fn run() {
+    redirect_journald_stdio_to_logfile();
     let _sentinel = SentinelGuard::new();
     tracing_subscriber::fmt()
         .with_env_filter(

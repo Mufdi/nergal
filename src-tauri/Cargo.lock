@@ -655,6 +655,7 @@ dependencies = [
  "dunce",
  "eventsource-stream",
  "futures-util",
+ "libc",
  "notify",
  "notify-debouncer-full",
  "parking_lot",

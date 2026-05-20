@@ -15,6 +15,7 @@ import {
   type Session,
 } from "@/stores/workspace";
 import { openTabAction } from "@/stores/rightPanel";
+import { toastsAtom } from "@/stores/toast";
 import { SessionRow } from "@/components/session/SessionRow";
 import { SessionIndicator } from "@/components/session/SessionIndicator";
 import { ProjectPickerModal } from "@/components/session/ProjectPickerModal";
@@ -241,6 +242,7 @@ function WorkspacesView() {
   const freshSessions = useAtomValue(freshSessionsAtom);
   const setFreshSessions = useSetAtom(freshSessionsAtom);
   const openTab = useSetAtom(openTabAction);
+  const addToast = useSetAtom(toastsAtom);
   const triggerMergeSignal = useAtomValue(triggerMergeAtom);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [addingSessionFor, setAddingSessionFor] = useState<string | null>(null);
@@ -366,7 +368,17 @@ function WorkspacesView() {
         setWorkspaces((prev) => [...prev, ws]);
         setExpandedIds((prev) => new Set([...prev, ws.id]));
       })
-      .catch(() => {});
+      .catch((err) => {
+        // The backend returns plain strings (e.g. "Not a git repository").
+        // Surfacing the error keeps fresh users from staring at a no-op (the
+        // dialog closed, the workspace didn't appear, and previously the catch
+        // swallowed the reason).
+        const message = typeof err === "string" ? err : (err?.message ?? "Failed to add workspace");
+        const description = message === "Not a git repository"
+          ? `${selected} is not a git repository. Run "git init" inside it first or pick a different folder.`
+          : undefined;
+        addToast({ type: "error", message: "Could not add workspace", description: description ?? message });
+      });
   }
 
   async function handleDeleteWorkspace(ws: Workspace) {

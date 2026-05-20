@@ -58,14 +58,18 @@ export function MergeModal({
     const idx = branches.indexOf(targetBranch);
     if (e.key === "ArrowDown") {
       e.preventDefault();
+      e.stopPropagation();
       const next = idx < 0 ? 0 : (idx + 1) % branches.length;
       setTargetBranch(branches[next]);
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
+      e.stopPropagation();
       const prev = idx < 0 ? branches.length - 1 : (idx - 1 + branches.length) % branches.length;
       setTargetBranch(branches[prev]);
     } else if (e.key === "Enter" && targetBranch && !merging) {
+      // BUG-16: bubbling would click the hovered sidebar row.
       e.preventDefault();
+      e.stopPropagation();
       handleMerge();
     }
   }

@@ -30,12 +30,17 @@ export function ProjectPickerModal({ open, onOpenChange, workspaces, preselected
     if (workspaces.length === 0) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
+      e.stopPropagation();
       setSelectedIdx((i) => (i + 1) % workspaces.length);
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
+      e.stopPropagation();
       setSelectedIdx((i) => (i - 1 + workspaces.length) % workspaces.length);
     } else if (e.key === "Enter") {
+      // Without stopPropagation Enter bubbles to the sidebar and clicks the
+      // hovered session row (BUG-16, destructive in fast flows).
       e.preventDefault();
+      e.stopPropagation();
       const ws = workspaces[selectedIdx];
       if (ws) {
         onPick(ws.id);
@@ -45,6 +50,7 @@ export function ProjectPickerModal({ open, onOpenChange, workspaces, preselected
       const i = parseInt(e.key, 10) - 1;
       if (i < workspaces.length) {
         e.preventDefault();
+        e.stopPropagation();
         onPick(workspaces[i].id);
         onOpenChange(false);
       }

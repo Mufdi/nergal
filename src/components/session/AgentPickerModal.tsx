@@ -65,17 +65,22 @@ export function AgentPickerModal({
     if (agents.length === 0) return;
     if (e.key === "ArrowRight" || e.key === "ArrowDown") {
       e.preventDefault();
+      e.stopPropagation();
       setSelectedIdx((i) => (i + 1) % agents.length);
     } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
       e.preventDefault();
+      e.stopPropagation();
       setSelectedIdx((i) => (i - 1 + agents.length) % agents.length);
     } else if (e.key === "Enter") {
+      // BUG-16: bubbling would click the hovered sidebar row.
       e.preventDefault();
+      e.stopPropagation();
       commit(selectedIdx);
     } else if (/^[1-9]$/.test(e.key)) {
       const i = parseInt(e.key, 10) - 1;
       if (i < agents.length) {
         e.preventDefault();
+        e.stopPropagation();
         commit(i);
       }
     }

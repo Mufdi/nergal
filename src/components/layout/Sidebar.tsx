@@ -102,6 +102,10 @@ export function Sidebar({ collapsed }: SidebarProps) {
     if (e.ctrlKey || e.altKey || e.shiftKey) return;
     const target = e.target as HTMLElement | null;
     if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+    // Radix portals out of the DOM tree but React events still bubble through
+    // the React tree to this handler; without this guard, Enter inside a modal
+    // would click the hovered sidebar row (BUG-16).
+    if (target?.closest('[role="dialog"]')) return;
 
     const container = e.currentTarget as HTMLElement;
 

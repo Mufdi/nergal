@@ -231,9 +231,13 @@ pub async fn start_hook_server(
                     continue;
                 }
 
+                // Treat empty string the same as missing: an empty CLUIHUD_SESSION_ID
+                // env var is functionally equivalent to no env var, and registering
+                // "" as a session would silently swallow every later event for it.
                 let cluihud_sid = parsed.as_ref().and_then(|v| {
                     v.get("cluihud_session_id")
                         .and_then(|s| s.as_str())
+                        .filter(|s| !s.is_empty())
                         .map(String::from)
                 });
 
@@ -330,7 +334,10 @@ fn process_event(
     cluihud_session_id: Option<&str>,
 ) {
     if cluihud_session_id.is_none() {
-        tracing::debug!("ignoring hook event without cluihud_session_id");
+        tracing::warn!(
+            event_type = ?std::any::type_name_of_val(event),
+            "dropping hook event: missing cluihud_session_id (env var not propagated through PTY shell?)",
+        );
         return;
     }
 

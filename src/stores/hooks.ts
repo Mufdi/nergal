@@ -5,7 +5,7 @@ import { costMapAtom, modeMapAtom, cwdMapAtom, agentStatusMapAtom, activeSession
 import { taskMapAtom } from "./tasks";
 import { fileMapAtom, type ModifiedFile } from "./files";
 import { planStateMapAtom, planDocumentsAtom, registerPlanAtom, planReviewStatusMapAtom } from "./plan";
-import { pendingAsksAtom } from "./askUser";
+import { pendingAsksAtom, pendingAttentionAtom } from "./askUser";
 import { openTabAction, expandRightPanelAtom, activePanelViewAtom } from "./rightPanel";
 import { refreshGitInfoAtom } from "./git";
 import { addActivityAtom } from "./activity";
@@ -24,6 +24,13 @@ function createActivity(type: ActivityEntry["type"], message: string, detail?: s
     message,
     detail,
   };
+}
+
+function clearKey<T extends Record<string, unknown>>(prev: T, key: string): T {
+  if (!(key in prev)) return prev;
+  const next = { ...prev };
+  delete next[key];
+  return next;
 }
 
 export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
@@ -47,11 +54,13 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
           set(modeMapAtom, (prev) => ({ ...prev, [sid]: "active" }));
           set(addActivityAtom, { sessionId: sid, entry: createActivity("tool_use", `Tool done: ${tool_name ?? "unknown"}`) });
           set(refreshGitInfoAtom, sid);
+          set(pendingAttentionAtom, (prev) => clearKey(prev, sid));
           break;
         }
         case "stop": {
           set(modeMapAtom, (prev) => ({ ...prev, [sid]: "idle" }));
           set(planReviewStatusMapAtom, (prev) => ({ ...prev, [sid]: "idle" }));
+          set(pendingAttentionAtom, (prev) => clearKey(prev, sid));
           set(addActivityAtom, { sessionId: sid, entry: createActivity("session", `Stopped: ${stop_reason ?? "completed"}`) });
           set(refreshGitInfoAtom, sid);
           notify("Claude stopped", stop_reason ?? "completed");
@@ -70,10 +79,12 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
         case "session_end": {
           set(modeMapAtom, (prev) => ({ ...prev, [sid]: "idle" }));
           set(planReviewStatusMapAtom, (prev) => ({ ...prev, [sid]: "idle" }));
+          set(pendingAttentionAtom, (prev) => clearKey(prev, sid));
           set(addActivityAtom, { sessionId: sid, entry: createActivity("session", "Session ended") });
           break;
         }
         case "user_prompt_submit": {
+          set(pendingAttentionAtom, (prev) => clearKey(prev, sid));
           set(addActivityAtom, { sessionId: sid, entry: createActivity("session", "User prompt submitted") });
           break;
         }
@@ -212,10 +223,29 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
       if (!sid) return;
       const tool = payload.tool_name ?? "unknown tool";
       const reason = payload.reason ?? "Auto-mode denied this action";
+      set(pendingAttentionAtom, (prev) => clearKey(prev, sid));
       set(toastsAtom, { message: `Permission denied: ${tool}`, description: reason, type: "error" });
       set(addActivityAtom, { sessionId: sid, entry: createActivity("session", `Permission denied: ${tool}`, reason) });
       notify("Permission denied", `${tool}: ${reason}`);
     }),
+  );
+
+  unlisteners.push(
+    await listen<{ session_id: string; notification_type?: string; message?: string }>(
+      "attention:pending",
+      (payload) => {
+        const sid = payload.session_id;
+        if (!sid) return;
+        set(pendingAttentionAtom, (prev) => ({ ...prev, [sid]: true }));
+        const ntype = payload.notification_type ?? "input";
+        const detail = payload.message ?? undefined;
+        set(addActivityAtom, {
+          sessionId: sid,
+          entry: createActivity("session", `Claude needs attention: ${ntype}`, detail),
+        });
+        notify("Claude needs attention", detail ?? `Type: ${ntype}`);
+      },
+    ),
   );
 
   // Live preview browser: localhost dev-server ports detected by the Rust

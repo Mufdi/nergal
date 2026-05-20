@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/tooltip";
 import type { Session, Workspace } from "@/stores/workspace";
 import { gitInfoMapAtom } from "@/stores/git";
-import { pendingAsksAtom } from "@/stores/askUser";
+import { pendingAsksAtom, pendingAttentionAtom } from "@/stores/askUser";
 import { SessionIndicator } from "./SessionIndicator";
 import claudeIcon from "@/assets/agents/claude.svg";
 import codexIcon from "@/assets/agents/codex.svg";
@@ -55,7 +55,8 @@ export function SessionRow({
   const hasLineChanges = linesAdded > 0 || linesRemoved > 0;
   const isCompleted = session.status === "completed";
   const pendingAsks = useAtomValue(pendingAsksAtom);
-  const isAwaiting = !!pendingAsks[session.id];
+  const pendingAttention = useAtomValue(pendingAttentionAtom);
+  const isAwaiting = !!pendingAsks[session.id] || !!pendingAttention[session.id];
 
   function handleRenameSubmit() {
     const trimmed = editName.trim();

@@ -128,6 +128,18 @@ impl FrontendHookEvent {
                     None,
                     None,
                 ),
+                HookEvent::Notification {
+                    session_id,
+                    notification_type,
+                    ..
+                } => (
+                    session_id.clone(),
+                    "notification",
+                    notification_type.clone(),
+                    None,
+                    None,
+                    None,
+                ),
                 HookEvent::CwdChanged { session_id, .. } => {
                     (session_id.clone(), "cwd_changed", None, None, None, None)
                 }
@@ -733,6 +745,30 @@ fn process_event(
                 "ask:user-pending",
                 AskUserPendingPayload {
                     session_id: cluihud_session_id.unwrap_or(session_id).to_string(),
+                },
+            );
+        }
+
+        HookEvent::Notification {
+            session_id,
+            notification_type,
+            message,
+        } => {
+            tracing::debug!(
+                "Notification: type={notification_type:?} message={message:?}"
+            );
+            #[derive(Clone, serde::Serialize)]
+            struct AttentionPendingPayload {
+                session_id: String,
+                notification_type: Option<String>,
+                message: Option<String>,
+            }
+            let _ = app.emit(
+                "attention:pending",
+                AttentionPendingPayload {
+                    session_id: cluihud_session_id.unwrap_or(session_id).to_string(),
+                    notification_type: notification_type.clone(),
+                    message: message.clone(),
                 },
             );
         }

@@ -56,6 +56,14 @@ const HOOKS: &[HookDef] = &[
         if_condition: None,
     },
     HookDef {
+        event: "Notification",
+        matcher: Some("permission_prompt"),
+        command: "cluihud hook notification",
+        is_async: true,
+        timeout: None,
+        if_condition: None,
+    },
+    HookDef {
         event: "Stop",
         matcher: None,
         command: "cluihud hook send stop",

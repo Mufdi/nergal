@@ -36,6 +36,8 @@ enum HookAction {
     PlanReview,
     /// Synchronous AskUserQuestion interception via GUI
     AskUser,
+    /// Non-blocking Notification forwarder (permission prompts, idle prompts, …)
+    Notification,
     /// Configure Claude Code hooks in ~/.claude/settings.json
     Setup,
 }
@@ -71,6 +73,12 @@ fn main() {
                 HookAction::AskUser => {
                     if let Err(e) = cluihud::hooks::cli::ask_user(&config.hook_socket_path) {
                         eprintln!("cluihud hook ask-user: {e:#}");
+                        std::process::exit(1);
+                    }
+                }
+                HookAction::Notification => {
+                    if let Err(e) = cluihud::hooks::cli::notification(&config.hook_socket_path) {
+                        eprintln!("cluihud hook notification: {e:#}");
                         std::process::exit(1);
                     }
                 }

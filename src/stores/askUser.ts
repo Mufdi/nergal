@@ -19,3 +19,9 @@ export interface AskUserState {
 export const askUserAtom = atom<AskUserState | null>(null);
 
 export const pendingAsksAtom = atom<Record<string, true>>({});
+
+// Separate from `pendingAsksAtom` because the Notification hook is observability-
+// only — the GUI never intercepts the in-terminal prompt, so clearing rules
+// follow CC turn-state transitions (Stop / PostToolUse / PermissionDenied) rather
+// than a paired resolve event.
+export const pendingAttentionAtom = atom<Record<string, true>>({});

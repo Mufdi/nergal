@@ -2,7 +2,7 @@ import { useAtomValue } from "jotai";
 import { Check } from "lucide-react";
 import { modeMapAtom } from "@/stores/workspace";
 import { planReviewStatusMapAtom } from "@/stores/plan";
-import { pendingAsksAtom } from "@/stores/askUser";
+import { pendingAsksAtom, pendingAttentionAtom } from "@/stores/askUser";
 
 type IndicatorState = "idle" | "thinking" | "working" | "attention" | "completed";
 
@@ -38,8 +38,9 @@ export function SessionIndicator({ sessionId, sessionStatus, size = "sm" }: Sess
   const modeMap = useAtomValue(modeMapAtom);
   const planReviewMap = useAtomValue(planReviewStatusMapAtom);
   const pendingAsks = useAtomValue(pendingAsksAtom);
+  const pendingAttention = useAtomValue(pendingAttentionAtom);
 
-  const state = resolveState(sessionId, sessionStatus, modeMap, planReviewMap, pendingAsks);
+  const state = resolveState(sessionId, sessionStatus, modeMap, planReviewMap, pendingAsks, pendingAttention);
 
   if (state === "completed") {
     return <Check className="size-3 shrink-0 text-muted-foreground/50" />;
@@ -59,9 +60,11 @@ function resolveState(
   modeMap: Record<string, string>,
   planReviewMap: Record<string, string>,
   pendingAsks: Record<string, true>,
+  pendingAttention: Record<string, true>,
 ): IndicatorState {
   if (planReviewMap[sessionId] === "pending_review") return "attention";
   if (pendingAsks[sessionId]) return "attention";
+  if (pendingAttention[sessionId]) return "attention";
   if (sessionStatus === "completed") return "completed";
 
   const mode = modeMap[sessionId] ?? "idle";

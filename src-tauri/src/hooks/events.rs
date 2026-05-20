@@ -68,6 +68,17 @@ pub enum HookEvent {
         #[serde(default)]
         fifo_path: String,
     },
+    /// Consumed only to light the session attention indicator —
+    /// `notification_type` discriminates the subtype the matcher filtered on
+    /// (e.g. `permission_prompt`).
+    #[serde(rename = "Notification")]
+    Notification {
+        session_id: String,
+        #[serde(default)]
+        notification_type: Option<String>,
+        #[serde(default)]
+        message: Option<String>,
+    },
     #[serde(rename = "CwdChanged")]
     CwdChanged {
         session_id: String,
@@ -168,6 +179,7 @@ impl HookEvent {
             | Self::UserPromptSubmit { session_id }
             | Self::PlanReview { session_id, .. }
             | Self::AskUser { session_id, .. }
+            | Self::Notification { session_id, .. }
             | Self::CwdChanged { session_id, .. }
             | Self::FileChanged { session_id, .. }
             | Self::PermissionDenied { session_id, .. }

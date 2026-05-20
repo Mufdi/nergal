@@ -208,6 +208,54 @@ pub fn plan_review(socket_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Returns immediately so CC's TUI keeps owning the dialog; we only fire a
+/// socket message so the GUI can light the session attention indicator.
+pub fn notification(socket_path: &Path) -> Result<()> {
+    let mut input = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input)
+        .context("reading stdin for notification")?;
+
+    let stdin_json: serde_json::Value =
+        serde_json::from_str(input.trim()).context("stdin is not valid JSON")?;
+
+    let cluihud_id = std::env::var("CLUIHUD_SESSION_ID").unwrap_or_default();
+    if cluihud_id.is_empty() {
+        return Ok(());
+    }
+
+    let session_id = stdin_json
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let notification_type = stdin_json
+        .get("notification_type")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let message = stdin_json
+        .get("message")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    let socket_msg = serde_json::json!({
+        "hook_event_name": "Notification",
+        "session_id": session_id,
+        "notification_type": notification_type,
+        "message": message,
+        "cluihud_session_id": cluihud_id,
+    });
+
+    let payload = serde_json::to_string(&socket_msg).context("serializing socket message")?;
+    if let Ok(mut stream) = UnixStream::connect(socket_path) {
+        let _ = stream.write_all(payload.as_bytes());
+        let _ = stream.write_all(b"\n");
+        let _ = stream.flush();
+    }
+
+    Ok(())
+}
+
 /// AskUserQuestion notifier (non-blocking).
 ///
 /// CC's TUI handles the prompt natively; cluihud only fires a socket message

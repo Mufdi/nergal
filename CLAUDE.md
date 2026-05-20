@@ -47,7 +47,7 @@ Nergal corre **alrededor** del agente CLI, no en su lugar. Esto define el filtro
 | Rust format | `cd src-tauri && cargo fmt --check` |
 | TS check | `npx tsc --noEmit` |
 | Full check | `cd src-tauri && cargo clippy -- -D warnings && cargo test && cargo fmt --check && cd .. && npx tsc --noEmit` |
-| Reinstall CLI binary | `cargo install --path src-tauri --force` (after editing `src-tauri/src/hooks/cli.rs`) |
+| Reinstall installed app | `pnpm tauri build && sudo dpkg -i src-tauri/target/release/bundle/deb/Nergal_*.deb` — covers Rust + frontend + bundled hook CLI in one shot. Do NOT use `cargo install --path src-tauri --force`: it puts a binary in `~/.cargo/bin/` that shadows `/usr/bin/cluihud` for the GNOME launcher (user PATH is inherited) and skips the Tauri frontend bundling step, producing ghost windows. |
 
 Run the full check after significant changes.
 

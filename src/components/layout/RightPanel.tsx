@@ -412,10 +412,9 @@ function DocumentContent({ tab }: { tab: Tab }) {
     }
     case "spec": {
       const specChange = tab.data?.changeName as string | undefined;
-      const specSession = tab.data?.sessionId as string | undefined;
       const specPath = tab.data?.specPath as string | undefined;
-      return specChange && specSession
-        ? <SpecContentWrapper key={tab.id} tabId={tab.id} changeName={specChange} sessionId={specSession} initialSpecPath={specPath} />
+      return specChange
+        ? <SpecContentWrapper key={tab.id} tabId={tab.id} changeName={specChange} initialSpecPath={specPath} />
         : <PlaceholderView label="Select a change" />;
     }
     case "git":
@@ -466,11 +465,17 @@ function PlanContentWrapper({ path }: { tabId: string; path: string }) {
 }
 
 
-function SpecContentWrapper({ tabId, changeName, sessionId, initialSpecPath }: { tabId: string; changeName: string; sessionId: string; initialSpecPath?: string }) {
+function SpecContentWrapper({ tabId, changeName, initialSpecPath }: { tabId: string; changeName: string; initialSpecPath?: string }) {
   const setDirty = useSetAtom(setDirtyAction);
+  // Reading the active session here (instead of taking it as a prop baked at
+  // tab-open time) makes the spec list+content follow worktree switches, so a
+  // tab opened in worktree A re-resolves through worktree B when the user
+  // switches sessions (BUG-03 strict intent).
+  const sessionId = useAtomValue(activeSessionIdAtom);
   const handleDirtyChange = useCallback((dirty: boolean) => {
     setDirty({ tabId, dirty });
   }, [tabId, setDirty]);
+  if (!sessionId) return <PlaceholderView label="No active session" />;
   return <SpecPanel changeName={changeName} sessionId={sessionId} initialSpecPath={initialSpecPath} onDirtyChange={handleDirtyChange} />;
 }
 

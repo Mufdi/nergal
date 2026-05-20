@@ -49,12 +49,14 @@ export function SpecListView() {
   }, [refresh]);
 
   function handleClick(change: OpenSpecChange) {
+    // Don't bake sessionId into tab.data — SpecContentWrapper reads the live
+    // active session so the panel follows worktree switches (BUG-03 strict).
     openTab({
       tab: {
         id: `spec-${change.name}`,
         type: "spec",
         label: change.name === "_master" ? "Specs" : change.name,
-        data: { changeName: change.name, sessionId },
+        data: { changeName: change.name },
       },
     });
   }
@@ -130,7 +132,6 @@ function ChangeItem({
 }) {
   const [expanded, setExpanded] = useState(false);
   const openTab = useSetAtom(openTabAction);
-  const sessionId = useAtomValue(activeSessionIdAtom);
 
   const isMaster = change.status === "master";
   const Icon = change.status === "archived"
@@ -147,7 +148,7 @@ function ChangeItem({
         id: `spec-${change.name}-${spec.name}`,
         type: "spec",
         label: spec.name,
-        data: { changeName: change.name, sessionId, specPath: spec.path },
+        data: { changeName: change.name, specPath: spec.path },
       },
     });
   }

@@ -12,6 +12,7 @@ pub mod scratchpad;
 pub mod setup;
 mod tasks;
 mod terminal;
+mod updater;
 mod worktree;
 
 use agents::claude_code::plan::PlanWatcher;
@@ -365,6 +366,11 @@ pub fn run() {
             browser::browser_get_listening_ports,
             browser::browser_register_shortcuts,
             browser::browser_unregister_shortcuts,
+            // Updater (download .deb / AppImage, reveal in file manager)
+            updater::get_install_source,
+            updater::check_app_update,
+            updater::download_app_update,
+            updater::reveal_in_downloads,
         ])
         .setup(move |app| {
             if let Some(window) = app.get_webview_window("main") {

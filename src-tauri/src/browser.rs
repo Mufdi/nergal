@@ -184,7 +184,7 @@ fn read_listening_user_ports() -> Vec<u16> {
     }
     all.sort_unstable();
     all.dedup();
-    all.retain(|&p| p >= MIN_PORT && p <= MAX_PORT);
+    all.retain(|&p| (MIN_PORT..=MAX_PORT).contains(&p));
     all
 }
 
@@ -313,7 +313,7 @@ mod tests {
     fn skips_privileged_ports_in_filter() {
         // Constructed via read_listening_user_ports filter, simulated:
         let mut all = vec![22u16, 53, 80, 443, 631, 1024, 5173, 32767, 40000];
-        all.retain(|&p| p >= MIN_PORT && p <= MAX_PORT);
+        all.retain(|&p| (MIN_PORT..=MAX_PORT).contains(&p));
         assert_eq!(all, vec![1024, 5173, 32767]);
     }
 

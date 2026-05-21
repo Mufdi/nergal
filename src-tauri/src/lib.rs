@@ -339,6 +339,7 @@ pub fn run() {
             commands::get_session_changed_files,
             commands::get_commit_files,
             commands::list_directory,
+            commands::search_files,
             commands::read_file_content,
             commands::write_file_content,
             commands::list_available_agents,

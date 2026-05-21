@@ -60,10 +60,10 @@ pub struct PathValidation {
 #[tauri::command]
 pub fn validate_path(path: String, kind: String) -> PathValidation {
     fn expand_home(input: &str) -> PathBuf {
-        if let Some(rest) = input.strip_prefix("~/") {
-            if let Some(home) = dirs::home_dir() {
-                return home.join(rest);
-            }
+        if let Some(rest) = input.strip_prefix("~/")
+            && let Some(home) = dirs::home_dir()
+        {
+            return home.join(rest);
         }
         PathBuf::from(input)
     }
@@ -1771,6 +1771,10 @@ pub fn open_in_editor(
     tracing::info!("open_in_editor: cmd={cmd} cwd={cwd_str} file={resolved_file:?}");
 
     let mut command = std::process::Command::new(&cmd);
+    // Spawn cwd matches the session — relative file paths from list_directory
+    // would otherwise resolve against cluihud's launch dir and the editor
+    // would report "failed to load".
+    command.current_dir(&cwd);
     command.arg(cwd_str.as_ref());
 
     if let Some(ref fp) = resolved_file {
@@ -2585,6 +2589,81 @@ pub fn list_directory(
     });
 
     Ok(entries)
+}
+
+const SEARCH_SKIP_DIRS: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".next",
+    ".turbo",
+    ".cache",
+    "vendor",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".idea",
+    ".vscode",
+];
+const SEARCH_MAX_RESULTS: usize = 500;
+
+#[tauri::command]
+pub fn search_files(
+    session_id: String,
+    query: String,
+    db: State<'_, SharedDb>,
+) -> Result<Vec<DirEntry>, String> {
+    let query_lc = query.trim().to_lowercase();
+    if query_lc.is_empty() {
+        return Ok(Vec::new());
+    }
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let mut hits = Vec::new();
+    let mut stack = vec![cwd.clone()];
+    while let Some(dir) = stack.pop() {
+        let read = match std::fs::read_dir(&dir) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        for entry in read.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') && name != ".env" {
+                continue;
+            }
+            let is_dir = entry
+                .metadata()
+                .map(|m| m.is_dir())
+                .unwrap_or(false);
+            let entry_path = entry.path();
+            if is_dir {
+                if SEARCH_SKIP_DIRS.contains(&name.as_str()) {
+                    continue;
+                }
+                stack.push(entry_path);
+                continue;
+            }
+            if name.to_lowercase().contains(&query_lc) {
+                let rel = entry_path
+                    .strip_prefix(&cwd)
+                    .unwrap_or(&entry_path)
+                    .to_string_lossy()
+                    .into_owned();
+                hits.push(DirEntry {
+                    name,
+                    is_dir: false,
+                    path: rel,
+                });
+                if hits.len() >= SEARCH_MAX_RESULTS {
+                    return Ok(hits);
+                }
+            }
+        }
+    }
+    hits.sort_by(|a, b| a.path.to_lowercase().cmp(&b.path.to_lowercase()));
+    Ok(hits)
 }
 
 #[tauri::command]

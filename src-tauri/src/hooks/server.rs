@@ -929,7 +929,21 @@ fn process_task_event(
     if is_task_create {
         store.apply_create(tool_input);
     } else {
-        store.apply_update(tool_input);
+        let matched = store.apply_update(tool_input);
+        if !matched {
+            // Surface mismatches so a future BUG-21-style repro has a log
+            // trail showing which taskId we couldn't find — silent drops
+            // hid the issue last quarter.
+            let task_id = tool_input
+                .get("taskId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("<missing>");
+            let known_ids: Vec<&str> =
+                store.all_tasks().map(|t| t.id.as_str()).collect();
+            tracing::warn!(
+                "task update missed: tool={tool_name} taskId={task_id} known={known_ids:?}"
+            );
+        }
     }
 
     if let Ok(db_guard) = db.lock() {

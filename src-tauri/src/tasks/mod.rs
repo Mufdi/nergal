@@ -72,10 +72,12 @@ impl TaskStore {
         Some(id)
     }
 
-    /// Apply a TaskUpdate tool_input. Updates status/subject/description by taskId.
-    pub fn apply_update(&mut self, input: &serde_json::Value) {
+    /// Returns `false` so callers can distinguish "lost event" (taskId
+    /// didn't match anything) from "no-op update" (matched but no fields
+    /// changed) — silent drops hid BUG-21 for a quarter.
+    pub fn apply_update(&mut self, input: &serde_json::Value) -> bool {
         let Some(task_id) = input.get("taskId").and_then(|v| v.as_str()) else {
-            return;
+            return false;
         };
 
         let Some(task) = self
@@ -83,7 +85,7 @@ impl TaskStore {
             .iter_mut()
             .find(|t| t.id == task_id || t.id.starts_with(&format!("{task_id}-")))
         else {
-            return;
+            return false;
         };
 
         if let Some(status_str) = input.get("status").and_then(|v| v.as_str()) {
@@ -117,6 +119,7 @@ impl TaskStore {
                 }
             }
         }
+        true
     }
 
     /// Replace all tasks (used by transcript full re-parse).

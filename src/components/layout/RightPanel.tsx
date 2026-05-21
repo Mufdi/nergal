@@ -330,7 +330,7 @@ function NavigablePickerContainer({ type, className }: { type: TabType; classNam
 function FilePickerOverlay({ type, onClose }: { type: TabType; onClose: () => void }) {
   return (
     <>
-      <div className="absolute inset-0 z-30 bg-scrim cluihud-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 z-30 bg-scrim cluihud-blur-md" onClick={onClose} />
       <div className="absolute inset-0 z-40 flex items-center justify-center px-6 pointer-events-none">
         <NavigablePickerContainer type={type} className="pointer-events-auto" />
       </div>

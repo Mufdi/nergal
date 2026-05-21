@@ -53,6 +53,11 @@ export const filePickerOpenAtom = atom(false);
 /// the equivalent for tab-less standalone panels.
 export const activePanelViewMapAtom = atom<Record<string, TabType | null>>({});
 
+/// Missing entry means "no user gesture yet, defer to layout preset" —
+/// the layout effect needs this third state to avoid clobbering the
+/// preset on first encounter while still respecting a saved gesture.
+export const rightPanelCollapsedMapAtom = atom<Record<string, boolean>>({});
+
 /// Reader/writer facade keyed by the active session. All call sites use
 /// `useAtomValue` / `useSetAtom`, so flipping this from primitive to derived
 /// is transparent — they keep working without touching their code.
@@ -254,6 +259,18 @@ export const reopenTabAction = atom(null, (get, set) => {
 /// Tracks the current spec artifact being viewed (changeName + artifactPath).
 /// Updated by SpecPanel, read by TopBar for "Open in IDE".
 export const currentSpecArtifactAtom = atom<{ changeName: string; artifactPath: string } | null>(null);
+
+interface FileBrowserState {
+  rootEntries: { name: string; is_dir: boolean; path: string }[];
+  expanded: string[];
+  children: Record<string, { name: string; is_dir: boolean; path: string }[]>;
+  lastOpened: string | null;
+}
+
+/// Module-level so reopening the file picker (or its mount-unmount cycle as
+/// the overlay opens/closes) doesn't drop expanded dirs, cached listings, or
+/// the last-opened file. Keyed per session.
+export const fileBrowserStateMapAtom = atom<Record<string, FileBrowserState>>({});
 
 /// Persists the active sub-tab (pill) per spec change across tab switches.
 export const specSubTabMapAtom = atom<Record<string, string>>({});

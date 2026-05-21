@@ -105,7 +105,7 @@ export function CommandPalette() {
 
   return (
     <div className="fixed inset-0 z-50 flex justify-center pt-[20vh]" onClick={() => setOpen(false)}>
-      <div className="fixed inset-0 bg-scrim cluihud-blur-sm" />
+      <div className="fixed inset-0 bg-scrim cluihud-blur-md" />
       <div
         className="cluihud-glow relative z-10 w-full max-w-lg rounded-lg border-2 border-primary bg-card shadow-lg max-h-[70vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}

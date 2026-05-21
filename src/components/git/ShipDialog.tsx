@@ -536,9 +536,14 @@ export function ShipDialog() {
   return (
     <Dialog open={state.open} onOpenChange={(o) => { if (!o) close(); }}>
       <DialogContent className="max-w-2xl sm:max-w-2xl">
-        <DialogHeader>
+        <DialogHeader className="shrink-0">
           <DialogTitle>Ship session</DialogTitle>
         </DialogHeader>
+
+        {/* Body is the only stretchy region — header + armed line + footer
+            stay visible at any modal height, so a 50-file stage never hides
+            the action buttons. */}
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-1">
 
         {loading && (
           <div className="flex items-center gap-2 py-4">
@@ -667,9 +672,10 @@ export function ShipDialog() {
           <div className="rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-[10px] text-red-400">{error}</div>
         )}
 
-        {/* Armed indicator + footer */}
+        </div>
+
         {!loading && (
-          <div className="flex items-center justify-between border-t border-border/40 pt-2 text-[10px] text-muted-foreground">
+          <div className="flex shrink-0 items-center justify-between border-t border-border/40 pt-2 text-[10px] text-muted-foreground">
             <span>
               About to: <span className="text-orange-400 font-medium">{ACTION_LABELS[armedAction]}</span>
               {" · "}<Kbd keys="ctrl+enter" /> fires the armed action
@@ -677,7 +683,7 @@ export function ShipDialog() {
           </div>
         )}
 
-        <DialogFooter className="flex-nowrap gap-1.5">
+        <DialogFooter className="shrink-0 flex-nowrap gap-1.5">
           <Button size="sm" variant="secondary" onClick={close} disabled={shipping || pushing}>
             Cancel <Kbd keys="esc" className="ml-1.5" />
           </Button>

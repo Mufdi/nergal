@@ -12,7 +12,7 @@ import * as terminalService from "@/components/terminal/terminalService";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { ActivityDrawer } from "@/components/activity/ActivityDrawer";
 import { ZenMode } from "@/components/zen/ZenMode";
-import { expandRightPanelAtom, activePanelViewAtom, openTabAction } from "@/stores/rightPanel";
+import { expandRightPanelAtom, activePanelViewAtom, openTabAction, rightPanelCollapsedMapAtom } from "@/stores/rightPanel";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { planReviewStatusMapAtom, planStateMapAtom } from "@/stores/plan";
 import { toggleSidebarAtom, toggleRightPanelAtom, focusZoneAtom } from "@/stores/shortcuts";
@@ -40,7 +40,8 @@ export function Workspace() {
 
   const [settingsOpen, setSettingsOpen] = useAtom(settingsOpenAtom);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [rightCollapsed, setRightCollapsed] = useState(true);
+  const rightCollapsedMap = useAtomValue(rightPanelCollapsedMapAtom);
+  const setRightCollapsedMap = useSetAtom(rightPanelCollapsedMapAtom);
   const expandSignal = useAtomValue(expandRightPanelAtom);
   const sidebarToggle = useAtomValue(toggleSidebarAtom);
   const rightToggle = useAtomValue(toggleRightPanelAtom);
@@ -69,6 +70,16 @@ export function Workspace() {
   const activeConflictedFiles = useAtomValue(activeConflictedFilesAtom);
   const setSelectedConflictMap = useSetAtom(selectedConflictFileMapAtom);
   const setChipModeMap = useSetAtom(gitChipModeAtom);
+
+  const rightCollapsed = activeSessionId
+    ? rightCollapsedMap[activeSessionId] ?? true
+    : true;
+  function setRightCollapsed(next: boolean) {
+    if (!activeSessionId) return;
+    setRightCollapsedMap((prev) =>
+      prev[activeSessionId] === next ? prev : { ...prev, [activeSessionId]: next },
+    );
+  }
 
   // Redistribute space when sidebar collapses/expands manually
   const prevSidebarCollapsed = useRef(sidebarCollapsed);
@@ -136,12 +147,21 @@ export function Workspace() {
   useEffect(() => {
     const sessionChanged = prevSessionRef.current !== activeSessionId;
     prevSessionRef.current = activeSessionId ?? null;
+    const presetChanged = prevPresetRef.current !== layoutPreset;
 
-    if (!sessionChanged && prevPresetRef.current === layoutPreset) return;
+    if (!sessionChanged && !presetChanged) return;
     prevPresetRef.current = layoutPreset;
 
     const sizes = PRESET_SIZES[layoutPreset];
     setSessionPreset(layoutPreset);
+
+    // Saved gesture wins on any session switch — preset frequently differs
+    // between sessions, so guarding on !presetChanged would never fire and
+    // the panel would re-expand on return.
+    const userOverride =
+      sessionChanged && activeSessionId
+        ? rightCollapsedMap[activeSessionId]
+        : undefined;
 
     requestAnimationFrame(() => {
       const sidebar = sidebarPanelRef.current;
@@ -160,6 +180,18 @@ export function Workspace() {
         sidebarAutoCollapsedRef.current = false;
       }
 
+      if (userOverride === true) {
+        if (right && !right.isCollapsed()) right.collapse();
+        return;
+      }
+      if (userOverride === false) {
+        if (right) {
+          if (right.isCollapsed()) right.expand();
+          if (sizes.right > 0) right.resize(`${sizes.right}%`);
+        }
+        if (center && sizes.center > 0) center.resize(`${sizes.center}%`);
+        return;
+      }
       if (sizes.right === 0) {
         if (right) right.collapse();
       } else {
@@ -170,7 +202,7 @@ export function Workspace() {
         if (center) center.resize(`${sizes.center}%`);
       }
     });
-  }, [layoutPreset, sidebarCollapsed, setSessionPreset]);
+  }, [layoutPreset, sidebarCollapsed, activeSessionId, rightCollapsedMap, setSessionPreset]);
 
   // Collapse right panel on mount and send focus to sidebar
   useEffect(() => {

@@ -16,7 +16,7 @@ const STATE_COLORS: Record<IndicatorState, string> = {
   idle: "bg-muted-foreground/40",
   thinking: "bg-sky-400",
   working: "bg-green-500 text-green-500",
-  attention: "bg-orange-500",
+  attention: "bg-primary text-primary",
   completed: "bg-muted-foreground/30",
 };
 

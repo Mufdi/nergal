@@ -948,14 +948,16 @@ body,
   }
 }
 
-@keyframes cluihud-ask-blink {
-  0%, 100% { background-color: color-mix(in srgb, var(--color-primary) 30%, transparent); }
-  50% { background-color: transparent; }
+@keyframes cluihud-ask-pulse {
+  0%, 100% { background-color: color-mix(in srgb, var(--color-primary) 35%, transparent); }
+  50% { background-color: color-mix(in srgb, var(--color-primary) 10%, transparent); }
 }
 
+/* Continuous (infinite) instead of the previous 2-cycle blink — attention
+   needs to keep nagging until the user actually addresses it, otherwise a
+   row that pulsed for 0.8s and then went solid blends into "active". */
 .cluihud-ask-pending {
-  background-color: color-mix(in srgb, var(--color-primary) 30%, transparent) !important;
-  animation: cluihud-ask-blink 0.4s ease-in-out 2;
+  animation: cluihud-ask-pulse 1.4s ease-in-out infinite;
 }
 
 /* ── Plan annotation ── */
@@ -1090,9 +1092,17 @@ mark[data-ws-hidden] {
   color: #991b1b !important;
 }
 
-/* ── File picker keyboard navigation ── */
-[data-nav-selected] {
-  background: var(--secondary) !important;
-  color: var(--foreground) !important;
+/* Same bg as :hover so keyboard nav and mouse hover read identically —
+   active row stays distinct via its accent strip, not its bg. */
+[data-focus-zone] [data-nav-selected="true"] {
+  background-color: color-mix(in srgb, var(--secondary) 60%, transparent);
+  color: var(--foreground);
+}
+
+/* `:focus-within` ties the badge-hide to the sidebar actually owning
+   focus — without it the row-meta stayed hidden after the user moved
+   focus to the terminal because the data-nav-selected attribute persists. */
+[data-focus-zone='sidebar']:focus-within [data-nav-selected="true"] [data-row-meta] {
+  display: none;
 }
 

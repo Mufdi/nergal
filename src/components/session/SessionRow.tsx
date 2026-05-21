@@ -10,6 +10,7 @@ import {
   Tooltip,
   TooltipTrigger,
   TooltipContent,
+  TooltipProvider,
 } from "@/components/ui/tooltip";
 import type { Session, Workspace } from "@/stores/workspace";
 import { gitInfoMapAtom } from "@/stores/git";
@@ -76,7 +77,7 @@ export function SessionRow({
       className={`group flex w-full items-center gap-1.5 ${shortcutNumber != null ? "pl-3" : "pl-7"} pr-3 py-1 text-left transition-colors cursor-pointer ${
         isActive
           ? "bg-secondary/60 text-foreground shadow-[inset_2px_0_0_0_var(--color-primary)]"
-          : "hover:bg-secondary/40 text-foreground/70"
+          : "hover:bg-secondary/60 hover:text-foreground text-foreground/70"
       } ${isCompleted ? "opacity-50" : ""} ${isAwaiting ? "cluihud-ask-pending" : ""}`}
     >
       {shortcutNumber != null && (
@@ -124,17 +125,28 @@ export function SessionRow({
           autoFocus
         />
       ) : (
-        <span className="flex-1 truncate text-[11px]">{session.name}</span>
+        <TooltipProvider delay={0}>
+          <Tooltip>
+            <TooltipTrigger render={<span className="flex-1 truncate text-[11px]" />}>
+              {session.name}
+            </TooltipTrigger>
+            <TooltipContent side="right" className="text-[10px]">
+              {session.name}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       )}
 
-      <span className="shrink-0 flex items-center gap-1.5 text-[10px] tabular-nums group-hover:hidden">
+      <span data-row-meta className="shrink-0 flex items-center gap-1.5 text-[10px] tabular-nums group-hover:hidden">
         {hasLineChanges && (
           <span className="flex items-center gap-1">
-            <span className="text-green-500">+{linesAdded}</span>
-            <span className="text-red-500">-{linesRemoved}</span>
+            <span className="text-green-500">+{compactCount(linesAdded)}</span>
+            <span className="text-red-500">-{compactCount(linesRemoved)}</span>
           </span>
         )}
-        <span className="text-muted-foreground/50">{formatAge(session.updated_at)}</span>
+        {!hasLineChanges && (
+          <span className="text-muted-foreground/50">{formatAge(session.updated_at)}</span>
+        )}
       </span>
 
       <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
@@ -183,4 +195,10 @@ function formatAge(timestamp: number): string {
   if (delta < 3600) return `${Math.floor(delta / 60)}m`;
   if (delta < 86400) return `${Math.floor(delta / 3600)}h`;
   return `${Math.floor(delta / 86400)}d`;
+}
+
+function compactCount(n: number): string {
+  if (n < 1000) return n.toString();
+  if (n < 10000) return `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+  return `${Math.floor(n / 1000)}k`;
 }

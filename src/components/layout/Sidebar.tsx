@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { configAtom } from "@/stores/config";
 import { useFocusPulse } from "@/hooks/useFocusPulse";
@@ -7,10 +7,11 @@ import { focusZoneAtom, previousNonTerminalZoneAtom, triggerResumeSessionAtom, t
 import {
   workspacesAtom,
   activeSessionIdAtom,
-  showCompletedAtom,
   sessionLaunchModeAtom,
   freshSessionsAtom,
   activeSessionAtom,
+  sessionTabIdsAtom,
+  expandedWorkspaceIdsAtom,
   type Workspace,
   type Session,
 } from "@/stores/workspace";
@@ -26,7 +27,6 @@ import { open } from "@tauri-apps/plugin-dialog";
 import * as terminalService from "@/components/terminal/terminalService";
 import { TasksIsland } from "@/components/tasks/TasksIsland";
 import { NergalLogo, NergalN } from "@/components/layout/NergalLogo";
-import { Eye, EyeOff } from "lucide-react";
 import {
   Tooltip,
   TooltipProvider,
@@ -139,9 +139,12 @@ export function Sidebar({ collapsed }: SidebarProps) {
       {collapsed ? (
         <CollapsedSidebar />
       ) : (
-        <div className="flex flex-1 flex-col gap-1">
-          {/* Workspaces card */}
-          <div className={`flex flex-1 flex-col overflow-hidden rounded-lg border-2 ${borderClass} bg-card ${dotGridClass} cluihud-panel-focus`}>
+        <div className="flex min-h-0 flex-1 flex-col gap-1">
+          {/* `min-h-0` lets the workspaces card shrink below its content
+              height — without it, a sidebar with many sessions grows past
+              the viewport and pushes TasksIsland off-screen instead of
+              activating the inner overflow-y-auto. */}
+          <div className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border-2 ${borderClass} bg-card ${dotGridClass} cluihud-panel-focus`}>
             <div className="flex h-20 shrink-0 items-center px-3 pt-2">
               <NergalLogo />
             </div>
@@ -151,7 +154,6 @@ export function Sidebar({ collapsed }: SidebarProps) {
             </div>
           </div>
 
-          {/* Tasks island — separate card */}
           <TasksIsland />
         </div>
       )}
@@ -231,20 +233,32 @@ function CollapsedSidebar() {
   );
 }
 
+// Persists across mount cycles — a `useRef` inside the component resets
+// when WorkspacesView unmounts (sidebar collapses), which replays the
+// last Ctrl+N trigger as soon as the sidebar re-expands.
+let lastNewSessionConsumed = 0;
+
 function WorkspacesView() {
   const workspaces = useAtomValue(workspacesAtom);
   const setWorkspaces = useSetAtom(workspacesAtom);
   const activeSessionId = useAtomValue(activeSessionIdAtom);
   const setActiveSessionId = useSetAtom(activeSessionIdAtom);
-  const showCompleted = useAtomValue(showCompletedAtom);
-  const setShowCompleted = useSetAtom(showCompletedAtom);
   const setLaunchMode = useSetAtom(sessionLaunchModeAtom);
   const freshSessions = useAtomValue(freshSessionsAtom);
   const setFreshSessions = useSetAtom(freshSessionsAtom);
+  const setSessionTabIds = useSetAtom(sessionTabIdsAtom);
+  const expandedFromAtom = useAtomValue(expandedWorkspaceIdsAtom);
+  const setExpandedAtom = useSetAtom(expandedWorkspaceIdsAtom);
   const openTab = useSetAtom(openTabAction);
   const addToast = useSetAtom(toastsAtom);
   const triggerMergeSignal = useAtomValue(triggerMergeAtom);
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const expandedIds = expandedFromAtom ?? new Set<string>();
+  const setExpandedIds = (updater: Set<string> | ((prev: Set<string>) => Set<string>)) => {
+    setExpandedAtom((prev) => {
+      const current = prev ?? new Set<string>();
+      return typeof updater === "function" ? updater(current) : updater;
+    });
+  };
   const [addingSessionFor, setAddingSessionFor] = useState<string | null>(null);
   const [newSessionName, setNewSessionName] = useState("");
 
@@ -286,14 +300,10 @@ function WorkspacesView() {
     setTriggerResume(null);
   }, [triggerResumeId]);
 
-  // Track the last consumed trigger so a Ctrl+N fired before `workspaces`
-  // finished loading is replayed once the list resolves (otherwise the
-  // first shortcut after app boot is silently dropped).
-  const lastNewSessionTriggerRef = useRef(0);
   useEffect(() => {
     if (triggerNewSession === 0 || workspaces.length === 0) return;
-    if (triggerNewSession <= lastNewSessionTriggerRef.current) return;
-    lastNewSessionTriggerRef.current = triggerNewSession;
+    if (triggerNewSession <= lastNewSessionConsumed) return;
+    lastNewSessionConsumed = triggerNewSession;
     if (workspaces.length === 1) {
       setAddingSessionFor(workspaces[0].id);
     } else {
@@ -316,8 +326,10 @@ function WorkspacesView() {
     invoke<Workspace[]>("get_workspaces")
       .then((ws) => {
         setWorkspaces(ws);
-        if (ws.length > 0) {
-          setExpandedIds(new Set([ws[0].id]));
+        // Initialize only on first hydration — a subsequent re-mount (e.g.
+        // sidebar re-expand) keeps whatever the user toggled.
+        if (ws.length > 0 && expandedFromAtom === null) {
+          setExpandedAtom(new Set([ws[0].id]));
         }
       })
       .catch(() => {});
@@ -400,13 +412,18 @@ function WorkspacesView() {
     }
     try {
       await invoke("delete_workspace", { workspaceId: ws.id });
+      const removedIds = new Set(ws.sessions.map((s) => s.id));
       setWorkspaces((prev) => prev.filter((w) => w.id !== ws.id));
       setExpandedIds((prev) => {
         const next = new Set(prev);
         next.delete(ws.id);
         return next;
       });
-      if (activeSessionId && ws.sessions.some((s) => s.id === activeSessionId)) {
+      // Without this, Ctrl+Shift+Tab would still cycle into the deleted
+      // workspace's tab ids and leave the UI on a session that no longer
+      // exists.
+      setSessionTabIds((prev) => prev.filter((id) => !removedIds.has(id)));
+      if (activeSessionId && removedIds.has(activeSessionId)) {
         setActiveSessionId(null);
       }
     } catch {
@@ -508,27 +525,13 @@ function WorkspacesView() {
 
   return (
     <div className="py-1">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-1.5">
+      {/* Sticky inside the workspaces scroll container so the title + add
+          button stay visible when the user has enough sessions to overflow. */}
+      <div className="sticky top-0 z-10 flex items-center justify-between bg-card px-3 py-1.5">
         <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
           Workspaces
         </span>
         <div className="flex items-center gap-1">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <div
-                  role="button"
-                  onClick={() => setShowCompleted(!showCompleted)}
-                  className="flex size-5 items-center justify-center rounded text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                  aria-label={showCompleted ? "Hide completed" : "Show completed"}
-                />
-              }
-            >
-              {showCompleted ? <Eye className="size-3" /> : <EyeOff className="size-3" />}
-            </TooltipTrigger>
-            <TooltipContent side="top">{showCompleted ? "Hide completed" : "Show completed"}</TooltipContent>
-          </Tooltip>
           <button
             onClick={handleAddWorkspace}
             className="flex size-5 items-center justify-center rounded text-muted-foreground hover:text-foreground transition-colors"
@@ -551,9 +554,7 @@ function WorkspacesView() {
           : activeWs?.id;
         return workspaces.map((ws) => {
           const isExpanded = expandedIds.has(ws.id);
-          const filteredSessions = showCompleted
-            ? ws.sessions
-            : ws.sessions.filter((s) => s.status !== "completed");
+          const filteredSessions = ws.sessions.filter((s) => s.status !== "completed");
           const isShortcutWorkspace = ws.id === shortcutWsId;
           const nonCompletedSessions = ws.sessions.filter((s) => s.status !== "completed");
         return (
@@ -667,6 +668,7 @@ function WorkspacesView() {
                               sessions: w.sessions.filter((sess) => sess.id !== s.id),
                             })),
                           );
+                          setSessionTabIds((prev) => prev.filter((id) => id !== s.id));
                           if (activeSessionId === s.id) setActiveSessionId(null);
                         })
                         .catch(() => {});

@@ -1,0 +1,32 @@
+{
+  "tier": "L",
+  "tier_source": "heuristic + user-stated 'no asumas nada, valida todo'",
+  "rigor_applied": {
+    "discovery_invoked": true,
+    "discovery_mode": "inline-validation (not /discovery skill spawn — direct codebase + agent doc verification per user direction)",
+    "iprev_rounds": 0,
+    "iprev_reason": "user paused before implementation; iprev runs at execute time",
+    "reviewer_mode": "deferred",
+    "gates_phases_run": [],
+    "per_phase_models": {
+      "design": "claude-opus-4-7",
+      "implementation": "claude-sonnet-4-6",
+      "exploration": "claude-haiku-4-5"
+    }
+  },
+  "spec_target": ["agent-adapter", "pi-adapter", "opencode-adapter", "codex-adapter"],
+  "interview_answers": {
+    "discovery": "validated inline — pi docs read + opencode binary inspected + codex docs fetched",
+    "iprev": "skip for now; revisit at execute",
+    "reviewers": "deferred to execute",
+    "gates": "deferred to execute"
+  },
+  "events": [
+    {
+      "ts": "2026-05-20",
+      "type": "scaffold-complete",
+      "reason": "proposal.md + design.md + tasks.md + implementation.md + 4 delta specs + ARCHITECT-BRIEF.md created; openspec validate PASSED; user requested stop before code implementation"
+    }
+  ],
+  "interview_ts": "2026-05-20"
+}

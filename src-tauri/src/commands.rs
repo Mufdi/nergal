@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use tauri::State;
 
 use crate::agents::AgentId;
+use crate::agents::ThemePalette;
 use crate::agents::claude_code::cost::{self, CostSummary};
 use crate::agents::state::AgentRuntimeState;
 use crate::config::Config;
@@ -244,7 +245,10 @@ pub fn submit_ask_answer(
     let answers_value: serde_json::Value =
         serde_json::from_str(&answers).map_err(|e| format!("parsing answers JSON: {e}"))?;
     let mut response = serde_json::json!({ "answers": answers_value });
-    if let Some(text) = feedback.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty())
+    if let Some(text) = feedback
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
         && let Some(obj) = response.as_object_mut()
     {
         obj.insert(
@@ -2633,10 +2637,7 @@ pub fn search_files(
             if name.starts_with('.') && name != ".env" {
                 continue;
             }
-            let is_dir = entry
-                .metadata()
-                .map(|m| m.is_dir())
-                .unwrap_or(false);
+            let is_dir = entry.metadata().map(|m| m.is_dir()).unwrap_or(false);
             let entry_path = entry.path();
             if is_dir {
                 if SEARCH_SKIP_DIRS.contains(&name.as_str()) {
@@ -2732,6 +2733,20 @@ pub async fn list_available_agents(
         });
     }
     Ok(out)
+}
+
+/// Push cluihud's active palette to every adapter that advertises
+/// `THEME_SYNC`. Invoked from the frontend `applyTheme` flow after the DOM
+/// `data-theme` mutation commits. Failures are logged inside the registry
+/// dispatcher — the command always returns `Ok(())` so the UI never surfaces
+/// theme-sync errors to the user.
+#[tauri::command]
+pub async fn apply_theme_to_agents(
+    agents: State<'_, AgentRuntimeState>,
+    palette: ThemePalette,
+) -> Result<(), String> {
+    agents.registry.apply_theme_to_all(palette).await;
+    Ok(())
 }
 
 /// Resolve the default agent for a project, applying the documented priority:

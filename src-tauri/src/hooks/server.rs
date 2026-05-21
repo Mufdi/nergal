@@ -761,9 +761,7 @@ fn process_event(
             notification_type,
             message,
         } => {
-            tracing::debug!(
-                "Notification: type={notification_type:?} message={message:?}"
-            );
+            tracing::debug!("Notification: type={notification_type:?} message={message:?}");
             #[derive(Clone, serde::Serialize)]
             struct AttentionPendingPayload {
                 session_id: String,
@@ -938,8 +936,7 @@ fn process_task_event(
                 .get("taskId")
                 .and_then(|v| v.as_str())
                 .unwrap_or("<missing>");
-            let known_ids: Vec<&str> =
-                store.all_tasks().map(|t| t.id.as_str()).collect();
+            let known_ids: Vec<&str> = store.all_tasks().map(|t| t.id.as_str()).collect();
             tracing::warn!(
                 "task update missed: tool={tool_name} taskId={task_id} known={known_ids:?}"
             );

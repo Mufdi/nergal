@@ -7,14 +7,19 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 
+use std::path::{Path, PathBuf};
+
 use super::transcript::parse_transcript_line;
 use crate::agents::{
     AdapterError, AgentAdapter, AgentCapabilities, AgentCapability, AgentId, DetectionResult,
-    EventSink, SpawnContext, SpawnSpec, TranscriptEvent, Transport,
+    EventSink, SpawnContext, SpawnSpec, ThemePalette, TranscriptEvent, Transport, write_atomic,
 };
 
 pub struct CodexAdapter {
     capabilities: AgentCapabilities,
+    /// Root of the codex user config (`~/.codex` in practice). Captured at
+    /// construction so theme writes go to a hermetic location in tests.
+    config_root: PathBuf,
 }
 
 impl Default for CodexAdapter {
@@ -25,6 +30,13 @@ impl Default for CodexAdapter {
 
 impl CodexAdapter {
     pub fn new() -> Self {
+        let home = dirs::home_dir().unwrap_or_default();
+        Self::with_config_root(home.join(".codex"))
+    }
+
+    /// Constructor for tests that need a hermetic config root. Production
+    /// code always goes through [`Self::new`].
+    fn with_config_root(config_root: PathBuf) -> Self {
         Self {
             capabilities: AgentCapabilities {
                 // Codex has permission prompts via PermissionRequest hooks
@@ -36,9 +48,11 @@ impl CodexAdapter {
                     | AgentCapability::STRUCTURED_TRANSCRIPT
                     | AgentCapability::RAW_COST_PER_MESSAGE
                     | AgentCapability::SESSION_RESUME
-                    | AgentCapability::SESSION_PICKER,
+                    | AgentCapability::SESSION_PICKER
+                    | AgentCapability::THEME_SYNC,
                 supported_models: vec![],
             },
+            config_root,
         }
     }
 }
@@ -150,6 +164,43 @@ impl AgentAdapter for CodexAdapter {
         // keeps Codex's hook flow functional without spurious watchers.
         Ok(())
     }
+
+    async fn apply_theme(&self, palette: &ThemePalette) -> Result<(), AdapterError> {
+        let path = self.config_root.join("config.toml");
+        let theme_name = derive_codex_theme(palette);
+        upsert_codex_tui_theme(&path, theme_name).await?;
+        Ok(())
+    }
+}
+
+/// Map cluihud's light/dark variant to a codex `tui.theme` name. Codex
+/// today exposes a single syntax theme name (`monochrome`) regardless of
+/// variant — known limitation, documented in the spec delta. Returning a
+/// constant lets the mapping evolve when codex CLI widens its theme keys.
+fn derive_codex_theme(_palette: &ThemePalette) -> &'static str {
+    "monochrome"
+}
+
+/// Upsert `[tui] theme = "<value>"` in `path`, preserving every other
+/// table, key, comment and whitespace. Creates the file when missing.
+async fn upsert_codex_tui_theme(path: &Path, value: &str) -> Result<(), AdapterError> {
+    let raw = match tokio::fs::read_to_string(path).await {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(AdapterError::Io(e)),
+    };
+    let mut doc: toml_edit::DocumentMut = raw
+        .parse()
+        .map_err(|e: toml_edit::TomlError| AdapterError::Transport(anyhow::anyhow!(e)))?;
+    let tui = doc
+        .entry("tui")
+        .or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
+    let tui_table = tui
+        .as_table_mut()
+        .ok_or_else(|| AdapterError::Transport(anyhow::anyhow!("[tui] is not a TOML table")))?;
+    tui_table["theme"] = toml_edit::value(value);
+    write_atomic(path, doc.to_string().as_bytes()).await?;
+    Ok(())
 }
 
 /// Best-effort read of Codex's per-project trust state. Codex stores trust
@@ -214,6 +265,74 @@ mod tests {
     fn requires_cluihud_setup_is_true_for_codex() {
         let a = CodexAdapter::new();
         assert!(a.requires_cluihud_setup());
+    }
+
+    fn sample_palette() -> ThemePalette {
+        ThemePalette {
+            id: "v11-tokyo-night".into(),
+            is_dark: true,
+            surface: "#1a1b26".into(),
+            foreground: "#c0caf5".into(),
+            card: "#16161e".into(),
+            secondary: "#24283b".into(),
+            muted_foreground: "#7a88cf".into(),
+            border: "rgba(255,255,255,0.08)".into(),
+            accent: "#7aa2f7".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_theme_writes_tui_theme_key() {
+        let root = tempfile::tempdir().unwrap();
+        let adapter = CodexAdapter::with_config_root(root.path().to_path_buf());
+        adapter.apply_theme(&sample_palette()).await.unwrap();
+        let raw = tokio::fs::read_to_string(root.path().join("config.toml"))
+            .await
+            .unwrap();
+        let parsed: toml_edit::DocumentMut = raw.parse().unwrap();
+        assert_eq!(parsed["tui"]["theme"].as_str(), Some("monochrome"));
+    }
+
+    #[tokio::test]
+    async fn apply_theme_preserves_other_config_keys() {
+        let root = tempfile::tempdir().unwrap();
+        tokio::fs::create_dir_all(root.path()).await.unwrap();
+        tokio::fs::write(
+            root.path().join("config.toml"),
+            br#"# user-managed
+model = "gpt-5-codex"
+
+[mcp_servers.foo]
+command = "/usr/bin/foo"
+"#,
+        )
+        .await
+        .unwrap();
+        let adapter = CodexAdapter::with_config_root(root.path().to_path_buf());
+        adapter.apply_theme(&sample_palette()).await.unwrap();
+        let raw = tokio::fs::read_to_string(root.path().join("config.toml"))
+            .await
+            .unwrap();
+        let parsed: toml_edit::DocumentMut = raw.parse().unwrap();
+        assert_eq!(parsed["model"].as_str(), Some("gpt-5-codex"));
+        assert_eq!(
+            parsed["mcp_servers"]["foo"]["command"].as_str(),
+            Some("/usr/bin/foo")
+        );
+        assert_eq!(parsed["tui"]["theme"].as_str(), Some("monochrome"));
+        assert!(raw.contains("# user-managed"), "leading comment preserved");
+    }
+
+    #[tokio::test]
+    async fn apply_theme_creates_missing_config_file() {
+        let root = tempfile::tempdir().unwrap();
+        let adapter = CodexAdapter::with_config_root(root.path().to_path_buf());
+        let path = root.path().join("config.toml");
+        assert!(!path.exists());
+        adapter.apply_theme(&sample_palette()).await.unwrap();
+        let raw = tokio::fs::read_to_string(&path).await.unwrap();
+        assert!(raw.contains("[tui]"));
+        assert!(raw.contains("theme = \"monochrome\""));
     }
 
     #[test]

@@ -159,3 +159,15 @@ export interface AvailableAgent {
   version: string | null;
   capabilities: string[];
 }
+
+export interface ThemePalette {
+  id: string;
+  isDark: boolean;
+  surface: string;
+  foreground: string;
+  card: string;
+  secondary: string;
+  mutedForeground: string;
+  border: string;
+  accent: string;
+}

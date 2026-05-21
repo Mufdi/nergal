@@ -70,6 +70,10 @@ futures-util = "0.3"
 wezterm-term = { git = "https://github.com/wezterm/wezterm.git", tag = "20240203-110809-5046fc22" }
 termwiz = { git = "https://github.com/wezterm/wezterm.git", tag = "20240203-110809-5046fc22" }
 
+# Codex adapter theme sync: upsert `tui.theme` in `~/.codex/config.toml`
+# while preserving formatting + comments around unrelated keys.
+toml_edit = "0.22"
+
 # Used by `redirect_journald_stdio_to_logfile` in lib.rs to `dup2` an open log
 # file over stdout/stderr when launched under systemd (gnome-shell), where
 # stderr is a journald pipe whose backpressure stalls WebKitGTK rendering.

@@ -32,9 +32,7 @@ enum PiLine {
     #[serde(rename = "session")]
     Session,
     #[serde(rename = "message")]
-    Message {
-        message: PiMessage,
-    },
+    Message { message: PiMessage },
     #[serde(other)]
     Unknown,
 }

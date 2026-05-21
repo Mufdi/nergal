@@ -4,6 +4,7 @@ import { activeSessionTasksAtom, clearCompletedTasksAtom, taskMapAtom } from "@/
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { invoke } from "@/lib/tauri";
 import type { Task } from "@/lib/types";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ChevronDown, ChevronRight, Trash2, CheckCircle2, Circle, Loader2 } from "lucide-react";
 
 const STATUS_ICON: Record<string, typeof Circle> = {
@@ -88,9 +89,22 @@ export function TasksIsland() {
                 className="flex items-center gap-2 rounded px-2 py-1 hover:bg-secondary/30"
               >
                 <Icon className={`size-3 flex-shrink-0 ${color} ${task.status === "in_progress" ? "animate-spin" : ""}`} />
-                <span className={`truncate text-xs ${task.status === "completed" ? "text-muted-foreground line-through" : "text-foreground"}`}>
-                  {task.subject}
-                </span>
+                <TooltipProvider delay={0}>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span
+                          className={`truncate text-xs ${task.status === "completed" ? "text-muted-foreground line-through" : "text-foreground"}`}
+                        />
+                      }
+                    >
+                      {task.subject}
+                    </TooltipTrigger>
+                    <TooltipContent side="right" className="max-w-md text-[10px]">
+                      {task.subject}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               </div>
             );
           })}

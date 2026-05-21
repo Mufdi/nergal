@@ -103,6 +103,10 @@ bitflags::bitflags! {
         /// session". CC/Pi/Codex do; OpenCode doesn't. Distinct from
         /// SESSION_RESUME, which only says the agent can resume by id.
         const SESSION_PICKER        = 1 << 8;
+        /// The adapter can write cluihud's active theme palette into the
+        /// agent's native theme subsystem (pi hot-reload, opencode custom
+        /// theme, codex tui.theme). See `AgentAdapter::apply_theme`.
+        const THEME_SYNC            = 1 << 9;
     }
 }
 
@@ -139,6 +143,9 @@ impl serde::Serialize for AgentCapability {
         if self.contains(Self::SESSION_PICKER) {
             names.push("SESSION_PICKER");
         }
+        if self.contains(Self::THEME_SYNC) {
+            names.push("THEME_SYNC");
+        }
         names.serialize(ser)
     }
 }
@@ -160,6 +167,7 @@ impl<'de> serde::Deserialize<'de> for AgentCapability {
                 "SESSION_RESUME" => flags |= Self::SESSION_RESUME,
                 "ANNOTATIONS_INJECT" => flags |= Self::ANNOTATIONS_INJECT,
                 "SESSION_PICKER" => flags |= Self::SESSION_PICKER,
+                "THEME_SYNC" => flags |= Self::THEME_SYNC,
                 other => {
                     return Err(serde::de::Error::custom(format!(
                         "unknown agent capability: {other}"
@@ -178,6 +186,85 @@ impl<'de> serde::Deserialize<'de> for AgentCapability {
 pub struct AgentCapabilities {
     pub flags: AgentCapability,
     pub supported_models: Vec<String>,
+}
+
+/// Cluihud theme snapshot crossed to each [`AgentAdapter::apply_theme`] call.
+///
+/// Derived in the frontend from `getComputedStyle` on `<html>` after
+/// `applyTheme` commits, so the source of truth stays in CSS and adapters
+/// don't need to know cluihud's theme catalog.
+///
+/// `border` may carry an rgba string (e.g. `rgba(255,255,255,0.08)`); each
+/// adapter converts to its own native color shape.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThemePalette {
+    pub id: String,
+    pub is_dark: bool,
+    pub surface: String,
+    pub foreground: String,
+    pub card: String,
+    pub secondary: String,
+    pub muted_foreground: String,
+    pub border: String,
+    pub accent: String,
+}
+
+/// Atomically write `bytes` to `path` via stage-and-rename so readers (pi's
+/// theme hot-reloader, opencode's config probe) never see a half-written
+/// file. Parent directory is created on demand.
+pub async fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let mut tmp = path.as_os_str().to_os_string();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    tokio::fs::write(&tmp, bytes).await?;
+    tokio::fs::rename(&tmp, path).await?;
+    Ok(())
+}
+
+/// Reconcile a JSON settings file's top-level `theme` key.
+///
+/// - Missing file (or empty) → create with `{ "theme": expected }`.
+/// - `theme` absent → set it, preserve other keys.
+/// - `theme` already equals `expected` → no-op (`Ok(true)`).
+/// - `theme` set to anything else → leave untouched, `Ok(false)` so the
+///   caller can log "user selection wins".
+/// - Parse failure → leave file alone (`Ok(false)`), since clobbering a
+///   user's hand-edited config is worse than missing a theme sync cycle.
+pub async fn update_settings_theme_if_safe(path: &Path, expected: &str) -> std::io::Result<bool> {
+    let raw = match tokio::fs::read_to_string(path).await {
+        Ok(s) => Some(s),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e),
+    };
+    let mut value: serde_json::Value = match raw.as_deref().map(str::trim) {
+        None | Some("") => serde_json::Value::Object(serde_json::Map::new()),
+        Some(s) => match serde_json::from_str(s) {
+            Ok(v) => v,
+            Err(_) => return Ok(false),
+        },
+    };
+    let obj = match value.as_object_mut() {
+        Some(o) => o,
+        None => return Ok(false),
+    };
+    match obj.get("theme") {
+        Some(serde_json::Value::String(s)) if s == expected => return Ok(true),
+        Some(_) => return Ok(false),
+        None => {
+            obj.insert(
+                "theme".into(),
+                serde_json::Value::String(expected.to_string()),
+            );
+        }
+    }
+    let pretty =
+        serde_json::to_vec_pretty(&value).map_err(|e| std::io::Error::other(e.to_string()))?;
+    write_atomic(path, &pretty).await?;
+    Ok(true)
 }
 
 /// Outcome of a lightweight [`AgentAdapter::detect`] call. Must NOT spawn
@@ -377,6 +464,20 @@ pub trait AgentAdapter: Send + Sync {
             AgentCapability::ASK_USER_BLOCKING,
         ))
     }
+
+    /// Apply cluihud's active theme to the agent's native theming subsystem.
+    ///
+    /// Best-effort by contract: implementations write namespaced files
+    /// (`cluihud-active.*`) and only flip the agent's pointer when it is
+    /// absent or already ours, so a user-authored theme never gets clobbered.
+    /// Returned errors are logged at the registry dispatcher and never
+    /// surfaced as user-facing notifications.
+    ///
+    /// Adapters that declare [`AgentCapability::THEME_SYNC`] MUST override
+    /// this; the default returns `NotSupported`.
+    async fn apply_theme(&self, _palette: &ThemePalette) -> Result<(), AdapterError> {
+        Err(AdapterError::NotSupported(AgentCapability::THEME_SYNC))
+    }
 }
 
 #[cfg(test)]
@@ -446,5 +547,122 @@ mod tests {
         let json = r#"["PLAN_REVIEW","NOT_A_REAL_CAP"]"#;
         let parsed: Result<AgentCapability, _> = serde_json::from_str(json);
         assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn theme_sync_capability_round_trips() {
+        let caps = AgentCapability::THEME_SYNC | AgentCapability::TOOL_CALL_EVENTS;
+        let json = serde_json::to_string(&caps).unwrap();
+        assert!(json.contains("THEME_SYNC"));
+        let parsed: AgentCapability = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, caps);
+    }
+
+    #[test]
+    fn theme_palette_serializes_camel_case() {
+        let p = ThemePalette {
+            id: "v1-dark".into(),
+            is_dark: true,
+            surface: "#000".into(),
+            foreground: "#fff".into(),
+            card: "#0a0a0b".into(),
+            secondary: "#1c1c1e".into(),
+            muted_foreground: "#5c5c5f".into(),
+            border: "rgba(255,255,255,0.08)".into(),
+            accent: "#f97316".into(),
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("\"isDark\":true"));
+        assert!(json.contains("\"mutedForeground\":"));
+        let parsed: ThemePalette = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.id, "v1-dark");
+        assert_eq!(parsed.muted_foreground, "#5c5c5f");
+        assert!(parsed.is_dark);
+    }
+
+    #[tokio::test]
+    async fn write_atomic_creates_parent_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("nested/sub/out.json");
+        write_atomic(&target, b"{\"k\":1}").await.unwrap();
+        let content = tokio::fs::read_to_string(&target).await.unwrap();
+        assert_eq!(content, "{\"k\":1}");
+    }
+
+    #[tokio::test]
+    async fn update_settings_theme_creates_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let touched = update_settings_theme_if_safe(&path, "cluihud-active")
+            .await
+            .unwrap();
+        assert!(touched);
+        let v: serde_json::Value =
+            serde_json::from_str(&tokio::fs::read_to_string(&path).await.unwrap()).unwrap();
+        assert_eq!(v["theme"], "cluihud-active");
+    }
+
+    #[tokio::test]
+    async fn update_settings_theme_preserves_other_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        tokio::fs::write(&path, br#"{"defaultModel":"sonnet","other":42}"#)
+            .await
+            .unwrap();
+        let touched = update_settings_theme_if_safe(&path, "cluihud-active")
+            .await
+            .unwrap();
+        assert!(touched);
+        let v: serde_json::Value =
+            serde_json::from_str(&tokio::fs::read_to_string(&path).await.unwrap()).unwrap();
+        assert_eq!(v["theme"], "cluihud-active");
+        assert_eq!(v["defaultModel"], "sonnet");
+        assert_eq!(v["other"], 42);
+    }
+
+    #[tokio::test]
+    async fn update_settings_theme_respects_user_choice() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        tokio::fs::write(&path, br#"{"theme":"tokyonight"}"#)
+            .await
+            .unwrap();
+        let touched = update_settings_theme_if_safe(&path, "cluihud-active")
+            .await
+            .unwrap();
+        assert!(!touched);
+        let v: serde_json::Value =
+            serde_json::from_str(&tokio::fs::read_to_string(&path).await.unwrap()).unwrap();
+        assert_eq!(v["theme"], "tokyonight");
+    }
+
+    #[tokio::test]
+    async fn update_settings_theme_idempotent_when_already_ours() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        tokio::fs::write(&path, br#"{"theme":"cluihud-active","x":1}"#)
+            .await
+            .unwrap();
+        let touched = update_settings_theme_if_safe(&path, "cluihud-active")
+            .await
+            .unwrap();
+        assert!(touched);
+        let raw = tokio::fs::read_to_string(&path).await.unwrap();
+        // No-op path: file is left untouched (we asserted equality, didn't
+        // rewrite), so the original compact form survives.
+        assert_eq!(raw, r#"{"theme":"cluihud-active","x":1}"#);
+    }
+
+    #[tokio::test]
+    async fn update_settings_theme_skips_corrupted_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        tokio::fs::write(&path, b"not valid json").await.unwrap();
+        let touched = update_settings_theme_if_safe(&path, "cluihud-active")
+            .await
+            .unwrap();
+        assert!(!touched);
+        let raw = tokio::fs::read_to_string(&path).await.unwrap();
+        assert_eq!(raw, "not valid json");
     }
 }

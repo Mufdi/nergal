@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::{AdapterError, AgentAdapter, AgentId, DetectionResult};
+use super::{AdapterError, AgentAdapter, AgentCapability, AgentId, DetectionResult, ThemePalette};
 
 /// In-process registry of adapter instances. Cheap to clone the `Arc`.
 pub struct AgentRegistry {
@@ -64,6 +64,30 @@ impl AgentRegistry {
         out
     }
 
+    /// Push cluihud's active theme to every adapter that advertises
+    /// [`AgentCapability::THEME_SYNC`]. Sequential — the set is tiny (≤4)
+    /// and each write is cheap. Per-adapter failures are logged at `warn!`
+    /// and never propagated: theme sync is a UX nicety, not load-bearing.
+    pub async fn apply_theme_to_all(&self, palette: ThemePalette) {
+        let adapters = self.list();
+        for adapter in adapters {
+            if !adapter
+                .capabilities()
+                .flags
+                .contains(AgentCapability::THEME_SYNC)
+            {
+                continue;
+            }
+            if let Err(e) = adapter.apply_theme(&palette).await {
+                tracing::warn!(
+                    agent = %adapter.id().as_str(),
+                    error = %e,
+                    "apply_theme failed; theme sync is best-effort",
+                );
+            }
+        }
+    }
+
     /// Priority list for default-agent resolution when more than one is
     /// detected. Stable — codified here rather than derived from registration
     /// order so the user-visible default doesn't depend on init ordering.
@@ -94,15 +118,18 @@ pub fn register_supplementary_adapters(reg: &AgentRegistry) -> Result<(), Adapte
 mod tests {
     use super::*;
     use crate::agents::{
-        AgentCapabilities, AgentCapability, EventSink, SpawnContext, SpawnSpec, TranscriptEvent,
-        Transport,
+        AgentCapabilities, AgentCapability, EventSink, SpawnContext, SpawnSpec, ThemePalette,
+        TranscriptEvent, Transport,
     };
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Minimal stub adapter for registry tests. Lives only in `cfg(test)`.
     struct StubAdapter {
         id: AgentId,
         caps: AgentCapabilities,
+        apply_theme_calls: AtomicUsize,
+        apply_theme_fails: bool,
     }
 
     impl StubAdapter {
@@ -113,7 +140,19 @@ mod tests {
                     flags: AgentCapability::empty(),
                     supported_models: vec![],
                 },
+                apply_theme_calls: AtomicUsize::new(0),
+                apply_theme_fails: false,
             }
+        }
+
+        fn with_theme_sync(mut self, fails: bool) -> Self {
+            self.caps.flags |= AgentCapability::THEME_SYNC;
+            self.apply_theme_fails = fails;
+            self
+        }
+
+        fn theme_call_count(&self) -> usize {
+            self.apply_theme_calls.load(Ordering::SeqCst)
         }
     }
 
@@ -159,6 +198,28 @@ mod tests {
         ) -> Result<(), AdapterError> {
             Ok(())
         }
+        async fn apply_theme(&self, _palette: &ThemePalette) -> Result<(), AdapterError> {
+            self.apply_theme_calls.fetch_add(1, Ordering::SeqCst);
+            if self.apply_theme_fails {
+                Err(AdapterError::Transport(anyhow::anyhow!("synthetic fail")))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn sample_palette() -> ThemePalette {
+        ThemePalette {
+            id: "v1-dark".into(),
+            is_dark: true,
+            surface: "#141415".into(),
+            foreground: "#ededef".into(),
+            card: "#0a0a0b".into(),
+            secondary: "#1c1c1e".into(),
+            muted_foreground: "#5c5c5f".into(),
+            border: "rgba(255,255,255,0.08)".into(),
+            accent: "#f97316".into(),
+        }
     }
 
     #[test]
@@ -197,6 +258,34 @@ mod tests {
                 AgentId::pi(),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn apply_theme_to_all_skips_non_capable_adapters() {
+        let reg = AgentRegistry::new();
+        let capable = Arc::new(StubAdapter::new(AgentId::pi()).with_theme_sync(false));
+        let plain = Arc::new(StubAdapter::new(AgentId::opencode()));
+        reg.register(capable.clone() as Arc<dyn AgentAdapter>)
+            .unwrap();
+        reg.register(plain.clone() as Arc<dyn AgentAdapter>)
+            .unwrap();
+        reg.apply_theme_to_all(sample_palette()).await;
+        assert_eq!(capable.theme_call_count(), 1);
+        assert_eq!(plain.theme_call_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn apply_theme_to_all_continues_after_per_adapter_failure() {
+        let reg = AgentRegistry::new();
+        let failing = Arc::new(StubAdapter::new(AgentId::pi()).with_theme_sync(true));
+        let healthy = Arc::new(StubAdapter::new(AgentId::codex()).with_theme_sync(false));
+        reg.register(failing.clone() as Arc<dyn AgentAdapter>)
+            .unwrap();
+        reg.register(healthy.clone() as Arc<dyn AgentAdapter>)
+            .unwrap();
+        reg.apply_theme_to_all(sample_palette()).await;
+        assert_eq!(failing.theme_call_count(), 1);
+        assert_eq!(healthy.theme_call_count(), 1);
     }
 
     #[tokio::test]

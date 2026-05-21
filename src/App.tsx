@@ -6,9 +6,23 @@ import { setupAgentListeners } from "./stores/agent";
 import { setupHookListeners } from "./stores/hooks";
 import { configAtom } from "./stores/config";
 import { invoke } from "./lib/tauri";
-import { applyTheme } from "./lib/themes";
-import type { Config } from "./lib/types";
+import { applyTheme, extractPaletteFromComputedStyle } from "./lib/themes";
+import type { Config, ThemePalette } from "./lib/types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+
+// Trailing-edge debounce so rapid theme clicks collapse to a single backend
+// invocation. 150ms balances perceived responsiveness against thrashing pi's
+// hot-reloader / opencode's HTTP API when the user clicks through swatches.
+let themeSyncTimer: number | null = null;
+function debouncedSyncPaletteToAgents(palette: ThemePalette): void {
+  if (themeSyncTimer !== null) window.clearTimeout(themeSyncTimer);
+  themeSyncTimer = window.setTimeout(() => {
+    themeSyncTimer = null;
+    invoke("apply_theme_to_agents", { palette }).catch((err) => {
+      console.warn("[app] apply_theme_to_agents failed:", err);
+    });
+  }, 150);
+}
 
 class ErrorBoundary extends Component<
   { children: ReactNode },
@@ -60,6 +74,11 @@ export function App() {
 
   useEffect(() => {
     applyTheme(themeMode, customThemes);
+    const handle = requestAnimationFrame(() => {
+      const palette = extractPaletteFromComputedStyle();
+      debouncedSyncPaletteToAgents(palette);
+    });
+    return () => cancelAnimationFrame(handle);
   }, [themeMode, customThemes]);
 
   useEffect(() => {

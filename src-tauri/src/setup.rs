@@ -488,6 +488,10 @@ mod tests {
 
         assert!(!merge_hook(&mut hooks_map, &def));
         let arr = hooks_map["SessionStart"].as_array().unwrap();
-        assert_eq!(arr.len(), 1, "should not duplicate when wrapper form already present");
+        assert_eq!(
+            arr.len(),
+            1,
+            "should not duplicate when wrapper form already present"
+        );
     }
 }

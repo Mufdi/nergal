@@ -13,7 +13,7 @@ use super::session_resolver::{encode_cwd_to_pi_path, extract_pi_session_uuid, wa
 use super::transcript::parse_transcript_line;
 use crate::agents::{
     AdapterError, AgentAdapter, AgentCapabilities, AgentCapability, AgentId, DetectionResult,
-    EventSink, SpawnContext, SpawnSpec, TranscriptEvent, Transport,
+    EventSink, SpawnContext, SpawnSpec, ThemePalette, TranscriptEvent, Transport, write_atomic,
 };
 
 pub struct PiAdapter {
@@ -41,6 +41,12 @@ impl Default for PiAdapter {
 impl PiAdapter {
     pub fn new() -> Self {
         let home = dirs::home_dir().unwrap_or_default();
+        Self::with_state_dir(home.join(".pi/agent"))
+    }
+
+    /// Constructor for tests that need a hermetic `state_dir`. Production
+    /// code always goes through [`Self::new`].
+    fn with_state_dir(state_dir: PathBuf) -> Self {
         Self {
             capabilities: AgentCapabilities {
                 // Pi by design has no plan-mode, no permission prompt, no
@@ -49,11 +55,12 @@ impl PiAdapter {
                     | AgentCapability::STRUCTURED_TRANSCRIPT
                     | AgentCapability::RAW_COST_PER_MESSAGE
                     | AgentCapability::SESSION_RESUME
-                    | AgentCapability::SESSION_PICKER,
+                    | AgentCapability::SESSION_PICKER
+                    | AgentCapability::THEME_SYNC,
                 supported_models: vec![],
             },
             binary_path: parking_lot::RwLock::new(which::which("pi").ok()),
-            state_dir: home.join(".pi/agent"),
+            state_dir,
             session_cwds: Arc::new(DashMap::new()),
             tails: Arc::new(DashMap::new()),
             session_uuids: Arc::new(DashMap::new()),
@@ -211,6 +218,116 @@ impl AgentAdapter for PiAdapter {
             .get(cluihud_session_id)
             .map(|r| r.clone())
     }
+
+    async fn apply_theme(&self, palette: &ThemePalette) -> Result<(), AdapterError> {
+        let themes_dir = self.state_dir.join("themes");
+        let target = themes_dir.join("cluihud-active.json");
+        let body = serde_json::to_vec_pretty(&build_pi_theme(palette))
+            .map_err(|e| AdapterError::Transport(anyhow::anyhow!(e)))?;
+        write_atomic(&target, &body).await?;
+        let settings = self.state_dir.join("settings.json");
+        let pointed_at_us =
+            crate::agents::update_settings_theme_if_safe(&settings, "cluihud-active").await?;
+        if !pointed_at_us {
+            tracing::debug!(
+                "pi settings.json points at a user-selected theme; cluihud-active.json written but inactive"
+            );
+        }
+        Ok(())
+    }
+}
+
+/// Translate cluihud's `ThemePalette` into the 51-token pi theme schema.
+///
+/// `vars` carries the cluihud palette as named refs; `colors` is a semantic
+/// indirection layer (`"accent"` references `vars.accent`). Tokens set to
+/// `""` inherit the terminal default foreground so pi messages pick up
+/// cluihud's `--terminal-foreground` automatically.
+fn build_pi_theme(palette: &ThemePalette) -> serde_json::Value {
+    let mut vars = serde_json::Map::new();
+    vars.insert("accent".into(), palette.accent.as_str().into());
+    vars.insert("foreground".into(), palette.foreground.as_str().into());
+    vars.insert("muted".into(), palette.muted_foreground.as_str().into());
+    vars.insert("surface".into(), palette.surface.as_str().into());
+    vars.insert("card".into(), palette.card.as_str().into());
+    vars.insert("secondary".into(), palette.secondary.as_str().into());
+    vars.insert("success".into(), "#22c55e".into());
+    vars.insert("error".into(), "#ef4444".into());
+    vars.insert("warning".into(), "#f59e0b".into());
+
+    let pairs: &[(&str, &str)] = &[
+        ("accent", "accent"),
+        ("border", "accent"),
+        ("borderAccent", "accent"),
+        ("borderMuted", "muted"),
+        ("success", "success"),
+        ("error", "error"),
+        ("warning", "warning"),
+        ("muted", "muted"),
+        ("dim", "muted"),
+        ("text", ""),
+        ("thinkingText", "muted"),
+        ("selectedBg", "secondary"),
+        ("userMessageBg", "card"),
+        ("userMessageText", ""),
+        ("customMessageBg", "card"),
+        ("customMessageText", ""),
+        ("customMessageLabel", "accent"),
+        ("toolPendingBg", "card"),
+        ("toolSuccessBg", "card"),
+        ("toolErrorBg", "card"),
+        ("toolTitle", "accent"),
+        ("toolOutput", ""),
+        ("mdHeading", "accent"),
+        ("mdLink", "accent"),
+        ("mdLinkUrl", "muted"),
+        ("mdCode", "accent"),
+        ("mdCodeBlock", ""),
+        ("mdCodeBlockBorder", "muted"),
+        ("mdQuote", "muted"),
+        ("mdQuoteBorder", "muted"),
+        ("mdHr", "muted"),
+        ("mdListBullet", "accent"),
+        ("toolDiffAdded", "success"),
+        ("toolDiffRemoved", "error"),
+        ("toolDiffContext", "muted"),
+        ("syntaxComment", "muted"),
+        ("syntaxKeyword", "accent"),
+        ("syntaxFunction", "accent"),
+        ("syntaxVariable", "foreground"),
+        ("syntaxString", "success"),
+        ("syntaxNumber", "foreground"),
+        ("syntaxType", "accent"),
+        ("syntaxOperator", "muted"),
+        ("syntaxPunctuation", "muted"),
+        ("thinkingOff", "muted"),
+        ("thinkingMinimal", "muted"),
+        ("thinkingLow", "muted"),
+        ("thinkingMedium", "accent"),
+        ("thinkingHigh", "accent"),
+        ("thinkingXhigh", "accent"),
+        ("bashMode", "accent"),
+    ];
+    let mut colors = serde_json::Map::new();
+    for (k, v) in pairs {
+        colors.insert((*k).into(), serde_json::Value::String((*v).to_string()));
+    }
+
+    let mut export = serde_json::Map::new();
+    export.insert("pageBg".into(), palette.surface.as_str().into());
+    export.insert("cardBg".into(), palette.card.as_str().into());
+    export.insert("infoBg".into(), palette.secondary.as_str().into());
+
+    let mut root = serde_json::Map::new();
+    root.insert(
+        "$schema".into(),
+        "https://raw.githubusercontent.com/badlogic/pi-mono/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json".into(),
+    );
+    root.insert("name".into(), "cluihud-active".into());
+    root.insert("vars".into(), serde_json::Value::Object(vars));
+    root.insert("colors".into(), serde_json::Value::Object(colors));
+    root.insert("export".into(), serde_json::Value::Object(export));
+    serde_json::Value::Object(root)
 }
 
 #[cfg(test)]
@@ -252,6 +369,148 @@ mod tests {
     fn requires_cluihud_setup_is_false_for_pi() {
         let a = PiAdapter::new();
         assert!(!a.requires_cluihud_setup());
+    }
+
+    fn sample_palette() -> ThemePalette {
+        ThemePalette {
+            id: "v11-tokyo-night".into(),
+            is_dark: true,
+            surface: "#1a1b26".into(),
+            foreground: "#c0caf5".into(),
+            card: "#16161e".into(),
+            secondary: "#24283b".into(),
+            muted_foreground: "#7a88cf".into(),
+            border: "rgba(255,255,255,0.08)".into(),
+            accent: "#7aa2f7".into(),
+        }
+    }
+
+    #[test]
+    fn build_pi_theme_emits_all_required_tokens() {
+        let json = build_pi_theme(&sample_palette());
+        let colors = json
+            .get("colors")
+            .and_then(|c| c.as_object())
+            .expect("colors block present");
+        let required = [
+            "accent",
+            "border",
+            "borderAccent",
+            "borderMuted",
+            "success",
+            "error",
+            "warning",
+            "muted",
+            "dim",
+            "text",
+            "thinkingText",
+            "selectedBg",
+            "userMessageBg",
+            "userMessageText",
+            "customMessageBg",
+            "customMessageText",
+            "customMessageLabel",
+            "toolPendingBg",
+            "toolSuccessBg",
+            "toolErrorBg",
+            "toolTitle",
+            "toolOutput",
+            "mdHeading",
+            "mdLink",
+            "mdLinkUrl",
+            "mdCode",
+            "mdCodeBlock",
+            "mdCodeBlockBorder",
+            "mdQuote",
+            "mdQuoteBorder",
+            "mdHr",
+            "mdListBullet",
+            "toolDiffAdded",
+            "toolDiffRemoved",
+            "toolDiffContext",
+            "syntaxComment",
+            "syntaxKeyword",
+            "syntaxFunction",
+            "syntaxVariable",
+            "syntaxString",
+            "syntaxNumber",
+            "syntaxType",
+            "syntaxOperator",
+            "syntaxPunctuation",
+            "thinkingOff",
+            "thinkingMinimal",
+            "thinkingLow",
+            "thinkingMedium",
+            "thinkingHigh",
+            "thinkingXhigh",
+            "bashMode",
+        ];
+        assert_eq!(required.len(), 51);
+        for key in &required {
+            assert!(colors.contains_key(*key), "missing pi color token: {key}");
+        }
+        assert_eq!(colors.len(), required.len());
+        assert_eq!(json["name"], "cluihud-active");
+        assert_eq!(json["vars"]["accent"], "#7aa2f7");
+        assert_eq!(json["export"]["pageBg"], "#1a1b26");
+    }
+
+    #[tokio::test]
+    async fn apply_theme_writes_cluihud_active_json() {
+        let state = tempfile::tempdir().unwrap();
+        let adapter = PiAdapter::with_state_dir(state.path().to_path_buf());
+        adapter.apply_theme(&sample_palette()).await.unwrap();
+        let theme_path = state.path().join("themes/cluihud-active.json");
+        let raw = tokio::fs::read_to_string(&theme_path).await.unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(parsed["name"], "cluihud-active");
+        assert_eq!(parsed["vars"]["accent"], "#7aa2f7");
+    }
+
+    #[tokio::test]
+    async fn apply_theme_respects_user_theme_choice() {
+        let state = tempfile::tempdir().unwrap();
+        tokio::fs::create_dir_all(state.path()).await.unwrap();
+        tokio::fs::write(
+            state.path().join("settings.json"),
+            br#"{"theme":"my-custom","defaultModel":"sonnet"}"#,
+        )
+        .await
+        .unwrap();
+        let adapter = PiAdapter::with_state_dir(state.path().to_path_buf());
+        adapter.apply_theme(&sample_palette()).await.unwrap();
+        let raw = tokio::fs::read_to_string(state.path().join("settings.json"))
+            .await
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(parsed["theme"], "my-custom");
+        assert_eq!(parsed["defaultModel"], "sonnet");
+        let theme_path = state.path().join("themes/cluihud-active.json");
+        assert!(
+            theme_path.exists(),
+            "theme file written even when user opted out"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_theme_preserves_other_settings_keys() {
+        let state = tempfile::tempdir().unwrap();
+        tokio::fs::create_dir_all(state.path()).await.unwrap();
+        tokio::fs::write(
+            state.path().join("settings.json"),
+            br#"{"defaultModel":"sonnet","lastChangelogVersion":"0.72.1"}"#,
+        )
+        .await
+        .unwrap();
+        let adapter = PiAdapter::with_state_dir(state.path().to_path_buf());
+        adapter.apply_theme(&sample_palette()).await.unwrap();
+        let raw = tokio::fs::read_to_string(state.path().join("settings.json"))
+            .await
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(parsed["theme"], "cluihud-active");
+        assert_eq!(parsed["defaultModel"], "sonnet");
+        assert_eq!(parsed["lastChangelogVersion"], "0.72.1");
     }
 
     #[test]

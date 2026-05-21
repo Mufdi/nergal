@@ -108,8 +108,7 @@ pub async fn browser_register_shortcuts(app: AppHandle) -> Result<(), String> {
         let event_id = (*event_id).to_string();
         if let Err(e) = manager.on_shortcut(shortcut, move |_app, _shortcut, event| {
             if event.state == ShortcutState::Pressed
-                && let Err(emit_err) =
-                    app_clone.emit("browser:intercepted-shortcut", &event_id)
+                && let Err(emit_err) = app_clone.emit("browser:intercepted-shortcut", &event_id)
             {
                 tracing::warn!("emit browser:intercepted-shortcut failed: {emit_err}");
             }

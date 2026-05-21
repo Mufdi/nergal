@@ -17,7 +17,7 @@ use dashmap::DashMap;
 use super::sse_client::{SessionIdMap, SseClient};
 use crate::agents::{
     AdapterError, AgentAdapter, AgentCapabilities, AgentCapability, AgentId, DetectionResult,
-    EventSink, SpawnContext, SpawnSpec, TranscriptEvent, Transport,
+    EventSink, SpawnContext, SpawnSpec, ThemePalette, TranscriptEvent, Transport, write_atomic,
 };
 
 /// Port range reserved for OpenCode TUI sessions. Stays well above the
@@ -29,6 +29,10 @@ pub struct OpenCodeAdapter {
     capabilities: AgentCapabilities,
     binary_path: parking_lot::RwLock<Option<PathBuf>>,
     config_paths: Vec<PathBuf>,
+    /// Root of the opencode user config (`~/.config/opencode` in practice).
+    /// Captured at construction so `apply_theme` writes into a hermetic
+    /// location in tests without relying on a process-global HOME.
+    config_root: PathBuf,
     /// `cluihud_session_id` → bound port. Set in [`Self::spawn`] and read by
     /// [`Self::start_event_pump`] so the SSE consumer connects to the right
     /// address without re-deriving it.
@@ -51,6 +55,13 @@ impl Default for OpenCodeAdapter {
 impl OpenCodeAdapter {
     pub fn new() -> Self {
         let home = dirs::home_dir().unwrap_or_default();
+        Self::with_config_root(home.join(".config/opencode"))
+    }
+
+    /// Constructor for tests that need a hermetic config root. Production
+    /// code always goes through [`Self::new`].
+    fn with_config_root(config_root: PathBuf) -> Self {
+        let home = dirs::home_dir().unwrap_or_default();
         Self {
             capabilities: AgentCapabilities {
                 // Now that the SSE consumer is wired, re-enable the
@@ -60,14 +71,13 @@ impl OpenCodeAdapter {
                 // --continue / --session <id>.
                 flags: AgentCapability::SESSION_RESUME
                     | AgentCapability::TOOL_CALL_EVENTS
-                    | AgentCapability::STRUCTURED_TRANSCRIPT,
+                    | AgentCapability::STRUCTURED_TRANSCRIPT
+                    | AgentCapability::THEME_SYNC,
                 supported_models: vec![],
             },
             binary_path: parking_lot::RwLock::new(which::which("opencode").ok()),
-            config_paths: vec![
-                home.join(".config/opencode"),
-                home.join(".local/share/opencode"),
-            ],
+            config_paths: vec![config_root.clone(), home.join(".local/share/opencode")],
+            config_root,
             session_ports: Arc::new(DashMap::new()),
             sse_clients: Arc::new(DashMap::new()),
             session_internal_ids: Arc::new(DashMap::new()),
@@ -232,6 +242,116 @@ impl AgentAdapter for OpenCodeAdapter {
             .get(cluihud_session_id)
             .map(|r| r.clone())
     }
+
+    async fn apply_theme(&self, palette: &ThemePalette) -> Result<(), AdapterError> {
+        let themes_dir = self.config_root.join("themes");
+        let target = themes_dir.join("cluihud-active.json");
+        let body = serde_json::to_vec_pretty(&build_opencode_theme(palette))
+            .map_err(|e| AdapterError::Transport(anyhow::anyhow!(e)))?;
+        write_atomic(&target, &body).await?;
+        let tui_json = self.config_root.join("tui.json");
+        let pointed_at_us =
+            crate::agents::update_settings_theme_if_safe(&tui_json, "cluihud-active").await?;
+        if !pointed_at_us {
+            tracing::debug!(
+                "opencode tui.json points at a user-selected theme; cluihud-active.json written but inactive"
+            );
+            return Ok(());
+        }
+        for entry in self.session_ports.iter() {
+            let port = *entry.value();
+            let url = format!("http://127.0.0.1:{port}/tui/execute-command");
+            let body = serde_json::json!({ "command": "theme cluihud-active" });
+            // Best-effort: the live-switch endpoint isn't documented as
+            // accepting an argument. Failure (timeout, 4xx, connection
+            // refused) falls back to next-spawn via tui.json.
+            let _ = reqwest::Client::new()
+                .post(&url)
+                .json(&body)
+                .timeout(std::time::Duration::from_millis(1500))
+                .send()
+                .await;
+        }
+        Ok(())
+    }
+}
+
+/// Translate a `ThemePalette` into the opencode theme schema
+/// (`https://opencode.ai/theme.json`).
+///
+/// `defs` carries the cluihud palette as named refs; each `theme.*` token
+/// points at one of those refs. Required tokens per schema: primary,
+/// secondary, accent, text, textMuted, background. We populate the full
+/// UI/markdown/syntax set so opencode renders coherently against cluihud's
+/// chrome.
+fn build_opencode_theme(palette: &ThemePalette) -> serde_json::Value {
+    let mut defs = serde_json::Map::new();
+    defs.insert("bg".into(), palette.surface.as_str().into());
+    defs.insert("card".into(), palette.card.as_str().into());
+    defs.insert("secondary".into(), palette.secondary.as_str().into());
+    defs.insert("fg".into(), palette.foreground.as_str().into());
+    defs.insert("muted".into(), palette.muted_foreground.as_str().into());
+    defs.insert("accent".into(), palette.accent.as_str().into());
+    defs.insert("success".into(), "#22c55e".into());
+    defs.insert("error".into(), "#ef4444".into());
+    defs.insert("warning".into(), "#f59e0b".into());
+    defs.insert("info".into(), palette.accent.as_str().into());
+
+    let pairs: &[(&str, &str)] = &[
+        ("primary", "accent"),
+        ("secondary", "secondary"),
+        ("accent", "accent"),
+        ("error", "error"),
+        ("warning", "warning"),
+        ("success", "success"),
+        ("info", "info"),
+        ("text", "fg"),
+        ("textMuted", "muted"),
+        ("background", "bg"),
+        ("backgroundPanel", "card"),
+        ("backgroundElement", "secondary"),
+        ("border", "muted"),
+        ("borderActive", "accent"),
+        ("borderSubtle", "muted"),
+        ("diffAdded", "success"),
+        ("diffRemoved", "error"),
+        ("diffContext", "muted"),
+        ("diffHunkHeader", "accent"),
+        ("diffLineNumber", "muted"),
+        ("markdownText", "fg"),
+        ("markdownHeading", "accent"),
+        ("markdownLink", "accent"),
+        ("markdownLinkText", "accent"),
+        ("markdownCode", "accent"),
+        ("markdownBlockQuote", "muted"),
+        ("markdownEmph", "accent"),
+        ("markdownStrong", "fg"),
+        ("markdownHorizontalRule", "muted"),
+        ("markdownListItem", "fg"),
+        ("markdownListEnumeration", "accent"),
+        ("markdownImage", "accent"),
+        ("markdownImageText", "muted"),
+        ("markdownCodeBlock", "fg"),
+        ("syntaxComment", "muted"),
+        ("syntaxKeyword", "accent"),
+        ("syntaxFunction", "accent"),
+        ("syntaxVariable", "fg"),
+        ("syntaxString", "success"),
+        ("syntaxNumber", "fg"),
+        ("syntaxType", "accent"),
+        ("syntaxOperator", "muted"),
+        ("syntaxPunctuation", "muted"),
+    ];
+    let mut theme = serde_json::Map::new();
+    for (k, v) in pairs {
+        theme.insert((*k).into(), serde_json::Value::String((*v).to_string()));
+    }
+
+    let mut root = serde_json::Map::new();
+    root.insert("$schema".into(), "https://opencode.ai/theme.json".into());
+    root.insert("defs".into(), serde_json::Value::Object(defs));
+    root.insert("theme".into(), serde_json::Value::Object(theme));
+    serde_json::Value::Object(root)
 }
 
 #[cfg(test)]
@@ -274,6 +394,105 @@ mod tests {
         let p2 = OpenCodeAdapter::port_for("ses-abc");
         assert_eq!(p1, p2);
         assert!((PORT_BASE..PORT_BASE + PORT_SPAN).contains(&p1));
+    }
+
+    fn sample_palette() -> ThemePalette {
+        ThemePalette {
+            id: "v11-tokyo-night".into(),
+            is_dark: true,
+            surface: "#1a1b26".into(),
+            foreground: "#c0caf5".into(),
+            card: "#16161e".into(),
+            secondary: "#24283b".into(),
+            muted_foreground: "#7a88cf".into(),
+            border: "rgba(255,255,255,0.08)".into(),
+            accent: "#7aa2f7".into(),
+        }
+    }
+
+    #[test]
+    fn build_opencode_theme_includes_required_token_set() {
+        let json = build_opencode_theme(&sample_palette());
+        assert_eq!(json["$schema"], "https://opencode.ai/theme.json");
+        let theme = json
+            .get("theme")
+            .and_then(|t| t.as_object())
+            .expect("theme block");
+        for required in [
+            "primary",
+            "secondary",
+            "accent",
+            "text",
+            "textMuted",
+            "background",
+        ] {
+            assert!(
+                theme.contains_key(required),
+                "missing required opencode token: {required}"
+            );
+        }
+        let defs = json
+            .get("defs")
+            .and_then(|d| d.as_object())
+            .expect("defs block");
+        assert_eq!(defs["bg"], "#1a1b26");
+        assert_eq!(defs["accent"], "#7aa2f7");
+        assert_eq!(theme["background"], "bg");
+        assert_eq!(theme["accent"], "accent");
+    }
+
+    #[tokio::test]
+    async fn apply_theme_writes_expected_files() {
+        let root = tempfile::tempdir().unwrap();
+        let adapter = OpenCodeAdapter::with_config_root(root.path().to_path_buf());
+        adapter.apply_theme(&sample_palette()).await.unwrap();
+        let theme_path = root.path().join("themes/cluihud-active.json");
+        let raw = tokio::fs::read_to_string(&theme_path).await.unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(parsed["$schema"], "https://opencode.ai/theme.json");
+        assert_eq!(parsed["defs"]["accent"], "#7aa2f7");
+        let tui_raw = tokio::fs::read_to_string(root.path().join("tui.json"))
+            .await
+            .unwrap();
+        let tui: serde_json::Value = serde_json::from_str(&tui_raw).unwrap();
+        assert_eq!(tui["theme"], "cluihud-active");
+    }
+
+    #[tokio::test]
+    async fn apply_theme_preserves_existing_tui_json_keys() {
+        let root = tempfile::tempdir().unwrap();
+        tokio::fs::create_dir_all(root.path()).await.unwrap();
+        tokio::fs::write(root.path().join("tui.json"), br#"{"layout":"split"}"#)
+            .await
+            .unwrap();
+        let adapter = OpenCodeAdapter::with_config_root(root.path().to_path_buf());
+        adapter.apply_theme(&sample_palette()).await.unwrap();
+        let raw = tokio::fs::read_to_string(root.path().join("tui.json"))
+            .await
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(parsed["theme"], "cluihud-active");
+        assert_eq!(parsed["layout"], "split");
+    }
+
+    #[tokio::test]
+    async fn apply_theme_does_not_overwrite_user_theme_choice() {
+        let root = tempfile::tempdir().unwrap();
+        tokio::fs::create_dir_all(root.path()).await.unwrap();
+        tokio::fs::write(root.path().join("tui.json"), br#"{"theme":"tokyonight"}"#)
+            .await
+            .unwrap();
+        let adapter = OpenCodeAdapter::with_config_root(root.path().to_path_buf());
+        adapter.apply_theme(&sample_palette()).await.unwrap();
+        let raw = tokio::fs::read_to_string(root.path().join("tui.json"))
+            .await
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(parsed["theme"], "tokyonight");
+        assert!(
+            root.path().join("themes/cluihud-active.json").exists(),
+            "theme file written even when user opted out"
+        );
     }
 
     #[test]

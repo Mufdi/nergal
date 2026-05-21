@@ -27,7 +27,7 @@ export interface Theme {
   fonts: ThemeFonts;
 }
 
-import type { CustomTheme } from "./types";
+import type { CustomTheme, ThemePalette } from "./types";
 
 export const FONT_GEIST_SANS = '"Geist Variable", "Inter", system-ui, sans-serif';
 export const FONT_INTER = '"Inter Variable", "Inter", system-ui, sans-serif';
@@ -520,6 +520,67 @@ function applySnapshot(root: HTMLElement, snapshot: ThemeSnapshot): void {
   root.style.setProperty("--theme-font-interface", snapshot.fonts.interface);
   root.style.setProperty("--theme-font-terminal", snapshot.fonts.terminal);
   root.style.setProperty("--theme-font-markdown", snapshot.fonts.markdown);
+}
+
+/// Snapshot the computed CSS variables backing the current theme into a
+/// `ThemePalette` for the agents bridge. Reads the same `--terminal-surface`
+/// / `--card` / `--primary` / etc. that the renderer + chrome already use,
+/// so the palette never drifts from what the user sees on screen.
+///
+/// Must run AFTER `applyTheme()` has committed and the browser has computed
+/// styles — callers should defer behind `requestAnimationFrame`.
+export function extractPaletteFromComputedStyle(): ThemePalette {
+  const cs = getComputedStyle(document.documentElement);
+  const surface = cs.getPropertyValue("--terminal-surface").trim() || "#000000";
+  const foreground = cs.getPropertyValue("--terminal-foreground").trim() || "#ffffff";
+  const card = cs.getPropertyValue("--card").trim() || surface;
+  const secondary = cs.getPropertyValue("--secondary").trim() || card;
+  const mutedForeground = cs.getPropertyValue("--muted-foreground").trim() || foreground;
+  const border = cs.getPropertyValue("--border").trim() || "rgba(255,255,255,0.08)";
+  const accent = cs.getPropertyValue("--primary").trim() || "#f97316";
+  const id = document.documentElement.dataset.theme ?? DEFAULT_THEME_ID;
+  return {
+    id,
+    isDark: relativeLuminance(surface) < 0.5,
+    surface,
+    foreground,
+    card,
+    secondary,
+    mutedForeground,
+    border,
+    accent,
+  };
+}
+
+function parseHexToRgb(hex: string): [number, number, number] | null {
+  const trimmed = hex.trim();
+  if (!trimmed.startsWith("#")) return null;
+  const body = trimmed.slice(1);
+  if (body.length === 3) {
+    const r = parseInt(body[0] + body[0], 16);
+    const g = parseInt(body[1] + body[1], 16);
+    const b = parseInt(body[2] + body[2], 16);
+    if ([r, g, b].some(Number.isNaN)) return null;
+    return [r, g, b];
+  }
+  if (body.length === 6 || body.length === 8) {
+    const r = parseInt(body.slice(0, 2), 16);
+    const g = parseInt(body.slice(2, 4), 16);
+    const b = parseInt(body.slice(4, 6), 16);
+    if ([r, g, b].some(Number.isNaN)) return null;
+    return [r, g, b];
+  }
+  return null;
+}
+
+function relativeLuminance(color: string): number {
+  const rgb = parseHexToRgb(color);
+  if (!rgb) return 0;
+  const [r, g, b] = rgb.map((v) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
 /// Synchronous bootstrap — reads the cached snapshot and applies it before

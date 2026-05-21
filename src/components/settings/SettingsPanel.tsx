@@ -18,7 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select } from "@/components/ui/select";
-import { CheckCircle2, AlertTriangle, XCircle, Info, FolderTree, Bot, Pencil, Palette, Terminal, NotebookText, RefreshCw, Check, ArrowLeft, Trash2, Sliders } from "lucide-react";
+import { CheckCircle2, AlertTriangle, XCircle, Info, FolderTree, Bot, Pencil, Palette, Terminal, NotebookText, RefreshCw, Check, ArrowLeft, Trash2, Sliders, Download, ExternalLink, FolderOpen } from "lucide-react";
 import { HexColorPicker } from "react-colorful";
 import { scratchpadPathAtom, reloadTabsFromBackend } from "@/stores/scratchpad";
 import {
@@ -971,7 +971,7 @@ function AppearanceSection({
   );
 }
 
-type SectionId = "paths" | "agents" | "editor" | "appearance" | "terminal" | "scratchpad";
+type SectionId = "paths" | "agents" | "editor" | "appearance" | "terminal" | "scratchpad" | "about";
 
 const SECTIONS: { id: SectionId; label: string; icon: typeof FolderTree }[] = [
   { id: "paths", label: "Paths", icon: FolderTree },
@@ -980,7 +980,269 @@ const SECTIONS: { id: SectionId; label: string; icon: typeof FolderTree }[] = [
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "terminal", label: "Terminal", icon: Terminal },
   { id: "scratchpad", label: "Scratchpad", icon: NotebookText },
+  { id: "about", label: "About", icon: Info },
 ];
+
+type InstallSource = "deb" | "appimage" | "dev" | "unknown";
+
+interface UpdateCheckResult {
+  currentVersion: string;
+  latestVersion: string;
+  hasUpdate: boolean;
+  releaseUrl: string;
+  releaseNotes: string | null;
+  debAssetUrl: string | null;
+  debAssetSize: number | null;
+  appimageAssetUrl: string | null;
+  appimageAssetSize: number | null;
+}
+
+type UpdateState =
+  | { kind: "idle" }
+  | { kind: "checking" }
+  | { kind: "up_to_date"; latest: string }
+  | { kind: "available"; result: UpdateCheckResult }
+  | { kind: "downloading" }
+  | { kind: "downloaded"; path: string }
+  | { kind: "error"; message: string };
+
+function AboutSection({ appVersion }: { appVersion: string }) {
+  const [installSource, setInstallSource] = useState<InstallSource>("unknown");
+  const [updateState, setUpdateState] = useState<UpdateState>({ kind: "idle" });
+
+  useEffect(() => {
+    invoke<InstallSource>("get_install_source")
+      .then(setInstallSource)
+      .catch(() => setInstallSource("unknown"));
+  }, []);
+
+  async function handleCheck() {
+    setUpdateState({ kind: "checking" });
+    try {
+      const result = await invoke<UpdateCheckResult>("check_app_update");
+      if (result.hasUpdate) {
+        setUpdateState({ kind: "available", result });
+      } else {
+        setUpdateState({ kind: "up_to_date", latest: result.latestVersion });
+      }
+    } catch (err) {
+      setUpdateState({ kind: "error", message: String(err) });
+    }
+  }
+
+  async function handleDownloadDeb(result: UpdateCheckResult) {
+    if (!result.debAssetUrl) return;
+    setUpdateState({ kind: "downloading" });
+    try {
+      const filename = result.debAssetUrl.split("/").pop() ?? `Nergal_${result.latestVersion}_amd64.deb`;
+      const path = await invoke<string>("download_app_update", {
+        url: result.debAssetUrl,
+        filename,
+      });
+      setUpdateState({ kind: "downloaded", path });
+    } catch (err) {
+      setUpdateState({ kind: "error", message: String(err) });
+    }
+  }
+
+  async function handleReveal(path: string) {
+    try {
+      await invoke("reveal_in_downloads", { path });
+    } catch (err) {
+      console.error("[about] reveal failed:", err);
+    }
+  }
+
+  function handleOpenReleaseUrl(url: string) {
+    window.open(url, "_blank", "noopener");
+  }
+
+  const sourceLabel = {
+    deb: ".deb (system install)",
+    appimage: "AppImage (portable)",
+    dev: "Dev build",
+    unknown: "Unknown",
+  }[installSource];
+
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-1">
+        <Label>Application</Label>
+        <div className="rounded-md border border-border/40 bg-card/50 p-3 text-sm">
+          <div className="flex items-baseline justify-between">
+            <span className="text-base font-semibold">Nergal</span>
+            <span className="font-mono text-xs text-muted-foreground tabular-nums">
+              v{appVersion || "—"}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">{sourceLabel}</p>
+        </div>
+      </div>
+
+      <div className="grid gap-2">
+        <Label>Updates</Label>
+        <UpdateActions
+          installSource={installSource}
+          state={updateState}
+          onCheck={handleCheck}
+          onDownloadDeb={handleDownloadDeb}
+          onReveal={handleReveal}
+          onOpenRelease={handleOpenReleaseUrl}
+          onReset={() => setUpdateState({ kind: "idle" })}
+        />
+      </div>
+
+      <div className="grid gap-1 text-xs text-muted-foreground">
+        <a
+          href="https://github.com/Mufdi/nergal"
+          target="_blank"
+          rel="noreferrer noopener"
+          className="inline-flex w-fit items-center gap-1 hover:text-foreground"
+        >
+          <ExternalLink size={11} />
+          github.com/Mufdi/nergal
+        </a>
+        <a
+          href="https://github.com/Mufdi/nergal/releases"
+          target="_blank"
+          rel="noreferrer noopener"
+          className="inline-flex w-fit items-center gap-1 hover:text-foreground"
+        >
+          <ExternalLink size={11} />
+          Release history
+        </a>
+      </div>
+    </div>
+  );
+}
+
+function UpdateActions({
+  installSource,
+  state,
+  onCheck,
+  onDownloadDeb,
+  onReveal,
+  onOpenRelease,
+  onReset,
+}: {
+  installSource: InstallSource;
+  state: UpdateState;
+  onCheck: () => void;
+  onDownloadDeb: (result: UpdateCheckResult) => void;
+  onReveal: (path: string) => void;
+  onOpenRelease: (url: string) => void;
+  onReset: () => void;
+}) {
+  if (installSource === "dev") {
+    return (
+      <p className="text-xs text-muted-foreground">
+        Dev builds don't receive updates. Pull <code className="rounded bg-muted px-1 font-mono text-[10px]">main</code> and rebuild.
+      </p>
+    );
+  }
+
+  switch (state.kind) {
+    case "idle":
+      return (
+        <Button variant="outline" size="sm" onClick={onCheck} className="w-fit">
+          <RefreshCw size={12} />
+          Check for updates
+        </Button>
+      );
+    case "checking":
+      return (
+        <Button variant="outline" size="sm" disabled className="w-fit">
+          <RefreshCw size={12} className="animate-spin" />
+          Checking…
+        </Button>
+      );
+    case "up_to_date":
+      return (
+        <div className="flex items-center gap-2 text-xs text-emerald-500">
+          <CheckCircle2 size={12} />
+          You're on the latest release (v{state.latest}).
+          <button
+            type="button"
+            onClick={onReset}
+            className="ml-1 text-muted-foreground hover:text-foreground"
+          >
+            (recheck)
+          </button>
+        </div>
+      );
+    case "available": {
+      const { result } = state;
+      const debSize = result.debAssetSize ? formatBytes(result.debAssetSize) : null;
+      return (
+        <div className="grid gap-2">
+          <p className="text-sm">
+            Update available: <strong>v{result.latestVersion}</strong>
+            <span className="ml-2 text-xs text-muted-foreground">(current v{result.currentVersion})</span>
+          </p>
+          {installSource === "deb" && result.debAssetUrl && (
+            <Button variant="default" size="sm" onClick={() => onDownloadDeb(result)} className="w-fit">
+              <Download size={12} />
+              Download .deb{debSize ? ` (${debSize})` : ""}
+            </Button>
+          )}
+          {installSource === "appimage" && (
+            <p className="text-xs text-muted-foreground">
+              AppImage auto-install isn't wired yet. Open the release page to download manually.
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => onOpenRelease(result.releaseUrl)}
+            className="inline-flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          >
+            <ExternalLink size={11} />
+            Open release notes on GitHub
+          </button>
+        </div>
+      );
+    }
+    case "downloading":
+      return (
+        <Button variant="default" size="sm" disabled className="w-fit">
+          <Download size={12} className="animate-pulse" />
+          Downloading…
+        </Button>
+      );
+    case "downloaded":
+      return (
+        <div className="grid gap-2">
+          <p className="text-xs text-emerald-500">
+            <CheckCircle2 size={12} className="inline align-text-bottom" /> Downloaded to <code className="rounded bg-muted px-1 font-mono text-[10px]">{state.path}</code>
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Open the file with your package manager to install. Cluihud will keep running on the current version.
+          </p>
+          <Button variant="outline" size="sm" onClick={() => onReveal(state.path)} className="w-fit">
+            <FolderOpen size={12} />
+            Reveal in file manager
+          </Button>
+        </div>
+      );
+    case "error":
+      return (
+        <div className="grid gap-2">
+          <p className="text-xs text-destructive">
+            <XCircle size={12} className="inline align-text-bottom" /> {state.message}
+          </p>
+          <Button variant="outline" size="sm" onClick={onCheck} className="w-fit">
+            <RefreshCw size={12} />
+            Retry
+          </Button>
+        </div>
+      );
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
   const [config, setConfig] = useAtom(configAtom);
@@ -1435,13 +1697,12 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
             )}
 
             {activeSection === "scratchpad" && <ScratchpadPathField />}
+
+            {activeSection === "about" && <AboutSection appVersion={appVersion} />}
           </div>
         </div>
 
         <DialogFooter className="-mx-4 -mb-4 bg-transparent border-t-0 px-4 pt-2 pb-4">
-          <span className="mr-auto self-center text-[10px] text-muted-foreground/70 tabular-nums">
-            v{appVersion}
-          </span>
           <div ref={footerRef} className="contents">
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               Cancel

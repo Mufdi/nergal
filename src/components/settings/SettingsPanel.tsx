@@ -21,6 +21,7 @@ import { Select } from "@/components/ui/select";
 import { CheckCircle2, AlertTriangle, XCircle, Info, FolderTree, Bot, Pencil, Palette, Terminal, NotebookText, RefreshCw, Check, ArrowLeft, Trash2, Sliders, Download, ExternalLink, FolderOpen } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { open as openShell } from "@tauri-apps/plugin-shell";
 import { HexColorPicker } from "react-colorful";
 import { scratchpadPathAtom, reloadTabsFromBackend } from "@/stores/scratchpad";
 import {
@@ -999,6 +1000,12 @@ interface UpdateCheckResult {
   appimageAssetSize: number | null;
 }
 
+interface CurrentReleaseInfo {
+  version: string;
+  notes: string | null;
+  releaseUrl: string;
+}
+
 type UpdateState =
   | { kind: "idle" }
   | { kind: "checking" }
@@ -1011,11 +1018,15 @@ type UpdateState =
 function AboutSection({ appVersion }: { appVersion: string }) {
   const [installSource, setInstallSource] = useState<InstallSource>("unknown");
   const [updateState, setUpdateState] = useState<UpdateState>({ kind: "idle" });
+  const [currentRelease, setCurrentRelease] = useState<CurrentReleaseInfo | null>(null);
 
   useEffect(() => {
     invoke<InstallSource>("get_install_source")
       .then(setInstallSource)
       .catch(() => setInstallSource("unknown"));
+    invoke<CurrentReleaseInfo | null>("get_current_release_notes")
+      .then(setCurrentRelease)
+      .catch(() => setCurrentRelease(null));
   }, []);
 
   async function handleCheck() {
@@ -1056,7 +1067,7 @@ function AboutSection({ appVersion }: { appVersion: string }) {
   }
 
   function handleOpenReleaseUrl(url: string) {
-    window.open(url, "_blank", "noopener");
+    openShell(url).catch((err) => console.error("[about] open url failed:", err));
   }
 
   const sourceLabel = {
@@ -1081,6 +1092,23 @@ function AboutSection({ appVersion }: { appVersion: string }) {
         </div>
       </div>
 
+      {currentRelease?.notes && (
+        <div className="grid gap-2">
+          <Label>What's new in v{currentRelease.version}</Label>
+          <div className="rounded-md border border-border/40 bg-card/30 p-3">
+            <ReleaseNotesMarkdown content={currentRelease.notes} />
+          </div>
+          <button
+            type="button"
+            onClick={() => handleOpenReleaseUrl(currentRelease.releaseUrl)}
+            className="inline-flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          >
+            <ExternalLink size={11} />
+            Open on GitHub
+          </button>
+        </div>
+      )}
+
       <div className="grid gap-2">
         <Label>Updates</Label>
         <UpdateActions
@@ -1094,25 +1122,58 @@ function AboutSection({ appVersion }: { appVersion: string }) {
       </div>
 
       <div className="grid gap-1 text-xs text-muted-foreground">
-        <a
-          href="https://github.com/Mufdi/nergal"
-          target="_blank"
-          rel="noreferrer noopener"
-          className="inline-flex w-fit items-center gap-1 hover:text-foreground"
+        <button
+          type="button"
+          onClick={() => handleOpenReleaseUrl("https://github.com/Mufdi/nergal")}
+          className="inline-flex w-fit items-center gap-1 text-left hover:text-foreground"
         >
           <ExternalLink size={11} />
           github.com/Mufdi/nergal
-        </a>
-        <a
-          href="https://github.com/Mufdi/nergal/releases"
-          target="_blank"
-          rel="noreferrer noopener"
-          className="inline-flex w-fit items-center gap-1 hover:text-foreground"
+        </button>
+        <button
+          type="button"
+          onClick={() => handleOpenReleaseUrl("https://github.com/Mufdi/nergal/releases")}
+          className="inline-flex w-fit items-center gap-1 text-left hover:text-foreground"
         >
           <ExternalLink size={11} />
           Release history
-        </a>
+        </button>
       </div>
+    </div>
+  );
+}
+
+function ReleaseNotesMarkdown({ content }: { content: string }) {
+  return (
+    <div className="prose-invert max-w-none text-[11px]">
+      <Markdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: (props) => (
+            <a
+              {...props}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="text-primary hover:underline"
+            />
+          ),
+          h1: (props) => <h2 className="mb-1 mt-2 text-xs font-semibold" {...props} />,
+          h2: (props) => <h3 className="mb-1 mt-2 text-xs font-semibold" {...props} />,
+          h3: (props) => <h4 className="mb-1 mt-2 text-[11px] font-semibold" {...props} />,
+          p: (props) => <p className="mb-1 leading-snug" {...props} />,
+          ul: (props) => <ul className="mb-1 ml-4 list-disc" {...props} />,
+          ol: (props) => <ol className="mb-1 ml-4 list-decimal" {...props} />,
+          li: (props) => <li className="mb-0.5" {...props} />,
+          code: (props) => (
+            <code className="rounded bg-muted px-1 font-mono text-[10px]" {...props} />
+          ),
+          pre: (props) => (
+            <pre className="my-1 overflow-x-auto rounded bg-muted p-2 font-mono text-[10px]" {...props} />
+          ),
+        }}
+      >
+        {content}
+      </Markdown>
     </div>
   );
 }
@@ -1132,14 +1193,6 @@ function UpdateActions({
   onReveal: (path: string) => void;
   onOpenRelease: (url: string) => void;
 }) {
-  if (installSource === "dev") {
-    return (
-      <p className="text-xs text-muted-foreground">
-        Dev builds don't receive updates. Pull <code className="rounded bg-muted px-1 font-mono text-[10px]">main</code> and rebuild.
-      </p>
-    );
-  }
-
   const button = renderUpdateButton({
     installSource,
     state,
@@ -1156,6 +1209,17 @@ function UpdateActions({
 
   return (
     <div className="grid gap-3">
+      {installSource === "dev" && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-500">
+          <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+          <span>
+            Dev build detected. The check runs against GitHub Releases, but
+            installing the new bundle is disabled — pull{" "}
+            <code className="rounded bg-amber-500/20 px-1 font-mono text-[10px]">main</code> and
+            rebuild instead.
+          </span>
+        </div>
+      )}
       {button}
       {supplementary}
     </div>
@@ -1220,8 +1284,9 @@ function renderUpdateButton({
           </Button>
         );
       }
-      // AppImage path: auto-install not wired yet — surface a disabled button
-      // and rely on the supplementary block to point at the release page.
+      // AppImage + dev + unknown sources: no in-app install path. The
+      // supplementary block surfaces the release page so the user can
+      // grab the bundle manually.
       return (
         <Button variant="outline" size="sm" disabled className="w-fit">
           <Download size={12} />

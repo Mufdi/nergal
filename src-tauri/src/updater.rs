@@ -1,23 +1,19 @@
 //! In-app update flow.
 //!
-//! cluihud talks to the GitHub Releases API directly (no signed updater
-//! plugin) and tailors the install action to the source the binary was
-//! launched from:
-//!
-//! - `.deb` install → download the new `.deb` to `~/Downloads` and reveal
-//!   it in the file manager. The user runs their own package-manager UI;
-//!   cluihud never touches `sudo`.
-//! - AppImage → reserved for a future signed in-place auto-install. Today
-//!   we offer the same download-and-reveal flow (saved as `.AppImage`).
-//! - Dev build (`target/release/cluihud`) → returns "dev" and the UI hides
-//!   the update button entirely.
+//! Source-aware on purpose: cluihud must never trigger a sudo prompt, so
+//! `.deb` installs only ever stage the new package in `~/Downloads/` and
+//! defer the elevation to the user's own package-manager UI. AppImage
+//! signed auto-install is a future addition; today both paths share the
+//! same download-and-reveal flow.
 
 use std::env;
 use std::path::PathBuf;
 
 use serde::Serialize;
 
-/// Where the running binary came from. Drives the UI's update affordance.
+/// Drives the UI's update affordance — see module doc for the per-source
+/// policy. `Dev` exists so dev builds get a warning banner instead of a
+/// useless download button.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InstallSource {
@@ -27,8 +23,6 @@ pub enum InstallSource {
     Unknown,
 }
 
-/// Sniff the install source from `/proc/self/exe` and the process env.
-/// Linux-only — no Windows/macOS branches (cluihud is Linux-only by scope).
 pub fn detect_install_source() -> InstallSource {
     if env::var_os("APPIMAGE").is_some() {
         return InstallSource::Appimage;
@@ -58,8 +52,6 @@ pub fn get_install_source() -> InstallSource {
     detect_install_source()
 }
 
-/// GitHub Releases API representation. We only deserialize the fields the
-/// updater needs; everything else is ignored.
 #[derive(serde::Deserialize)]
 struct GithubRelease {
     tag_name: String,
@@ -81,9 +73,8 @@ struct GithubAsset {
     size: u64,
 }
 
-/// Frontend-facing release info. `latestVersion` is the tag with the
-/// leading `v` stripped. `currentVersion` echoes back from cargo so the
-/// UI doesn't need to round-trip through `@tauri-apps/api/app`.
+/// `currentVersion` echoes back from cargo here so the UI doesn't have
+/// to round-trip through `@tauri-apps/api/app` to compare against latest.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateCheckResult {
@@ -101,9 +92,54 @@ pub struct UpdateCheckResult {
 const GITHUB_RELEASES_URL: &str =
     "https://api.github.com/repos/Mufdi/nergal/releases/latest";
 
-/// User-Agent string GitHub requires; identifying ourselves makes their
-/// abuse heuristics happy.
+/// GitHub rejects unauthenticated requests without a User-Agent header.
 const USER_AGENT: &str = concat!("cluihud-updater/", env!("CARGO_PKG_VERSION"));
+
+/// Distinct from `check_app_update`: this is always-on "what's new in
+/// what you have", so dev builds and up-to-date installs still see a
+/// changelog without having to trigger an update check. Returns
+/// `Ok(None)` when no release exists for the current version yet.
+#[tauri::command]
+pub async fn get_current_release_notes() -> Result<Option<CurrentReleaseInfo>, String> {
+    let current = env!("CARGO_PKG_VERSION");
+    let url = format!(
+        "https://api.github.com/repos/Mufdi/nergal/releases/tags/v{current}"
+    );
+    let client = reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("http client: {e}"))?;
+    let resp = client
+        .get(&url)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| format!("github release lookup: {e}"))?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    if !resp.status().is_success() {
+        return Err(format!("github release returned {}", resp.status()));
+    }
+    let release: GithubRelease = resp
+        .json()
+        .await
+        .map_err(|e| format!("github release body: {e}"))?;
+    Ok(Some(CurrentReleaseInfo {
+        version: current.to_string(),
+        notes: release.body,
+        release_url: release.html_url,
+    }))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CurrentReleaseInfo {
+    pub version: String,
+    pub notes: Option<String>,
+    pub release_url: String,
+}
 
 #[tauri::command]
 pub async fn check_app_update() -> Result<UpdateCheckResult, String> {
@@ -152,10 +188,11 @@ pub async fn check_app_update() -> Result<UpdateCheckResult, String> {
     })
 }
 
-/// Naive semver-ish compare: split on `.`, parse each segment as u64.
-/// Sufficient for cluihud's `0.1.x` tag space; if we ever ship `1.0.0-rc.1`
-/// the parse will fall back to lexicographic on the failing segment, which
-/// is still safer than blindly trusting `latest != current`.
+/// Numeric-segments-only on purpose: cluihud's tag space is `0.1.x`.
+/// A future `1.0.0-rc.1` will fail the numeric parse and fall back to
+/// the string-inequality branch, which is still safer than blindly
+/// trusting `latest != current` (mis-ordered tags wouldn't false-flag
+/// as updates).
 fn version_is_newer(latest: &str, current: &str) -> bool {
     let lt: Vec<u64> = latest.split('.').filter_map(|s| s.parse().ok()).collect();
     let cu: Vec<u64> = current.split('.').filter_map(|s| s.parse().ok()).collect();
@@ -165,8 +202,9 @@ fn version_is_newer(latest: &str, current: &str) -> bool {
     latest != current
 }
 
-/// Resolve `~/Downloads`, honoring `xdg-user-dir DOWNLOAD` when available,
-/// falling back to `$HOME/Downloads` and creating it on demand.
+/// `xdg-user-dir DOWNLOAD` first so we respect the user's localized /
+/// remapped Downloads folder (KDE/GNOME both honor this); fall through
+/// to the conventional `$HOME/Downloads` when xdg-user-dirs isn't set up.
 fn resolve_downloads_dir() -> Result<PathBuf, String> {
     if let Ok(out) = std::process::Command::new("xdg-user-dir")
         .arg("DOWNLOAD")
@@ -182,13 +220,15 @@ fn resolve_downloads_dir() -> Result<PathBuf, String> {
     Ok(home.join("Downloads"))
 }
 
-/// Stream `url` into `~/Downloads/<filename>`. Returns the absolute path
-/// to the saved file. The frontend can then call `reveal_in_file_manager`.
 #[tauri::command]
 pub async fn download_app_update(url: String, filename: String) -> Result<String, String> {
+    // Host allow-list closes a path that would otherwise let the
+    // frontend coerce this command into fetching arbitrary URLs.
     if !url.starts_with("https://github.com/") && !url.starts_with("https://objects.githubusercontent.com/") {
         return Err("refusing to download outside github.com hosts".into());
     }
+    // Filename comes from the frontend; reject anything that would
+    // escape the Downloads dir.
     if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
         return Err("invalid filename".into());
     }
@@ -220,9 +260,8 @@ pub async fn download_app_update(url: String, filename: String) -> Result<String
     Ok(target.to_string_lossy().into_owned())
 }
 
-/// Open the parent directory of `path` in the user's file manager. Uses
-/// `xdg-open` so it works across GNOME, KDE, XFCE, etc. without a
-/// hardcoded file-manager binary.
+/// `xdg-open` (vs. nautilus/dolphin/thunar directly) so the user's
+/// configured default file manager wins, regardless of DE.
 #[tauri::command]
 pub fn reveal_in_downloads(path: String) -> Result<(), String> {
     let p = PathBuf::from(&path);

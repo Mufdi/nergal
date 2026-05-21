@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { invoke } from "@/lib/tauri";
+import { open as openShell } from "@tauri-apps/plugin-shell";
 import type { PrSummary } from "@/stores/git";
 import { prsCacheMapAtom, PRS_CACHE_TTL_MS, activePrInChipMapAtom } from "@/stores/git";
 import { PrViewer } from "@/components/git/PrViewer";
@@ -280,16 +281,17 @@ export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
               <span className="shrink-0 font-mono text-[9px] text-muted-foreground/60">
                 {pr.head_ref_name} → {pr.base_ref_name}
               </span>
-              <a
-                href={pr.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openShell(pr.url).catch((err) => console.error("[pr] open github failed:", err));
+                }}
                 className="shrink-0 text-muted-foreground/50 hover:text-foreground"
                 title="Open on GitHub"
               >
                 <ExternalLink size={10} />
-              </a>
+              </button>
             </button>
           );
         })}

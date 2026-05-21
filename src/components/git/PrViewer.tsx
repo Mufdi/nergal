@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { invoke } from "@/lib/tauri";
+import { open as openShell } from "@tauri-apps/plugin-shell";
 import {
   prAnnotationsMapAtom,
   prAnnotationsKey,
@@ -761,15 +762,17 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
           <span className="truncate text-[11px] font-medium text-foreground/90" title={title}>
             {title}
           </span>
-          <a
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              openShell(url).catch((err) => console.error("[pr] open github failed:", err));
+            }}
             className="ml-auto flex shrink-0 items-center text-muted-foreground hover:text-foreground"
             title="Open on GitHub"
           >
             <ExternalLink size={11} />
-          </a>
+          </button>
         </div>
         <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-mono">
           <span className="truncate">{headRefName}</span>

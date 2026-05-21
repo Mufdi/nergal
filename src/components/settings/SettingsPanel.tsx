@@ -19,6 +19,8 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select } from "@/components/ui/select";
 import { CheckCircle2, AlertTriangle, XCircle, Info, FolderTree, Bot, Pencil, Palette, Terminal, NotebookText, RefreshCw, Check, ArrowLeft, Trash2, Sliders, Download, ExternalLink, FolderOpen } from "lucide-react";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { HexColorPicker } from "react-colorful";
 import { scratchpadPathAtom, reloadTabsFromBackend } from "@/stores/scratchpad";
 import {
@@ -1088,7 +1090,6 @@ function AboutSection({ appVersion }: { appVersion: string }) {
           onDownloadDeb={handleDownloadDeb}
           onReveal={handleReveal}
           onOpenRelease={handleOpenReleaseUrl}
-          onReset={() => setUpdateState({ kind: "idle" })}
         />
       </div>
 
@@ -1123,7 +1124,6 @@ function UpdateActions({
   onDownloadDeb,
   onReveal,
   onOpenRelease,
-  onReset,
 }: {
   installSource: InstallSource;
   state: UpdateState;
@@ -1131,7 +1131,6 @@ function UpdateActions({
   onDownloadDeb: (result: UpdateCheckResult) => void;
   onReveal: (path: string) => void;
   onOpenRelease: (url: string) => void;
-  onReset: () => void;
 }) {
   if (installSource === "dev") {
     return (
@@ -1141,64 +1140,93 @@ function UpdateActions({
     );
   }
 
+  const button = renderUpdateButton({
+    installSource,
+    state,
+    onCheck,
+    onDownloadDeb,
+    onReveal,
+  });
+
+  const supplementary = renderUpdateSupplementary({
+    installSource,
+    state,
+    onOpenRelease,
+  });
+
+  return (
+    <div className="grid gap-3">
+      {button}
+      {supplementary}
+    </div>
+  );
+}
+
+function renderUpdateButton({
+  installSource,
+  state,
+  onCheck,
+  onDownloadDeb,
+  onReveal,
+}: {
+  installSource: InstallSource;
+  state: UpdateState;
+  onCheck: () => void;
+  onDownloadDeb: (result: UpdateCheckResult) => void;
+  onReveal: (path: string) => void;
+}) {
   switch (state.kind) {
     case "idle":
       return (
-        <Button variant="outline" size="sm" onClick={onCheck} className="w-fit">
+        <Button variant="default" size="sm" onClick={onCheck} className="w-fit">
           <RefreshCw size={12} />
-          Check for updates
+          Update
         </Button>
       );
     case "checking":
       return (
-        <Button variant="outline" size="sm" disabled className="w-fit">
+        <Button variant="default" size="sm" disabled className="w-fit">
           <RefreshCw size={12} className="animate-spin" />
           Checking…
         </Button>
       );
     case "up_to_date":
       return (
-        <div className="flex items-center gap-2 text-xs text-emerald-500">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onCheck}
+          className="w-fit text-emerald-500"
+          title="Click to check again"
+        >
           <CheckCircle2 size={12} />
-          You're on the latest release (v{state.latest}).
-          <button
-            type="button"
-            onClick={onReset}
-            className="ml-1 text-muted-foreground hover:text-foreground"
-          >
-            (recheck)
-          </button>
-        </div>
+          Up to date (v{state.latest})
+        </Button>
       );
     case "available": {
       const { result } = state;
-      const debSize = result.debAssetSize ? formatBytes(result.debAssetSize) : null;
-      return (
-        <div className="grid gap-2">
-          <p className="text-sm">
-            Update available: <strong>v{result.latestVersion}</strong>
-            <span className="ml-2 text-xs text-muted-foreground">(current v{result.currentVersion})</span>
-          </p>
-          {installSource === "deb" && result.debAssetUrl && (
-            <Button variant="default" size="sm" onClick={() => onDownloadDeb(result)} className="w-fit">
-              <Download size={12} />
-              Download .deb{debSize ? ` (${debSize})` : ""}
-            </Button>
-          )}
-          {installSource === "appimage" && (
-            <p className="text-xs text-muted-foreground">
-              AppImage auto-install isn't wired yet. Open the release page to download manually.
-            </p>
-          )}
-          <button
-            type="button"
-            onClick={() => onOpenRelease(result.releaseUrl)}
-            className="inline-flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+      if (installSource === "deb" && result.debAssetUrl) {
+        const debSize = result.debAssetSize ? formatBytes(result.debAssetSize) : null;
+        return (
+          <Button
+            variant="default"
+            size="sm"
+            onClick={() => onDownloadDeb(result)}
+            className="w-fit"
           >
-            <ExternalLink size={11} />
-            Open release notes on GitHub
-          </button>
-        </div>
+            <Download size={12} />
+            Download v{result.latestVersion}
+            {debSize ? ` (${debSize})` : ""}
+          </Button>
+        );
+      }
+      // AppImage path: auto-install not wired yet — surface a disabled button
+      // and rely on the supplementary block to point at the release page.
+      return (
+        <Button variant="outline" size="sm" disabled className="w-fit">
+          <Download size={12} />
+          v{result.latestVersion} available
+        </Button>
       );
     }
     case "downloading":
@@ -1210,31 +1238,108 @@ function UpdateActions({
       );
     case "downloaded":
       return (
-        <div className="grid gap-2">
-          <p className="text-xs text-emerald-500">
-            <CheckCircle2 size={12} className="inline align-text-bottom" /> Downloaded to <code className="rounded bg-muted px-1 font-mono text-[10px]">{state.path}</code>
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Open the file with your package manager to install. Cluihud will keep running on the current version.
-          </p>
-          <Button variant="outline" size="sm" onClick={() => onReveal(state.path)} className="w-fit">
-            <FolderOpen size={12} />
-            Reveal in file manager
-          </Button>
-        </div>
+        <Button variant="outline" size="sm" onClick={() => onReveal(state.path)} className="w-fit">
+          <FolderOpen size={12} />
+          Reveal in file manager
+        </Button>
       );
     case "error":
       return (
+        <Button variant="outline" size="sm" onClick={onCheck} className="w-fit">
+          <RefreshCw size={12} />
+          Retry
+        </Button>
+      );
+  }
+}
+
+function renderUpdateSupplementary({
+  installSource,
+  state,
+  onOpenRelease,
+}: {
+  installSource: InstallSource;
+  state: UpdateState;
+  onOpenRelease: (url: string) => void;
+}) {
+  switch (state.kind) {
+    case "available": {
+      const { result } = state;
+      return (
         <div className="grid gap-2">
-          <p className="text-xs text-destructive">
-            <XCircle size={12} className="inline align-text-bottom" /> {state.message}
+          <p className="text-xs text-muted-foreground">
+            Current: v{result.currentVersion}
           </p>
-          <Button variant="outline" size="sm" onClick={onCheck} className="w-fit">
-            <RefreshCw size={12} />
-            Retry
-          </Button>
+          {installSource === "appimage" && (
+            <p className="text-xs text-amber-500">
+              <AlertTriangle size={11} className="inline align-text-bottom" />{" "}
+              AppImage auto-install isn't wired yet. Open the release page to download manually.
+            </p>
+          )}
+          {result.releaseNotes && (
+            <details className="rounded-md border border-border/40 bg-card/30 p-2 text-xs" open>
+              <summary className="cursor-pointer select-none text-foreground">
+                What's new in v{result.latestVersion}
+              </summary>
+              <div className="prose-invert mt-2 max-w-none text-[11px]">
+                <Markdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    a: (props) => (
+                      <a
+                        {...props}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="text-primary hover:underline"
+                      />
+                    ),
+                    h1: (props) => <h2 className="mb-1 mt-2 text-xs font-semibold" {...props} />,
+                    h2: (props) => <h3 className="mb-1 mt-2 text-xs font-semibold" {...props} />,
+                    h3: (props) => <h4 className="mb-1 mt-2 text-[11px] font-semibold" {...props} />,
+                    p: (props) => <p className="mb-1 leading-snug" {...props} />,
+                    ul: (props) => <ul className="mb-1 ml-4 list-disc" {...props} />,
+                    ol: (props) => <ol className="mb-1 ml-4 list-decimal" {...props} />,
+                    li: (props) => <li className="mb-0.5" {...props} />,
+                    code: (props) => (
+                      <code className="rounded bg-muted px-1 font-mono text-[10px]" {...props} />
+                    ),
+                    pre: (props) => (
+                      <pre className="my-1 overflow-x-auto rounded bg-muted p-2 font-mono text-[10px]" {...props} />
+                    ),
+                  }}
+                >
+                  {result.releaseNotes}
+                </Markdown>
+              </div>
+            </details>
+          )}
+          <button
+            type="button"
+            onClick={() => onOpenRelease(result.releaseUrl)}
+            className="inline-flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          >
+            <ExternalLink size={11} />
+            Open on GitHub
+          </button>
         </div>
       );
+    }
+    case "downloaded":
+      return (
+        <p className="text-xs text-muted-foreground">
+          <CheckCircle2 size={11} className="inline align-text-bottom text-emerald-500" />{" "}
+          Saved to <code className="rounded bg-muted px-1 font-mono text-[10px]">{state.path}</code>.
+          Open it with your package manager to install — cluihud keeps running on the current version.
+        </p>
+      );
+    case "error":
+      return (
+        <p className="text-xs text-destructive">
+          <XCircle size={11} className="inline align-text-bottom" /> {state.message}
+        </p>
+      );
+    default:
+      return null;
   }
 }
 

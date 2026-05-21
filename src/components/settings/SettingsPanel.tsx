@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { configAtom } from "@/stores/config";
+import { getVersion } from "@tauri-apps/api/app";
 import { availableAgentsAtom, type AgentDetection } from "@/stores/agent";
 import { invoke } from "@/lib/tauri";
 import type { AvailableAgent, Config, PathValidation } from "@/lib/types";
@@ -727,10 +728,14 @@ function AppearanceSection({
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [returnFocusId, setReturnFocusId] = useState<string | null>(null);
+  /// Held out of `config.custom_themes` so the picker doesn't sprout empty
+  /// customs on every editor open + close with no edits.
+  const [draftCustom, setDraftCustom] = useState<CustomTheme | null>(null);
 
   const customs = config.custom_themes;
   const editingCustom = editingId
-    ? customs.find((c) => c.id === editingId) ?? null
+    ? customs.find((c) => c.id === editingId)
+      ?? (draftCustom?.id === editingId ? draftCustom : null)
     : null;
 
   const builtinCards = VISIBLE_THEMES;
@@ -746,11 +751,7 @@ function AppearanceSection({
 
   function customizeBuiltin(baseId: string) {
     const fork = forkBuiltinTheme(baseId, customs);
-    setConfig((prev) => ({
-      ...prev,
-      custom_themes: [...prev.custom_themes, fork],
-      theme_mode: fork.id,
-    }));
+    setDraftCustom(fork);
     setReturnFocusId(fork.id);
     setEditingId(fork.id);
   }
@@ -762,10 +763,21 @@ function AppearanceSection({
   }
 
   function updateCustom(next: CustomTheme) {
-    setConfig((prev) => ({
-      ...prev,
-      custom_themes: prev.custom_themes.map((c) => (c.id === next.id ? next : c)),
-    }));
+    setConfig((prev) => {
+      const exists = prev.custom_themes.some((c) => c.id === next.id);
+      if (exists) {
+        return {
+          ...prev,
+          custom_themes: prev.custom_themes.map((c) => (c.id === next.id ? next : c)),
+        };
+      }
+      return {
+        ...prev,
+        custom_themes: [...prev.custom_themes, next],
+        theme_mode: next.id,
+      };
+    });
+    setDraftCustom(null);
   }
 
   async function deleteCustom(customId: string, prompt = true) {
@@ -852,12 +864,23 @@ function AppearanceSection({
   }, [editingId, returnFocusId]);
 
   if (editingCustom) {
+    const isDraft = draftCustom?.id === editingCustom.id;
     return (
       <ThemeEditor
         custom={editingCustom}
         onChange={updateCustom}
-        onClose={() => setEditingId(null)}
-        onDelete={() => deleteCustom(editingCustom.id)}
+        onClose={() => {
+          setEditingId(null);
+          if (isDraft) setDraftCustom(null);
+        }}
+        onDelete={() => {
+          if (isDraft) {
+            setDraftCustom(null);
+            setEditingId(null);
+          } else {
+            void deleteCustom(editingCustom.id);
+          }
+        }}
       />
     );
   }
@@ -966,9 +989,14 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
   const agents = useAtomValue(availableAgentsAtom);
   const setAvailableAgents = useSetAtom(availableAgentsAtom);
   const [rescanning, setRescanning] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
   const navRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const footerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => setAppVersion(""));
+  }, []);
 
   const FOCUSABLE_SELECTOR =
     'input:not([type="hidden"]):not([disabled]):not([aria-disabled="true"]):not([tabindex="-1"]), [role="combobox"]:not([disabled]):not([aria-disabled="true"]):not([tabindex="-1"]), textarea:not([disabled]):not([aria-disabled="true"]):not([tabindex="-1"]), button:not([disabled]):not([aria-disabled="true"]):not([tabindex="-1"])';
@@ -1387,7 +1415,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
             )}
 
             {activeSection === "terminal" && (
-              <div className="space-y-4">
+              <div className="space-y-4 pt-1">
                 {TOGGLE_FIELDS.map(({ key, label, help }) => (
                   <div key={key} className="flex items-start gap-3 text-sm">
                     <Switch
@@ -1395,7 +1423,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
                       checked={config[key]}
                       onCheckedChange={(v) => handleToggleChange(key, v)}
                       aria-label={label}
-                      className="mt-0.5"
+                      className="mt-1"
                     />
                     <label htmlFor={`setting-${key}`} className="flex flex-col gap-0.5 cursor-pointer">
                       <span className="font-medium">{label}</span>
@@ -1411,6 +1439,9 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
         </div>
 
         <DialogFooter className="-mx-4 -mb-4 bg-transparent border-t-0 px-4 pt-2 pb-4">
+          <span className="mr-auto self-center text-[10px] text-muted-foreground/70 tabular-nums">
+            v{appVersion}
+          </span>
           <div ref={footerRef} className="contents">
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               Cancel

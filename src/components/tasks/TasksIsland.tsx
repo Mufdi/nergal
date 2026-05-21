@@ -1,6 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { activeSessionTasksAtom, clearCompletedTasksAtom } from "@/stores/tasks";
+import { activeSessionTasksAtom, clearCompletedTasksAtom, taskMapAtom } from "@/stores/tasks";
+import { activeSessionIdAtom } from "@/stores/workspace";
+import { invoke } from "@/lib/tauri";
+import type { Task } from "@/lib/types";
 import { ChevronDown, ChevronRight, Trash2, CheckCircle2, Circle, Loader2 } from "lucide-react";
 
 const STATUS_ICON: Record<string, typeof Circle> = {
@@ -18,7 +21,22 @@ const STATUS_COLOR: Record<string, string> = {
 export function TasksIsland() {
   const tasks = useAtomValue(activeSessionTasksAtom);
   const clearCompleted = useSetAtom(clearCompletedTasksAtom);
+  const setTaskMap = useSetAtom(taskMapAtom);
+  const sessionId = useAtomValue(activeSessionIdAtom);
+  const taskMap = useAtomValue(taskMapAtom);
   const [collapsed, setCollapsed] = useState(false);
+
+  // Hydrate from DB the first time a session becomes active — the live
+  // `tasks:update` stream only carries deltas, so a session that already
+  // had tasks before the app started (or before the user switched to it)
+  // would otherwise show an empty panel until the next TaskUpdate fires.
+  useEffect(() => {
+    if (!sessionId) return;
+    if (sessionId in taskMap) return;
+    invoke<Task[]>("get_tasks", { sessionId })
+      .then((loaded) => setTaskMap((prev) => ({ ...prev, [sessionId]: loaded })))
+      .catch(() => setTaskMap((prev) => ({ ...prev, [sessionId]: [] })));
+  }, [sessionId, taskMap, setTaskMap]);
 
   if (tasks.length === 0) return null;
 

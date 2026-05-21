@@ -203,13 +203,13 @@ export function StatusBar() {
             <TooltipTrigger className={`cursor-default ${rateLimitColor(sl.rate_5h_pct)}`}>
               5h:{Math.round(sl.rate_5h_pct)}%
               {sl.rate_5h_resets_at && (
-                <span className="text-muted-foreground/60"> {new Date(sl.rate_5h_resets_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                <span className="text-muted-foreground/60"> {new Date(sl.rate_5h_resets_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}</span>
               )}
             </TooltipTrigger>
             <TooltipContent>
               5-hour rate limit: {sl.rate_5h_pct.toFixed(1)}% used
               {sl.rate_5h_resets_at && (
-                <> — resets {new Date(sl.rate_5h_resets_at * 1000).toLocaleTimeString()}</>
+                <> — resets {new Date(sl.rate_5h_resets_at * 1000).toLocaleTimeString([], { hour12: false })}</>
               )}
             </TooltipContent>
           </Tooltip>
@@ -258,7 +258,7 @@ export function StatusBar() {
             <TooltipContent>
               Weekly rate limit: {sl.rate_7d_pct.toFixed(1)}% used
               {sl.rate_7d_resets_at && (
-                <> — resets {new Date(sl.rate_7d_resets_at * 1000).toLocaleString()}</>
+                <> — resets {new Date(sl.rate_7d_resets_at * 1000).toLocaleString([], { hour12: false })}</>
               )}
             </TooltipContent>
           </Tooltip>
@@ -294,20 +294,24 @@ function LocalhostPortChips() {
   }
 
   return (
-    <div className="flex items-center gap-1">
+    // Bounded width + horizontal scroll so a project with 10+ open dev
+    // servers can't push status icons off-screen on a narrow window.
+    <div className="flex min-w-0 items-center gap-1">
       <Globe className="size-3 shrink-0 text-muted-foreground/60" />
-      {ports.map((port) => (
-        <Tooltip key={port}>
-          <TooltipTrigger
-            onClick={() => openPort(port)}
-            disabled={!sessionId}
-            className="rounded border border-border/40 px-1.5 py-0 font-mono text-[10px] text-muted-foreground transition-colors hover:border-primary/40 hover:bg-secondary hover:text-foreground disabled:opacity-40"
-          >
-            :{port}
-          </TooltipTrigger>
-          <TooltipContent>Open http://localhost:{port}</TooltipContent>
-        </Tooltip>
-      ))}
+      <div className="scrollbar-none flex max-w-[16rem] items-center gap-1 overflow-x-auto">
+        {ports.map((port) => (
+          <Tooltip key={port}>
+            <TooltipTrigger
+              onClick={() => openPort(port)}
+              disabled={!sessionId}
+              className="shrink-0 rounded border border-border/40 px-1.5 py-0 font-mono text-[10px] text-muted-foreground transition-colors hover:border-primary/40 hover:bg-secondary hover:text-foreground disabled:opacity-40"
+            >
+              :{port}
+            </TooltipTrigger>
+            <TooltipContent>Open http://localhost:{port}</TooltipContent>
+          </Tooltip>
+        ))}
+      </div>
     </div>
   );
 }

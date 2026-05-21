@@ -223,10 +223,18 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
       if (!sid) return;
       const tool = payload.tool_name ?? "unknown tool";
       const reason = payload.reason ?? "Auto-mode denied this action";
+      // CC also self-denies inside auto-mode without ever asking the user
+      // (internal safety guard). Those arrive with no preceding
+      // `permission_prompt` notification, so pendingAttention is unset —
+      // surface them in the activity log for audit but skip the toast +
+      // desktop notification to keep the chrome quiet.
+      const userWasAsked = !!get(pendingAttentionAtom)[sid];
       set(pendingAttentionAtom, (prev) => clearKey(prev, sid));
-      set(toastsAtom, { message: `Permission denied: ${tool}`, description: reason, type: "error" });
       set(addActivityAtom, { sessionId: sid, entry: createActivity("session", `Permission denied: ${tool}`, reason) });
-      notify("Permission denied", `${tool}: ${reason}`);
+      if (userWasAsked) {
+        set(toastsAtom, { message: `Permission denied: ${tool}`, description: reason, type: "error" });
+        notify("Permission denied", `${tool}: ${reason}`);
+      }
     }),
   );
 

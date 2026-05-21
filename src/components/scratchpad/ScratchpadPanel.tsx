@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { FloatingPanel } from "@/components/floating/FloatingPanel";
+import * as terminalService from "@/components/terminal/terminalService";
+import { focusZoneAtom } from "@/stores/shortcuts";
 import { ScratchpadTabBar } from "./ScratchpadTabBar";
 import { ScratchpadEditor } from "./ScratchpadEditor";
 import {
@@ -29,6 +31,7 @@ export function ScratchpadPanel() {
   const setGeometry = useSetAtom(scratchpadGeometryAtom);
   const opacity = useAtomValue(scratchpadOpacityAtom);
   const setFocusSignal = useSetAtom(scratchpadFocusSignalAtom);
+  const setFocusZone = useSetAtom(focusZoneAtom);
   const lastOpenRef = useRef(false);
 
   // One-shot bootstrap: load tabs + geometry + subscribe watcher events.
@@ -44,6 +47,14 @@ export function ScratchpadPanel() {
   // a tab before typing" friction.
   useEffect(() => {
     if (!open) {
+      // Close path is shared across the FloatingPanel close button, Esc, and
+      // the Ctrl+Alt+L toggle — handing focus back here covers all of them.
+      if (lastOpenRef.current) {
+        requestAnimationFrame(() => {
+          setFocusZone("terminal");
+          terminalService.focusActive();
+        });
+      }
       lastOpenRef.current = false;
       return;
     }
@@ -59,7 +70,7 @@ export function ScratchpadPanel() {
       // (subscribed to active tab + signal) lands after layout settles.
       requestAnimationFrame(() => setFocusSignal((p) => p + 1));
     }
-  }, [open, tabs, activeTabId, setActiveTabId, setFocusSignal]);
+  }, [open, tabs, activeTabId, setActiveTabId, setFocusSignal, setFocusZone]);
 
   // Re-clamp geometry on viewport changes (display reconnect, window resize).
   useEffect(() => {

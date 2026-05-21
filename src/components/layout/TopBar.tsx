@@ -21,6 +21,7 @@ import { triggerShipAtom } from "@/stores/ship";
 import { activeGitInfoAtom, refreshGitInfoAtom, conflictedFilesMapAtom, refreshConflictedFilesAtom, activeConflictedFilesAtom } from "@/stores/git";
 import { selectedConflictFileMapAtom } from "@/stores/conflict";
 import { gitChipModeAtom } from "@/stores/git";
+import { pendingAsksAtom, pendingAttentionAtom } from "@/stores/askUser";
 import { toastsAtom } from "@/stores/toast";
 import { configAtom } from "@/stores/config";
 import { appStore } from "@/stores/jotaiStore";
@@ -134,6 +135,8 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   const activeConflictedFiles = useAtomValue(activeConflictedFilesAtom);
   const setSelectedConflictMap = useSetAtom(selectedConflictFileMapAtom);
   const setChipModeMap = useSetAtom(gitChipModeAtom);
+  const pendingAsks = useAtomValue(pendingAsksAtom);
+  const pendingAttention = useAtomValue(pendingAttentionAtom);
   const addToast = useSetAtom(toastsAtom);
   const activeSession = workspace?.sessions.find((s) => s.id === sessionId) ?? null;
   const isWorktreeSession = activeSession?.worktree_path != null;
@@ -320,6 +323,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
           const entry = sessionMap.get(tabId);
           if (!entry) return null;
           const isActive = tabId === sessionId;
+          const isAwaiting = !!pendingAsks[tabId] || !!pendingAttention[tabId];
           return (
             <button
               key={tabId}
@@ -334,7 +338,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
                 isActive
                   ? "bg-secondary text-foreground"
                   : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground/80"
-              } ${dragOverId === tabId && dropSideRef.current === "left" ? "border-l-2 border-l-primary/60" : ""} ${dragOverId === tabId && dropSideRef.current === "right" ? "border-r-2 border-r-primary/60" : ""}`}
+              } ${dragOverId === tabId && dropSideRef.current === "left" ? "border-l-2 border-l-primary/60" : ""} ${dragOverId === tabId && dropSideRef.current === "right" ? "border-r-2 border-r-primary/60" : ""} ${isAwaiting ? "cluihud-ask-pending" : ""}`}
             >
               {/* Status indicator */}
               <SessionIndicator sessionId={tabId} sessionStatus={entry.session.status} size="xs" />

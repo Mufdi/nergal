@@ -51,6 +51,38 @@ Nergal corre **alrededor** del agente CLI, no en su lugar. Esto define el filtro
 
 Run the full check after significant changes.
 
+## Release commands
+
+Two-step ship-of-the-repo flow (see OpenSpec change `release-script`):
+
+1. **In a Claude session**: say "cortemos v0.1.X" (or equivalent). Claude reads `git log <prev-tag>..HEAD` + relevant diffs + BUG-NN entries from the just-archived working file, writes a contextual user-facing CHANGELOG section, and prepends it to `CHANGELOG.md`.
+2. **Run the script**: `pnpm release <patch|minor|major>` (or explicit `pnpm release 0.1.10`). The script verifies the CHANGELOG section is present, bumps versions in `package.json` + `src-tauri/Cargo.toml` + `src-tauri/tauri.conf.json`, refreshes `Cargo.lock`, commits `chore(release): vX.Y.Z`, tags, and pushes `main` + tag.
+
+| Command | Behavior |
+|---|---|
+| `pnpm release <bump>` | Full release (live). |
+| `pnpm release:dry` (or `pnpm release <bump> --dry-run`) | All guards + computation, no mutations. Useful for previewing the changelog echo + the would-be operations. |
+| `pnpm release <bump> --no-push` | Local commit + tag, skip push. Relaxes the "must be on main" guard for testing on a throwaway branch. |
+| `pnpm release:test` | Runs `node --test scripts/release.test.mjs` over the pure helpers (version bump, section extraction, working-tree guard). |
+
+Pre-flight guards (script aborts before any mutation if any fails):
+- Working tree clean (except `CHANGELOG.md`, which is expected dirty after step 1)
+- On `main` (unless `--no-push`)
+- Previous tag exists locally
+- New tag doesn't exist locally or on origin
+- `CHANGELOG.md` has a `## v<new>` section at top
+
+After the script: build + GitHub release remain manual until OpenSpec change `release-ci-signed`:
+
+```bash
+GSTREAMER_PLUGINS_DIR=/usr/lib/x86_64-linux-gnu/gstreamer-1.0 pnpm tauri build
+gh release create vX.Y.Z --title "Nergal vX.Y.Z" --notes-file <body.md> \
+  src-tauri/target/release/bundle/deb/Nergal_*.deb \
+  src-tauri/target/release/bundle/rpm/Nergal-*.rpm \
+  src-tauri/target/release/bundle/appimage/Nergal_*.AppImage
+gh release edit v<previous> --notes-file <prev-with-banner.md>
+```
+
 ## Documentation TOC
 
 Read on demand when working in the relevant area:

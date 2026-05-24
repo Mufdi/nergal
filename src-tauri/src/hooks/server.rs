@@ -413,7 +413,8 @@ fn process_event(
                                     .flatten()
                             });
                             if let Some(cwd) = cwd {
-                                let local_plans = cwd.join(".claude").join("plans");
+                                let local_plans =
+                                    crate::agents::claude_code::resolve_cc_plans_directory(&cwd);
                                 if local_plans.exists() {
                                     let local_mgr =
                                         crate::agents::claude_code::plan::PlanManager::new(
@@ -565,7 +566,8 @@ fn process_event(
                                     .flatten()
                             });
                             if let Some(cwd) = cwd {
-                                let local_plans = cwd.join(".claude").join("plans");
+                                let local_plans =
+                                    crate::agents::claude_code::resolve_cc_plans_directory(&cwd);
                                 if local_plans.exists() {
                                     let local_mgr =
                                         crate::agents::claude_code::plan::PlanManager::new(

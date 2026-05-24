@@ -15,7 +15,7 @@ mod terminal;
 mod updater;
 mod worktree;
 
-use agents::claude_code::plan::PlanWatcher;
+use agents::claude_code::plan::{PlanWatcher, SharedPlanWatcher};
 use agents::claude_code::transcript::TranscriptWatcher;
 use agents::state::AgentRuntimeState;
 use config::Config;
@@ -191,7 +191,7 @@ pub fn run() {
     ));
 
     let plan_state: plan_state::SharedPlanState = std::sync::Arc::new(std::sync::Mutex::new(
-        PlanStateManager::new(config.plans_directory.clone()),
+        PlanStateManager::new(dirs::home_dir().unwrap_or_default().join(".claude/plans")),
     ));
 
     let agent_state = AgentRuntimeState::bootstrap()
@@ -248,6 +248,7 @@ pub fn run() {
             pty::terminal_get_full_grid,
             pty::terminal_scroll,
             pty::terminal_scroll_to_bottom,
+            pty::terminal_mouse_button,
             pty::terminal_paste,
             pty::terminal_clipboard_write,
             // Config commands
@@ -264,8 +265,8 @@ pub fn run() {
             commands::reject_plan,
             commands::submit_plan_decision,
             commands::submit_ask_answer,
-            commands::list_plans,
             commands::list_session_plans,
+            commands::get_session_plan_capability,
             commands::load_plan,
             // Annotation commands
             commands::save_annotation,
@@ -394,7 +395,6 @@ pub fn run() {
 
             let app_handle = app.handle().clone();
             let socket_path = config.hook_socket_path.clone();
-            let plans_dir = config.plans_directory.clone();
             let transcripts_dir = config.transcripts_directory.clone();
 
             let hook_app = app_handle.clone();
@@ -429,20 +429,47 @@ pub fn run() {
                 browser::run_port_scanner(browser_app).await;
             });
 
-            if plans_dir.exists() {
-                match PlanWatcher::new(&plans_dir, app_handle.clone()) {
-                    Ok(watcher) => {
-                        Box::leak(Box::new(watcher));
-                        tracing::info!("plan watcher started on {}", plans_dir.display());
-                    }
-                    Err(e) => tracing::warn!("failed to start plan watcher: {e}"),
+            // Plan watcher is dynamic: one notify::Watcher whose watch set
+            // grows as sessions land in cwds the boot-time scan did not see
+            // (e.g. worktrees outside the first workspace). Seed it with
+            // every existing session's resolved plans dir so the first
+            // session that's already in DB doesn't have to wait for a new
+            // create_session to subscribe.
+            let plan_watcher_arc: SharedPlanWatcher = match PlanWatcher::new(app_handle.clone()) {
+                Ok(w) => std::sync::Arc::new(std::sync::Mutex::new(w)),
+                Err(e) => {
+                    tracing::error!("failed to construct plan watcher: {e}");
+                    return Err(format!("plan watcher init: {e}").into());
                 }
-            } else {
-                tracing::info!(
-                    "plans directory does not exist yet, skipping watcher: {}",
-                    plans_dir.display()
-                );
+            };
+            if let Ok(db_guard) = db.lock() {
+                let workspaces = db_guard.get_workspaces().unwrap_or_default();
+                for ws in workspaces {
+                    let seeds: Vec<PathBuf> = ws
+                        .sessions
+                        .iter()
+                        .map(|s| {
+                            s.worktree_path
+                                .clone()
+                                .unwrap_or_else(|| ws.repo_path.clone())
+                        })
+                        .chain(std::iter::once(ws.repo_path.clone()))
+                        .collect();
+                    if let Ok(mut w) = plan_watcher_arc.lock() {
+                        for cwd in seeds {
+                            let dir = crate::agents::claude_code::resolve_cc_plans_directory(&cwd);
+                            if let Err(e) = w.watch_dir(&dir) {
+                                tracing::warn!(
+                                    dir = %dir.display(),
+                                    error = %e,
+                                    "plan watcher seed watch failed"
+                                );
+                            }
+                        }
+                    }
+                }
             }
+            app.manage(plan_watcher_arc.clone());
 
             if transcripts_dir.exists() {
                 match TranscriptWatcher::new(&transcripts_dir, app_handle.clone()) {

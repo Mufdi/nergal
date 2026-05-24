@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -12,15 +13,18 @@ pub enum PlanEvent {
     Updated(PathBuf),
 }
 
-/// Watches `~/.claude/plans/` for `.md` file changes via inotify.
-/// Emits `plan:event` Tauri events instead of sending to a channel.
+/// Watches `.md` file changes on a dynamic set of plans directories via
+/// inotify and emits `plan:event` Tauri events. The set is mutable so the
+/// app can extend coverage as sessions land in cwds the boot-time watcher
+/// didn't know about (worktrees outside the first workspace).
 pub struct PlanWatcher {
-    _watcher: notify::RecommendedWatcher,
+    watcher: notify::RecommendedWatcher,
+    watched: HashSet<PathBuf>,
 }
 
 impl PlanWatcher {
-    pub fn new(plans_dir: &Path, app: AppHandle) -> Result<Self> {
-        let mut watcher =
+    pub fn new(app: AppHandle) -> Result<Self> {
+        let watcher =
             notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
                 let Ok(event) = res else { return };
                 if event.kind.is_modify() || event.kind.is_create() {
@@ -31,12 +35,38 @@ impl PlanWatcher {
                     }
                 }
             })?;
+        Ok(Self {
+            watcher,
+            watched: HashSet::new(),
+        })
+    }
 
-        watcher.watch(plans_dir, notify::RecursiveMode::NonRecursive)?;
+    /// Idempotent: adding an already-watched path is a no-op. Skips paths
+    /// that don't yet exist on disk; callers re-invoke on plans-dir creation
+    /// via [`Self::ensure_dir_and_watch`].
+    pub fn watch_dir(&mut self, dir: &Path) -> Result<()> {
+        if self.watched.contains(dir) {
+            return Ok(());
+        }
+        if !dir.exists() {
+            return Ok(());
+        }
+        self.watcher
+            .watch(dir, notify::RecursiveMode::NonRecursive)
+            .with_context(|| format!("watch dir: {}", dir.display()))?;
+        self.watched.insert(dir.to_path_buf());
+        Ok(())
+    }
 
-        Ok(Self { _watcher: watcher })
+    /// Create the dir if missing, then watch it. Useful at session-create
+    /// time where the worktree's `.claude/plans/` may not exist yet.
+    pub fn ensure_dir_and_watch(&mut self, dir: &Path) -> Result<()> {
+        std::fs::create_dir_all(dir).with_context(|| format!("mkdir: {}", dir.display()))?;
+        self.watch_dir(dir)
     }
 }
+
+pub type SharedPlanWatcher = Arc<Mutex<PlanWatcher>>;
 
 /// Manages plan files in Claude's plans directory.
 #[derive(Debug)]

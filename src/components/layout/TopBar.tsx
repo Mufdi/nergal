@@ -24,6 +24,7 @@ import { gitChipModeAtom } from "@/stores/git";
 import { pendingAsksAtom, pendingAttentionAtom } from "@/stores/askUser";
 import { toastsAtom } from "@/stores/toast";
 import { configAtom } from "@/stores/config";
+import { activePlanCapabilityAtom, fetchPlanCapabilityAction } from "@/stores/plan";
 import { appStore } from "@/stores/jotaiStore";
 import { invoke } from "@/lib/tauri";
 import {
@@ -118,6 +119,17 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   const tabs = useAtomValue(activeTabsAtom);
   const activePanelView = useAtomValue(activePanelViewAtom);
   const config = useAtomValue(configAtom);
+  const planCapability = useAtomValue(activePlanCapabilityAtom);
+  const fetchPlanCapability = useSetAtom(fetchPlanCapabilityAction);
+
+  useEffect(() => {
+    if (sessionId) fetchPlanCapability(sessionId);
+  }, [sessionId, fetchPlanCapability]);
+
+  const planAvailable = planCapability?.kind !== "NotApplicable";
+  const visiblePanelButtons = planAvailable
+    ? PANEL_BUTTONS
+    : PANEL_BUTTONS.filter((b) => b.type !== "plan");
 
   const setActiveSessionId = useSetAtom(activeSessionIdAtom);
   const [sessionTabIds, setSessionTabIds] = useAtom(sessionTabIdsAtom);
@@ -520,7 +532,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
         )}
 
         {/* Panel buttons */}
-        {PANEL_BUTTONS.map((btn) => {
+        {visiblePanelButtons.map((btn) => {
           const isActive = rightPanelVisible && (activePanelView === btn.type || activeTab?.type === btn.type);
           const Icon = btn.icon;
           return (

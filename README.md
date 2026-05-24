@@ -20,7 +20,7 @@ The result is a keyboard-first HUD where the agent stays in the centerpiece term
 ### Agent integration
 
 - **Multi-session PTY terminal** — Real `claude` (or other registered CLI agent) running in a PTY. Multiple sessions across multiple workspaces, each with its own state indicator (idle / thinking / working / attention / completed).
-- **Plan review with inline annotations** — Blocks `ExitPlanMode`. Surfaces the plan in an annotatable view; approve, or reject with structured feedback that points the agent back to the edited plan file.
+- **Plan review with inline annotations** — Blocks `ExitPlanMode`. Surfaces the plan in an annotatable view; approve, or reject with structured feedback that points the agent back to the edited plan file. **Currently Claude Code only** — the Plans panel is hidden for OpenCode, Codex, and Pi sessions because their CLIs don't persist plans to disk (see `docs/conventions.md` for the per-agent breakdown; revisit once upstream adds reliable persistence).
 - **Live task tracking** — `TodoWrite` events stream into a session-scoped task panel. State and progress visible without scrolling the transcript.
 - **Multi-agent support** — Adapter foundation for Claude Code, Codex, OpenCode, and Pi. Each adapter declares its capabilities; the UI gates panels accordingly.
 

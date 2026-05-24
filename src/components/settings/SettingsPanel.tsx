@@ -1839,15 +1839,6 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
                   onChange={(v) => handleTextChange("claude_binary", v)}
                 />
                 <ValidatedPathField
-                  configKey="plans_directory"
-                  label="Plans Directory"
-                  placeholder="~/.claude/plans"
-                  kind="dir"
-                  help="Where plan files (.md) are watched and saved."
-                  value={config.plans_directory}
-                  onChange={(v) => handleTextChange("plans_directory", v)}
-                />
-                <ValidatedPathField
                   configKey="transcripts_directory"
                   label="Transcripts Directory"
                   placeholder="~/.claude/projects"

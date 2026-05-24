@@ -1,7 +1,7 @@
 //! Pi adapter — implements [`AgentAdapter`] over a JSONL tail.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,8 +13,10 @@ use super::session_resolver::{encode_cwd_to_pi_path, extract_pi_session_uuid, wa
 use super::transcript::parse_transcript_line;
 use crate::agents::{
     AdapterError, AgentAdapter, AgentCapabilities, AgentCapability, AgentId, DetectionResult,
-    EventSink, SpawnContext, SpawnSpec, ThemePalette, TranscriptEvent, Transport, write_atomic,
+    EventSink, PlanCapability, SpawnContext, SpawnSpec, ThemePalette, TranscriptEvent, Transport,
+    write_atomic,
 };
+use crate::models::Session;
 
 pub struct PiAdapter {
     capabilities: AgentCapabilities,
@@ -158,6 +160,12 @@ impl AgentAdapter for PiAdapter {
 
     fn parse_transcript_line(&self, line: &str) -> Option<TranscriptEvent> {
         parse_transcript_line(line)
+    }
+
+    fn plan_capability(&self, _session: &Session, _cwd: &Path) -> PlanCapability {
+        // SCOPE: Pi has no native plan mode; the community tool-restrict
+        // extension produces no on-disk artifact.
+        PlanCapability::NotApplicable
     }
 
     async fn start_event_pump(

@@ -32,7 +32,6 @@ export interface CostSummary {
 
 export interface Config {
   claude_binary: string;
-  plans_directory: string;
   transcripts_directory: string;
   hook_socket_path: string;
   default_shell: string;
@@ -171,3 +170,17 @@ export interface ThemePalette {
   border: string;
   accent: string;
 }
+
+export interface PlanSummary {
+  name: string;
+  path: string;
+  modified: number;
+}
+
+export type PlanCapabilityWire =
+  | { kind: "FileBased"; dir: string; label: string }
+  | { kind: "NotApplicable" };
+
+export type SessionPlansResponse =
+  | { capability: "FileBased"; dir: string; plans: PlanSummary[] }
+  | { capability: "NotApplicable"; plans: PlanSummary[] };

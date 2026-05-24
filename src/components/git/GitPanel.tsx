@@ -303,12 +303,12 @@ export function GitPanel({ sessionId }: GitPanelProps) {
 
       {pendingMerge && conflictedFiles.length === 0 && (
         <div className="shrink-0 flex items-center gap-2 border-b border-border/50 bg-green-500/10 px-3 py-1.5">
-          <Check size={12} className="text-green-400" />
-          <span className="text-[11px] text-green-300">In-progress merge ready to finish (creates a local merge commit).</span>
+          <Check size={12} className="shrink-0 text-green-400" />
+          <span className="flex-1 min-w-0 text-[11px] text-green-300">In-progress merge ready to finish (creates a local merge commit).</span>
           <button
             onClick={handleCompleteMerge}
             disabled={completing}
-            className="ml-auto flex h-6 items-center gap-1.5 rounded bg-green-500/20 px-2 text-[10px] font-medium text-green-300 hover:bg-green-500/30 transition-colors disabled:opacity-50"
+            className="ml-2 shrink-0 flex h-6 items-center gap-1.5 rounded bg-green-500/20 px-2.5 text-[10px] font-medium text-green-300 hover:bg-green-500/30 transition-colors disabled:opacity-50"
             title="Creates a merge commit locally. No push."
           >
             {completing ? <Loader2 size={10} className="animate-spin" /> : null}
@@ -319,13 +319,13 @@ export function GitPanel({ sessionId }: GitPanelProps) {
 
       {prInfo && prInfo.state !== "OPEN" && (
         <div className="shrink-0 flex items-center gap-2 border-b border-border/50 bg-purple-500/10 px-3 py-1.5">
-          <Check size={12} className="text-purple-400" />
-          <span className="text-[11px] text-purple-300">
+          <Check size={12} className="shrink-0 text-purple-400" />
+          <span className="flex-1 min-w-0 text-[11px] text-purple-300">
             PR #{prInfo.number} is {prInfo.state.toLowerCase()}. Cleanup will delete this session, its worktree, branch and plan files.
           </span>
           <button
             onClick={handleCleanupSession}
-            className="ml-auto flex h-6 items-center gap-1.5 rounded bg-purple-500/20 px-2 text-[10px] font-medium text-purple-300 hover:bg-purple-500/30 transition-colors"
+            className="ml-2 shrink-0 flex h-6 items-center gap-1.5 rounded bg-purple-500/20 px-2.5 text-[10px] font-medium text-purple-300 hover:bg-purple-500/30 transition-colors"
             title="Permanently deletes the session — irreversible"
           >
             Cleanup session

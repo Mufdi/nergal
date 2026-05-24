@@ -20,7 +20,7 @@
 //! the transition; the trait methods are the future call path.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -28,10 +28,12 @@ use dashmap::DashMap;
 
 use crate::agents::{
     AdapterError, AgentAdapter, AgentCapabilities, AgentCapability, AgentId, DetectionResult,
-    EventSink, PlanDecision, SpawnContext, SpawnSpec, TranscriptEvent, Transport,
+    EventSink, PlanCapability, PlanDecision, SpawnContext, SpawnSpec, TranscriptEvent, Transport,
 };
+use crate::models::Session;
 
 use super::cost;
+use super::plans_path::resolve_cc_plans_directory;
 
 /// Wrapper around CC's hooks/transcript/plan/tasks behavior.
 pub struct ClaudeCodeAdapter {
@@ -189,6 +191,13 @@ impl AgentAdapter for ClaudeCodeAdapter {
         // ownership. For zero-regression today, keeping it a no-op preserves
         // current behavior.
         Ok(())
+    }
+
+    fn plan_capability(&self, _session: &Session, cwd: &Path) -> PlanCapability {
+        PlanCapability::FileBased {
+            dir: resolve_cc_plans_directory(cwd),
+            label: "Claude Code".to_string(),
+        }
     }
 
     async fn submit_plan_decision(

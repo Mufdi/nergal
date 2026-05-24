@@ -6,7 +6,6 @@ export const settingsOpenAtom = atom(false);
 
 export const configAtom = atom<Config>({
   claude_binary: "claude",
-  plans_directory: "",
   transcripts_directory: "",
   hook_socket_path: "",
   default_shell: "/bin/bash",

@@ -10,6 +10,28 @@ use super::config::CluihudTerminalConfig;
 use super::input::map_event;
 use super::types::{CellSnapshot, CursorSnapshot, GridSnapshot, TerminalKeyEvent};
 
+#[derive(Debug, Clone, Copy)]
+pub enum PrimaryButton {
+    Left,
+    Middle,
+    Right,
+    None,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum PrimaryKind {
+    Press,
+    Release,
+    Move,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MouseMods {
+    pub shift: bool,
+    pub ctrl: bool,
+    pub alt: bool,
+}
+
 /// A single terminal emulator instance owned by the backend.
 ///
 /// Phase 1 only: no IPC coupling, no coalescing, no grid differ. Those land
@@ -181,6 +203,52 @@ impl TerminalSession {
     /// negative = down. `col`/`row` are cell coordinates of the cursor
     /// at the time of the wheel event; many apps ignore them but mouse
     /// reports need them for correctness.
+    /// Forward a primary mouse button event to wezterm-term. wezterm emits
+    /// the encoded mouse report when the running app has enabled a mouse
+    /// mode (`?1000h`, `?1002h`, `?1006h`); without an enabled mode this is
+    /// a no-op. CC's TUI relies on this to detect clicks on interactive
+    /// menus / lists; without forwarding the panel stays inert.
+    pub fn mouse_button(
+        &mut self,
+        button: PrimaryButton,
+        kind: PrimaryKind,
+        col: u16,
+        row: u16,
+        mods: MouseMods,
+    ) -> Result<()> {
+        use wezterm_term::input::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let mut modifiers = KeyModifiers::default();
+        if mods.shift {
+            modifiers |= KeyModifiers::SHIFT;
+        }
+        if mods.ctrl {
+            modifiers |= KeyModifiers::CTRL;
+        }
+        if mods.alt {
+            modifiers |= KeyModifiers::ALT;
+        }
+        let wez_button = match button {
+            PrimaryButton::Left => MouseButton::Left,
+            PrimaryButton::Middle => MouseButton::Middle,
+            PrimaryButton::Right => MouseButton::Right,
+            PrimaryButton::None => MouseButton::None,
+        };
+        let wez_kind = match kind {
+            PrimaryKind::Press => MouseEventKind::Press,
+            PrimaryKind::Release => MouseEventKind::Release,
+            PrimaryKind::Move => MouseEventKind::Move,
+        };
+        self.terminal.mouse_event(MouseEvent {
+            kind: wez_kind,
+            button: wez_button,
+            x: col as usize,
+            y: row as i64,
+            x_pixel_offset: 0,
+            y_pixel_offset: 0,
+            modifiers,
+        })
+    }
+
     pub fn mouse_wheel(&mut self, delta_lines: i32, col: u16, row: u16) -> Result<()> {
         use wezterm_term::input::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
         let count = delta_lines.unsigned_abs() as usize;

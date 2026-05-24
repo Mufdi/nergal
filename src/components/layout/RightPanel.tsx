@@ -11,6 +11,7 @@ import {
   type Tab,
   type TabType,
 } from "@/stores/rightPanel";
+import { activePlanCapabilityAtom, fetchPlanCapabilityAction } from "@/stores/plan";
 import { focusZoneAtom, previousNonTerminalZoneAtom } from "@/stores/shortcuts";
 import { configAtom } from "@/stores/config";
 import { useFocusPulse } from "@/hooks/useFocusPulse";
@@ -44,7 +45,10 @@ interface RightPanelProps {
 export function RightPanel({ collapsed }: RightPanelProps) {
   const activeTab = useAtomValue(activeTabAtom);
   const tabs = useAtomValue(activeTabsAtom);
-  const activePanelView = useAtomValue(activePanelViewAtom);
+  const [activePanelView, setActivePanelView] = useAtom(activePanelViewAtom);
+  const sessionId = useAtomValue(activeSessionIdAtom);
+  const planCapability = useAtomValue(activePlanCapabilityAtom);
+  const fetchPlanCapability = useSetAtom(fetchPlanCapabilityAction);
   const setFocusZone = useSetAtom(focusZoneAtom);
   const setPreviousZone = useSetAtom(previousNonTerminalZoneAtom);
   const focusZone = useAtomValue(focusZoneAtom);
@@ -64,6 +68,19 @@ export function RightPanel({ collapsed }: RightPanelProps) {
     document.addEventListener("cluihud:toggle-annotations-drawer", handleToggle);
     return () => document.removeEventListener("cluihud:toggle-annotations-drawer", handleToggle);
   }, []);
+
+  useEffect(() => {
+    if (sessionId) fetchPlanCapability(sessionId);
+  }, [sessionId, fetchPlanCapability]);
+
+  // Redirect off the Plans panel when switching to an agent without
+  // file-based plans (Codex, Pi). Without this the panel chrome shows
+  // "Plans" but the picker collapses to NotApplicable copy.
+  useEffect(() => {
+    if (activePanelView === "plan" && planCapability?.kind === "NotApplicable") {
+      setActivePanelView("file");
+    }
+  }, [activePanelView, planCapability, setActivePanelView]);
 
   // Drawer self-focuses via its own callback ref — no parent focus management needed
 

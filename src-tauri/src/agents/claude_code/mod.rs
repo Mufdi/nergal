@@ -10,7 +10,9 @@
 pub mod adapter;
 pub mod cost;
 pub mod plan;
+pub mod plans_path;
 pub mod tasks_parser;
 pub mod transcript;
 
 pub use adapter::ClaudeCodeAdapter;
+pub use plans_path::resolve_cc_plans_directory;

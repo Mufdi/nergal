@@ -24,7 +24,6 @@ fn normalize_theme_mode(value: &str) -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub claude_binary: String,
-    pub plans_directory: PathBuf,
     pub transcripts_directory: PathBuf,
     pub hook_socket_path: PathBuf,
     pub default_shell: String,
@@ -100,7 +99,6 @@ impl Default for Config {
 
         Self {
             claude_binary: "claude".into(),
-            plans_directory: claude_dir.join("plans"),
             transcripts_directory: claude_dir.join("projects"),
             hook_socket_path: std::env::temp_dir().join("cluihud.sock"),
             default_shell: shell,
@@ -126,7 +124,10 @@ impl Config {
         config_dir.join("cluihud").join("config.json")
     }
 
-    /// Load config from disk, falling back to defaults.
+    /// Load config from disk, falling back to defaults. The legacy
+    /// `plans_directory` field (removed by `plan-panel-multi-agent`) is
+    /// ignored on load via serde's default behavior for unknown fields and
+    /// dropped on next save.
     pub fn load() -> Self {
         let path = Self::config_path();
         let mut cfg: Self = match std::fs::read_to_string(&path) {

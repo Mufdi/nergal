@@ -89,8 +89,7 @@ pub struct UpdateCheckResult {
     pub appimage_asset_size: Option<u64>,
 }
 
-const GITHUB_RELEASES_URL: &str =
-    "https://api.github.com/repos/Mufdi/nergal/releases/latest";
+const GITHUB_RELEASES_URL: &str = "https://api.github.com/repos/Mufdi/nergal/releases/latest";
 
 /// GitHub rejects unauthenticated requests without a User-Agent header.
 const USER_AGENT: &str = concat!("cluihud-updater/", env!("CARGO_PKG_VERSION"));
@@ -102,9 +101,7 @@ const USER_AGENT: &str = concat!("cluihud-updater/", env!("CARGO_PKG_VERSION"));
 #[tauri::command]
 pub async fn get_current_release_notes() -> Result<Option<CurrentReleaseInfo>, String> {
     let current = env!("CARGO_PKG_VERSION");
-    let url = format!(
-        "https://api.github.com/repos/Mufdi/nergal/releases/tags/v{current}"
-    );
+    let url = format!("https://api.github.com/repos/Mufdi/nergal/releases/tags/v{current}");
     let client = reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .timeout(std::time::Duration::from_secs(15))
@@ -224,7 +221,9 @@ fn resolve_downloads_dir() -> Result<PathBuf, String> {
 pub async fn download_app_update(url: String, filename: String) -> Result<String, String> {
     // Host allow-list closes a path that would otherwise let the
     // frontend coerce this command into fetching arbitrary URLs.
-    if !url.starts_with("https://github.com/") && !url.starts_with("https://objects.githubusercontent.com/") {
+    if !url.starts_with("https://github.com/")
+        && !url.starts_with("https://objects.githubusercontent.com/")
+    {
         return Err("refusing to download outside github.com hosts".into());
     }
     // Filename comes from the frontend; reject anything that would
@@ -265,9 +264,7 @@ pub async fn download_app_update(url: String, filename: String) -> Result<String
 #[tauri::command]
 pub fn reveal_in_downloads(path: String) -> Result<(), String> {
     let p = PathBuf::from(&path);
-    let dir = p
-        .parent()
-        .ok_or_else(|| "path has no parent".to_string())?;
+    let dir = p.parent().ok_or_else(|| "path has no parent".to_string())?;
     std::process::Command::new("xdg-open")
         .arg(dir)
         .spawn()

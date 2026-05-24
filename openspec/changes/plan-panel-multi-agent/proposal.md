@@ -2,14 +2,13 @@
 
 The Plan panel is broken today for any user whose Claude Code `plansDirectory` setting doesn't resolve to `<cwd>/.claude/plans/` — the only path the `list_session_plans` command scans. The Settings UI exposes a `plans_directory` field that suggests configurability but is ignored by the panel: it's only consumed by the global `list_plans` command (not invoked from the frontend) and by the live-event watcher. A reported user verified that their cluihud setting matched their plan location and still saw an empty panel — the field is decorative.
 
-Beyond the CC bug, the panel inherits CC's path convention for every agent. OpenCode has its own convention (`.opencode/plans/*.md`), Codex's plan mode is TUI-only with no disk persistence, and Pi has no native plan mode — only a community extension that restricts tools without producing artifacts. The current behavior shows silent empty panels for these agents, which is misleading.
+Beyond the CC bug, the panel inherits CC's path convention for every agent. OpenCode's plan mode is read-only by design (verified against `anomalyco/opencode` `packages/opencode/src/agent/agent.ts` on the `dev` branch — only `edit` permission exceptions for `.opencode/plans/*.md` and `Global.Path.data/plans/*.md`, not automatic save; cross-referenced with upstream issue [#11078](https://github.com/anomalyco/opencode/issues/11078) where the model refuses to write even with permission). Codex's plan mode is TUI-only with no disk persistence. Pi has no native plan mode — only a community extension that restricts tools without producing artifacts. The current behavior shows silent empty panels for these agents, which is misleading.
 
 ## What Changes
 
 - Add `plan_capability(session, cwd) -> PlanCapability` method to the `AgentAdapter` trait. Variants in v1: `FileBased { dir, label }` and `NotApplicable`.
 - CC adapter returns `FileBased`, with the directory resolved from CC's `plansDirectory` setting following CC's own resolution rules (cwd-relative vs absolute, with project-local settings overriding home).
-- OpenCode adapter returns `FileBased { dir: <cwd>/.opencode/plans }`.
-- Codex and Pi adapters return `NotApplicable`. Rationale documented in `docs/Per-agent feature limitations.md` (Obsidian vault) for future revisit.
+- OpenCode, Codex, and Pi adapters return `NotApplicable`. Rationale documented in `docs/Per-agent feature limitations.md` (Obsidian vault) for future revisit. OpenCode-specific note: if upstream lands reliable automatic plan persistence, revisit to declare `FileBased`.
 - `list_session_plans` Tauri command delegates to the active session's adapter, removing the hardcoded path.
 - Frontend hides the "Plans" entry from the right-panel chrome when the active session's capability is `NotApplicable`. Empty state for `FileBased` shows the resolved path and a config hint.
 - The `plans_directory` field is removed from cluihud's Config and Settings UI — the resolved path comes from the agent adapter, not from cluihud config.

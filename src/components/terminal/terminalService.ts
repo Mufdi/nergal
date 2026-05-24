@@ -366,6 +366,28 @@ export function sendSpecialKeyToActive(code: string, key: string, modifiers: { c
   );
 }
 
+function sendMouseButton(
+  entry: Entry,
+  button: "left" | "middle" | "right" | "none",
+  kind: "press" | "release" | "move",
+  col: number,
+  row: number,
+  mods: MouseEvent,
+): void {
+  invoke("terminal_mouse_button", {
+    sessionId: entry.sessionId,
+    button,
+    kind,
+    col,
+    row,
+    mods: {
+      shift: mods.shiftKey,
+      ctrl: mods.ctrlKey,
+      alt: mods.altKey,
+    },
+  }).catch((err: unknown) => console.error("terminal_mouse_button failed", err));
+}
+
 // ── Private: input wiring ──
 
 function wireInput(entry: Entry): void {
@@ -453,19 +475,21 @@ function wireInput(entry: Entry): void {
 
   entry.canvas.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
-    // Block the browser's default focus shift so our explicit textarea.focus()
-    // call below sticks — otherwise Chromium/WebKit would blur the textarea
-    // immediately after the handler returns, since the canvas itself isn't a
-    // focusable element. Native selection isn't used here (we track selection
-    // via grid cells manually), so suppressing the default is harmless.
     e.preventDefault();
     focusCanvas(entry);
     const cell = mouseToCell(entry, e);
     if (!cell) return;
 
-    // Click on a hyperlink cell (without a drag) opens it. We distinguish
-    // click-vs-drag by comparing mousedown and mouseup cell positions in
-    // the mouseup handler below.
+    // In alt screen, defer to the TUI app: forward the press as a mouse
+    // report (wezterm no-ops when no mode is enabled). Suppress selection
+    // bookkeeping so CC's Ink menus / fuzzy pickers receive the click
+    // intact. Shift overrides to allow text selection over a TUI.
+    const hyperlink = entry.grid[cell.row]?.[cell.col]?.hyperlink ?? null;
+    if (entry.isAltScreen && !hyperlink && !e.shiftKey) {
+      sendMouseButton(entry, "left", "press", cell.col, cell.row, e);
+      return;
+    }
+
     entry.isDragging = true;
     entry.selection = { anchor: cell, head: cell };
     entry.selectionScrollOffset = entry.scrollOffset;
@@ -486,6 +510,10 @@ function wireInput(entry: Entry): void {
       return;
     }
 
+    if (entry.isAltScreen && (e.buttons & 1) === 1) {
+      sendMouseButton(entry, "left", "move", cell.col, cell.row, e);
+    }
+
     // Hover: detect hyperlink under the cursor and flip the pointer.
     const hyperlink = entry.grid[cell.row]?.[cell.col]?.hyperlink ?? null;
     if (hyperlink !== entry.hoveredHyperlink) {
@@ -495,7 +523,13 @@ function wireInput(entry: Entry): void {
   });
 
   entry.canvas.addEventListener("mouseup", (e) => {
-    if (!entry.isDragging) return;
+    if (!entry.isDragging) {
+      if (entry.isAltScreen && e.button === 0) {
+        const cell = mouseToCell(entry, e);
+        if (cell) sendMouseButton(entry, "left", "release", cell.col, cell.row, e);
+      }
+      return;
+    }
     entry.isDragging = false;
 
     if (!entry.selection) return;

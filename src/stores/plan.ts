@@ -1,9 +1,32 @@
 import { atom } from "jotai";
-import type { PlanMode, DiffLine } from "@/lib/types";
+import type { PlanMode, DiffLine, PlanCapabilityWire } from "@/lib/types";
 import { activeSessionIdAtom } from "./workspace";
+import { invoke } from "@/lib/tauri";
 
 export type PlanSidebarTab = "files" | "annotations";
 export const planSidebarTabAtom = atom<PlanSidebarTab>("files");
+
+export const planCapabilityMapAtom = atom<Record<string, PlanCapabilityWire>>({});
+
+export const activePlanCapabilityAtom = atom<PlanCapabilityWire | null>((get) => {
+  const id = get(activeSessionIdAtom);
+  if (!id) return null;
+  return get(planCapabilityMapAtom)[id] ?? null;
+});
+
+export const fetchPlanCapabilityAction = atom(null, async (get, set, sessionId: string) => {
+  const cached = get(planCapabilityMapAtom)[sessionId];
+  if (cached) return cached;
+  try {
+    const cap = await invoke<PlanCapabilityWire>("get_session_plan_capability", { sessionId });
+    set(planCapabilityMapAtom, (prev) => ({ ...prev, [sessionId]: cap }));
+    return cap;
+  } catch {
+    const fallback: PlanCapabilityWire = { kind: "NotApplicable" };
+    set(planCapabilityMapAtom, (prev) => ({ ...prev, [sessionId]: fallback }));
+    return fallback;
+  }
+});
 
 export type PlanReviewStatus = "idle" | "pending_review" | "submitted";
 

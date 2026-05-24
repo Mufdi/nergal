@@ -20,8 +20,7 @@
 
 ## 3. OpenCode adapter
 
-- [ ] 3.1 Implement `plan_capability` in `agents/opencode/adapter.rs` returning `FileBased { dir: cwd.join(".opencode/plans"), label: "OpenCode".to_string() }`.
-- [ ] 3.2 **Empirical verification before merge**: run an OpenCode session, switch to plan mode (Tab), let the Plan agent generate a plan, confirm the file lands at `<cwd>/.opencode/plans/<something>.md`. If the path differs, update the adapter accordingly and document in the proposal.
+- [ ] 3.1 Implement `plan_capability` in `agents/opencode/adapter.rs` returning `NotApplicable`. OpenCode plan mode is read-only by design — verified against `anomalyco/opencode` `packages/opencode/src/agent/agent.ts` `dev` branch: the only `edit` permission exceptions are `.opencode/plans/*.md` and `Global.Path.data/plans/*.md`, but neither is auto-written; cross-referenced with upstream issue #11078 where the model refuses to write even with permission. Add a source comment pointing readers at that finding and at `Per-agent feature limitations.md`.
 
 ## 4. Codex and Pi adapters
 
@@ -48,7 +47,7 @@
 - [ ] 6.2 Update `src/components/panel/PlanListView.tsx`:
   - Read `activePlanCapabilityAtom`.
   - If `NotApplicable` → render nothing or a minimal placeholder (panel should not be reachable in this state, but defensive).
-  - If `FileBased { dir }` and `plans.length === 0` → empty state shows `"No plans found at {dir}"` + secondary text contextual to the agent (CC: `"Check plansDirectory in ~/.claude/settings.json"`; OpenCode: `"OpenCode writes plans to .opencode/plans/ during Plan mode"`).
+  - If `FileBased { dir }` and `plans.length === 0` → empty state shows user-friendly copy (no internal-jargon like `plansDirectory`) plus a muted-mono path so the user can verify where the panel is reading from.
   - Otherwise → existing list behavior.
 - [ ] 6.3 Update the right-panel chrome (locate the panel switcher component — likely `src/components/panel/RightPanel.tsx` or `PanelChrome.tsx`):
   - Subscribe to `activePlanCapabilityAtom`.
@@ -68,7 +67,7 @@
   - CC session with `plansDirectory = ".claude/plans"` (current dev setup) → panel works, no regression.
   - CC session with `plansDirectory = "/tmp/custom-plans"` → panel reads from `/tmp/custom-plans`.
   - CC session with no `plansDirectory` set → fallback to `<cwd>/.claude/plans`.
-  - OpenCode session with plans in `.opencode/plans/` → panel reads them.
+  - OpenCode session → Plans entry hidden from right-panel switcher (opencode plan mode does not auto-persist plans; see anomalyco/opencode#11078).
   - Codex session → Plans entry hidden from right-panel switcher.
   - Pi session → Plans entry hidden from right-panel switcher.
   - Switching between CC and Codex sessions → Plans entry appears/disappears correctly.

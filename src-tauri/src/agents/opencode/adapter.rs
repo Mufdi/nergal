@@ -8,7 +8,7 @@
 //! panels light up identically — without restoring the old chat-panel UI.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -17,8 +17,10 @@ use dashmap::DashMap;
 use super::sse_client::{SessionIdMap, SseClient};
 use crate::agents::{
     AdapterError, AgentAdapter, AgentCapabilities, AgentCapability, AgentId, DetectionResult,
-    EventSink, SpawnContext, SpawnSpec, ThemePalette, TranscriptEvent, Transport, write_atomic,
+    EventSink, PlanCapability, SpawnContext, SpawnSpec, ThemePalette, TranscriptEvent, Transport,
+    write_atomic,
 };
+use crate::models::Session;
 
 /// Port range reserved for OpenCode TUI sessions. Stays well above the
 /// reserved range and out of common dev-server territory (3000s/8000s).
@@ -190,6 +192,15 @@ impl AgentAdapter for OpenCodeAdapter {
 
     fn parse_transcript_line(&self, _line: &str) -> Option<TranscriptEvent> {
         None
+    }
+
+    fn plan_capability(&self, _session: &Session, _cwd: &Path) -> PlanCapability {
+        // SCOPE: opencode plan mode is read-only and does not persist plans
+        // to disk by default. The `.opencode/plans/*.md` write path is
+        // documented but the model refuses to use it (issue
+        // anomalyco/opencode#11078). Revisit if upstream adds reliable
+        // automatic persistence.
+        PlanCapability::NotApplicable
     }
 
     async fn start_event_pump(

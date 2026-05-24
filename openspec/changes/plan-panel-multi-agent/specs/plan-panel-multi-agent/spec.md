@@ -14,9 +14,10 @@ The default trait impl SHALL return `NotApplicable`. Adding new variants is a no
 - **THEN** the result is `FileBased { dir: <resolved>, label: "Claude Code" }`
 - **AND** `<resolved>` is computed per the CC plans-directory resolution rules in the `cc-adapter` spec
 
-#### Scenario: OpenCode adapter declares FileBased
+#### Scenario: OpenCode adapter declares NotApplicable
 - **WHEN** `opencode_adapter.plan_capability(session, cwd)` is called
-- **THEN** the result is `FileBased { dir: cwd.join(".opencode/plans"), label: "OpenCode" }`
+- **THEN** the result is `NotApplicable`
+- **AND** the rationale (opencode plan mode is read-only and refuses to write `.opencode/plans/*.md` per upstream issue #11078) is captured in the source comment
 
 #### Scenario: Codex adapter declares NotApplicable
 - **WHEN** `codex_adapter.plan_capability(session, cwd)` is called
@@ -42,9 +43,9 @@ The `list_session_plans` Tauri command SHALL resolve the active session's `agent
 - **THEN** the response shape is `{ capability: "FileBased", dir: "<resolved>", plans: [..., ...] }`
 - **AND** the plans are sorted by modified time descending
 
-#### Scenario: OpenCode session with plans
-- **WHEN** `list_session_plans` is called for an OpenCode session with files in `.opencode/plans/`
-- **THEN** the response is `{ capability: "FileBased", dir: "<cwd>/.opencode/plans", plans: [...] }`
+#### Scenario: OpenCode session
+- **WHEN** `list_session_plans` is called for an OpenCode session
+- **THEN** the response is `{ capability: "NotApplicable", plans: [] }`
 
 #### Scenario: Codex session
 - **WHEN** `list_session_plans` is called for a Codex session
@@ -88,11 +89,6 @@ When the Plans panel renders for a `FileBased` session and the scanned directory
 - **WHEN** a CC session's resolved plans dir exists but contains no `.md` files
 - **THEN** the panel renders primary text `"No plans found at <path>"`
 - **AND** secondary text `"Check plansDirectory in ~/.claude/settings.json"`
-
-#### Scenario: OpenCode session with empty plans dir
-- **WHEN** an OpenCode session's `.opencode/plans/` is empty
-- **THEN** primary text reads `"No plans found at <path>"`
-- **AND** secondary text reads `"OpenCode writes plans to .opencode/plans/ during Plan mode (Tab)"`
 
 #### Scenario: Resolved dir does not exist on disk
 - **WHEN** the resolved dir for a FileBased session does not exist on disk

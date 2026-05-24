@@ -20,7 +20,7 @@ pub use config::CluihudTerminalConfig;
 pub use differ::GridDiffer;
 pub use emitter::TerminalHandle;
 pub use input::map_event;
-pub use session::TerminalSession;
+pub use session::{MouseMods, PrimaryButton, PrimaryKind, TerminalSession};
 pub use types::{
     CellSnapshot, CursorSnapshot, GridRow, GridSnapshot, GridUpdate, TerminalKeyEvent,
 };

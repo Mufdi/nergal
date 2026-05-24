@@ -12,8 +12,10 @@ use std::path::{Path, PathBuf};
 use super::transcript::parse_transcript_line;
 use crate::agents::{
     AdapterError, AgentAdapter, AgentCapabilities, AgentCapability, AgentId, DetectionResult,
-    EventSink, SpawnContext, SpawnSpec, ThemePalette, TranscriptEvent, Transport, write_atomic,
+    EventSink, PlanCapability, SpawnContext, SpawnSpec, ThemePalette, TranscriptEvent, Transport,
+    write_atomic,
 };
+use crate::models::Session;
 
 pub struct CodexAdapter {
     capabilities: AgentCapabilities,
@@ -151,6 +153,12 @@ impl AgentAdapter for CodexAdapter {
 
     fn parse_transcript_line(&self, line: &str) -> Option<TranscriptEvent> {
         parse_transcript_line(line)
+    }
+
+    fn plan_capability(&self, _session: &Session, _cwd: &Path) -> PlanCapability {
+        // SCOPE: Codex plan mode is TUI-only (no on-disk artifact). Re-evaluate
+        // if a future change wires rollout-JSONL extraction.
+        PlanCapability::NotApplicable
     }
 
     async fn start_event_pump(

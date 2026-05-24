@@ -6,6 +6,7 @@ use crate::agents::AgentId;
 use crate::agents::ThemePalette;
 use crate::agents::claude_code::cost::{self, CostSummary};
 use crate::agents::state::AgentRuntimeState;
+use crate::agents::{PlanCapability, PlanCapabilityWire};
 use crate::config::Config;
 use crate::db::SharedDb;
 use crate::hooks::state::HookState;
@@ -354,37 +355,76 @@ fn scan_plans_dir(dir: &std::path::Path) -> Vec<PlanSummary> {
     plans
 }
 
-#[tauri::command]
-pub fn list_plans(state: State<'_, SharedPlanState>) -> Result<Vec<PlanSummary>, String> {
-    let mgr = state.lock().map_err(|e| e.to_string())?;
-    Ok(scan_plans_dir(mgr.plans_dir()))
+#[derive(Clone, serde::Serialize)]
+#[serde(tag = "capability")]
+pub enum SessionPlansResponse {
+    FileBased {
+        dir: String,
+        plans: Vec<PlanSummary>,
+    },
+    NotApplicable {
+        plans: Vec<PlanSummary>,
+    },
+}
+
+fn session_cwd_opt(db: &crate::db::Database, session: &Session) -> Option<PathBuf> {
+    if let Some(wt) = session.worktree_path.clone() {
+        return Some(wt);
+    }
+    db.workspace_repo_path(&session.workspace_id).ok().flatten()
+}
+
+fn resolve_session_plan_capability(
+    db_state: &State<'_, SharedDb>,
+    agent_state: &State<'_, AgentRuntimeState>,
+    session_id: &str,
+) -> Result<Option<(Session, PlanCapability)>, String> {
+    let db = db_state.lock().map_err(|e| e.to_string())?;
+    let Some(session) = db.find_session(session_id).map_err(|e| e.to_string())? else {
+        return Ok(None);
+    };
+    let Some(cwd) = session_cwd_opt(&db, &session) else {
+        return Ok(None);
+    };
+    let agent_id = AgentId::new(&session.agent_id).map_err(|e| e.to_string())?;
+    let Some(adapter) = agent_state.registry.get(&agent_id) else {
+        return Ok(None);
+    };
+    let capability = adapter.plan_capability(&session, &cwd);
+    Ok(Some((session, capability)))
 }
 
 #[tauri::command]
 pub fn list_session_plans(
     db: State<'_, SharedDb>,
+    agent_state: State<'_, AgentRuntimeState>,
     session_id: String,
-) -> Result<Vec<PlanSummary>, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
-
-    let Some(session) = db.find_session(&session_id).map_err(|e| e.to_string())? else {
-        return Ok(vec![]);
+) -> Result<SessionPlansResponse, String> {
+    let Some((_session, capability)) =
+        resolve_session_plan_capability(&db, &agent_state, &session_id)?
+    else {
+        return Ok(SessionPlansResponse::NotApplicable { plans: vec![] });
     };
+    Ok(match capability {
+        PlanCapability::FileBased { dir, .. } => SessionPlansResponse::FileBased {
+            plans: scan_plans_dir(&dir),
+            dir: dir.display().to_string(),
+        },
+        PlanCapability::NotApplicable => SessionPlansResponse::NotApplicable { plans: vec![] },
+    })
+}
 
-    let repo_path = db
-        .workspace_repo_path(&session.workspace_id)
-        .map_err(|e| e.to_string())?;
-
-    let cwd = if let Some(ref wt) = session.worktree_path {
-        wt.clone()
-    } else if let Some(ref rp) = repo_path {
-        rp.clone()
-    } else {
-        return Ok(vec![]);
+#[tauri::command]
+pub fn get_session_plan_capability(
+    db: State<'_, SharedDb>,
+    agent_state: State<'_, AgentRuntimeState>,
+    session_id: String,
+) -> Result<PlanCapabilityWire, String> {
+    let Some((_, capability)) = resolve_session_plan_capability(&db, &agent_state, &session_id)?
+    else {
+        return Ok(PlanCapabilityWire::NotApplicable);
     };
-
-    let project_plans_dir = cwd.join(".claude").join("plans");
-    Ok(scan_plans_dir(&project_plans_dir))
+    Ok(capability.into())
 }
 
 #[tauri::command]
@@ -698,6 +738,7 @@ pub fn delete_workspace(db: State<'_, SharedDb>, workspace_id: String) -> Result
 pub fn create_session(
     db: State<'_, SharedDb>,
     agents: State<'_, AgentRuntimeState>,
+    plan_watcher: State<'_, crate::agents::claude_code::plan::SharedPlanWatcher>,
     workspace_id: String,
     name: String,
     agent_id: Option<String>,
@@ -768,7 +809,27 @@ pub fn create_session(
     // Populate the agent_id cache BEFORE the PTY spawn so the SessionStart
     // hook never races the cache. Until the session-creation flow exposes a
     // picker (commit 11), every new session is a CC session by default.
-    agents.register_session(&session.id, agent_id);
+    agents.register_session(&session.id, agent_id.clone());
+
+    if agent_id == AgentId::claude_code()
+        && let Some(adapter) = agents.registry.get(&agent_id)
+    {
+        let cwd = session
+            .worktree_path
+            .clone()
+            .unwrap_or_else(|| repo_path.clone());
+        let cap = adapter.plan_capability(&session, &cwd);
+        if let crate::agents::PlanCapability::FileBased { dir, .. } = cap
+            && let Ok(mut w) = plan_watcher.lock()
+            && let Err(e) = w.ensure_dir_and_watch(&dir)
+        {
+            tracing::warn!(
+                dir = %dir.display(),
+                error = %e,
+                "plan watcher extend failed"
+            );
+        }
+    }
     Ok(session)
 }
 

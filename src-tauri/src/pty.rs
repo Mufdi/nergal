@@ -617,6 +617,76 @@ pub fn terminal_scroll(
     Ok(())
 }
 
+/// Forward a primary mouse button event (left/middle/right press/release)
+/// to wezterm. Required for CC's TUI menus + Ink-based pickers, which only
+/// respond when the terminal forwards encoded mouse reports.
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MouseModsWire {
+    #[serde(default)]
+    pub shift: bool,
+    #[serde(default)]
+    pub ctrl: bool,
+    #[serde(default)]
+    pub alt: bool,
+}
+
+#[tauri::command]
+pub fn terminal_mouse_button(
+    state: State<'_, PtyManager>,
+    session_id: String,
+    button: String,
+    kind: String,
+    col: u16,
+    row: u16,
+    mods: MouseModsWire,
+) -> Result<(), String> {
+    use crate::terminal::{MouseMods, PrimaryButton, PrimaryKind};
+    let pty_id = {
+        let session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
+        session_ptys
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| "no PTY for session".to_string())?
+    };
+
+    let instances = state.instances.lock().map_err(|e| e.to_string())?;
+    let instance = instances.get(&pty_id).ok_or("PTY instance not found")?;
+    let handle = &instance.terminal;
+
+    let btn = match button.as_str() {
+        "left" => PrimaryButton::Left,
+        "middle" => PrimaryButton::Middle,
+        "right" => PrimaryButton::Right,
+        "none" => PrimaryButton::None,
+        other => return Err(format!("unknown mouse button: {other}")),
+    };
+    let kind = match kind.as_str() {
+        "press" => PrimaryKind::Press,
+        "release" => PrimaryKind::Release,
+        "move" => PrimaryKind::Move,
+        other => return Err(format!("unknown mouse kind: {other}")),
+    };
+
+    let mut session = handle.session.lock().map_err(|e| e.to_string())?;
+    session
+        .mouse_button(
+            btn,
+            kind,
+            col,
+            row,
+            MouseMods {
+                shift: mods.shift,
+                ctrl: mods.ctrl,
+                alt: mods.alt,
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    drop(session);
+    handle.wake();
+    Ok(())
+}
+
 /// Snap the scrollback viewport back to the live bottom. Idempotent.
 #[tauri::command]
 pub fn terminal_scroll_to_bottom(

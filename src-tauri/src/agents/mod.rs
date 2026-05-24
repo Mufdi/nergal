@@ -380,6 +380,34 @@ pub struct PlanDecision {
     pub message: Option<String>,
 }
 
+/// `NotApplicable` hides the Plans panel entry for the session; `FileBased`
+/// drives the scan path. New variants are non-breaking thanks to the trait
+/// default ([`AgentAdapter::plan_capability`]).
+#[derive(Clone, Debug)]
+pub enum PlanCapability {
+    FileBased { dir: PathBuf, label: String },
+    NotApplicable,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(tag = "kind")]
+pub enum PlanCapabilityWire {
+    FileBased { dir: String, label: String },
+    NotApplicable,
+}
+
+impl From<PlanCapability> for PlanCapabilityWire {
+    fn from(cap: PlanCapability) -> Self {
+        match cap {
+            PlanCapability::FileBased { dir, label } => Self::FileBased {
+                dir: dir.display().to_string(),
+                label,
+            },
+            PlanCapability::NotApplicable => Self::NotApplicable,
+        }
+    }
+}
+
 /// Sink that adapters call to forward translated events into the cluihud
 /// event bus. The runtime owns the receiver; adapters only emit.
 pub type EventSink = tokio::sync::mpsc::UnboundedSender<crate::hooks::events::HookEvent>;
@@ -432,6 +460,12 @@ pub trait AgentAdapter: Send + Sync {
     /// Default impl is a no-op for adapters that don't start anything.
     async fn stop_event_pump(&self, _session_id: &str) -> Result<(), AdapterError> {
         Ok(())
+    }
+
+    /// MUST stay cheap (no filesystem scans) — `list_session_plans` calls
+    /// this synchronously on every request.
+    fn plan_capability(&self, _session: &crate::models::Session, _cwd: &Path) -> PlanCapability {
+        PlanCapability::NotApplicable
     }
 
     /// For adapters that declare [`AgentCapability::PLAN_REVIEW`]. Default

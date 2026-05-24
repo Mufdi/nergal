@@ -27,6 +27,8 @@ rusqlite = { version = "0.34", features = ["bundled"] }
 tauri-plugin-notification = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-global-shortcut = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 # Direct dep on arboard so we can write to the OS clipboard inside
 # `spawn_blocking`. The clipboard plugin's own `write_text` runs on the
 # tokio runtime and its Wayland backend makes synchronous I/O to wl-clipboard

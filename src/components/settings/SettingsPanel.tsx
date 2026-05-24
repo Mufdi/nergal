@@ -22,6 +22,8 @@ import { CheckCircle2, AlertTriangle, XCircle, Info, FolderTree, Bot, Pencil, Pa
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { open as openShell } from "@tauri-apps/plugin-shell";
+import { check as checkUpdater } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { HexColorPicker } from "react-colorful";
 import { scratchpadPathAtom, reloadTabsFromBackend } from "@/stores/scratchpad";
 import {
@@ -1013,6 +1015,8 @@ type UpdateState =
   | { kind: "available"; result: UpdateCheckResult }
   | { kind: "downloading" }
   | { kind: "downloaded"; path: string }
+  | { kind: "appimage_downloading"; downloaded: number; total: number | null }
+  | { kind: "appimage_installed" }
   | { kind: "error"; message: string };
 
 function AboutSection({ appVersion }: { appVersion: string }) {
@@ -1055,6 +1059,43 @@ function AboutSection({ appVersion }: { appVersion: string }) {
       setUpdateState({ kind: "downloaded", path });
     } catch (err) {
       setUpdateState({ kind: "error", message: String(err) });
+    }
+  }
+
+  async function handleAppImageUpdate() {
+    setUpdateState({ kind: "appimage_downloading", downloaded: 0, total: null });
+    try {
+      const update = await checkUpdater();
+      if (!update) {
+        setUpdateState({
+          kind: "error",
+          message: "Updater plugin reported no update. The latest.json manifest may not be published yet.",
+        });
+        return;
+      }
+      let totalBytes: number | null = null;
+      let received = 0;
+      await update.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          totalBytes = event.data.contentLength ?? null;
+          setUpdateState({ kind: "appimage_downloading", downloaded: 0, total: totalBytes });
+        } else if (event.event === "Progress") {
+          received += event.data.chunkLength;
+          setUpdateState({ kind: "appimage_downloading", downloaded: received, total: totalBytes });
+        } else if (event.event === "Finished") {
+          setUpdateState({ kind: "appimage_installed" });
+        }
+      });
+    } catch (err) {
+      setUpdateState({ kind: "error", message: String(err) });
+    }
+  }
+
+  async function handleRelaunch() {
+    try {
+      await relaunch();
+    } catch (err) {
+      console.error("[about] relaunch failed:", err);
     }
   }
 
@@ -1118,6 +1159,8 @@ function AboutSection({ appVersion }: { appVersion: string }) {
           onDownloadDeb={handleDownloadDeb}
           onReveal={handleReveal}
           onOpenRelease={handleOpenReleaseUrl}
+          onUpdateAppImage={handleAppImageUpdate}
+          onRelaunch={handleRelaunch}
         />
       </div>
 
@@ -1185,6 +1228,8 @@ function UpdateActions({
   onDownloadDeb,
   onReveal,
   onOpenRelease,
+  onUpdateAppImage,
+  onRelaunch,
 }: {
   installSource: InstallSource;
   state: UpdateState;
@@ -1192,6 +1237,8 @@ function UpdateActions({
   onDownloadDeb: (result: UpdateCheckResult) => void;
   onReveal: (path: string) => void;
   onOpenRelease: (url: string) => void;
+  onUpdateAppImage: () => void;
+  onRelaunch: () => void;
 }) {
   const button = renderUpdateButton({
     installSource,
@@ -1199,6 +1246,8 @@ function UpdateActions({
     onCheck,
     onDownloadDeb,
     onReveal,
+    onUpdateAppImage,
+    onRelaunch,
   });
 
   const supplementary = renderUpdateSupplementary({
@@ -1232,12 +1281,16 @@ function renderUpdateButton({
   onCheck,
   onDownloadDeb,
   onReveal,
+  onUpdateAppImage,
+  onRelaunch,
 }: {
   installSource: InstallSource;
   state: UpdateState;
   onCheck: () => void;
   onDownloadDeb: (result: UpdateCheckResult) => void;
   onReveal: (path: string) => void;
+  onUpdateAppImage: () => void;
+  onRelaunch: () => void;
 }) {
   switch (state.kind) {
     case "idle":
@@ -1284,9 +1337,16 @@ function renderUpdateButton({
           </Button>
         );
       }
-      // AppImage + dev + unknown sources: no in-app install path. The
-      // supplementary block surfaces the release page so the user can
-      // grab the bundle manually.
+      if (installSource === "appimage") {
+        const size = result.appimageAssetSize ? formatBytes(result.appimageAssetSize) : null;
+        return (
+          <Button variant="default" size="sm" onClick={onUpdateAppImage} className="w-fit">
+            <Download size={12} />
+            Install v{result.latestVersion}
+            {size ? ` (${size})` : ""}
+          </Button>
+        );
+      }
       return (
         <Button variant="outline" size="sm" disabled className="w-fit">
           <Download size={12} />
@@ -1306,6 +1366,22 @@ function renderUpdateButton({
         <Button variant="outline" size="sm" onClick={() => onReveal(state.path)} className="w-fit">
           <FolderOpen size={12} />
           Reveal in file manager
+        </Button>
+      );
+    case "appimage_downloading": {
+      const pct = state.total ? Math.floor((state.downloaded / state.total) * 100) : null;
+      return (
+        <Button variant="default" size="sm" disabled className="w-fit">
+          <Download size={12} className="animate-pulse" />
+          Installing{pct !== null ? ` ${pct}%` : "…"}
+        </Button>
+      );
+    }
+    case "appimage_installed":
+      return (
+        <Button variant="default" size="sm" onClick={onRelaunch} className="w-fit">
+          <RefreshCw size={12} />
+          Restart to apply
         </Button>
       );
     case "error":
@@ -1336,9 +1412,8 @@ function renderUpdateSupplementary({
             Current: v{result.currentVersion}
           </p>
           {installSource === "appimage" && (
-            <p className="text-xs text-amber-500">
-              <AlertTriangle size={11} className="inline align-text-bottom" />{" "}
-              AppImage auto-install isn't wired yet. Open the release page to download manually.
+            <p className="text-xs text-muted-foreground">
+              The installer replaces the running AppImage in place. Nergal needs to restart afterwards.
             </p>
           )}
           {result.releaseNotes && (
@@ -1395,6 +1470,19 @@ function renderUpdateSupplementary({
           <CheckCircle2 size={11} className="inline align-text-bottom text-emerald-500" />{" "}
           Saved to <code className="rounded bg-muted px-1 font-mono text-[10px]">{state.path}</code>.
           Open it with your package manager to install — cluihud keeps running on the current version.
+        </p>
+      );
+    case "appimage_downloading":
+      return (
+        <p className="text-xs text-muted-foreground">
+          Downloading signed AppImage and verifying the signature against the embedded pubkey…
+        </p>
+      );
+    case "appimage_installed":
+      return (
+        <p className="text-xs text-muted-foreground">
+          <CheckCircle2 size={11} className="inline align-text-bottom text-emerald-500" />{" "}
+          Installed in place. Restart Nergal to load the new version.
         </p>
       );
     case "error":

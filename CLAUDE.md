@@ -53,17 +53,22 @@ Run the full check after significant changes.
 
 ## Release commands
 
-Two-step ship-of-the-repo flow (see OpenSpec change `release-script`):
+Two-step ship flow (see OpenSpec changes `release-script` + `release-ci-signed`):
 
 1. **In a Claude session**: say "cortemos v0.1.X" (or equivalent). Claude reads `git log <prev-tag>..HEAD` + relevant diffs + BUG-NN entries from the just-archived working file, writes a contextual user-facing CHANGELOG section, and prepends it to `CHANGELOG.md`.
 2. **Run the script**: `pnpm release <patch|minor|major>` (or explicit `pnpm release 0.1.10`). The script verifies the CHANGELOG section is present, bumps versions in `package.json` + `src-tauri/Cargo.toml` + `src-tauri/tauri.conf.json`, refreshes `Cargo.lock`, commits `chore(release): vX.Y.Z`, tags, and pushes `main` + tag.
+3. **CI takes it from there**: `.github/workflows/release.yml` (triggered on `v*` tag push) builds, signs (via `TAURI_SIGNING_PRIVATE_KEY` repo secret), and publishes `.deb` + `.rpm` + `.AppImage` + `.AppImage.sig` + `latest.json`. Then prepends a "Latest release →" banner to the previous release. Monitor at https://github.com/Mufdi/nergal/actions.
+
+Versioning policy (when to pick `patch` vs `minor`, what counts as "breaking" while still in `0.x`, expectations for the eventual `1.0` cut) lives in the project's private notes — ask the user if you need it.
 
 | Command | Behavior |
 |---|---|
 | `pnpm release <bump>` | Full release (live). |
 | `pnpm release:dry` (or `pnpm release <bump> --dry-run`) | All guards + computation, no mutations. Useful for previewing the changelog echo + the would-be operations. |
 | `pnpm release <bump> --no-push` | Local commit + tag, skip push. Relaxes the "must be on main" guard for testing on a throwaway branch. |
-| `pnpm release:test` | Runs `node --test scripts/release.test.mjs` over the pure helpers (version bump, section extraction, working-tree guard). |
+| `pnpm release:body <version>` | Print the CHANGELOG section for that version as the GH release body. Used by CI. |
+| `pnpm release:banner <new-tag>` | Update the previous release's body with a forward-pointer banner. Used by CI. |
+| `pnpm release:test` | Runs the pure-helper test suite for all three release scripts. |
 
 Pre-flight guards (script aborts before any mutation if any fails):
 - Working tree clean (except `CHANGELOG.md`, which is expected dirty after step 1)
@@ -72,16 +77,21 @@ Pre-flight guards (script aborts before any mutation if any fails):
 - New tag doesn't exist locally or on origin
 - `CHANGELOG.md` has a `## v<new>` section at top
 
-After the script: build + GitHub release remain manual until OpenSpec change `release-ci-signed`:
+### First-time signing key setup (one-off)
 
 ```bash
-GSTREAMER_PLUGINS_DIR=/usr/lib/x86_64-linux-gnu/gstreamer-1.0 pnpm tauri build
-gh release create vX.Y.Z --title "Nergal vX.Y.Z" --notes-file <body.md> \
-  src-tauri/target/release/bundle/deb/Nergal_*.deb \
-  src-tauri/target/release/bundle/rpm/Nergal-*.rpm \
-  src-tauri/target/release/bundle/appimage/Nergal_*.AppImage
-gh release edit v<previous> --notes-file <prev-with-banner.md>
+pnpm tauri signer generate -w ~/.tauri/cluihud-updater.key   # interactive password prompt
 ```
+
+Then add two repo secrets at https://github.com/Mufdi/nergal/settings/secrets/actions:
+- `TAURI_SIGNING_PRIVATE_KEY` — entire content of `~/.tauri/cluihud-updater.key`.
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — the password from above.
+
+The pubkey is already pinned in `src-tauri/tauri.conf.json` under `plugins.updater.pubkey`. **Never commit the `.key` file.**
+
+### Key rotation
+
+Regenerate the keypair, swap both repo secrets, replace `plugins.updater.pubkey` in `tauri.conf.json`, then cut a new release. AppImages signed with the old key cannot verify updates signed with the new key — this is expected behaviour and the only mitigation is for affected users to download the next release manually from GitHub.
 
 ## Documentation TOC
 

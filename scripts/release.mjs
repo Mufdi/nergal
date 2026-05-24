@@ -108,7 +108,8 @@ Flags:
   2. Run \`pnpm release <bump>\` → script verifies section presence, bumps
      versions, refreshes Cargo.lock, commits, tags, pushes.
 
-Build + GitHub release remain manual until OpenSpec change \`release-ci-signed\`.
+After push, GitHub Actions builds, signs, and publishes the release.
+Monitor at https://github.com/Mufdi/nergal/actions.
 `);
 }
 
@@ -351,10 +352,8 @@ async function main() {
   process.stdout.write(`  ✓ pushed ${newTag}\n\n`);
 
   process.stdout.write(`Released ${newTag} (commit ${commitSha.slice(0, 8)}).\n\n`);
-  process.stdout.write(`Build artifacts and GitHub release remain manual until Change B (release-ci-signed).\n`);
-  process.stdout.write(`Next manual steps:\n`);
-  process.stdout.write(`  GSTREAMER_PLUGINS_DIR=/usr/lib/x86_64-linux-gnu/gstreamer-1.0 pnpm tauri build\n`);
-  process.stdout.write(`  gh release create ${newTag} --title "Nergal ${newTag}" --notes-file <body.md> <artifact paths>\n`);
+  process.stdout.write(`CI workflow will now build, sign, and publish the release.\n`);
+  process.stdout.write(`Monitor at https://github.com/Mufdi/nergal/actions\n`);
 }
 
 // Only run main when invoked directly (not when imported by tests)

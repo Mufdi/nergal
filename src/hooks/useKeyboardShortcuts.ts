@@ -178,23 +178,6 @@ export function useKeyboardShortcuts() {
         return;
       }
 
-      // Ctrl+Ñ — toggle terminal focus
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === "Semicolon") {
-        e.preventDefault();
-        e.stopPropagation();
-        const active = document.activeElement;
-        const terminalHost = document.querySelector(
-          "[data-focus-zone='terminal']",
-        ) as HTMLElement | null;
-        if (active && terminalHost?.contains(active)) {
-          (active as HTMLElement).blur();
-        } else {
-          const input = terminalHost?.querySelector("textarea") as HTMLElement | null;
-          input?.focus();
-        }
-        return;
-      }
-
       // Let CodeMirror handle Ctrl+S when editor is focused
       const inEditor = (e.target as HTMLElement)?.closest(".cm-editor") != null;
 

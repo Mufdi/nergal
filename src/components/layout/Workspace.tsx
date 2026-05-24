@@ -301,7 +301,22 @@ export function Workspace() {
     if (!panel) return;
     if (rightCollapsed) {
       panel.expand();
+      requestAnimationFrame(() => {
+        setFocusZone("panel");
+        const terminalInput = document.querySelector(
+          "[data-focus-zone='terminal'] textarea",
+        ) as HTMLElement | null;
+        terminalInput?.blur();
+        const panelEl = document.querySelector(
+          "[data-focus-zone='panel']",
+        ) as HTMLElement | null;
+        panelEl?.focus();
+      });
     } else {
+      // Focus shift MUST happen before collapse — unmounting the panel
+      // subtree orphans activeElement to <body> and breaks key input.
+      setFocusZone("terminal");
+      requestAnimationFrame(() => terminalService.focusActive());
       panel.collapse();
     }
   }

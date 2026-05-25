@@ -2,14 +2,13 @@
 
 ## v0.1.4 — 2026-05-24
 
-* Added per-agent plan capability gating — the right-panel Plan view is now hidden for agents that don't persist plans to disk (OpenCode, Codex, Pi); for those sessions, switching to Plan auto-redirects to Files instead of leaving a dead button
-* Changed the release pipeline so that pushing a `v*` tag triggers GitHub Actions to build, sign, and publish `.deb` / `.rpm` / `.AppImage` / `.AppImage.sig` / `latest.json` — v0.1.4 is the first release cut through the signed CI flow, so the in-app updater finally has a real signature to verify against the pinned pubkey
-* Fixed the Plans panel showing empty when Claude Code's `plansDirectory` setting pointed somewhere other than `.claude/plans/` — the watcher and on-demand reader both now resolve the directory through `~/.claude/settings.json` < `<cwd>/.claude/settings.json` < `<cwd>/.claude/settings.local.json` (with `~/` expansion and absolute-vs-relative normalisation), so any of the standard CC settings locations is honoured
-* Fixed clicks on Claude Code's interactive TUI menus (model picker, AskUserQuestion choices, etc.) being silently dropped — the terminal panel now forwards primary mouse Press/Move/Release events to the backend, which encodes them through wezterm's mouse-reporting modes when the agent enables them. Shift+click still falls through to text selection so copying over an interactive UI keeps working
-* Fixed `Ctrl+Shift+B` orphaning focus when the right panel collapsed (next keystroke fell to body instead of the terminal) and not shifting focus into the panel when it expanded — both directions now route focus deterministically: collapse → terminal, expand → panel
-* Fixed `Ctrl+ñ` behaving as a focus toggle (blurring the terminal if it was already focused) instead of the documented hard-focus — pressing it from any zone now reliably moves focus into the active terminal
-* Fixed the Cleanup session / Finish merge action buttons in the Git panel getting pushed against the banner edge when the description grew — both banners now use proper flex sizing so the action button keeps breathing room
-* Removed the legacy `plansDirectory` field from cluihud's own Settings — only the agent's `plansDirectory` setting matters and the cluihud-level field was vestigial; existing `config.json` files keep the field silently ignored
+* Added per-agent gating for the Plan view; it's now hidden on agents that don't persist plans to disk (OpenCode, Codex, Pi), and switching to Plan on those sessions auto-redirects to Files
+* Fixed the Plans panel showing empty when Claude Code's `plansDirectory` setting pointed outside `.claude/plans/`; the watcher and reader now honour `~/.claude/settings.json`, `<cwd>/.claude/settings.json`, and `<cwd>/.claude/settings.local.json` (in that precedence) so any standard CC location works
+* Fixed clicks on Claude Code's interactive TUI menus (model picker, AskUserQuestion choices) being silently dropped; the terminal panel now forwards primary mouse events to the agent, and Shift+click still falls through to text selection so copying over an interactive UI keeps working
+* Fixed `Ctrl+Shift+B` orphaning focus when the right panel collapsed and not capturing focus when it expanded; both directions now route focus deterministically (collapse → terminal, expand → panel)
+* Fixed `Ctrl+ñ` blurring the terminal when it was already focused instead of acting as a hard-focus; pressing it from any zone now reliably moves focus into the active terminal
+* Fixed the Cleanup session / Finish merge buttons in the Git panel getting pushed against the banner edge when the description grew — both banners now use proper flex sizing so the action keeps breathing room
+* Removed the legacy `plansDirectory` field from cluihud's own Settings; only the agent's `plansDirectory` matters, and existing `config.json` files keep the field silently ignored
 
 ## v0.1.3 — 2026-05-20
 

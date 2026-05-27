@@ -44,7 +44,7 @@ src/                              # React frontend
 ├── stores/        # Jotai atoms — workspace, rightPanel, hooks, shortcuts,
 │                  # plan, tasks, git, annotations, conflict, ship, zenMode,
 │                  # layout, files, activity, askUser, toast, session, config,
-│                  # agent, buddy (frozen)
+│                  # agent
 ├── hooks/ · lib/
 
 src-tauri/src/                    # Rust backend

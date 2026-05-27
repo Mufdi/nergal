@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { invoke } from "@/lib/tauri";
+import { useObsidianRemarkPlugin, isObsidianHref, openObsidianHref, obsidianUrlTransform } from "@/lib/markdown/obsidianMarkdown";
 
 interface TranscriptEntry {
   role: "human" | "assistant";
@@ -15,6 +16,7 @@ interface TranscriptViewerProps {
 
 export function TranscriptViewer({ sessionId }: TranscriptViewerProps) {
   const [entries, setEntries] = useState<TranscriptEntry[] | null>(null);
+  const obsidianPlugin = useObsidianRemarkPlugin();
 
   useEffect(() => {
     setEntries(null);
@@ -55,9 +57,32 @@ export function TranscriptViewer({ sessionId }: TranscriptViewerProps) {
           >
             {entry.role === "assistant" ? (
               <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
+                remarkPlugins={[remarkGfm, obsidianPlugin]}
+                urlTransform={obsidianUrlTransform}
                 components={{
                   p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                  a: ({ href, children, ...props }) => {
+                    if (isObsidianHref(href)) {
+                      return (
+                        <a
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            openObsidianHref(href!);
+                          }}
+                          className="text-accent underline cursor-pointer"
+                          role="link"
+                        >
+                          {children}
+                        </a>
+                      );
+                    }
+                    return (
+                      <a href={href} className="text-accent underline" {...props}>
+                        {children}
+                      </a>
+                    );
+                  },
                   code: ({ children }) => (
                     <code className="rounded bg-background/50 px-1 py-0.5 text-[10px] font-mono">
                       {children}

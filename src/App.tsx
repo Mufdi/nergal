@@ -4,6 +4,7 @@ import { Workspace } from "./components/layout/Workspace";
 import { AskUserModal } from "./components/session/AskUserModal";
 import { setupAgentListeners } from "./stores/agent";
 import { setupHookListeners } from "./stores/hooks";
+import { setupObsidianListeners } from "./stores/obsidian";
 import { configAtom } from "./stores/config";
 import { invoke } from "./lib/tauri";
 import { applyTheme, extractPaletteFromComputedStyle } from "./lib/themes";
@@ -88,11 +89,15 @@ export function App() {
   useEffect(() => {
     const unlisteners = setupHookListeners(store);
     const unlistenAgents = setupAgentListeners();
+    const unlistenObsidian = setupObsidianListeners(store);
     return () => {
       unlisteners.then((fns) => {
         for (const fn of fns) fn();
       });
       unlistenAgents.then((fn) => fn());
+      unlistenObsidian.then((fns) => {
+        for (const fn of fns) fn();
+      });
     };
   }, [store]);
 

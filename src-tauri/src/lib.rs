@@ -5,6 +5,7 @@ pub mod config;
 mod db;
 pub mod hooks;
 mod models;
+pub mod obsidian;
 mod openspec;
 mod plan_state;
 mod pty;
@@ -279,8 +280,6 @@ pub fn run() {
             commands::delete_spec_annotation,
             commands::clear_spec_annotations,
             commands::count_spec_annotations_by_prefix,
-            // Buddy command
-            commands::get_buddy,
             // Setup command
             commands::send_notification,
             commands::setup_hooks,
@@ -349,6 +348,15 @@ pub fn run() {
             commands::list_available_agents,
             commands::resolve_default_agent,
             commands::apply_theme_to_agents,
+            commands::get_obsidian_config,
+            commands::save_obsidian_config,
+            commands::obsidian_enabled,
+            commands::obsidian_open_uri,
+            commands::obsidian_build_uri,
+            commands::obsidian_pre_bootstrap,
+            commands::obsidian_create_project_note,
+            commands::obsidian_list_templates,
+            commands::obsidian_quick_capture,
             pty::write_to_session_pty,
             // Scratchpad commands
             scratchpad::commands::scratchpad_get_path,

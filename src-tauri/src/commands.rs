@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::agents::AgentId;
 use crate::agents::ThemePalette;
@@ -591,54 +591,6 @@ pub fn count_spec_annotations_by_prefix(
     let like = format!("{}%", prefix.replace('%', "\\%"));
     db.count_spec_annotations_by_prefix(&like)
         .map_err(|e| e.to_string())
-}
-
-// -- Buddy commands --
-
-#[derive(Clone, serde::Serialize)]
-pub struct BuddyData {
-    soul: Option<serde_json::Value>,
-    user_id: Option<String>,
-    access_token: Option<String>,
-}
-
-#[tauri::command]
-pub fn get_buddy() -> Result<BuddyData, String> {
-    let home = dirs::home_dir().ok_or("cannot determine home directory")?;
-
-    // Read soul from ~/.claude.json
-    let claude_json = home.join(".claude.json");
-    let (soul, user_id) = match std::fs::read_to_string(&claude_json) {
-        Ok(contents) => {
-            let json: serde_json::Value =
-                serde_json::from_str(&contents).map_err(|e| e.to_string())?;
-            let soul = json.get("companion").cloned();
-            let user_id = json
-                .get("userID")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            (soul, user_id)
-        }
-        Err(_) => (None, None),
-    };
-
-    // Read access token from ~/.claude/.credentials.json for OAuth profile fetch
-    let creds_json = home.join(".claude").join(".credentials.json");
-    let access_token = std::fs::read_to_string(&creds_json)
-        .ok()
-        .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok())
-        .and_then(|json| {
-            json.get("claudeAiOauth")
-                .and_then(|oauth| oauth.get("accessToken"))
-                .and_then(|v| v.as_str())
-                .map(String::from)
-        });
-
-    Ok(BuddyData {
-        soul,
-        user_id,
-        access_token,
-    })
 }
 
 // -- Workspace commands --
@@ -2819,4 +2771,300 @@ pub fn resolve_default_agent(project_path: String) -> Result<String, String> {
     Ok(cfg
         .resolve_agent_for_project(std::path::Path::new(&project_path))
         .unwrap_or_else(|| AgentId::claude_code().as_str().to_string()))
+}
+
+// obsidian-bridge change.
+
+#[tauri::command]
+pub fn get_obsidian_config(
+    db: State<'_, SharedDb>,
+    workspace_id: String,
+) -> Result<crate::obsidian::config::ResolvedObsidianConfig, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    crate::obsidian::config::resolve(&workspace_id, |wid| db.get_obsidian_config(wid))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn save_obsidian_config(
+    app: AppHandle,
+    db: State<'_, SharedDb>,
+    workspace_id: String,
+    cfg: crate::obsidian::config::ObsidianConfig,
+) -> Result<crate::obsidian::config::ResolvedObsidianConfig, String> {
+    let mut cfg = cfg;
+    crate::obsidian::config::normalize_file_channels(&mut cfg);
+    let db = db.lock().map_err(|e| e.to_string())?;
+    db.upsert_obsidian_config(&workspace_id, &cfg)
+        .map_err(|e| e.to_string())?;
+    let resolved =
+        crate::obsidian::config::resolve(&workspace_id, |wid| db.get_obsidian_config(wid))
+            .map_err(|e| e.to_string())?;
+    let _ = app.emit("obsidian:config-changed", &resolved);
+    Ok(resolved)
+}
+
+#[tauri::command]
+pub fn obsidian_enabled(db: State<'_, SharedDb>, workspace_id: String) -> Result<bool, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let resolved =
+        crate::obsidian::config::resolve(&workspace_id, |wid| db.get_obsidian_config(wid))
+            .map_err(|e| e.to_string())?;
+    Ok(resolved.vault_root.is_some())
+}
+
+// xdg-open bypasses tauri-plugin-shell's hardcoded URL regex, which rejects
+// custom schemes by default. We validate the prefix in our own code so the
+// command never spawns xdg-open with anything outside our scheme allowlist.
+#[tauri::command]
+pub fn obsidian_open_uri(uri: String) -> Result<(), String> {
+    if !uri.starts_with("obsidian://") && !uri.starts_with("cluihud://") {
+        return Err(format!("refusing to open unknown scheme: {uri}"));
+    }
+    std::process::Command::new("xdg-open")
+        .arg(&uri)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("xdg-open: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn obsidian_build_uri(
+    db: State<'_, SharedDb>,
+    workspace_id: String,
+    path: String,
+    heading: Option<String>,
+    block: Option<String>,
+) -> Result<String, String> {
+    let resolved = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        crate::obsidian::config::resolve(&workspace_id, |wid| db.get_obsidian_config(wid))
+            .map_err(|e| e.to_string())?
+    };
+    if resolved.vault_root.is_none() {
+        return Err("Obsidian integration not configured".into());
+    }
+    let abs = std::path::PathBuf::from(&path);
+    crate::obsidian::paths::to_obsidian_uri(&resolved, &abs, heading.as_deref(), block.as_deref())
+        .ok_or_else(|| "Path is outside the configured vault".to_string())
+}
+
+#[derive(serde::Serialize)]
+pub struct ProjectNoteResult {
+    pub path: String,
+    pub created: bool,
+}
+
+#[derive(serde::Serialize)]
+pub struct PreBootstrap {
+    pub vault_root: String,
+    pub expected_path: String,
+    pub inherited: bool,
+}
+
+// Single-shot backend probe so the Sidebar doesn't have to juggle Jotai atom
+// timing (the active workspace's config may not be loaded yet when the user
+// clicks Add Workspace immediately after launch). Returns None if no vault
+// root can be sourced from anywhere — modal stays hidden.
+#[tauri::command]
+pub fn obsidian_pre_bootstrap(
+    db: State<'_, SharedDb>,
+    workspace_id: String,
+) -> Result<Option<PreBootstrap>, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let own = crate::obsidian::config::resolve(&workspace_id, |wid| db.get_obsidian_config(wid))
+        .map_err(|e| e.to_string())?;
+    let workspaces = db.get_workspaces().map_err(|e| e.to_string())?;
+    let workspace_name = workspaces
+        .iter()
+        .find(|w| w.id == workspace_id)
+        .map(|w| w.name.clone())
+        .ok_or_else(|| "workspace not found".to_string())?;
+
+    if let Some(root) = own.vault_root.clone() {
+        return Ok(Some(PreBootstrap {
+            expected_path: project_index_for(&root, &workspace_name),
+            vault_root: root,
+            inherited: false,
+        }));
+    }
+
+    for w in &workspaces {
+        if w.id == workspace_id {
+            continue;
+        }
+        let resolved = crate::obsidian::config::resolve(&w.id, |wid| db.get_obsidian_config(wid))
+            .map_err(|e| e.to_string())?;
+        if let Some(root) = resolved.vault_root.clone() {
+            return Ok(Some(PreBootstrap {
+                expected_path: project_index_for(&root, &workspace_name),
+                vault_root: root,
+                inherited: true,
+            }));
+        }
+    }
+
+    Ok(None)
+}
+
+// Same scan as obsidian_pre_bootstrap but returns the full donor config so
+// the create step can persist all transferable fields (vault_name + quick
+// capture + templates + toggles), not just vault_root.
+fn find_donor_cfg(
+    db: &crate::db::Database,
+    skip_workspace_id: &str,
+) -> Result<Option<crate::obsidian::config::ObsidianConfig>, String> {
+    let workspaces = db.get_workspaces().map_err(|e| e.to_string())?;
+    for w in workspaces {
+        if w.id == skip_workspace_id {
+            continue;
+        }
+        let resolved = crate::obsidian::config::resolve(&w.id, |wid| db.get_obsidian_config(wid))
+            .map_err(|e| e.to_string())?;
+        if resolved.vault_root.is_some() {
+            return Ok(Some(resolved));
+        }
+    }
+    Ok(None)
+}
+
+fn project_index_for(vault_root: &str, workspace_name: &str) -> String {
+    let slug = workspace_name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    let slug = slug.trim_matches('-');
+    // Strip trailing slashes from the stored vault_root so the join doesn't
+    // produce `/vault//Projects/...` for rows that predate normalize_file_channels.
+    let root = vault_root.trim_end_matches('/');
+    format!("{root}/Projects/{slug}/index.md")
+}
+
+#[tauri::command]
+pub fn obsidian_create_project_note(
+    app: AppHandle,
+    db: State<'_, SharedDb>,
+    workspace_id: String,
+    target_path: String,
+    suggested_layout: bool,
+) -> Result<ProjectNoteResult, String> {
+    let (workspace_name, workspace_path) = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        let workspaces = db.get_workspaces().map_err(|e| e.to_string())?;
+        let ws = workspaces
+            .into_iter()
+            .find(|w| w.id == workspace_id)
+            .ok_or_else(|| "workspace not found".to_string())?;
+        (ws.name, ws.repo_path)
+    };
+
+    // Persist inheritance now (the pre-bootstrap probe is read-only). When the
+    // new workspace has no own row yet, copy transferable fields from any
+    // sibling workspace that has Obsidian configured.
+    let mut config_dirty = false;
+    {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        let own_row = db
+            .get_obsidian_config(&workspace_id)
+            .map_err(|e| e.to_string())?;
+        if own_row.is_none()
+            && let Some(donor) = find_donor_cfg(&db, &workspace_id)?
+        {
+            let mut inherited = crate::obsidian::config::ObsidianConfig {
+                vault_root: donor.vault_root,
+                vault_name: donor.vault_name,
+                session_log_path: None,
+                quick_capture_path: donor.quick_capture_path,
+                moc_path: None,
+                templates_path: donor.templates_path,
+                backlinks_enabled: donor.backlinks_enabled,
+                render_wikilinks: donor.render_wikilinks,
+            };
+            crate::obsidian::config::normalize_file_channels(&mut inherited);
+            db.upsert_obsidian_config(&workspace_id, &inherited)
+                .map_err(|e| e.to_string())?;
+            config_dirty = true;
+        }
+    }
+
+    let resolved = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        crate::obsidian::config::resolve(&workspace_id, |wid| db.get_obsidian_config(wid))
+            .map_err(|e| e.to_string())?
+    };
+
+    let expanded = crate::obsidian::config::expand_home(&target_path);
+    let target = std::path::Path::new(&expanded);
+    let outcome = crate::obsidian::bootstrap::create_project_note_at(
+        target,
+        &workspace_name,
+        &workspace_path,
+    )
+    .map_err(|e| e.to_string())?;
+    if suggested_layout {
+        let (log_path, moc_path) =
+            crate::obsidian::bootstrap::suggested_layout_paths(&resolved, &workspace_name)
+                .map_err(|e| e.to_string())?;
+        let mut next = resolved.clone();
+        next.session_log_path = Some(log_path);
+        next.moc_path = Some(moc_path);
+        let db = db.lock().map_err(|e| e.to_string())?;
+        db.upsert_obsidian_config(&workspace_id, &next)
+            .map_err(|e| e.to_string())?;
+        config_dirty = true;
+    }
+    if config_dirty {
+        let final_resolved = {
+            let db = db.lock().map_err(|e| e.to_string())?;
+            crate::obsidian::config::resolve(&workspace_id, |wid| db.get_obsidian_config(wid))
+                .map_err(|e| e.to_string())?
+        };
+        let _ = app.emit("obsidian:config-changed", &final_resolved);
+    }
+    Ok(ProjectNoteResult {
+        path: outcome.path.display().to_string(),
+        created: outcome.created,
+    })
+}
+
+#[tauri::command]
+pub fn obsidian_list_templates(
+    db: State<'_, SharedDb>,
+    workspace_id: String,
+) -> Result<Vec<crate::obsidian::templates::Template>, String> {
+    let resolved = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        crate::obsidian::config::resolve(&workspace_id, |wid| db.get_obsidian_config(wid))
+            .map_err(|e| e.to_string())?
+    };
+    crate::obsidian::templates::list_templates(&resolved).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn obsidian_quick_capture(
+    app: AppHandle,
+    db: State<'_, SharedDb>,
+    workspace_id: String,
+    text: String,
+) -> Result<String, String> {
+    let resolved = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        crate::obsidian::config::resolve(&workspace_id, |wid| db.get_obsidian_config(wid))
+            .map_err(|e| e.to_string())?
+    };
+    let written = crate::obsidian::channels::QuickCaptureWriter::append(&resolved, &text, None)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "quick_capture_path not configured for this workspace".to_string())?;
+    let path_str = written.display().to_string();
+    let _ = app.emit("obsidian:capture-saved", &path_str);
+    Ok(path_str)
 }

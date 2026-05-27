@@ -1,12 +1,19 @@
 import { useState, useEffect, useRef } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { commandPaletteOpenAtom, shortcutRegistryAtom, type ShortcutAction } from "@/stores/shortcuts";
+import { activeSessionIdAtom } from "@/stores/workspace";
+import { obsidianTemplatesAtom, type ObsidianTemplate } from "@/stores/obsidianTemplates";
+import { toastsAtom } from "@/stores/toast";
+import { invoke } from "@/lib/tauri";
 import { Search } from "lucide-react";
 
 export function CommandPalette() {
   const isOpen = useAtomValue(commandPaletteOpenAtom);
   const setOpen = useSetAtom(commandPaletteOpenAtom);
   const registry = useAtomValue(shortcutRegistryAtom);
+  const templates = useAtomValue(obsidianTemplatesAtom);
+  const activeSessionId = useAtomValue(activeSessionIdAtom);
+  const setToasts = useSetAtom(toastsAtom);
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -88,6 +95,33 @@ export function CommandPalette() {
     ? CONTEXTUAL_SHORTCUTS.filter((s) => s.label.toLowerCase().includes(lowerQuery) || s.keys.toLowerCase().includes(lowerQuery))
     : CONTEXTUAL_SHORTCUTS;
 
+  const filteredTemplates = lowerQuery
+    ? templates.filter((t) => {
+        const haystack = `send template ${t.name} ${t.description ?? ""} ${t.filename}`.toLowerCase();
+        return haystack.includes(lowerQuery);
+      })
+    : templates;
+
+  async function sendTemplate(template: ObsidianTemplate) {
+    if (!activeSessionId) {
+      setToasts({
+        message: "No active session",
+        description: "Open a session to send a template.",
+        type: "info",
+      });
+      return;
+    }
+    setOpen(false);
+    try {
+      await invoke("write_to_session_pty", {
+        sessionId: activeSessionId,
+        data: `${template.body}\r`,
+      });
+    } catch (err) {
+      setToasts({ message: "Template send failed", description: String(err), type: "error" });
+    }
+  }
+
   const categories = ["navigation", "session", "panel", "action"] as const;
   const grouped = new Map<string, ShortcutAction[]>();
   for (const action of filtered) {
@@ -158,6 +192,30 @@ export function CommandPalette() {
               </div>
             );
           })}
+          {filteredTemplates.length > 0 && (
+            <div>
+              <div className="px-3 py-1">
+                <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                  templates
+                </span>
+              </div>
+              {filteredTemplates.map((t) => (
+                <button
+                  key={t.filename}
+                  type="button"
+                  onClick={() => sendTemplate(t)}
+                  className="flex w-full items-start justify-between gap-3 px-3 py-1.5 text-left text-foreground/80 hover:bg-secondary/50"
+                >
+                  <span className="flex flex-col gap-0.5">
+                    <span className="text-xs">Send template: {t.name}</span>
+                    {t.description && (
+                      <span className="text-[10px] text-muted-foreground">{t.description}</span>
+                    )}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
           {filteredContextual.length > 0 && (
             <div>
               <div className="px-3 py-1">

@@ -184,3 +184,16 @@ export type PlanCapabilityWire =
 export type SessionPlansResponse =
   | { capability: "FileBased"; dir: string; plans: PlanSummary[] }
   | { capability: "NotApplicable"; plans: PlanSummary[] };
+
+export interface ObsidianConfig {
+  vault_root: string | null;
+  vault_name: string | null;
+  session_log_path: string | null;
+  quick_capture_path: string | null;
+  moc_path: string | null;
+  templates_path: string | null;
+  backlinks_enabled: boolean;
+  render_wikilinks: boolean;
+}
+
+export type ResolvedObsidianConfig = ObsidianConfig;

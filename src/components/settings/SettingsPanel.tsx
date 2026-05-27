@@ -27,6 +27,17 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { HexColorPicker } from "react-colorful";
 import { scratchpadPathAtom, reloadTabsFromBackend } from "@/stores/scratchpad";
 import {
+  obsidianApplyBusyAtom,
+  obsidianConfigAtom,
+  obsidianDraftAtom,
+  obsidianDraftDirtyAtom,
+  resetObsidianDraftAtom,
+  saveObsidianConfigAtom,
+} from "@/stores/obsidian";
+import { activeWorkspaceAtom } from "@/stores/workspace";
+import { ObsidianIcon } from "@/components/icons/ObsidianIcon";
+import type { ObsidianConfig } from "@/lib/types";
+import {
   VISIBLE_THEMES,
   normalizeThemeId,
   type Theme,
@@ -230,6 +241,210 @@ function ScratchpadPathField() {
         Path where scratchpad notes (.md) live. Changing it closes open tabs and reloads from the new path.
       </p>
     </div>
+  );
+}
+
+function ObsidianSection() {
+  const activeWorkspace = useAtomValue(activeWorkspaceAtom);
+  const resolved = useAtomValue(obsidianConfigAtom);
+  const [draft, setDraft] = useAtom(obsidianDraftAtom);
+  const dirty = useAtomValue(obsidianDraftDirtyAtom);
+
+  // resolved only moves on save or workspace switch, so this won't fight typing.
+  useEffect(() => {
+    if (resolved) setDraft(resolved);
+  }, [resolved, setDraft]);
+
+  function setField<K extends keyof ObsidianConfig>(key: K, value: ObsidianConfig[K]) {
+    setDraft((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function nullableString(s: string): string | null {
+    const t = s.trim();
+    return t.length === 0 ? null : t;
+  }
+
+  if (!activeWorkspace) {
+    return (
+      <div className="grid gap-3">
+        <p className="text-xs text-muted-foreground">
+          Obsidian settings are stored per workspace. Create a session in any workspace from the
+          sidebar — that activates the workspace and surfaces its Obsidian config here.
+        </p>
+        <p className="text-[11px] text-muted-foreground">
+          If you just confirmed the bootstrap prompt, your Obsidian config was already saved to
+          that workspace. Open a session there and reopen Settings → Obsidian to see it.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-4">
+      <p className="text-xs text-muted-foreground">
+        Bridge to your Obsidian vault. Set <code>vault_root</code> to enable any feature; each channel is independently opt-in.
+      </p>
+
+      <ValidatedPathField
+        configKey="obsidian_vault_root"
+        label="Vault root"
+        placeholder="/path/to/vault"
+        kind="dir"
+        help="Master switch. When unset, every Obsidian feature stays invisible."
+        value={draft.vault_root ?? ""}
+        onChange={(v) => setField("vault_root", nullableString(v))}
+      />
+
+      {resolved?.vault_root && (
+        <Button
+          variant="outline"
+          type="button"
+          className="w-fit"
+          onClick={() => {
+            const vault =
+              resolved.vault_name?.trim() ||
+              resolved.vault_root?.split("/").filter(Boolean).pop() ||
+              "";
+            if (!vault) return;
+            const uri = `obsidian://open?vault=${encodeURIComponent(vault)}`;
+            invoke("obsidian_open_uri", { uri }).catch((err) =>
+              console.warn("[settings] open vault failed:", err),
+            );
+          }}
+        >
+          Open vault in Obsidian
+        </Button>
+      )}
+
+      <div className="grid gap-1.5">
+        <Label htmlFor="obsidian-vault-name">Vault name (override)</Label>
+        <Input
+          id="obsidian-vault-name"
+          type="text"
+          value={draft.vault_name ?? ""}
+          onChange={(e) => setField("vault_name", nullableString(e.target.value))}
+          placeholder="MyVault"
+        />
+        <p className="text-xs text-muted-foreground">
+          Used in <code>obsidian://open?vault=…</code> URIs. Defaults to the basename of <code>vault_root</code>.
+        </p>
+      </div>
+
+      <div className="grid gap-1.5">
+        <Label htmlFor="obsidian-session-log-path">Session log channel</Label>
+        <Input
+          id="obsidian-session-log-path"
+          type="text"
+          value={draft.session_log_path ?? ""}
+          onChange={(e) => setField("session_log_path", nullableString(e.target.value))}
+          placeholder="/path/to/vault/log.md"
+        />
+        <p className="text-xs text-muted-foreground">
+          File where hook events get appended live. Empty = disabled.
+        </p>
+      </div>
+
+      <div className="grid gap-1.5">
+        <Label htmlFor="obsidian-quick-capture-path">Quick capture channel</Label>
+        <Input
+          id="obsidian-quick-capture-path"
+          type="text"
+          value={draft.quick_capture_path ?? ""}
+          onChange={(e) => setField("quick_capture_path", nullableString(e.target.value))}
+          placeholder="/path/to/vault/Inbox.md"
+        />
+        <p className="text-xs text-muted-foreground">
+          Target file for <kbd className="px-1 py-0.5 text-[10px] rounded bg-secondary">Ctrl+Alt+Q</kbd> captures. If you omit the <code>.md</code> extension it's added on save. Empty = shortcut shows a hint instead.
+        </p>
+      </div>
+
+      <div className="grid gap-1.5">
+        <Label htmlFor="obsidian-moc-path">MOC channel (directory)</Label>
+        <Input
+          id="obsidian-moc-path"
+          type="text"
+          value={draft.moc_path ?? ""}
+          onChange={(e) => setField("moc_path", nullableString(e.target.value))}
+          placeholder="/path/to/vault/MOCs/"
+        />
+        <p className="text-xs text-muted-foreground">
+          Where per-session MOCs (Maps of Content — structured snapshot of files touched, tasks, decisions) land at session end. Empty = no MOCs are written.
+        </p>
+      </div>
+
+      <div className="grid gap-1.5">
+        <Label htmlFor="obsidian-templates-path">Templates channel (directory)</Label>
+        <Input
+          id="obsidian-templates-path"
+          type="text"
+          value={draft.templates_path ?? ""}
+          onChange={(e) => setField("templates_path", nullableString(e.target.value))}
+          placeholder="/path/to/vault/Templates/"
+        />
+        <p className="text-xs text-muted-foreground">
+          Directory of <code>template-*.md</code> files. Each appears in the command palette as "Send template: …".
+        </p>
+      </div>
+
+      <div className="grid gap-3 rounded-md border border-border/40 p-3">
+        <label className="flex items-start gap-3">
+          <Switch
+            checked={draft.render_wikilinks}
+            onCheckedChange={(v) => setField("render_wikilinks", v)}
+          />
+          <div className="grid gap-0.5">
+            <span className="text-sm font-medium">Render wikilinks</span>
+            <span className="text-xs text-muted-foreground">
+              Convert <code>[[Note]]</code> in transcripts and plans to clickable <code>obsidian://</code> links.
+            </span>
+          </div>
+        </label>
+        <label className="flex items-start gap-3">
+          <Switch
+            checked={draft.backlinks_enabled}
+            onCheckedChange={(v) => setField("backlinks_enabled", v)}
+          />
+          <div className="grid gap-0.5">
+            <span className="text-sm font-medium">Reverse backlinks</span>
+            <span className="text-xs text-muted-foreground">
+              When a MOC is generated, write a backlink section into every referenced vault note.
+            </span>
+          </div>
+        </label>
+      </div>
+
+      {dirty && (
+        <p className="text-xs text-amber-500">Unsaved changes — click Apply in the footer.</p>
+      )}
+    </div>
+  );
+}
+
+function ObsidianApplyButton() {
+  const draft = useAtomValue(obsidianDraftAtom);
+  const dirty = useAtomValue(obsidianDraftDirtyAtom);
+  const activeWorkspace = useAtomValue(activeWorkspaceAtom);
+  const saveCfg = useSetAtom(saveObsidianConfigAtom);
+  const [busy, setBusy] = useAtom(obsidianApplyBusyAtom);
+
+  async function handleApply() {
+    if (!dirty || !activeWorkspace || busy) return;
+    setBusy(true);
+    try {
+      await saveCfg(draft);
+    } catch (err) {
+      console.error("[settings] save_obsidian_config failed:", err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!activeWorkspace) return null;
+
+  return (
+    <Button onClick={handleApply} disabled={!dirty || busy}>
+      {busy ? "Applying…" : "Apply"}
+    </Button>
   );
 }
 
@@ -976,7 +1191,7 @@ function AppearanceSection({
   );
 }
 
-type SectionId = "paths" | "agents" | "editor" | "appearance" | "terminal" | "scratchpad" | "about";
+type SectionId = "paths" | "agents" | "editor" | "appearance" | "terminal" | "scratchpad" | "obsidian" | "about";
 
 const SECTIONS: { id: SectionId; label: string; icon: typeof FolderTree }[] = [
   { id: "paths", label: "Paths", icon: FolderTree },
@@ -985,6 +1200,7 @@ const SECTIONS: { id: SectionId; label: string; icon: typeof FolderTree }[] = [
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "terminal", label: "Terminal", icon: Terminal },
   { id: "scratchpad", label: "Scratchpad", icon: NotebookText },
+  { id: "obsidian", label: "Obsidian", icon: ObsidianIcon },
   { id: "about", label: "About", icon: Info },
 ];
 
@@ -1518,6 +1734,11 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
     getVersion().then(setAppVersion).catch(() => setAppVersion(""));
   }, []);
 
+  const resetObsidianDraft = useSetAtom(resetObsidianDraftAtom);
+  useEffect(() => {
+    if (open) resetObsidianDraft();
+  }, [open, resetObsidianDraft]);
+
   const FOCUSABLE_SELECTOR =
     'input:not([type="hidden"]):not([disabled]):not([aria-disabled="true"]):not([tabindex="-1"]), [role="combobox"]:not([disabled]):not([aria-disabled="true"]):not([tabindex="-1"]), textarea:not([disabled]):not([aria-disabled="true"]):not([tabindex="-1"]), button:not([disabled]):not([aria-disabled="true"]):not([tabindex="-1"])';
 
@@ -1947,6 +2168,8 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
 
             {activeSection === "scratchpad" && <ScratchpadPathField />}
 
+            {activeSection === "obsidian" && <ObsidianSection />}
+
             {activeSection === "about" && <AboutSection appVersion={appVersion} />}
           </div>
         </div>
@@ -1956,6 +2179,9 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
+            {activeSection === "obsidian" && (
+              <ObsidianApplyButton />
+            )}
             <Button onClick={handleSave}>
               Save
             </Button>

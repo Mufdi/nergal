@@ -8,6 +8,7 @@ import { createHighlighter, createTextRange, resolvePinpointTarget, HighlightEve
 import { invoke } from "@/lib/tauri";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useObsidianRemarkPlugin, isObsidianHref, openObsidianHref, obsidianUrlTransform } from "@/lib/markdown/obsidianMarkdown";
 
 interface ToolbarState {
   position: { top: number; left: number };
@@ -39,9 +40,11 @@ interface Props {
  * triggered by annotation state changes.
  */
 const PlanMarkdown = memo(function PlanMarkdown({ content }: { content: string }) {
+  const obsidianPlugin = useObsidianRemarkPlugin();
   return (
     <Markdown
-      remarkPlugins={[remarkGfm]}
+      remarkPlugins={[remarkGfm, obsidianPlugin]}
+      urlTransform={obsidianUrlTransform}
       components={{
         h1: ({ node, ...props }: ComponentPropsWithoutRef<"h1"> & { node?: unknown }) => (
           <div data-annotatable="heading" className="annotatable-el">
@@ -86,7 +89,28 @@ const PlanMarkdown = memo(function PlanMarkdown({ content }: { content: string }
           return <code className="bg-surface-raised px-1 py-0.5 font-mono text-xs text-accent" {...props}>{children}</code>;
         },
         pre: ({ node: _n, children }: ComponentPropsWithoutRef<"pre"> & { node?: unknown }) => <div>{children}</div>,
-        a: ({ node, ...props }: ComponentPropsWithoutRef<"a"> & { node?: unknown }) => <a className="text-accent underline" {...props} />,
+        a: ({ node: _n, href, children, ...props }: ComponentPropsWithoutRef<"a"> & { node?: unknown }) => {
+          if (isObsidianHref(href)) {
+            return (
+              <a
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  openObsidianHref(href!);
+                }}
+                className="text-accent underline cursor-pointer"
+                role="link"
+              >
+                {children}
+              </a>
+            );
+          }
+          return (
+            <a href={href} className="text-accent underline" {...props}>
+              {children}
+            </a>
+          );
+        },
         blockquote: ({ node, ...props }: ComponentPropsWithoutRef<"blockquote"> & { node?: unknown }) => (
           <div data-annotatable="blockquote" className="annotatable-el">
             <blockquote className="my-2 border-l-2 border-accent pl-3 text-text-muted" {...props} />

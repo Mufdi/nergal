@@ -27,6 +27,9 @@ import { softCloseSessionAction, undoSessionCloseAction, hasPendingSessionCloseA
 import { invoke as invokeCmd } from "@/lib/tauri";
 import { scratchpadOpenAtom } from "./scratchpad";
 import { browserToggleModeAction } from "./browser";
+import { obsidianEnabledAtom } from "./obsidian";
+import { quickCaptureOpenAtom } from "./quickCapture";
+import { openInObsidian } from "@/lib/obsidian";
 
 export type FocusZone = "sidebar" | "terminal" | "panel";
 
@@ -394,6 +397,55 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   }},
   { id: "toggle-activity", label: "Toggle Activity Drawer", keys: "ctrl+shift+l", category: "panel", keywords: ["activity", "log", "timeline", "drawer"], handler: () => store().set(activityDrawerOpenAtom, (prev: boolean) => !prev) },
   { id: "toggle-scratchpad", label: "Toggle Scratchpad", keys: "ctrl+alt+l", category: "panel", keywords: ["scratchpad", "notes", "scratch", "buffer"], handler: () => store().set(scratchpadOpenAtom, (prev: boolean) => !prev) },
+  { id: "obsidian-quick-capture", label: "Quick Capture to Obsidian", keys: "ctrl+alt+q", category: "action", keywords: ["obsidian", "vault", "capture", "inbox", "note"], handler: () => {
+    const s = store();
+    if (!s.get(obsidianEnabledAtom)) {
+      s.set(toastsAtom, {
+        message: "Obsidian integration not configured",
+        description: "Set vault_root in Settings → Obsidian Integration.",
+        type: "info",
+      });
+      return;
+    }
+    s.set(quickCaptureOpenAtom, (prev: boolean) => !prev);
+  }},
+  { id: "obsidian-open-current", label: "Open in Obsidian (current file)", keys: "ctrl+shift+v", category: "action", keywords: ["obsidian", "vault", "open", "file"], handler: () => {
+    const s = store();
+    if (!s.get(obsidianEnabledAtom)) {
+      s.set(toastsAtom, {
+        message: "Obsidian integration not configured",
+        description: "Set vault_root in Settings → Obsidian Integration.",
+        type: "info",
+      });
+      return;
+    }
+    const ws = s.get(activeWorkspaceAtom);
+    if (!ws) {
+      s.set(toastsAtom, { message: "Open in Obsidian", description: "No active workspace", type: "info" });
+      return;
+    }
+    const tab = s.get(activeTabAtom);
+    let absPath: string | null = null;
+    if (tab?.type === "diff" || tab?.type === "file" || tab?.type === "plan") {
+      absPath = (tab.data?.path as string) ?? null;
+    } else if (tab?.type === "spec") {
+      const specCtx = s.get(currentSpecArtifactAtom);
+      if (specCtx) {
+        absPath = `${ws.repo_path}/openspec/changes/${specCtx.changeName}/${specCtx.artifactPath}`;
+      }
+    }
+    if (!absPath) {
+      s.set(toastsAtom, { message: "Open in Obsidian", description: "No file in focus to open", type: "info" });
+      return;
+    }
+    openInObsidian(ws.id, absPath).catch((err) => {
+      s.set(toastsAtom, {
+        message: "Open in Obsidian failed",
+        description: String(err),
+        type: "error",
+      });
+    });
+  }},
   { id: "toggle-annotations", label: "Toggle Annotations Drawer", keys: "ctrl+shift+j", category: "panel", keywords: ["annotations", "drawer", "comments", "plan"], handler: () => {
     document.dispatchEvent(new CustomEvent("cluihud:toggle-annotations-drawer"));
   }},

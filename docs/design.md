@@ -46,7 +46,7 @@ swapped for `--primary`. Keep encoding consistent.
 | `yellow-500` / `yellow-400` (`#eab308` / `#facc15`) | Warnings, pending annotations, file-modified | Highlighter mark, pinpoint outline, rate-limit threshold |
 | `sky-400` | "Thinking" / active not-yet-busy | Session in active mode |
 | `blue-400` (`#60a5fa`) | Comment annotation, tool-use activity | Annotation type "comment" |
-| `amber-400` | Buddy "shiny" variant, minimize button | Cosmetic accent |
+| `amber-400` | Minimize button | Cosmetic accent |
 
 **Rule**: Don't introduce a new encoded color without adding it here. If the
 state is just "user's choice" or "current focus", use `--primary` instead.
@@ -54,7 +54,7 @@ state is just "user's choice" or "current focus", use `--primary` instead.
 ### 1.3 Typography
 
 Variable Geist is loaded via `@fontsource-variable/geist` and aliased to
-`--font-sans`. Mono only inside `Kbd` and the `BuddyWidget` sprite.
+`--font-sans`. Mono only inside `Kbd`.
 
 | Class | Px | Use |
 |-------|----|-----|
@@ -63,7 +63,7 @@ Variable Geist is loaded via `@fontsource-variable/geist` and aliased to
 | `text-xs` | 12 | Task subjects, palette commands, activity entries, icon-button tooltips. |
 | `text-[11px]` | 11 | Sidebar rows, status bar text, session tabs, dense list items. |
 | `text-[10px]` | 10 | Hints, meta info, footer help text, sidebar shortcut numbers. |
-| `text-[9px]` | 9 | Kbd glyphs, BuddyWidget sprite, ultra-dense meta. |
+| `text-[9px]` | 9 | Kbd glyphs, ultra-dense meta. |
 
 **Section caps** (used everywhere for "heading-as-divider"):
 ```

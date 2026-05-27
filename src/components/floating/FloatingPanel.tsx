@@ -39,6 +39,7 @@ interface FloatingPanelProps {
   /// utility panels that must always sit above other floating overlays
   /// (e.g. scratchpad on top of the browser host iframe).
   zIndex?: number;
+  accent?: boolean;
 }
 
 const DEFAULT_MIN_WIDTH = 320;
@@ -66,6 +67,7 @@ export function FloatingPanel({
   minWidth = DEFAULT_MIN_WIDTH,
   minHeight = DEFAULT_MIN_HEIGHT,
   zIndex = 40,
+  accent = false,
 }: FloatingPanelProps) {
   const cardRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragSession | null>(null);
@@ -200,7 +202,9 @@ export function FloatingPanel({
       <div
         ref={cardRef}
         data-state={visible ? "open" : "closed"}
-        className="pointer-events-auto absolute flex flex-col overflow-hidden rounded-lg border border-border shadow-lg transition-[opacity,transform] duration-100 ease-out data-[state=closed]:opacity-0 data-[state=closed]:scale-[0.97] data-[state=open]:opacity-100 data-[state=open]:scale-100"
+        className={`pointer-events-auto absolute flex flex-col overflow-hidden rounded-lg shadow-lg transition-[opacity,transform] duration-100 ease-out data-[state=closed]:opacity-0 data-[state=closed]:scale-[0.97] data-[state=open]:opacity-100 data-[state=open]:scale-100 ${
+          accent ? "border-2 border-primary cluihud-glow" : "border border-border"
+        }`}
         style={{
           left: effective.x,
           top: effective.y,

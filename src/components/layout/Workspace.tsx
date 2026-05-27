@@ -22,6 +22,8 @@ import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { CommandPalette } from "@/components/command/CommandPalette";
 import { ShipDialog } from "@/components/git/ShipDialog";
 import { ScratchpadPanel } from "@/components/scratchpad/ScratchpadPanel";
+import { QuickCapturePanel } from "@/components/floating/QuickCapturePanel";
+import { ProjectBootstrapPrompt } from "@/components/session/ProjectBootstrapPrompt";
 import { BrowserFloating } from "@/components/browser/BrowserFloating";
 import { BrowserHost } from "@/components/browser/BrowserHost";
 import { activeConflictedFilesAtom, gitChipModeAtom } from "@/stores/git";
@@ -398,6 +400,8 @@ export function Workspace() {
       <CommandPalette />
       <ShipDialog />
       <ScratchpadPanel />
+      <QuickCapturePanel />
+      <ProjectBootstrapPrompt />
       <BrowserFloating />
       <BrowserHost />
     </div>

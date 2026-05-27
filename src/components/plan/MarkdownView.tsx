@@ -1,16 +1,19 @@
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ComponentPropsWithoutRef } from "react";
+import { useObsidianRemarkPlugin, isObsidianHref, openObsidianHref, obsidianUrlTransform } from "@/lib/markdown/obsidianMarkdown";
 
 interface MarkdownViewProps {
   content: string;
 }
 
 export function MarkdownView({ content }: MarkdownViewProps) {
+  const obsidianPlugin = useObsidianRemarkPlugin();
   return (
     <div className="prose-invert max-w-none px-4 py-3 text-[12px] text-text">
       <Markdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, obsidianPlugin]}
+        urlTransform={obsidianUrlTransform}
         components={{
           h1: (props: ComponentPropsWithoutRef<"h1">) => (
             <h1 className="mb-2 mt-4 border-b border-border pb-1 text-lg font-semibold text-text" {...props} />
@@ -51,9 +54,28 @@ export function MarkdownView({ content }: MarkdownViewProps) {
             );
           },
           pre: ({ children }: ComponentPropsWithoutRef<"pre">) => <div>{children}</div>,
-          a: (props: ComponentPropsWithoutRef<"a">) => (
-            <a className="text-accent underline" {...props} />
-          ),
+          a: ({ href, children, ...props }: ComponentPropsWithoutRef<"a">) => {
+            if (isObsidianHref(href)) {
+              return (
+                <a
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    openObsidianHref(href!);
+                  }}
+                  className="text-accent underline cursor-pointer"
+                  role="link"
+                >
+                  {children}
+                </a>
+              );
+            }
+            return (
+              <a href={href} className="text-accent underline" {...props}>
+                {children}
+              </a>
+            );
+          },
           blockquote: (props: ComponentPropsWithoutRef<"blockquote">) => (
             <blockquote className="my-2 border-l-2 border-accent pl-3 text-text-muted" {...props} />
           ),

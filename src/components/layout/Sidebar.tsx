@@ -17,6 +17,7 @@ import {
 } from "@/stores/workspace";
 import { openTabAction } from "@/stores/rightPanel";
 import { toastsAtom } from "@/stores/toast";
+import { bootstrapPromptAtom } from "@/stores/obsidian";
 import { SessionRow } from "@/components/session/SessionRow";
 import { SessionIndicator } from "@/components/session/SessionIndicator";
 import { ProjectPickerModal } from "@/components/session/ProjectPickerModal";
@@ -251,6 +252,7 @@ function WorkspacesView() {
   const setExpandedAtom = useSetAtom(expandedWorkspaceIdsAtom);
   const openTab = useSetAtom(openTabAction);
   const addToast = useSetAtom(toastsAtom);
+  const setBootstrapPrompt = useSetAtom(bootstrapPromptAtom);
   const triggerMergeSignal = useAtomValue(triggerMergeAtom);
   const expandedIds = expandedFromAtom ?? new Set<string>();
   const setExpandedIds = (updater: Set<string> | ((prev: Set<string>) => Set<string>)) => {
@@ -376,9 +378,26 @@ function WorkspacesView() {
     const selected = await open({ directory: true, title: "Select workspace folder" });
     if (!selected) return;
     invoke<Workspace>("create_workspace", { repoPath: selected })
-      .then((ws) => {
+      .then(async (ws) => {
         setWorkspaces((prev) => [...prev, ws]);
         setExpandedIds((prev) => new Set([...prev, ws.id]));
+        try {
+          const probe = await invoke<{
+            vault_root: string;
+            expected_path: string;
+            inherited: boolean;
+          } | null>("obsidian_pre_bootstrap", { workspaceId: ws.id });
+          if (probe) {
+            setBootstrapPrompt({
+              workspaceId: ws.id,
+              workspaceName: ws.name,
+              expectedPath: probe.expected_path,
+              inheritedVault: probe.inherited,
+            });
+          }
+        } catch (err) {
+          console.warn("[sidebar] obsidian_pre_bootstrap failed:", err);
+        }
       })
       .catch((err) => {
         // The backend returns plain strings (e.g. "Not a git repository").

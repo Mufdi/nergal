@@ -399,10 +399,19 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   { id: "toggle-scratchpad", label: "Toggle Scratchpad", keys: "ctrl+alt+l", category: "panel", keywords: ["scratchpad", "notes", "scratch", "buffer"], handler: () => store().set(scratchpadOpenAtom, (prev: boolean) => !prev) },
   { id: "obsidian-quick-capture", label: "Quick Capture to Obsidian", keys: "ctrl+alt+q", category: "action", keywords: ["obsidian", "vault", "capture", "inbox", "note"], handler: () => {
     const s = store();
+    const ws = s.get(activeWorkspaceAtom);
+    if (!ws) {
+      s.set(toastsAtom, {
+        message: "Quick capture needs an active session",
+        description: "Open a session — captures route to that workspace's vault.",
+        type: "info",
+      });
+      return;
+    }
     if (!s.get(obsidianEnabledAtom)) {
       s.set(toastsAtom, {
-        message: "Obsidian integration not configured",
-        description: "Set vault_root in Settings → Obsidian Integration.",
+        message: "Obsidian not configured for this workspace",
+        description: `Set vault_root for ${ws.name} in Settings → Obsidian Integration.`,
         type: "info",
       });
       return;
@@ -411,17 +420,21 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   }},
   { id: "obsidian-open-current", label: "Open in Obsidian (current file)", keys: "ctrl+shift+v", category: "action", keywords: ["obsidian", "vault", "open", "file"], handler: () => {
     const s = store();
-    if (!s.get(obsidianEnabledAtom)) {
+    const ws = s.get(activeWorkspaceAtom);
+    if (!ws) {
       s.set(toastsAtom, {
-        message: "Obsidian integration not configured",
-        description: "Set vault_root in Settings → Obsidian Integration.",
+        message: "Open in Obsidian",
+        description: "No active session — open one to resolve the target vault.",
         type: "info",
       });
       return;
     }
-    const ws = s.get(activeWorkspaceAtom);
-    if (!ws) {
-      s.set(toastsAtom, { message: "Open in Obsidian", description: "No active workspace", type: "info" });
+    if (!s.get(obsidianEnabledAtom)) {
+      s.set(toastsAtom, {
+        message: "Obsidian not configured for this workspace",
+        description: `Set vault_root for ${ws.name} in Settings → Obsidian Integration.`,
+        type: "info",
+      });
       return;
     }
     const tab = s.get(activeTabAtom);

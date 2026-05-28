@@ -94,6 +94,9 @@ export function App() {
     const unlistenDeepLink = listen<string>("deeplink:received", (url) => {
       dispatchDeepLink(url);
     });
+    invoke<string[]>("drain_pending_deeplinks")
+      .then((urls) => urls.forEach(dispatchDeepLink))
+      .catch((err) => console.warn("[deeplink] drain failed:", err));
     return () => {
       unlisteners.then((fns) => {
         for (const fn of fns) fn();

@@ -1,7 +1,12 @@
 import { invoke } from "@/lib/tauri";
 import { appStore } from "@/stores/jotaiStore";
 import { toastsAtom } from "@/stores/toast";
-import { activeSessionIdAtom, workspacesAtom, type Workspace } from "@/stores/workspace";
+import {
+  activeSessionIdAtom,
+  activeSessionAtom,
+  workspacesAtom,
+  type Workspace,
+} from "@/stores/workspace";
 
 export function dispatchDeepLink(rawUrl: string): void {
   let parsed: URL;
@@ -49,20 +54,32 @@ async function handleOpenWorkspace(path: string | null): Promise<void> {
   const workspaces = appStore.get(workspacesAtom);
   const match = workspaces.find((w) => w.repo_path === path);
   if (match) {
-    const firstSession = match.sessions[0];
-    if (firstSession) {
-      appStore.set(activeSessionIdAtom, firstSession.id);
-      appStore.set(toastsAtom, {
-        type: "success",
-        message: `Switched to ${match.name}`,
-      });
-    } else {
+    if (match.sessions.length === 0) {
       appStore.set(toastsAtom, {
         type: "info",
         message: match.name,
         description: "Open the sidebar and start a session in this workspace.",
       });
+      return;
     }
+    const active = appStore.get(activeSessionAtom);
+    if (active && active.workspace_id === match.id) {
+      appStore.set(toastsAtom, {
+        type: "info",
+        message: `Already on ${match.name}`,
+        description: active.name,
+      });
+      return;
+    }
+    // DB returns sessions ASC by created_at; land on the one the user was
+    // last touching, not the oldest.
+    const target = [...match.sessions].sort((a, b) => b.updated_at - a.updated_at)[0];
+    appStore.set(activeSessionIdAtom, target.id);
+    appStore.set(toastsAtom, {
+      type: "success",
+      message: `Switched to ${match.name}`,
+      description: target.name,
+    });
     return;
   }
   try {

@@ -43,6 +43,16 @@ enum HookAction {
 }
 
 fn main() {
+    // clap parsea argv[1] como subcomando y aborta con URLs; saltarlo deja que
+    // tauri-plugin-{deep-link,single-instance} consuman la URL desde env::args.
+    if std::env::args()
+        .nth(1)
+        .is_some_and(|a| a.starts_with("cluihud://"))
+    {
+        cluihud::run();
+        return;
+    }
+
     let cli = Cli::parse();
 
     match cli.command {

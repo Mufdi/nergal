@@ -27,8 +27,12 @@ use plan_state::PlanStateManager;
 use pty::PtyManager;
 use scratchpad::commands::ScratchpadState;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 use tauri_plugin_deep_link::DeepLinkExt;
+
+#[derive(Default)]
+pub struct PendingDeepLinks(pub Mutex<Vec<String>>);
 
 /// When launched under systemd (gnome-shell Activities, .desktop entries on
 /// kernel 6.8.0-117+), stdout/stderr are a journald pipe (`JOURNAL_STREAM`
@@ -233,6 +237,10 @@ pub fn run() {
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
+                // Mutter ignora set_focus por focus-stealing prevention; el
+                // attention hint hace pulsar el taskbar como fallback.
+                let _ = window
+                    .request_user_attention(Some(tauri::UserAttentionType::Critical));
             }
         }))
         .plugin(tauri_plugin_shell::init())
@@ -249,6 +257,7 @@ pub fn run() {
         .manage(agent_state.clone())
         .manage(ScratchpadState::new(scratchpad_root.clone()))
         .manage(crate::obsidian::templates_watcher::TemplatesWatcherState::new())
+        .manage(PendingDeepLinks::default())
         .invoke_handler(tauri::generate_handler![
             // PTY commands
             pty::start_claude_session,
@@ -367,6 +376,7 @@ pub fn run() {
             commands::obsidian_create_project_note,
             commands::obsidian_watch_templates,
             commands::obsidian_quick_capture,
+            commands::drain_pending_deeplinks,
             pty::write_to_session_pty,
             // Scratchpad commands
             scratchpad::commands::scratchpad_get_path,
@@ -420,9 +430,19 @@ pub fn run() {
                 for url in event.urls() {
                     let url_str = url.to_string();
                     tracing::info!("deeplink received: {url_str}");
+                    // Cold start: el listener del frontend monta después de este emit;
+                    // el buffer lo cubre via drain_pending_deeplinks.
+                    if let Some(state) = deep_link_emitter.try_state::<PendingDeepLinks>()
+                        && let Ok(mut buf) = state.0.lock()
+                    {
+                        buf.push(url_str.clone());
+                    }
                     let _ = deep_link_emitter.emit("deeplink:received", url_str);
                 }
             });
+            // single-instance solo invoca handle_cli_arguments para segundas
+            // instancias; en cold start hay que procesar argv a mano.
+            app.deep_link().handle_cli_arguments(std::env::args());
 
             let hook_app = app_handle.clone();
             let hook_db = db.clone();

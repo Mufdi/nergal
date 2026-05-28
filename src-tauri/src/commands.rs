@@ -3094,3 +3094,11 @@ pub fn obsidian_quick_capture(
     let _ = app.emit("obsidian:capture-saved", &path_str);
     Ok(path_str)
 }
+
+#[tauri::command]
+pub fn drain_pending_deeplinks(
+    state: tauri::State<'_, crate::PendingDeepLinks>,
+) -> Result<Vec<String>, String> {
+    let mut buf = state.0.lock().map_err(|e| e.to_string())?;
+    Ok(std::mem::take(&mut *buf))
+}

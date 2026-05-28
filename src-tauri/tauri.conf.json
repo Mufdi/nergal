@@ -54,7 +54,8 @@
           "gstreamer1.0-plugins-base",
           "gstreamer1.0-plugins-good",
           "git"
-        ]
+        ],
+        "desktopTemplate": "main.desktop"
       },
       "rpm": {
         "depends": [
@@ -63,7 +64,8 @@
           "gstreamer1-plugins-base",
           "gstreamer1-plugins-good",
           "git"
-        ]
+        ],
+        "desktopTemplate": "main.desktop"
       }
     }
   },

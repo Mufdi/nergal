@@ -2785,6 +2785,12 @@ pub fn get_obsidian_config(
         .map_err(|e| e.to_string())
 }
 
+#[derive(serde::Serialize, Clone)]
+struct ObsidianConfigChangedEvent {
+    workspace_id: String,
+    config: crate::obsidian::config::ResolvedObsidianConfig,
+}
+
 #[tauri::command]
 pub fn save_obsidian_config(
     app: AppHandle,
@@ -2800,7 +2806,13 @@ pub fn save_obsidian_config(
     let resolved =
         crate::obsidian::config::resolve(&workspace_id, |wid| db.get_obsidian_config(wid))
             .map_err(|e| e.to_string())?;
-    let _ = app.emit("obsidian:config-changed", &resolved);
+    let _ = app.emit(
+        "obsidian:config-changed",
+        ObsidianConfigChangedEvent {
+            workspace_id: workspace_id.clone(),
+            config: resolved.clone(),
+        },
+    );
     Ok(resolved)
 }
 
@@ -3028,7 +3040,13 @@ pub fn obsidian_create_project_note(
             crate::obsidian::config::resolve(&workspace_id, |wid| db.get_obsidian_config(wid))
                 .map_err(|e| e.to_string())?
         };
-        let _ = app.emit("obsidian:config-changed", &final_resolved);
+        let _ = app.emit(
+            "obsidian:config-changed",
+            ObsidianConfigChangedEvent {
+                workspace_id: workspace_id.clone(),
+                config: final_resolved.clone(),
+            },
+        );
     }
     Ok(ProjectNoteResult {
         path: outcome.path.display().to_string(),
@@ -3037,8 +3055,10 @@ pub fn obsidian_create_project_note(
 }
 
 #[tauri::command]
-pub fn obsidian_list_templates(
+pub fn obsidian_watch_templates(
+    app: AppHandle,
     db: State<'_, SharedDb>,
+    state: State<'_, crate::obsidian::templates_watcher::TemplatesWatcherState>,
     workspace_id: String,
 ) -> Result<Vec<crate::obsidian::templates::Template>, String> {
     let resolved = {
@@ -3046,6 +3066,12 @@ pub fn obsidian_list_templates(
         crate::obsidian::config::resolve(&workspace_id, |wid| db.get_obsidian_config(wid))
             .map_err(|e| e.to_string())?
     };
+    let dir = resolved
+        .templates_path
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from);
+    state.rewatch(dir.clone(), app).map_err(|e| e.to_string())?;
     crate::obsidian::templates::list_templates(&resolved).map_err(|e| e.to_string())
 }
 

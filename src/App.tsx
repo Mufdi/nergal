@@ -6,7 +6,8 @@ import { setupAgentListeners } from "./stores/agent";
 import { setupHookListeners } from "./stores/hooks";
 import { setupObsidianListeners } from "./stores/obsidian";
 import { configAtom } from "./stores/config";
-import { invoke } from "./lib/tauri";
+import { invoke, listen } from "./lib/tauri";
+import { dispatchDeepLink } from "./lib/deepLinkRouter";
 import { applyTheme, extractPaletteFromComputedStyle } from "./lib/themes";
 import type { Config, ThemePalette } from "./lib/types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -90,6 +91,9 @@ export function App() {
     const unlisteners = setupHookListeners(store);
     const unlistenAgents = setupAgentListeners();
     const unlistenObsidian = setupObsidianListeners(store);
+    const unlistenDeepLink = listen<string>("deeplink:received", (url) => {
+      dispatchDeepLink(url);
+    });
     return () => {
       unlisteners.then((fns) => {
         for (const fn of fns) fn();
@@ -98,6 +102,7 @@ export function App() {
       unlistenObsidian.then((fns) => {
         for (const fn of fns) fn();
       });
+      unlistenDeepLink.then((fn) => fn());
     };
   }, [store]);
 

@@ -17,7 +17,7 @@ export async function loadObsidianTemplates(workspaceId: string | null): Promise
     return;
   }
   try {
-    const list = await invoke<ObsidianTemplate[]>("obsidian_list_templates", {
+    const list = await invoke<ObsidianTemplate[]>("obsidian_watch_templates", {
       workspaceId,
     });
     appStore.set(obsidianTemplatesAtom, list);

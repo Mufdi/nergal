@@ -27,7 +27,8 @@ use plan_state::PlanStateManager;
 use pty::PtyManager;
 use scratchpad::commands::ScratchpadState;
 use std::path::PathBuf;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
+use tauri_plugin_deep_link::DeepLinkExt;
 
 /// When launched under systemd (gnome-shell Activities, .desktop entries on
 /// kernel 6.8.0-117+), stdout/stderr are a journald pipe (`JOURNAL_STREAM`
@@ -227,6 +228,13 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -234,11 +242,13 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_deep_link::init())
         .manage(PtyManager::new(config.terminal_kitty_keyboard))
         .manage(db.clone())
         .manage(plan_state.clone())
         .manage(agent_state.clone())
         .manage(ScratchpadState::new(scratchpad_root.clone()))
+        .manage(crate::obsidian::templates_watcher::TemplatesWatcherState::new())
         .invoke_handler(tauri::generate_handler![
             // PTY commands
             pty::start_claude_session,
@@ -355,7 +365,7 @@ pub fn run() {
             commands::obsidian_build_uri,
             commands::obsidian_pre_bootstrap,
             commands::obsidian_create_project_note,
-            commands::obsidian_list_templates,
+            commands::obsidian_watch_templates,
             commands::obsidian_quick_capture,
             pty::write_to_session_pty,
             // Scratchpad commands
@@ -404,6 +414,15 @@ pub fn run() {
             let app_handle = app.handle().clone();
             let socket_path = config.hook_socket_path.clone();
             let transcripts_dir = config.transcripts_directory.clone();
+
+            let deep_link_emitter = app_handle.clone();
+            app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    let url_str = url.to_string();
+                    tracing::info!("deeplink received: {url_str}");
+                    let _ = deep_link_emitter.emit("deeplink:received", url_str);
+                }
+            });
 
             let hook_app = app_handle.clone();
             let hook_db = db.clone();

@@ -68,10 +68,24 @@ pub fn suggested_layout_paths(
 
 fn render_template(name: &str, workspace_path: &Path) -> String {
     let abs = workspace_path.display().to_string();
-    // cluihud:// scheme arrives in M2 — until then the workspace path is
-    // pasted as plain code so the note still has the cross-reference, just
-    // not clickable from Obsidian's side.
-    format!("# {name}\n\n## Workspace\n\n`{abs}`\n\n## Decisions\n\n## Log\n")
+    let encoded = encode_uri_component(&abs);
+    let link = format!("cluihud://open-workspace?path={encoded}");
+    format!(
+        "# {name}\n\n## Workspace\n\n[Open in Nergal]({link})\n\n`{abs}`\n\n## Decisions\n\n## Log\n"
+    )
+}
+
+fn encode_uri_component(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char);
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
 }
 
 // File-system safe slug: keep alphanumerics, hyphens, underscores, dots; the
@@ -134,9 +148,24 @@ mod tests {
         let body = std::fs::read_to_string(&out.path).unwrap();
         assert!(body.contains("# demo"));
         assert!(body.contains("`/home/user/demo`"));
+        assert!(body.contains("cluihud://open-workspace?path=%2Fhome%2Fuser%2Fdemo"));
+        assert!(body.contains("[Open in Nergal]"));
         assert!(body.contains("## Workspace"));
         assert!(body.contains("## Decisions"));
         assert!(body.contains("## Log"));
+    }
+
+    #[test]
+    fn encode_uri_component_preserves_unreserved() {
+        assert_eq!(encode_uri_component("abc-DEF_123.~"), "abc-DEF_123.~");
+    }
+
+    #[test]
+    fn encode_uri_component_percent_encodes_slashes_and_spaces() {
+        assert_eq!(
+            encode_uri_component("/home/user/my project"),
+            "%2Fhome%2Fuser%2Fmy%20project"
+        );
     }
 
     #[test]

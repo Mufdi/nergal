@@ -79,8 +79,11 @@ toml_edit = "0.22"
 toml = "0.8"
 
 # obsidian-bridge: tauri-plugin-deep-link registers `cluihud://`;
+# tauri-plugin-single-instance forwards URI launches to the running app
+# on Linux (without it every xdg-open spawns a new process).
 # fs2 guards the post-session bg runner against concurrent invocations.
 tauri-plugin-deep-link = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 fs2 = "0.4"
 
 # Used by `redirect_journald_stdio_to_logfile` in lib.rs to `dup2` an open log

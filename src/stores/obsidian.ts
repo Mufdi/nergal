@@ -2,10 +2,19 @@ import { atom, type getDefaultStore } from "jotai";
 import { invoke, listen } from "@/lib/tauri";
 import type { ObsidianConfig, ResolvedObsidianConfig } from "@/lib/types";
 import { activeWorkspaceAtom } from "./workspace";
-import { loadObsidianTemplates } from "./obsidianTemplates";
+import {
+  loadObsidianTemplates,
+  obsidianTemplatesAtom,
+  type ObsidianTemplate,
+} from "./obsidianTemplates";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
 type Store = ReturnType<typeof getDefaultStore>;
+
+export interface ObsidianConfigChangedPayload {
+  workspace_id: string;
+  config: ResolvedObsidianConfig;
+}
 
 export const obsidianDefaultConfig: ResolvedObsidianConfig = {
   vault_root: null,
@@ -25,13 +34,15 @@ export const obsidianEnabledAtom = atom((get) => {
   return cfg?.vault_root != null && cfg.vault_root !== "";
 });
 
-// Out of component so the dialog footer can render Apply contextually.
+export const obsidianSelectedWorkspaceIdAtom = atom<string | null>(null);
+export const obsidianSettingsResolvedAtom = atom<ResolvedObsidianConfig | null>(null);
+
 export const obsidianDraftAtom = atom<ObsidianConfig>(obsidianDefaultConfig);
 export const obsidianApplyBusyAtom = atom<boolean>(false);
 
 export const obsidianDraftDirtyAtom = atom((get) => {
   const draft = get(obsidianDraftAtom);
-  const resolved = get(obsidianConfigAtom) ?? obsidianDefaultConfig;
+  const resolved = get(obsidianSettingsResolvedAtom) ?? obsidianDefaultConfig;
   return (
     draft.vault_root !== resolved.vault_root ||
     draft.vault_name !== resolved.vault_name ||
@@ -45,7 +56,7 @@ export const obsidianDraftDirtyAtom = atom((get) => {
 });
 
 export const resetObsidianDraftAtom = atom(null, (get, set) => {
-  set(obsidianDraftAtom, get(obsidianConfigAtom) ?? obsidianDefaultConfig);
+  set(obsidianDraftAtom, get(obsidianSettingsResolvedAtom) ?? obsidianDefaultConfig);
 });
 
 export interface BootstrapPromptState {
@@ -76,15 +87,21 @@ export const loadObsidianConfigAtom = atom(null, async (get, set) => {
 
 export const saveObsidianConfigAtom = atom(
   null,
-  async (get, set, cfg: ObsidianConfig): Promise<ResolvedObsidianConfig | null> => {
-    const ws = get(activeWorkspaceAtom);
-    if (!ws) return null;
+  async (
+    get,
+    set,
+    args: { workspaceId: string; cfg: ObsidianConfig },
+  ): Promise<ResolvedObsidianConfig | null> => {
     try {
       const resolved = await invoke<ResolvedObsidianConfig>("save_obsidian_config", {
-        workspaceId: ws.id,
-        cfg,
+        workspaceId: args.workspaceId,
+        cfg: args.cfg,
       });
-      set(obsidianConfigAtom, resolved);
+      set(obsidianSettingsResolvedAtom, resolved);
+      const active = get(activeWorkspaceAtom);
+      if (active && active.id === args.workspaceId) {
+        set(obsidianConfigAtom, resolved);
+      }
       return resolved;
     } catch (err) {
       console.warn("[obsidian] save_obsidian_config failed:", err);
@@ -97,10 +114,23 @@ export async function setupObsidianListeners(store: Store): Promise<UnlistenFn[]
   const unlisteners: UnlistenFn[] = [];
 
   unlisteners.push(
-    await listen<ResolvedObsidianConfig>("obsidian:config-changed", (payload) => {
-      store.set(obsidianConfigAtom, payload);
-      const ws = store.get(activeWorkspaceAtom);
-      void loadObsidianTemplates(ws?.id ?? null);
+    await listen<ObsidianConfigChangedPayload>("obsidian:config-changed", (payload) => {
+      const active = store.get(activeWorkspaceAtom);
+      if (active && active.id === payload.workspace_id) {
+        store.set(obsidianConfigAtom, payload.config);
+        void loadObsidianTemplates(active.id);
+      }
+      const selected = store.get(obsidianSelectedWorkspaceIdAtom);
+      const effective = active?.id ?? selected;
+      if (effective === payload.workspace_id) {
+        store.set(obsidianSettingsResolvedAtom, payload.config);
+      }
+    }),
+  );
+
+  unlisteners.push(
+    await listen<ObsidianTemplate[]>("obsidian:templates-updated", (payload) => {
+      store.set(obsidianTemplatesAtom, payload);
     }),
   );
 

@@ -17,7 +17,10 @@ pub fn list_templates(cfg: &ResolvedObsidianConfig) -> Result<Vec<Template>> {
     let Some(dir) = cfg.templates_path.as_deref().filter(|s| !s.is_empty()) else {
         return Ok(Vec::new());
     };
-    let dir = Path::new(dir);
+    list_templates_from_dir(Path::new(dir))
+}
+
+pub fn list_templates_from_dir(dir: &Path) -> Result<Vec<Template>> {
     if !dir.is_dir() {
         return Ok(Vec::new());
     }
@@ -186,5 +189,22 @@ mod tests {
         let (fm, body) = split_frontmatter(raw);
         assert!(fm.is_empty());
         assert!(body.contains("body"));
+    }
+
+    #[test]
+    fn list_from_dir_returns_empty_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("does-not-exist");
+        let out = list_templates_from_dir(&missing).unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn list_from_dir_returns_empty_when_path_is_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("not-a-dir.md");
+        std::fs::write(&file_path, "body").unwrap();
+        let out = list_templates_from_dir(&file_path).unwrap();
+        assert!(out.is_empty());
     }
 }

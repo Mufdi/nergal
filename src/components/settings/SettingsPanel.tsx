@@ -28,13 +28,16 @@ import { HexColorPicker } from "react-colorful";
 import { scratchpadPathAtom, reloadTabsFromBackend } from "@/stores/scratchpad";
 import {
   obsidianApplyBusyAtom,
-  obsidianConfigAtom,
+  obsidianDefaultConfig,
   obsidianDraftAtom,
   obsidianDraftDirtyAtom,
+  obsidianSelectedWorkspaceIdAtom,
+  obsidianSettingsResolvedAtom,
   resetObsidianDraftAtom,
   saveObsidianConfigAtom,
 } from "@/stores/obsidian";
-import { activeWorkspaceAtom } from "@/stores/workspace";
+import { activeWorkspaceAtom, workspacesAtom, type Workspace } from "@/stores/workspace";
+import type { ResolvedObsidianConfig } from "@/lib/types";
 import { ObsidianIcon } from "@/components/icons/ObsidianIcon";
 import type { ObsidianConfig } from "@/lib/types";
 import {
@@ -244,13 +247,55 @@ function ScratchpadPathField() {
   );
 }
 
-function ObsidianSection() {
+function useEffectiveObsidianWorkspace(): {
+  workspaces: Workspace[];
+  activeWorkspace: Workspace | null;
+  effective: Workspace | null;
+  selectedId: string | null;
+  setSelectedId: (id: string | null) => void;
+} {
+  const workspaces = useAtomValue(workspacesAtom);
   const activeWorkspace = useAtomValue(activeWorkspaceAtom);
-  const resolved = useAtomValue(obsidianConfigAtom);
+  const [selectedId, setSelectedId] = useAtom(obsidianSelectedWorkspaceIdAtom);
+
+  const effective = activeWorkspace
+    ? activeWorkspace
+    : workspaces.find((w) => w.id === selectedId) ?? workspaces[0] ?? null;
+
+  return { workspaces, activeWorkspace, effective, selectedId, setSelectedId };
+}
+
+function ObsidianSection() {
+  const { workspaces, activeWorkspace, effective, setSelectedId } =
+    useEffectiveObsidianWorkspace();
+  const [resolved, setResolved] = useAtom(obsidianSettingsResolvedAtom);
   const [draft, setDraft] = useAtom(obsidianDraftAtom);
   const dirty = useAtomValue(obsidianDraftDirtyAtom);
 
-  // resolved only moves on save or workspace switch, so this won't fight typing.
+  useEffect(() => {
+    if (!effective) {
+      setResolved(null);
+      setDraft(obsidianDefaultConfig);
+      return;
+    }
+    let cancelled = false;
+    invoke<ResolvedObsidianConfig>("get_obsidian_config", { workspaceId: effective.id })
+      .then((cfg) => {
+        if (cancelled) return;
+        setResolved(cfg);
+        setDraft(cfg);
+      })
+      .catch((err) => {
+        console.warn("[obsidian-settings] load failed:", err);
+        if (cancelled) return;
+        setResolved(obsidianDefaultConfig);
+        setDraft(obsidianDefaultConfig);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [effective?.id, setResolved, setDraft]);
+
   useEffect(() => {
     if (resolved) setDraft(resolved);
   }, [resolved, setDraft]);
@@ -264,26 +309,42 @@ function ObsidianSection() {
     return t.length === 0 ? null : t;
   }
 
-  if (!activeWorkspace) {
+  if (workspaces.length === 0) {
     return (
       <div className="grid gap-3">
         <p className="text-xs text-muted-foreground">
-          Obsidian settings are stored per workspace. Create a session in any workspace from the
-          sidebar — that activates the workspace and surfaces its Obsidian config here.
-        </p>
-        <p className="text-[11px] text-muted-foreground">
-          If you just confirmed the bootstrap prompt, your Obsidian config was already saved to
-          that workspace. Open a session there and reopen Settings → Obsidian to see it.
+          Obsidian settings are stored per workspace. Create one from the sidebar first.
         </p>
       </div>
     );
   }
+
+  const selectorVisible = workspaces.length > 1 || !activeWorkspace;
+  const workspaceOptions = workspaces.map((w) => ({ value: w.id, label: w.name }));
 
   return (
     <div className="grid gap-4">
       <p className="text-xs text-muted-foreground">
         Bridge to your Obsidian vault. Set <code>vault_root</code> to enable any feature; each channel is independently opt-in.
       </p>
+
+      {selectorVisible && (
+        <div className="grid gap-1.5">
+          <Label htmlFor="obsidian-workspace-selector">Workspace</Label>
+          <Select
+            id="obsidian-workspace-selector"
+            value={effective?.id ?? ""}
+            onValueChange={(v) => setSelectedId(v)}
+            options={workspaceOptions}
+            disabled={!!activeWorkspace}
+          />
+          <p className="text-[11px] text-muted-foreground">
+            {activeWorkspace
+              ? "Showing the active workspace. Editing another workspace requires no active session in it."
+              : "No active session. Pick the workspace whose Obsidian config you want to edit."}
+          </p>
+        </div>
+      )}
 
       <ValidatedPathField
         configKey="obsidian_vault_root"
@@ -423,15 +484,15 @@ function ObsidianSection() {
 function ObsidianApplyButton() {
   const draft = useAtomValue(obsidianDraftAtom);
   const dirty = useAtomValue(obsidianDraftDirtyAtom);
-  const activeWorkspace = useAtomValue(activeWorkspaceAtom);
+  const { effective } = useEffectiveObsidianWorkspace();
   const saveCfg = useSetAtom(saveObsidianConfigAtom);
   const [busy, setBusy] = useAtom(obsidianApplyBusyAtom);
 
   async function handleApply() {
-    if (!dirty || !activeWorkspace || busy) return;
+    if (!dirty || !effective || busy) return;
     setBusy(true);
     try {
-      await saveCfg(draft);
+      await saveCfg({ workspaceId: effective.id, cfg: draft });
     } catch (err) {
       console.error("[settings] save_obsidian_config failed:", err);
     } finally {
@@ -439,7 +500,7 @@ function ObsidianApplyButton() {
     }
   }
 
-  if (!activeWorkspace) return null;
+  if (!effective) return null;
 
   return (
     <Button onClick={handleApply} disabled={!dirty || busy}>

@@ -30,6 +30,7 @@
     "global-shortcut:allow-is-registered",
     "updater:default",
     "process:default",
-    "process:allow-restart"
+    "process:allow-restart",
+    "deep-link:default"
   ]
 }

@@ -68,6 +68,11 @@
     }
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["cluihud"]
+      }
+    },
     "updater": {
       "active": true,
       "endpoints": [

@@ -1,0 +1,33 @@
+{
+  "milestone": "M3",
+  "tier": "L",
+  "tier_source": "heuristic",
+  "tier_rationale": "7-10 files cross-module (new post_session.rs + channels.rs + moc.rs, plus server.rs/lib.rs/main.rs/commands.rs edits). Touches app-startup path (.run -> .build().run callback). Detached process + user vault writes. Already decomposed into 3 spawnable phases, so L rather than XL-split.",
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "discovery_skipped_reason": "Change already fully designed (design.md sections 4-6, Open Questions all closed, 3 M3 specs present). Mode B over existing slug, not raw idea.",
+    "iprev_rounds": 0,
+    "iprev_status": "RECOMMENDED-PENDING",
+    "iprev_reason": "files_estimate >= 5 triggers A3. Held at user's request (M3 blocked by M2 adjustments; user reviews plan first). Offer cross-model iprev on the bg-runner architecture before execute.",
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": [],
+    "per_phase_models": {
+      "design": "claude-opus-4-7",
+      "implementation": "claude-sonnet-4-6",
+      "exploration": "claude-haiku-4-5"
+    }
+  },
+  "spec_target": "post-session-runner, obsidian-session-log, obsidian-session-moc",
+  "execution_status": "GATED-NOT-STARTED",
+  "gate_reason": "M2 (#7 vault search modal + #I @@ picker) still in manual testing by user. M3 must not begin until M2 adjustments are finalized.",
+  "closed_decisions": {
+    "4.3.2_agent_status_snapshot": "persist-on-SessionEnd (NO dedicated migration 009)"
+  },
+  "open_items_for_execute": [
+    "Spec/tasks divergence: post-session-runner spec lists 5 marker triggers (adds PTY-side EOF termination, spec line 30) but tasks.md 4.1.6-4.1.8 covers only 4. Reconcile before/during Phase C.",
+    "Risk #1 (design.md): bg process may not spawn in hardened distros. PID-check at 200ms post-spawn + synchronous-flush fallback + toast is mandatory, not optional.",
+    "Multi-instance: runner uses global post-session.lock + pending-mocs/. Manual E2E (tasks 6.4/6.5) requires closing the installed .deb."
+  ],
+  "interview_ts": "2026-05-29"
+}

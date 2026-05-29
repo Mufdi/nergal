@@ -44,6 +44,100 @@ impl QuickCaptureWriter {
     }
 }
 
+/// #2 continuous session log. One file per workspace (`session_log_path` is a
+/// path to a file, per F); sessions are appended as `## Session` blocks. All
+/// writes are O_APPEND so concurrent sessions interleave at line boundaries.
+pub struct SessionLogWriter;
+
+impl SessionLogWriter {
+    fn open(cfg: &ResolvedObsidianConfig) -> Result<Option<std::fs::File>> {
+        let Some(path_str) = cfg.session_log_path.as_deref().filter(|s| !s.is_empty()) else {
+            return Ok(None);
+        };
+        let path = Path::new(path_str);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating parent dir {}", parent.display()))?;
+        }
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .with_context(|| format!("opening session_log {}", path.display()))?;
+        Ok(Some(file))
+    }
+
+    pub fn start_session(
+        cfg: &ResolvedObsidianConfig,
+        session_name: &str,
+        agent_id: &str,
+        model_name: Option<&str>,
+        cwd: Option<&str>,
+    ) -> Result<()> {
+        let Some(mut file) = Self::open(cfg)? else {
+            return Ok(());
+        };
+        let block = format!(
+            "\n## Session \"{name}\" — {ts}\n- Agent: {agent} ({model})\n- Cwd: {cwd}\n\n### Activity\n",
+            name = session_name,
+            ts = iso_timestamp(),
+            agent = agent_id,
+            model = model_name.unwrap_or("unknown"),
+            cwd = cwd.unwrap_or("?"),
+        );
+        file.write_all(block.as_bytes())?;
+        file.sync_all().ok();
+        Ok(())
+    }
+
+    pub fn append_event(cfg: &ResolvedObsidianConfig, line: &str) -> Result<()> {
+        let Some(mut file) = Self::open(cfg)? else {
+            return Ok(());
+        };
+        let entry = format!("- {} · {}\n", iso_timestamp(), line);
+        file.write_all(entry.as_bytes())?;
+        Ok(())
+    }
+
+    pub fn end_session(
+        cfg: &ResolvedObsidianConfig,
+        cost_usd: f64,
+        files: &[String],
+        tasks_completed: usize,
+    ) -> Result<()> {
+        let Some(mut file) = Self::open(cfg)? else {
+            return Ok(());
+        };
+        let files_line = if files.is_empty() {
+            "- Files touched: 0".to_string()
+        } else {
+            let basenames: Vec<String> = files
+                .iter()
+                .map(|f| {
+                    Path::new(f)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| f.clone())
+                })
+                .collect();
+            format!(
+                "- Files touched: {} ({})",
+                files.len(),
+                basenames.join(", ")
+            )
+        };
+        let block = format!(
+            "\n### Session ended at {ts}\n- Final cost: ${cost:.4}\n{files_line}\n- Tasks completed: {tc}\n",
+            ts = iso_timestamp(),
+            cost = cost_usd,
+            tc = tasks_completed,
+        );
+        file.write_all(block.as_bytes())?;
+        file.sync_all().ok();
+        Ok(())
+    }
+}
+
 pub fn iso_timestamp() -> String {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -224,6 +318,43 @@ mod tests {
         let contents = std::fs::read_to_string(&target).unwrap();
         assert!(contents.contains("#brain-dump"));
         assert!(!contents.contains("#nergal-inbox"));
+    }
+
+    #[test]
+    fn session_log_writes_full_lifecycle() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("log").join("project.md");
+        let cfg = ObsidianConfig {
+            session_log_path: Some(target.to_string_lossy().into_owned()),
+            ..ObsidianConfig::defaults()
+        };
+        SessionLogWriter::start_session(
+            &cfg,
+            "Auth refactor",
+            "claude-code",
+            Some("opus"),
+            Some("/repo"),
+        )
+        .unwrap();
+        SessionLogWriter::append_event(&cfg, "Edit src/auth.rs").unwrap();
+        SessionLogWriter::end_session(&cfg, 0.1234, &["/repo/src/auth.rs".to_string()], 2).unwrap();
+        let c = std::fs::read_to_string(&target).unwrap();
+        assert!(c.contains("## Session \"Auth refactor\""));
+        assert!(c.contains("- Agent: claude-code (opus)"));
+        assert!(c.contains("### Activity"));
+        assert!(c.contains("· Edit src/auth.rs"));
+        assert!(c.contains("### Session ended at"));
+        assert!(c.contains("Final cost: $0.1234"));
+        assert!(c.contains("Files touched: 1 (auth.rs)"));
+        assert!(c.contains("Tasks completed: 2"));
+    }
+
+    #[test]
+    fn session_log_noop_when_path_unset() {
+        let cfg = ObsidianConfig::defaults();
+        SessionLogWriter::start_session(&cfg, "x", "claude-code", None, None).unwrap();
+        SessionLogWriter::append_event(&cfg, "evt").unwrap();
+        SessionLogWriter::end_session(&cfg, 0.0, &[], 0).unwrap();
     }
 
     #[test]

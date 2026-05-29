@@ -20,6 +20,9 @@ enum Commands {
     /// running cluihud's view of available adapters. Sends a `control`
     /// message to the hook socket; no effect if cluihud is not running.
     RescanAgents,
+    /// Detached background runner: drain pending session-end markers (MOC +
+    /// reverse backlinks). Spawned by the app, not invoked by hand.
+    PostSession,
 }
 
 #[derive(Subcommand)]
@@ -105,6 +108,13 @@ fn main() {
             let config = cluihud::config::Config::load();
             if let Err(e) = cluihud::hooks::cli::send_rescan_agents(&config.hook_socket_path) {
                 eprintln!("cluihud rescan-agents: {e:#}");
+                std::process::exit(1);
+            }
+        }
+
+        Some(Commands::PostSession) => {
+            if let Err(e) = cluihud::obsidian::post_session::run() {
+                eprintln!("cluihud post-session: {e:#}");
                 std::process::exit(1);
             }
         }

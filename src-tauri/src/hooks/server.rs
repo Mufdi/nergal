@@ -325,6 +325,77 @@ pub fn spawn_adapter_event_consumer(
     });
 }
 
+/// #2 session log: resolve the workspace obsidian config + session for the
+/// active hook, but only when the session_log channel is set. None → skip.
+fn session_log_cfg(
+    db: &SharedDb,
+    csid: Option<&str>,
+) -> Option<(
+    crate::obsidian::config::ResolvedObsidianConfig,
+    crate::models::Session,
+)> {
+    let csid = csid?;
+    let guard = db.lock().ok()?;
+    let session = guard.find_session(csid).ok()??;
+    let cfg =
+        crate::obsidian::config::resolve(&session.workspace_id, |w| guard.get_obsidian_config(w))
+            .ok()?;
+    cfg.session_log_path.as_deref().filter(|s| !s.is_empty())?;
+    Some((cfg, session))
+}
+
+/// One activity line per loggable event; None for events the log skips.
+/// SessionStart/SessionEnd are special-cased in their match arms.
+fn session_log_line(event: &HookEvent) -> Option<String> {
+    fn file_of(input: &serde_json::Value) -> Option<&str> {
+        input
+            .get("file_path")
+            .or_else(|| input.get("path"))
+            .and_then(|v| v.as_str())
+    }
+    match event {
+        HookEvent::PreToolUse {
+            tool_name,
+            tool_input,
+            ..
+        } => Some(match tool_name.as_str() {
+            "Edit" | "Write" | "MultiEdit" | "NotebookEdit" | "Update" => file_of(tool_input)
+                .map_or_else(|| format!("Tool {tool_name}"), |f| format!("Edit {f}")),
+            "Read" => {
+                file_of(tool_input).map_or_else(|| "Read".to_string(), |f| format!("Read {f}"))
+            }
+            other => format!("Tool {other}"),
+        }),
+        HookEvent::Stop { stop_reason, .. } => Some(format!(
+            "Stop (reason: {})",
+            stop_reason.as_deref().unwrap_or("—")
+        )),
+        HookEvent::TaskCreated { task_subject, .. } => task_subject
+            .as_deref()
+            .map(|s| format!("Task created: \"{s}\"")),
+        HookEvent::TaskCompleted { task_subject, .. } => task_subject
+            .as_deref()
+            .map(|s| format!("Task completed: \"{s}\"")),
+        HookEvent::UserPromptSubmit { .. } => Some("Prompt submitted".to_string()),
+        HookEvent::PlanReview { .. } => Some("Plan ready".to_string()),
+        HookEvent::FileChanged {
+            file_path,
+            event_type,
+            ..
+        } => file_path
+            .as_deref()
+            .map(|f| format!("{} {f}", event_type.as_deref().unwrap_or("Changed"))),
+        HookEvent::PermissionDenied {
+            tool_name, reason, ..
+        } => Some(format!(
+            "Permission denied: {} — {}",
+            tool_name.as_deref().unwrap_or("?"),
+            reason.as_deref().unwrap_or("—")
+        )),
+        _ => None,
+    }
+}
+
 fn process_event(
     app: &AppHandle,
     event: &HookEvent,
@@ -360,6 +431,13 @@ fn process_event(
     frontend_event.cluihud_session_id = cluihud_session_id.map(String::from);
     let _ = app.emit("hook:event", &frontend_event);
 
+    // #2 continuous session log — best-effort append for loggable events.
+    if let Some(line) = session_log_line(event)
+        && let Some((cfg, _)) = session_log_cfg(db, cluihud_session_id)
+    {
+        let _ = crate::obsidian::channels::SessionLogWriter::append_event(&cfg, &line);
+    }
+
     match event {
         HookEvent::SessionStart { session_id } => {
             #[derive(Clone, serde::Serialize)]
@@ -379,10 +457,55 @@ fn process_event(
                     cwd,
                 },
             );
+
+            if let Some((cfg, session)) = session_log_cfg(db, cluihud_session_id) {
+                let log_cwd = session
+                    .worktree_path
+                    .as_ref()
+                    .map(|p| p.display().to_string());
+                let _ = crate::obsidian::channels::SessionLogWriter::start_session(
+                    &cfg,
+                    &session.name,
+                    &session.agent_id,
+                    None,
+                    log_cwd.as_deref(),
+                );
+            }
         }
 
         HookEvent::SessionEnd { session_id } => {
             let _ = app.emit("session:end", session_id);
+
+            if let Some((cfg, session)) = session_log_cfg(db, cluihud_session_id) {
+                let (cost, tasks_done) = match db.lock() {
+                    Ok(guard) => {
+                        let cost = guard
+                            .get_cost(&session.id)
+                            .ok()
+                            .flatten()
+                            .map(|c| c.total_usd)
+                            .unwrap_or(0.0);
+                        let tasks_done = guard
+                            .get_visible_tasks(&session.id)
+                            .map(|ts| {
+                                ts.iter()
+                                    .filter(|t| {
+                                        matches!(t.status, crate::tasks::TaskStatus::Completed)
+                                    })
+                                    .count()
+                            })
+                            .unwrap_or(0);
+                        (cost, tasks_done)
+                    }
+                    Err(_) => (0.0, 0),
+                };
+                let _ = crate::obsidian::channels::SessionLogWriter::end_session(
+                    &cfg,
+                    cost,
+                    &[],
+                    tasks_done,
+                );
+            }
         }
 
         HookEvent::PreToolUse {

@@ -3102,3 +3102,50 @@ pub fn drain_pending_deeplinks(
     let mut buf = state.0.lock().map_err(|e| e.to_string())?;
     Ok(std::mem::take(&mut *buf))
 }
+
+/// Global search engine (obsidian-bridge M2). `active_workspace_id` resolves
+/// the Vault/OpenSpec scopes; WorkspaceFiles carries its own id in the query.
+#[tauri::command]
+pub async fn search(
+    db: State<'_, SharedDb>,
+    query: crate::search::SearchQuery,
+    active_workspace_id: Option<String>,
+) -> Result<Vec<crate::search::SearchHit>, String> {
+    let ctx = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+
+        let mut workspace_paths = std::collections::HashMap::new();
+        let mut openspec_dir = None;
+        for ws in db.get_workspaces().map_err(|e| e.to_string())? {
+            if Some(&ws.id) == active_workspace_id.as_ref() {
+                let candidate = ws.repo_path.join("openspec");
+                if candidate.is_dir() {
+                    openspec_dir = Some(candidate);
+                }
+            }
+            workspace_paths.insert(ws.id, ws.repo_path);
+        }
+
+        let vault_root = active_workspace_id
+            .as_deref()
+            .and_then(|wid| {
+                crate::obsidian::config::resolve(wid, |w| db.get_obsidian_config(w)).ok()
+            })
+            .and_then(|cfg| cfg.vault_root)
+            .filter(|v| !v.is_empty())
+            .map(|v| std::path::PathBuf::from(crate::obsidian::config::expand_home(&v)));
+
+        crate::search::SearchContext {
+            vault_root,
+            transcripts_dir: Some(crate::config::Config::load().transcripts_directory),
+            openspec_dir,
+            workspace_paths,
+        }
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::search::SearchEngine::search(&query, &ctx).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}

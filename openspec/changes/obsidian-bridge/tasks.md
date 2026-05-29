@@ -68,12 +68,12 @@
 
 ### 3.1 Global search engine (capability: global-search-engine)
 
-- [ ] 3.1.1 Create `src-tauri/src/search/mod.rs` with `SearchEngine`, `SearchQuery`, `SearchScope`, `SearchHit` types as in design.md §7.
-- [ ] 3.1.2 Implement ripgrep shell-out: `Command::new("rg")` with args `--json --max-count N --line-number <pattern> <path>`. Parse JSON output stream. If `which::which("rg")` is None, fall back to `walkdir` + `grep-regex`.
-- [ ] 3.1.3 Implement scope resolvers: `resolve_paths_for(scope, ctx) -> Vec<PathBuf>`. Vault scope reads `cfg.vault_root`. SessionTranscripts scope reads `config.transcripts_directory`. WorkspaceFiles scope reads the workspace repo_path (excluding `.git`, `node_modules`, `target`, `.venv`, configurable via gitignore-respecting flag in rg).
-- [ ] 3.1.4 Implement scoring + merge: filename match score 100, title match 50, content match 10. Merge results from multiple scopes by score desc.
-- [ ] 3.1.5 Add Tauri command `search(query: SearchQuery) -> Vec<SearchHit>`. Register in invoke_handler.
-- [ ] 3.1.6 Add `src/stores/search.ts`: `searchModalOpenAtom`, `searchScopeAtom`, `searchQueryAtom`, `searchResultsAtom`. Cancellable via AbortController (rapid typing).
+- [x] 3.1.1 Create `src-tauri/src/search/mod.rs` with `SearchEngine`, `SearchQuery`, `SearchScope`, `SearchHit` types as in design.md §7.
+- [x] 3.1.2 Implement ripgrep shell-out: `Command::new("rg")` with args `--json --max-count N --line-number <pattern> <path>`. Parse JSON output stream. If `which::which("rg")` is None, fall back to `walkdir` + substring match (fixed-string semantics, no extra grep-regex dep).
+- [x] 3.1.3 Implement scope resolvers via `resolve_plans(scopes, ctx) -> Vec<ScopePlan>`. Vault reads `cfg.vault_root`. SessionTranscripts reads `config.transcripts_directory`. OpenSpec reads `<active workspace repo>/openspec`. WorkspaceFiles reads the workspace repo_path (excluding `.git`, `node_modules`, `target`, `.venv` via rg `--glob !dir/` and a walkdir `filter_entry`).
+- [x] 3.1.4 Implement scoring + merge: filename match 100, title match 50, content match 10. Per-file dedup (best-scoring line) so the modal lists files not lines; merge by score desc.
+- [x] 3.1.5 Add Tauri command `search(query, active_workspace_id) -> Vec<SearchHit>` (resolves Vault/OpenSpec scopes from the active workspace). Runs on `spawn_blocking`. Registered in invoke_handler.
+- [x] 3.1.6 Add `src/stores/search.ts`: `searchModalOpenAtom`, `searchScopeAtom`, `searchQueryAtom`, `searchResultsAtom` (+ `searchLoadingAtom`, `runSearchAtom`). Rapid-typing cancellation via monotonic seq guard + optional AbortSignal.
 
 ### 3.2 #7 · Vault search modal (capability: obsidian-vault-search)
 

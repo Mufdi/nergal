@@ -10,6 +10,7 @@ mod openspec;
 mod plan_state;
 mod pty;
 pub mod scratchpad;
+mod search;
 pub mod setup;
 mod tasks;
 mod terminal;
@@ -377,6 +378,7 @@ pub fn run() {
             commands::obsidian_watch_templates,
             commands::obsidian_quick_capture,
             commands::drain_pending_deeplinks,
+            commands::search,
             pty::write_to_session_pty,
             // Scratchpad commands
             scratchpad::commands::scratchpad_get_path,

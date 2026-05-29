@@ -45,6 +45,11 @@ regex = "1"
 # `browser_navigate` command (iframe-first architecture).
 url = "2"
 
+# global-search-engine (obsidian-bridge M2): pure-Rust file walker used as the
+# fallback search path when ripgrep is absent from PATH. ripgrep is the fast
+# path (shell-out), walkdir keeps the engine self-contained without it.
+walkdir = "2"
+
 # Agent-agnostic foundation: bitflags for capability sets, async-trait for
 # dyn AgentAdapter, dashmap for per-session agent_id cache (sync hot path),
 # parking_lot for lock-free aggregator state, dunce for cross-platform path

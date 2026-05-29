@@ -146,6 +146,11 @@ pub fn iso_timestamp() -> String {
     format_iso_utc(secs)
 }
 
+/// ISO-8601 UTC for a known unix-seconds instant (e.g. a session's created_at).
+pub fn iso_from_unix(secs: i64) -> String {
+    format_iso_utc(secs)
+}
+
 pub fn human_timestamp_utc() -> String {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)

@@ -114,10 +114,15 @@ pub fn spawn_runner_detached() -> Result<()> {
 /// the held lock and exit without work — their markers are covered by the
 /// running drain (they were written before the spawn).
 pub fn run() -> Result<()> {
-    run_in(&pending_dir(), &lock_path())
+    let db = crate::db::Database::open().context("opening database for post-session runner")?;
+    drain(&pending_dir(), &lock_path(), &|path| {
+        process_marker(path, &db)
+    })
 }
 
-fn run_in(dir: &Path, lock_path: &Path) -> Result<()> {
+/// Lock-guarded drain loop. The per-marker work is injected so the lock/marker
+/// lifecycle stays testable without a database.
+fn drain(dir: &Path, lock_path: &Path, process: &dyn Fn(&Path) -> Result<()>) -> Result<()> {
     if !dir.exists() {
         return Ok(());
     }
@@ -139,13 +144,14 @@ fn run_in(dir: &Path, lock_path: &Path) -> Result<()> {
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
-        match process_marker(&path) {
+        match process(&path) {
             Ok(()) => {
                 let _ = fs::remove_file(&path);
             }
             Err(e) => {
-                // Leave the marker for the next runner to retry.
-                tracing::warn!("post-session: marker {} failed: {e}", path.display());
+                // Leave the marker for the next runner to retry; stderr is nulled
+                // in the detached process, so failures go to the log file.
+                log_line(&format!("ERROR marker {}: {e:#}", path.display()));
             }
         }
     }
@@ -154,13 +160,38 @@ fn run_in(dir: &Path, lock_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn process_marker(path: &Path) -> Result<()> {
+fn process_marker(path: &Path, db: &crate::db::Database) -> Result<()> {
     let raw = fs::read_to_string(path)?;
-    let _marker: Marker =
+    let marker: Marker =
         serde_json::from_str(&raw).with_context(|| format!("parsing marker {}", path.display()))?;
-    // #11 MOC + N1 backlink propagation land here in a later phase; the marker
-    // is consumed once that work succeeds.
+    // Session gone (deleted before the runner reached it) → nothing to snapshot;
+    // drop the stale marker rather than retrying it forever.
+    if db.find_session(&marker.session_id)?.is_none() {
+        return Ok(());
+    }
+    let cfg =
+        crate::obsidian::config::resolve(&marker.workspace_id, |w| db.get_obsidian_config(w))?;
+    if let Some(moc_path) = crate::obsidian::moc::MocBuilder::build(&marker.session_id, &cfg, db)? {
+        let _ = crate::obsidian::moc::BacklinkUpdater::propagate(&moc_path, &cfg);
+    }
     Ok(())
+}
+
+/// Append-only runner log. The detached process has nulled stdio, so this is the
+/// only place its failures surface (the app tails it on next launch).
+fn log_line(msg: &str) {
+    let dir = config_dir().join("logs");
+    if fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    if let Ok(mut f) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("post-session.log"))
+    {
+        use std::io::Write;
+        let _ = writeln!(f, "{} {msg}", now_ms());
+    }
 }
 
 #[cfg(test)]
@@ -188,7 +219,7 @@ mod tests {
         let lock = dir.path().join("post-session.lock");
         write_marker_in(&pending, "a", "ws", "claude-code", "SessionEnd").unwrap();
         write_marker_in(&pending, "b", "ws", "claude-code", "app-close").unwrap();
-        run_in(&pending, &lock).unwrap();
+        drain(&pending, &lock, &|_| Ok(())).unwrap();
         assert!(!pending.join("a.json").exists());
         assert!(!pending.join("b.json").exists());
     }
@@ -196,7 +227,12 @@ mod tests {
     #[test]
     fn run_on_missing_dir_is_ok() {
         let dir = tempfile::tempdir().unwrap();
-        run_in(&dir.path().join("nope"), &dir.path().join("l.lock")).unwrap();
+        drain(
+            &dir.path().join("nope"),
+            &dir.path().join("l.lock"),
+            &|_| Ok(()),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -214,7 +250,7 @@ mod tests {
             .open(&lock)
             .unwrap();
         held.try_lock_exclusive().unwrap();
-        run_in(&pending, &lock).unwrap();
+        drain(&pending, &lock, &|_| Ok(())).unwrap();
         assert!(pending.join("a.json").exists());
         fs2::FileExt::unlock(&held).ok();
     }

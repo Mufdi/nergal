@@ -92,7 +92,7 @@ fn encode_uri_component(s: &str) -> String {
 // vault uses these as directory names so spaces and other punctuation are
 // flattened to dashes. Diacritics are stripped to avoid case-sensitivity
 // headaches across rsync/dropbox/git-on-mac surfaces of the vault.
-fn slugify_for_vault(name: &str) -> String {
+pub(crate) fn slugify_for_vault(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for c in name.chars() {
         let mapped = match c {

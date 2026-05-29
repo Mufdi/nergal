@@ -177,6 +177,37 @@ fn process_marker(path: &Path, db: &crate::db::Database) -> Result<()> {
     Ok(())
 }
 
+/// On launch: if any marker is older than `stale_after_ms`, a previous run
+/// exited before draining it — spawn the runner to catch up. Returns how many
+/// stale markers were found (for a "caught up on N" notice).
+pub fn recover_stale(stale_after_ms: u64) -> usize {
+    let stale = count_stale_in(&pending_dir(), stale_after_ms, now_ms());
+    if stale > 0 {
+        let _ = spawn_runner_detached();
+    }
+    stale
+}
+
+fn count_stale_in(dir: &Path, stale_after_ms: u64, now: u64) -> usize {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut stale = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        if let Ok(raw) = fs::read_to_string(&path)
+            && let Ok(m) = serde_json::from_str::<Marker>(&raw)
+            && now.saturating_sub(m.created_at) > stale_after_ms
+        {
+            stale += 1;
+        }
+    }
+    stale
+}
+
 /// Append-only runner log. The detached process has nulled stdio, so this is the
 /// only place its failures surface (the app tails it on next launch).
 fn log_line(msg: &str) {
@@ -222,6 +253,18 @@ mod tests {
         drain(&pending, &lock, &|_| Ok(())).unwrap();
         assert!(!pending.join("a.json").exists());
         assert!(!pending.join("b.json").exists());
+    }
+
+    #[test]
+    fn counts_only_markers_older_than_threshold() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        // created_at is now_ms() at write time; with now far in the future, all
+        // markers read as stale. With now == write time, none are.
+        write_marker_in(p, "a", "ws", "cc", "SessionEnd").unwrap();
+        write_marker_in(p, "b", "ws", "cc", "app-close").unwrap();
+        assert_eq!(count_stale_in(p, 600_000, now_ms() + 10_000_000), 2);
+        assert_eq!(count_stale_in(p, 600_000, 0), 0);
     }
 
     #[test]

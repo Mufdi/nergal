@@ -673,6 +673,20 @@ pub fn delete_workspace(db: State<'_, SharedDb>, workspace_id: String) -> Result
     let ws = workspaces.iter().find(|w| w.id == workspace_id);
 
     if let Some(ws) = ws {
+        // Snapshot each session synchronously before its worktree + the
+        // workspace row disappear (the detached runner runs too late).
+        if let Ok(cfg) =
+            crate::obsidian::config::resolve(&workspace_id, |w| db.get_obsidian_config(w))
+            && cfg.moc_path.as_deref().filter(|p| !p.is_empty()).is_some()
+        {
+            for session in &ws.sessions {
+                if let Ok(Some(moc_path)) =
+                    crate::obsidian::moc::MocBuilder::build(&session.id, &cfg, &db)
+                {
+                    let _ = crate::obsidian::moc::BacklinkUpdater::propagate(&moc_path, &cfg);
+                }
+            }
+        }
         for session in &ws.sessions {
             if let Some(wt) = &session.worktree_path {
                 let _ = crate::worktree::remove_worktree(&ws.repo_path, wt);
@@ -811,6 +825,18 @@ pub async fn delete_session(
 
     // Get session + workspace for worktree cleanup
     let session = db.find_session(&session_id).map_err(|e| e.to_string())?;
+
+    // Snapshot the session synchronously before its row + worktree disappear —
+    // the detached runner can't (it runs after the delete; the git diff needs
+    // the worktree present).
+    if let Some(s) = &session
+        && let Ok(cfg) =
+            crate::obsidian::config::resolve(&s.workspace_id, |w| db.get_obsidian_config(w))
+        && cfg.moc_path.as_deref().filter(|p| !p.is_empty()).is_some()
+        && let Ok(Some(moc_path)) = crate::obsidian::moc::MocBuilder::build(&session_id, &cfg, &db)
+    {
+        let _ = crate::obsidian::moc::BacklinkUpdater::propagate(&moc_path, &cfg);
+    }
 
     if let Some(session) = &session
         && let Some(wt_path) = &session.worktree_path

@@ -232,7 +232,20 @@ pub fn run() {
         reconcile_worktrees(&db_guard);
     }
 
+    // Drain any session-end MOC markers left behind by a previous crash/exit.
+    let recovered = crate::obsidian::post_session::recover_stale(10 * 60 * 1000);
+    if recovered > 0 {
+        tracing::info!("post-session: recovery spawned for {recovered} stale marker(s)");
+    }
+
     tauri::Builder::default()
+        .on_window_event(|window, event| {
+            // App closing with sessions still open → snapshot them before exit.
+            // Detached + non-blocking so the window closes immediately.
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                queue_close_markers(window.app_handle());
+            }
+        })
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
@@ -586,6 +599,48 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// On app close, drop a marker for every still-open session whose workspace has
+/// a moc channel, then spawn the detached runner. Non-blocking: the window
+/// closes immediately and the snapshots finish out-of-process.
+fn queue_close_markers(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    let db = app.state::<crate::db::SharedDb>();
+    let guard = match db.lock() {
+        Ok(g) => g,
+        Err(_) => return,
+    };
+    let workspaces = match guard.get_workspaces() {
+        Ok(w) => w,
+        Err(_) => return,
+    };
+    let mut any = false;
+    for ws in &workspaces {
+        let Ok(cfg) = crate::obsidian::config::resolve(&ws.id, |w| guard.get_obsidian_config(w))
+        else {
+            continue;
+        };
+        if cfg.moc_path.as_deref().filter(|s| !s.is_empty()).is_none() {
+            continue;
+        }
+        for session in &ws.sessions {
+            if matches!(session.status, crate::models::SessionStatus::Completed) {
+                continue;
+            }
+            let _ = crate::obsidian::post_session::write_marker(
+                &session.id,
+                &ws.id,
+                &session.agent_id,
+                "app-close",
+            );
+            any = true;
+        }
+    }
+    drop(guard);
+    if any {
+        let _ = crate::obsidian::post_session::spawn_runner_detached();
+    }
 }
 
 fn reconcile_worktrees(db: &Database) {

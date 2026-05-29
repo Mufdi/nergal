@@ -396,6 +396,60 @@ fn session_log_line(event: &HookEvent) -> Option<String> {
     }
 }
 
+/// SessionEnd obsidian finalization: write the #2 log footer and, if the moc
+/// channel is set, drop a marker + spawn the detached MOC/backlink runner.
+fn finalize_session_obsidian(db: &SharedDb, csid: Option<&str>) {
+    let Some(csid) = csid else { return };
+    let guard = match db.lock() {
+        Ok(g) => g,
+        Err(_) => return,
+    };
+    let session = match guard.find_session(csid) {
+        Ok(Some(s)) => s,
+        _ => return,
+    };
+    let cfg = match crate::obsidian::config::resolve(&session.workspace_id, |w| {
+        guard.get_obsidian_config(w)
+    }) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let cost = guard
+        .get_cost(&session.id)
+        .ok()
+        .flatten()
+        .map(|c| c.total_usd)
+        .unwrap_or(0.0);
+    let tasks_done = guard
+        .get_visible_tasks(&session.id)
+        .map(|ts| {
+            ts.iter()
+                .filter(|t| matches!(t.status, crate::tasks::TaskStatus::Completed))
+                .count()
+        })
+        .unwrap_or(0);
+    drop(guard); // release the DB lock before spawning the detached runner
+
+    if cfg
+        .session_log_path
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .is_some()
+    {
+        let _ =
+            crate::obsidian::channels::SessionLogWriter::end_session(&cfg, cost, &[], tasks_done);
+    }
+    if cfg.moc_path.as_deref().filter(|s| !s.is_empty()).is_some() {
+        let _ = crate::obsidian::post_session::write_marker(
+            &session.id,
+            &session.workspace_id,
+            &session.agent_id,
+            "SessionEnd",
+        );
+        let _ = crate::obsidian::post_session::spawn_runner_detached();
+    }
+}
+
 fn process_event(
     app: &AppHandle,
     event: &HookEvent,
@@ -475,37 +529,7 @@ fn process_event(
 
         HookEvent::SessionEnd { session_id } => {
             let _ = app.emit("session:end", session_id);
-
-            if let Some((cfg, session)) = session_log_cfg(db, cluihud_session_id) {
-                let (cost, tasks_done) = match db.lock() {
-                    Ok(guard) => {
-                        let cost = guard
-                            .get_cost(&session.id)
-                            .ok()
-                            .flatten()
-                            .map(|c| c.total_usd)
-                            .unwrap_or(0.0);
-                        let tasks_done = guard
-                            .get_visible_tasks(&session.id)
-                            .map(|ts| {
-                                ts.iter()
-                                    .filter(|t| {
-                                        matches!(t.status, crate::tasks::TaskStatus::Completed)
-                                    })
-                                    .count()
-                            })
-                            .unwrap_or(0);
-                        (cost, tasks_done)
-                    }
-                    Err(_) => (0.0, 0),
-                };
-                let _ = crate::obsidian::channels::SessionLogWriter::end_session(
-                    &cfg,
-                    cost,
-                    &[],
-                    tasks_done,
-                );
-            }
+            finalize_session_obsidian(db, cluihud_session_id);
         }
 
         HookEvent::PreToolUse {

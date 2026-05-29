@@ -25,9 +25,13 @@ export const obsidianDefaultConfig: ResolvedObsidianConfig = {
   templates_path: null,
   backlinks_enabled: false,
   render_wikilinks: true,
+  search_subdir: null,
 };
 
 export const obsidianConfigAtom = atom<ResolvedObsidianConfig | null>(null);
+
+// "subdir" is a no-op unless the active config has a non-empty search_subdir.
+export const vaultSearchScopeAtom = atom<"whole" | "subdir">("whole");
 
 export const obsidianEnabledAtom = atom((get) => {
   const cfg = get(obsidianConfigAtom);
@@ -51,7 +55,8 @@ export const obsidianDraftDirtyAtom = atom((get) => {
     draft.moc_path !== resolved.moc_path ||
     draft.templates_path !== resolved.templates_path ||
     draft.backlinks_enabled !== resolved.backlinks_enabled ||
-    draft.render_wikilinks !== resolved.render_wikilinks
+    draft.render_wikilinks !== resolved.render_wikilinks ||
+    draft.search_subdir !== resolved.search_subdir
   );
 });
 

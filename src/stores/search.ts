@@ -1,6 +1,7 @@
 import { atom } from "jotai";
 import { invoke } from "@/lib/tauri";
 import { activeWorkspaceAtom } from "./workspace";
+import { vaultSearchScopeAtom, obsidianConfigAtom } from "./obsidian";
 
 export type SearchScope =
   | { kind: "vault" }
@@ -68,10 +69,17 @@ export const runSearchAtom = atom(
       maxResults: opts.maxResults ?? 50,
     };
 
+    const cfg = get(obsidianConfigAtom);
+    const vaultSubdir =
+      get(vaultSearchScopeAtom) === "subdir" && cfg?.search_subdir
+        ? cfg.search_subdir
+        : null;
+
     try {
       const hits = await invoke<SearchHit[]>("search", {
         query,
         activeWorkspaceId: workspace?.id ?? null,
+        vaultSubdir,
       });
       if (seq !== searchSeq || opts.signal?.aborted) return;
       set(searchResultsAtom, hits);

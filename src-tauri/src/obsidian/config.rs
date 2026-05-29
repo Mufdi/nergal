@@ -13,6 +13,8 @@ pub struct ObsidianConfig {
     pub templates_path: Option<String>,
     pub backlinks_enabled: bool,
     pub render_wikilinks: bool,
+    /// Vault-relative folder scoping vault search + the `@@` picker; None/empty = whole vault.
+    pub search_subdir: Option<String>,
 }
 
 impl ObsidianConfig {
@@ -106,6 +108,12 @@ pub fn normalize_file_channels(cfg: &mut ObsidianConfig) {
         let n = normalize_md_path(p);
         cfg.session_log_path = if n.is_empty() { None } else { Some(n) };
     }
+    // Vault-relative: no ~ expansion. Trim surrounding slashes/whitespace so the
+    // later vault_root.join() stays inside the vault; empty collapses to None.
+    if let Some(s) = cfg.search_subdir.as_deref() {
+        let n = s.trim().trim_matches('/').to_string();
+        cfg.search_subdir = if n.is_empty() { None } else { Some(n) };
+    }
 }
 
 pub fn apply_toml_override(mut cfg: ObsidianConfig, toml_path: &Path) -> ObsidianConfig {
@@ -143,6 +151,9 @@ pub fn apply_toml_override(mut cfg: ObsidianConfig, toml_path: &Path) -> Obsidia
     if let Some(v) = parsed.render_wikilinks {
         cfg.render_wikilinks = v;
     }
+    if let Some(v) = parsed.search_subdir {
+        cfg.search_subdir = Some(v);
+    }
     cfg
 }
 
@@ -173,6 +184,7 @@ struct TomlOverride {
     templates_path: Option<String>,
     backlinks_enabled: Option<bool>,
     render_wikilinks: Option<bool>,
+    search_subdir: Option<String>,
 }
 
 #[cfg(test)]

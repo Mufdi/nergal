@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import { useAtomValue } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { invoke } from "@/lib/tauri";
-import { obsidianEnabledAtom } from "@/stores/obsidian";
+import { obsidianEnabledAtom, vaultSearchScopeAtom, obsidianConfigAtom } from "@/stores/obsidian";
 import { activeWorkspaceAtom } from "@/stores/workspace";
 import type { SearchHit } from "@/stores/search";
 import {
@@ -36,9 +36,17 @@ function setControlledValue(el: HTMLTextAreaElement, value: string, caret: numbe
 /// owner — it only needs the ref. No-op unless Obsidian is configured.
 export function useObsidianMentionPicker(
   textareaRef: RefObject<HTMLTextAreaElement | null>,
+  // Bump when the (possibly conditionally-rendered) textarea mounts/unmounts so
+  // the listener effect re-binds to the live element. A stable RefObject alone
+  // can't trigger that — `.current` mutation isn't reactive, so without this the
+  // effect runs once against a null ref and listeners never attach.
+  active = true,
 ): ReactNode {
   const enabled = useAtomValue(obsidianEnabledAtom);
   const workspace = useAtomValue(activeWorkspaceAtom);
+  const scopeMode = useAtomValue(vaultSearchScopeAtom);
+  const setScopeMode = useSetAtom(vaultSearchScopeAtom);
+  const cfg = useAtomValue(obsidianConfigAtom);
 
   const [items, setItems] = useState<SearchHit[]>([]);
   const [open, setOpen] = useState(false);
@@ -57,13 +65,26 @@ export function useObsidianMentionPicker(
   // Set on Esc to the dismissed token's identity, so the Esc keyup (and any
   // later keystroke that leaves the token unchanged) doesn't reopen it.
   const dismissedKeyRef = useRef<string | null>(null);
+  // Last token key we actually queried. Lets recompute skip a re-search (which
+  // would reset the selection to 0) when the keyup came from nav keys, not a
+  // query change.
+  const queriedKeyRef = useRef<string | null>(null);
 
   openRef.current = open;
   itemsRef.current = items;
   selectedRef.current = selectedIndex;
+  // Read through refs so the keydown listener + debounced search see the live
+  // scope without re-binding the effect on every toggle.
+  const subdirAvailRef = useRef<string | null>(null);
+  subdirAvailRef.current = cfg?.search_subdir?.trim() || null;
+  const scopeModeRef = useRef(scopeMode);
+  scopeModeRef.current = scopeMode;
+  const vaultSubdirRef = useRef<string | null>(null);
+  vaultSubdirRef.current = scopeMode === "subdir" ? subdirAvailRef.current : null;
 
   const close = useCallback(() => {
     tokenRef.current = null;
+    queriedKeyRef.current = null;
     setOpen(false);
     setItems([]);
   }, []);
@@ -82,7 +103,7 @@ export function useObsidianMentionPicker(
 
   useEffect(() => {
     const el = textareaRef.current;
-    if (!el || !enabled) return;
+    if (!el || !enabled || !active) return;
 
     function recompute() {
       if (!el) return;
@@ -92,6 +113,7 @@ export function useObsidianMentionPicker(
       if (!token) {
         tokenRef.current = null;
         dismissedKeyRef.current = null;
+        queriedKeyRef.current = null;
         setOpen(false);
         return;
       }
@@ -106,6 +128,10 @@ export function useObsidianMentionPicker(
       dismissedKeyRef.current = null;
       tokenRef.current = token;
       anchorRef.current = el.getBoundingClientRect();
+      // Same query already on screen (keyup came from Arrow/Enter nav, not a
+      // text change) — keep items + selection instead of re-querying to 0.
+      if (key === queriedKeyRef.current && openRef.current) return;
+      queriedKeyRef.current = key;
       if (debounceRef.current) clearTimeout(debounceRef.current);
       const seq = ++seqRef.current;
       debounceRef.current = setTimeout(async () => {
@@ -118,6 +144,7 @@ export function useObsidianMentionPicker(
               maxResults: MAX_RESULTS,
             },
             activeWorkspaceId: workspace?.id ?? null,
+            vaultSubdir: vaultSubdirRef.current,
           });
           if (seq !== seqRef.current) return;
           const rect = anchorRef.current;
@@ -144,6 +171,21 @@ export function useObsidianMentionPicker(
         const t = tokenRef.current;
         dismissedKeyRef.current = t ? `${t.start}:${t.query}` : null;
         close();
+        return;
+      }
+      // Ctrl+D mirrors the search modal's scope toggle (whole vault ⇄ subdir).
+      // event.code (not key) for the WebKitGTK layout quirk.
+      if ((e.ctrlKey || e.metaKey) && e.code === "KeyD") {
+        const avail = subdirAvailRef.current;
+        if (!avail) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const next = scopeModeRef.current === "subdir" ? "whole" : "subdir";
+        setScopeMode(next);
+        scopeModeRef.current = next;
+        vaultSubdirRef.current = next === "subdir" ? avail : null;
+        queriedKeyRef.current = null; // force a re-query under the new scope
+        recompute();
         return;
       }
       if (!openRef.current) return;
@@ -189,7 +231,7 @@ export function useObsidianMentionPicker(
       el.removeEventListener("blur", onBlur);
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [enabled, workspace?.id, close, insertCitation, textareaRef]);
+  }, [enabled, workspace?.id, close, insertCitation, textareaRef, active]);
 
   if (!enabled || !open) return null;
   return (
@@ -206,6 +248,11 @@ export function useObsidianMentionPicker(
         if (hit) insertCitation(hit);
       }}
       onHover={setSelectedIndex}
+      hint={
+        subdirAvailRef.current
+          ? `Ctrl+D: ${scopeMode === "subdir" ? subdirAvailRef.current : "whole vault"}`
+          : undefined
+      }
     />
   );
 }

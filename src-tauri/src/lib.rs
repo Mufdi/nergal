@@ -240,8 +240,7 @@ pub fn run() {
                 let _ = window.set_focus();
                 // Mutter ignora set_focus por focus-stealing prevention; el
                 // attention hint hace pulsar el taskbar como fallback.
-                let _ = window
-                    .request_user_attention(Some(tauri::UserAttentionType::Critical));
+                let _ = window.request_user_attention(Some(tauri::UserAttentionType::Critical));
             }
         }))
         .plugin(tauri_plugin_shell::init())

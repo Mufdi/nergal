@@ -55,6 +55,22 @@ fn filename_match_outranks_content_only() {
 }
 
 #[test]
+fn filename_match_without_body_match_surfaces() {
+    // The reported bug: a note whose name matches the query but whose body does
+    // not was invisible, because content grep only returns files with a body
+    // hit. collect_title_hits now runs in content mode too, so the note surfaces
+    // by filename alongside content-only matches in sibling notes.
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("Roadmap.md"), "no relevant words in body").unwrap();
+    fs::write(dir.path().join("other.md"), "the roadmap is discussed here").unwrap();
+    let hits = SearchEngine::search(&vault_query("roadmap"), &vault_ctx(dir.path())).unwrap();
+    assert_eq!(hits.len(), 2);
+    assert!(hits[0].path.ends_with("Roadmap.md"));
+    assert!(hits[0].score >= SCORE_FILENAME);
+    assert!(hits.iter().any(|h| h.path.ends_with("other.md")));
+}
+
+#[test]
 fn frontmatter_title_match_adds_title_score() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(

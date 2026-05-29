@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { FileText } from "lucide-react";
 
 export interface MentionItem {
@@ -12,6 +13,7 @@ interface MentionPickerOverlayProps {
   position: { left: number; top: number };
   onSelect: (index: number) => void;
   onHover: (index: number) => void;
+  hint?: string;
 }
 
 export function MentionPickerOverlay({
@@ -20,10 +22,20 @@ export function MentionPickerOverlay({
   position,
   onSelect,
   onHover,
+  hint,
 }: MentionPickerOverlayProps) {
+  const listRef = useRef<HTMLDivElement>(null);
+  // Keyboard nav past the scroll fold must follow the selection into view —
+  // arrow keys move selectedIndex but don't scroll the overflow container.
+  useEffect(() => {
+    const el = listRef.current?.querySelector<HTMLElement>("[data-mention-selected]");
+    el?.scrollIntoView({ block: "nearest" });
+  }, [selectedIndex]);
+
   if (items.length === 0) return null;
   return (
     <div
+      ref={listRef}
       className="cluihud-glow fixed z-[60] max-h-60 w-72 overflow-y-auto rounded-lg border-2 border-primary bg-card py-1 shadow-lg"
       style={{ left: position.left, top: position.top }}
     >
@@ -33,6 +45,7 @@ export function MentionPickerOverlay({
           <button
             key={item.key}
             type="button"
+            data-mention-selected={isSelected ? "" : undefined}
             // mousedown (not click) so selecting doesn't blur the textarea first.
             onMouseDown={(e) => {
               e.preventDefault();
@@ -53,6 +66,11 @@ export function MentionPickerOverlay({
           </button>
         );
       })}
+      {hint && (
+        <div className="border-t border-border/40 px-3 py-1 text-[10px] text-muted-foreground/70">
+          {hint}
+        </div>
+      )}
     </div>
   );
 }

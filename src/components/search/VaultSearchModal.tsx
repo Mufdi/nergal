@@ -11,6 +11,7 @@ import {
   type SearchHit,
 } from "@/stores/search";
 import { activeWorkspaceAtom, activeSessionIdAtom } from "@/stores/workspace";
+import { vaultSearchScopeAtom, obsidianConfigAtom } from "@/stores/obsidian";
 import { toastsAtom } from "@/stores/toast";
 import { openInObsidian } from "@/lib/obsidian";
 import { invoke } from "@/lib/tauri";
@@ -45,6 +46,16 @@ export function VaultSearchModal() {
   const workspace = useAtomValue(activeWorkspaceAtom);
   const activeSessionId = useAtomValue(activeSessionIdAtom);
   const setToasts = useSetAtom(toastsAtom);
+  const scopeMode = useAtomValue(vaultSearchScopeAtom);
+  const setScopeMode = useSetAtom(vaultSearchScopeAtom);
+  const obsidianConfig = useAtomValue(obsidianConfigAtom);
+  const subdir = obsidianConfig?.search_subdir?.trim() || null;
+
+  function toggleScope() {
+    if (!subdir) return; // nothing configured to scope to
+    setScopeMode((m) => (m === "subdir" ? "whole" : "subdir"));
+    void runSearch();
+  }
 
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -129,6 +140,12 @@ export function VaultSearchModal() {
         close();
         return;
       }
+      // event.code (not key) — WebKitGTK layout quirk, consistent with the app.
+      if ((e.ctrlKey || e.metaKey) && e.code === "KeyD") {
+        e.preventDefault();
+        toggleScope();
+        return;
+      }
       if (e.key === "ArrowDown") {
         e.preventDefault();
         setSelectedIndex((prev) => Math.min(prev + 1, results.length - 1));
@@ -176,9 +193,24 @@ export function VaultSearchModal() {
             aria-label="Search the vault"
             className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/50"
           />
-          <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-            Vault
-          </span>
+          {subdir && (
+            <span className="shrink-0 text-[10px] text-muted-foreground/60" aria-hidden>
+              Ctrl+D
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={toggleScope}
+            disabled={!subdir}
+            title={
+              subdir
+                ? `Scope (Ctrl+D): ${scopeMode === "subdir" ? subdir : "whole vault"}`
+                : "Set a search subdir in Settings → Obsidian to scope"
+            }
+            className="rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground enabled:hover:text-foreground disabled:opacity-60"
+          >
+            {scopeMode === "subdir" && subdir ? subdir : "Vault"}
+          </button>
         </div>
         <div ref={listRef} className="flex-1 overflow-y-auto py-1">
           {loading && results.length === 0 && (

@@ -90,7 +90,6 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
   const [showGlobalInput, setShowGlobalInput] = useState(false);
   const [globalComment, setGlobalComment] = useState("");
   const globalInputRef = useRef<HTMLTextAreaElement>(null);
-  const mentionOverlay = useObsidianMentionPicker(globalInputRef);
 
   // Annotation counts per spec_key across the whole change (or master)
   const [fileCounts, setFileCounts] = useState<Record<string, number>>({});
@@ -122,6 +121,13 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
   const isAnnotatingThis =
     annotationMode && scope?.kind === "spec" && scope.specPath === specScopeKey;
   const isEditable = change?.status === "active";
+
+  // The global-comment textarea only mounts while annotating this spec; pass
+  // that condition so the picker's listener re-attaches when it appears.
+  const mentionOverlay = useObsidianMentionPicker(
+    globalInputRef,
+    isAnnotatingThis && showGlobalInput,
+  );
 
   const countPrefix = isMaster ? "" : `${changeName}/`;
   const refreshCounts = useCallback(() => {

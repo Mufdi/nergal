@@ -52,7 +52,9 @@ export function PlanPanel({ path }: PlanPanelProps) {
   const [showGlobalInput, setShowGlobalInput] = useState(false);
   const [globalComment, setGlobalComment] = useState("");
   const globalInputRef = useRef<HTMLTextAreaElement>(null);
-  const mentionOverlay = useObsidianMentionPicker(globalInputRef);
+  // The global-comment textarea only mounts while annotating; pass that
+  // condition so the picker's listener re-attaches when it appears.
+  const mentionOverlay = useObsidianMentionPicker(globalInputRef, showGlobalInput && canAnnotate);
 
   if (!supportsPlanReview) {
     return (

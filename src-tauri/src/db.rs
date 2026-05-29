@@ -92,6 +92,7 @@ impl Database {
             include_str!("../migrations/006_scratchpad.sql"),
             include_str!("../migrations/007_agent_id.sql"),
             include_str!("../migrations/008_obsidian_config.sql"),
+            include_str!("../migrations/009_obsidian_search_subdir.sql"),
         ];
 
         for (i, sql) in migrations.iter().enumerate() {
@@ -704,7 +705,8 @@ impl Database {
     ) -> Result<Option<crate::obsidian::config::ObsidianConfig>> {
         let result = self.conn.query_row(
             "SELECT vault_root, vault_name, session_log_path, quick_capture_path, \
-                    moc_path, templates_path, backlinks_enabled, render_wikilinks \
+                    moc_path, templates_path, backlinks_enabled, render_wikilinks, \
+                    search_subdir \
              FROM obsidian_config WHERE workspace_id = ?1",
             [workspace_id],
             |r| {
@@ -717,6 +719,7 @@ impl Database {
                     templates_path: r.get::<_, Option<String>>(5)?,
                     backlinks_enabled: r.get::<_, i64>(6)? != 0,
                     render_wikilinks: r.get::<_, i64>(7)? != 0,
+                    search_subdir: r.get::<_, Option<String>>(8)?,
                 })
             },
         );
@@ -735,12 +738,13 @@ impl Database {
         self.conn.execute(
             "INSERT INTO obsidian_config (workspace_id, vault_root, vault_name, \
                 session_log_path, quick_capture_path, moc_path, templates_path, \
-                backlinks_enabled, render_wikilinks, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+                backlinks_enabled, render_wikilinks, search_subdir, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
              ON CONFLICT(workspace_id) DO UPDATE SET \
                 vault_root=?2, vault_name=?3, session_log_path=?4, \
                 quick_capture_path=?5, moc_path=?6, templates_path=?7, \
-                backlinks_enabled=?8, render_wikilinks=?9, updated_at=?10",
+                backlinks_enabled=?8, render_wikilinks=?9, search_subdir=?10, \
+                updated_at=?11",
             params![
                 workspace_id,
                 cfg.vault_root,
@@ -751,6 +755,7 @@ impl Database {
                 cfg.templates_path,
                 cfg.backlinks_enabled as i64,
                 cfg.render_wikilinks as i64,
+                cfg.search_subdir,
                 now_secs(),
             ],
         )?;

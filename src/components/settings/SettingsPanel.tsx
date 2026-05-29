@@ -305,8 +305,10 @@ function ObsidianSection() {
   }
 
   function nullableString(s: string): string | null {
-    const t = s.trim();
-    return t.length === 0 ? null : t;
+    // Keep the raw value (incl. interior/trailing spaces) so the user can type
+    // a path like "Resti Manager"; trimming per-keystroke ate the space before
+    // the next char. Backend normalize_file_channels trims on save.
+    return s.trim().length === 0 ? null : s;
   }
 
   if (workspaces.length === 0) {
@@ -444,6 +446,20 @@ function ObsidianSection() {
         />
         <p className="text-xs text-muted-foreground">
           Directory of <code>template-*.md</code> files. Each appears in the command palette as "Send template: …".
+        </p>
+      </div>
+
+      <div className="grid gap-1.5">
+        <Label htmlFor="obsidian-search-subdir">Search subdir (vault-relative)</Label>
+        <Input
+          id="obsidian-search-subdir"
+          type="text"
+          value={draft.search_subdir ?? ""}
+          onChange={(e) => setField("search_subdir", nullableString(e.target.value))}
+          placeholder="Projects/"
+        />
+        <p className="text-xs text-muted-foreground">
+          Optional folder (relative to vault root) to scope vault search and the <code>@@</code> picker. Toggle whole-vault ⇄ this folder with <code>Ctrl+D</code> in the search modal. Empty = always whole vault.
         </p>
       </div>
 

@@ -194,6 +194,8 @@ export interface ObsidianConfig {
   templates_path: string | null;
   backlinks_enabled: boolean;
   render_wikilinks: boolean;
+  /** Vault-relative folder that scopes vault search + the @@ picker. Null/empty = whole vault. */
+  search_subdir: string | null;
 }
 
 export type ResolvedObsidianConfig = ObsidianConfig;

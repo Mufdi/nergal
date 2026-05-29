@@ -109,10 +109,16 @@ impl SearchEngine {
         for plan in &plans {
             if query.titles_only {
                 collect_title_hits(plan, needle, query, &mut hits);
-            } else if rg_available {
-                collect_ripgrep_hits(plan, needle, query, &mut hits, &mut title_cache)?;
             } else {
-                collect_walkdir_hits(plan, needle, query, &mut hits, &mut title_cache);
+                // Filename/title matches that content grep can't see (the needle
+                // lives in the note name but not its body). Merged with content
+                // hits; the best-per-file dedup below keeps the higher score.
+                collect_title_hits(plan, needle, query, &mut hits);
+                if rg_available {
+                    collect_ripgrep_hits(plan, needle, query, &mut hits, &mut title_cache)?;
+                } else {
+                    collect_walkdir_hits(plan, needle, query, &mut hits, &mut title_cache);
+                }
             }
             if hits.len() >= query.max_results.saturating_mul(4) {
                 // Bound work on pathological vaults; final sort+truncate below.

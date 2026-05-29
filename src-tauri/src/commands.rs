@@ -3000,6 +3000,7 @@ pub fn obsidian_create_project_note(
                 templates_path: donor.templates_path,
                 backlinks_enabled: donor.backlinks_enabled,
                 render_wikilinks: donor.render_wikilinks,
+                search_subdir: donor.search_subdir,
             };
             crate::obsidian::config::normalize_file_channels(&mut inherited);
             db.upsert_obsidian_config(&workspace_id, &inherited)
@@ -3110,6 +3111,8 @@ pub async fn search(
     db: State<'_, SharedDb>,
     query: crate::search::SearchQuery,
     active_workspace_id: Option<String>,
+    // Narrows only the Vault scope, never the other scopes.
+    vault_subdir: Option<String>,
 ) -> Result<Vec<crate::search::SearchHit>, String> {
     let ctx = {
         let db = db.lock().map_err(|e| e.to_string())?;
@@ -3134,6 +3137,14 @@ pub async fn search(
             .and_then(|cfg| cfg.vault_root)
             .filter(|v| !v.is_empty())
             .map(|v| std::path::PathBuf::from(crate::obsidian::config::expand_home(&v)));
+
+        // Reject `..` components so the toggle can't climb out of the vault.
+        let vault_root = match vault_subdir.as_deref().map(str::trim) {
+            Some(sub) if !sub.is_empty() && !sub.split('/').any(|c| c == "..") => {
+                vault_root.map(|r| r.join(sub))
+            }
+            _ => vault_root,
+        };
 
         crate::search::SearchContext {
             vault_root,

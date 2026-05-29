@@ -7,6 +7,7 @@ import { hasCapabilityAtom } from "@/stores/agent";
 import { toastsAtom } from "@/stores/toast";
 import { invoke } from "@/lib/tauri";
 import { AnnotatableMarkdownView } from "./AnnotatableMarkdownView";
+import { useObsidianMentionPicker } from "@/hooks/useObsidianMentionPicker";
 import { MessageSquare, Trash2, Highlighter } from "lucide-react";
 import {
   Tooltip,
@@ -51,6 +52,7 @@ export function PlanPanel({ path }: PlanPanelProps) {
   const [showGlobalInput, setShowGlobalInput] = useState(false);
   const [globalComment, setGlobalComment] = useState("");
   const globalInputRef = useRef<HTMLTextAreaElement>(null);
+  const mentionOverlay = useObsidianMentionPicker(globalInputRef);
 
   if (!supportsPlanReview) {
     return (
@@ -251,9 +253,10 @@ export function PlanPanel({ path }: PlanPanelProps) {
               if (e.key === "Enter" && e.ctrlKey) { e.preventDefault(); handleGlobalComment(); }
               if (e.key === "Escape") { setShowGlobalInput(false); setGlobalComment(""); }
             }}
-            placeholder="General comment about this plan..."
+            placeholder="General comment about this plan... (@@ to cite a vault note)"
             className="mb-1.5 h-14 w-full resize-none rounded border border-border bg-background p-2 text-xs focus:ring-1 focus:ring-ring outline-none"
           />
+          {mentionOverlay}
           <div className="flex items-center justify-end gap-1">
             <button onClick={() => { setShowGlobalInput(false); setGlobalComment(""); }} className="rounded px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground">
               Cancel

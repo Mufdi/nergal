@@ -15,6 +15,7 @@ import {
 import { toastsAtom } from "@/stores/toast";
 import { MarkdownView } from "@/components/plan/MarkdownView";
 import { AnnotatableMarkdownView } from "@/components/plan/AnnotatableMarkdownView";
+import { useObsidianMentionPicker } from "@/hooks/useObsidianMentionPicker";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { FileText, Pencil, CheckSquare, ClipboardList, Wrench, Cog, ArrowLeft, Highlighter, MessageSquare, Trash2 } from "lucide-react";
 
@@ -89,6 +90,7 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
   const [showGlobalInput, setShowGlobalInput] = useState(false);
   const [globalComment, setGlobalComment] = useState("");
   const globalInputRef = useRef<HTMLTextAreaElement>(null);
+  const mentionOverlay = useObsidianMentionPicker(globalInputRef);
 
   // Annotation counts per spec_key across the whole change (or master)
   const [fileCounts, setFileCounts] = useState<Record<string, number>>({});
@@ -556,9 +558,10 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
                 setGlobalComment("");
               }
             }}
-            placeholder="General comment about this spec..."
+            placeholder="General comment about this spec... (@@ to cite a vault note)"
             className="mb-1.5 h-14 w-full resize-none rounded border border-border bg-background p-2 text-xs focus:ring-1 focus:ring-ring outline-none"
           />
+          {mentionOverlay}
           <div className="flex items-center justify-end gap-1">
             <button
               onClick={() => {

@@ -77,16 +77,16 @@
 
 ### 3.2 #7 · Vault search modal (capability: obsidian-vault-search)
 
-- [ ] 3.2.1 Create `src/components/search/VaultSearchModal.tsx`: full modal with an input, a scope chip (locked to "Vault" for #7), a results list (title + match snippet + actions), keyboard nav (arrow up/down, Enter to open primary action).
-- [ ] 3.2.2 Actions per result: "Open in Obsidian" (default Enter), "Send to agent" (writes a `> Source: [[note]]` block to the PTY), "Cite in scratchpad" (inserts into the active scratchpad tab).
-- [ ] 3.2.3 Mount modal at workspace root, controlled by `searchModalOpenAtom`.
-- [ ] 3.2.4 Add shortcut entry `obsidian-vault-search` → `ctrl+alt+v` in registry. Handler sets `searchScopeAtom = "Vault"` and opens modal. Gated by `obsidianEnabledAtom`.
+- [x] 3.2.1 Create `src/components/search/VaultSearchModal.tsx`: full modal with an input, a scope chip (locked to "Vault" for #7), a results list (title + match snippet + actions), keyboard nav (arrow up/down, Enter to open primary action). Mirrors the CommandPalette overlay pattern.
+- [x] 3.2.2 Actions per result: "Open in Obsidian" (Enter), "Send to agent" (Ctrl+Enter — writes `> Source: [[note]]` to the active PTY), "Cite in scratchpad" (Alt+Enter — appends to the active scratchpad tab via `persistTabContent`). Row buttons mirror the keyboard actions.
+- [x] 3.2.3 Mount modal at workspace root (`Workspace.tsx`), controlled by `searchModalOpenAtom`.
+- [x] 3.2.4 Add shortcut entry `obsidian-vault-search` → `ctrl+alt+o` in registry (changed from `ctrl+alt+v`: that collides with terminal paste). Handler sets `searchScopeAtom = { kind: "vault" }` and opens modal. Gated by `obsidianEnabledAtom`.
 
 ### 3.3 #I · `@@` mention picker (capability: obsidian-vault-search continued)
 
-- [ ] 3.3.1 Create `src/components/floating/MentionPickerOverlay.tsx`: a floating positioned overlay (anchored to the caret of the focused input/textarea) showing 5–8 results. Keyboard nav: ↑/↓ to select, Enter to insert, Esc to close.
-- [ ] 3.3.2 Add a hook `useObsidianMentionPicker(textareaRef)` that listens for keyup, detects `@@` token, queries `search({ scopes: [Vault], titles_only: true, max_results: 8, text: <after @@> })` with 50 ms debounce, mounts the overlay positioned over the textarea, and on selection replaces `@@<typed>` with `> Source: [[<note title>]]\n`.
-- [ ] 3.3.3 Wire `useObsidianMentionPicker` into the scratchpad editor input, the plan annotations comment input, and the message-to-agent overlay if it exists. Each gated by `obsidianEnabledAtom`.
+- [x] 3.3.1 Create `src/components/floating/MentionPickerOverlay.tsx`: a floating positioned overlay (anchored to the focused textarea's rect, flips above when near the viewport bottom) showing up to 8 results. Keyboard nav: ↑/↓ to select, Enter/Tab to insert, Esc to close. Selection via `onMouseDown` + preventDefault so it doesn't blur the textarea.
+- [x] 3.3.2 Add hook `useObsidianMentionPicker(textareaRef)` (in `src/hooks/`): keyup/click detects the `@@` token (pure logic in `src/lib/mentionPicker.ts`), queries `search({ scopes: [Vault], titlesOnly: true, maxResults: 8 })` with 50 ms debounce + seq-guard, and on selection replaces `@@<typed>` with `> Source: [[<note>]]\n` via the native-setter controlled-input trick. Esc-dismiss guard prevents the keyup from reopening the same token.
+- [x] 3.3.3 Wired `useObsidianMentionPicker` into the **plan annotations** (`PlanPanel.tsx`) and **spec annotations** (`SpecPanel.tsx`) comment textareas, gated by `obsidianEnabledAtom`. **Scratchpad** is CodeMirror 6 (not a textarea) — its vault citation is already reachable via #7's Alt+Enter ("Cite in scratchpad"); inline `@@` in CM6 deferred to a follow-up (needs a CM extension). No dedicated **message-to-agent** textarea exists (the terminal is a canvas PTY); the closest candidates (PR-annotation, conflict-intent inputs) are out of #I's stated scope.
 
 ### 3.4 #M · `cluihud://` URI scheme (capability: obsidian-deep-link, inbound side)
 

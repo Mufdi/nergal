@@ -23,6 +23,7 @@ import { CommandPalette } from "@/components/command/CommandPalette";
 import { ShipDialog } from "@/components/git/ShipDialog";
 import { ScratchpadPanel } from "@/components/scratchpad/ScratchpadPanel";
 import { QuickCapturePanel } from "@/components/floating/QuickCapturePanel";
+import { VaultSearchModal } from "@/components/search/VaultSearchModal";
 import { ProjectBootstrapPrompt } from "@/components/session/ProjectBootstrapPrompt";
 import { BrowserFloating } from "@/components/browser/BrowserFloating";
 import { BrowserHost } from "@/components/browser/BrowserHost";
@@ -401,6 +402,7 @@ export function Workspace() {
       <ShipDialog />
       <ScratchpadPanel />
       <QuickCapturePanel />
+      <VaultSearchModal />
       <ProjectBootstrapPrompt />
       <BrowserFloating />
       <BrowserHost />

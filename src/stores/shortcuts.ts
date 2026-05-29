@@ -29,6 +29,7 @@ import { scratchpadOpenAtom } from "./scratchpad";
 import { browserToggleModeAction } from "./browser";
 import { obsidianEnabledAtom } from "./obsidian";
 import { quickCaptureOpenAtom } from "./quickCapture";
+import { searchModalOpenAtom, searchScopeAtom } from "./search";
 import { openInObsidian } from "@/lib/obsidian";
 
 export type FocusZone = "sidebar" | "terminal" | "panel";
@@ -458,6 +459,28 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
         type: "error",
       });
     });
+  }},
+  { id: "obsidian-vault-search", label: "Search the Vault", keys: "ctrl+alt+o", category: "action", keywords: ["obsidian", "vault", "search", "find", "ask", "note"], handler: () => {
+    const s = store();
+    const ws = s.get(activeWorkspaceAtom);
+    if (!ws) {
+      s.set(toastsAtom, {
+        message: "Search the Vault",
+        description: "No active session — open one to resolve the target vault.",
+        type: "info",
+      });
+      return;
+    }
+    if (!s.get(obsidianEnabledAtom)) {
+      s.set(toastsAtom, {
+        message: "Obsidian not configured for this workspace",
+        description: `Set vault_root for ${ws.name} in Settings → Obsidian Integration.`,
+        type: "info",
+      });
+      return;
+    }
+    s.set(searchScopeAtom, { kind: "vault" });
+    s.set(searchModalOpenAtom, true);
   }},
   { id: "toggle-annotations", label: "Toggle Annotations Drawer", keys: "ctrl+shift+j", category: "panel", keywords: ["annotations", "drawer", "comments", "plan"], handler: () => {
     document.dispatchEvent(new CustomEvent("cluihud:toggle-annotations-drawer"));

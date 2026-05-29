@@ -82,10 +82,8 @@ export function SessionRow({
     >
       {shortcutNumber != null && (
         <Tooltip>
-          <TooltipTrigger>
-            <span className="flex size-4 shrink-0 items-center justify-center rounded-sm bg-muted/50 text-[9px] font-medium tabular-nums text-muted-foreground">
-              {shortcutNumber}
-            </span>
+          <TooltipTrigger render={<span className="flex size-4 shrink-0 items-center justify-center rounded-sm bg-muted/50 text-[9px] font-medium tabular-nums text-muted-foreground" />}>
+            {shortcutNumber}
           </TooltipTrigger>
           <TooltipContent side="top" className="text-[10px]">Ctrl+{shortcutNumber}</TooltipContent>
         </Tooltip>
@@ -95,7 +93,7 @@ export function SessionRow({
         if (!agent) return null;
         return (
           <Tooltip>
-            <TooltipTrigger>
+            <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
               <img
                 src={agent.src}
                 alt={agent.label}

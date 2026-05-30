@@ -150,6 +150,15 @@ export function setHost(el: HTMLDivElement | null): void {
   }
 }
 
+/// Containers stay alive so a soft-close undo re-shows them instantly; only
+/// finalize destroys them.
+export function hideAll(): void {
+  activeId = null;
+  for (const [, entry] of entries) {
+    entry.container.style.display = "none";
+  }
+}
+
 export async function show(
   sessionId: string,
   cwd: string,

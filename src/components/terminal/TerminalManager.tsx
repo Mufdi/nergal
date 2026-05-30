@@ -33,7 +33,12 @@ export function TerminalManager() {
   }, []);
 
   useEffect(() => {
-    if (!activeSessionId || !activeSession || !activeWorkspace) return;
+    // Last tab soft-closed → show the empty state now, not after the undo TTL.
+    if (!activeSessionId) {
+      terminalService.hideAll();
+      return;
+    }
+    if (!activeSession || !activeWorkspace) return;
     if (activeSession.status === "completed") return;
 
     let mode: "new" | "continue";

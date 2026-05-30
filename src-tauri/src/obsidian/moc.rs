@@ -1,10 +1,9 @@
 //! #11 per-session MOC snapshot + N1 reverse backlinks. Built by the detached
 //! post-session runner from on-disk + DB state (no live atoms): a pure template
-//! over (continuous-log block) + (DB cost/tasks/annotations) + (git diff stats).
+//! over the session's continuous-log block + DB tasks/annotations.
 //! N1 then writes a delimited backlink region into each note the MOC references.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{Context, Result, anyhow};
 
@@ -34,12 +33,6 @@ impl MocBuilder {
             .find_session(session_id)?
             .ok_or_else(|| anyhow!("session {session_id} not found"))?;
 
-        let cost_usd = db
-            .get_cost(session_id)
-            .ok()
-            .flatten()
-            .map(|c| c.total_usd)
-            .unwrap_or(0.0);
         let tasks_done = db
             .get_visible_tasks(session_id)
             .unwrap_or_default()
@@ -48,17 +41,13 @@ impl MocBuilder {
             .count();
         let annotations = db.get_annotations(session_id).unwrap_or_default();
 
-        let files = session
-            .worktree_path
-            .as_deref()
-            .map(|wt| git_changed_files(wt, session.merge_target.as_deref()))
-            .unwrap_or_default();
-
-        let activity = cfg
-            .session_log_path
-            .as_deref()
-            .filter(|s| !s.is_empty())
+        let log_path = cfg.session_log_path.as_deref().filter(|s| !s.is_empty());
+        let activity = log_path
             .and_then(|p| extract_session_activity(Path::new(p), &session.name))
+            .unwrap_or_default();
+        let model = log_path.and_then(|p| extract_session_model(Path::new(p), &session.name));
+        let files = log_path
+            .map(|p| extract_session_files(Path::new(p), &session.name))
             .unwrap_or_default();
 
         let started = iso_from_unix(session.created_at as i64);
@@ -68,13 +57,20 @@ impl MocBuilder {
             .filter(|s| !s.is_empty())
             .collect();
 
+        // A session with nothing to show (e.g. one that was only open in the
+        // sidebar at app-close) doesn't earn a MOC.
+        if activity.trim().is_empty() && files.is_empty() && tasks_done == 0 && decisions.is_empty()
+        {
+            return Ok(None);
+        }
+
         let md = render_moc(
             &session.id,
             &session.agent_id,
+            model.as_deref(),
             &session.name,
             &started,
             &iso_timestamp(),
-            cost_usd,
             &files,
             tasks_done,
             &activity,
@@ -131,10 +127,10 @@ impl BacklinkUpdater {
 fn render_moc(
     id: &str,
     agent: &str,
+    model: Option<&str>,
     name: &str,
     started: &str,
     ended: &str,
-    cost_usd: f64,
     files: &[String],
     tasks_done: usize,
     activity: &str,
@@ -144,9 +140,11 @@ fn render_moc(
     md.push_str("---\n");
     md.push_str(&format!("session_id: {id}\n"));
     md.push_str(&format!("agent: {agent}\n"));
+    if let Some(m) = model.filter(|m| !m.is_empty()) {
+        md.push_str(&format!("model: {m}\n"));
+    }
     md.push_str(&format!("started_at: {started}\n"));
     md.push_str(&format!("ended_at: {ended}\n"));
-    md.push_str(&format!("cost_usd: {cost_usd:.4}\n"));
     md.push_str(&format!("files_count: {}\n", files.len()));
     md.push_str(&format!("tasks_count: {tasks_done}\n"));
     md.push_str("---\n\n");
@@ -180,46 +178,44 @@ fn render_moc(
     md
 }
 
-/// `git diff --name-only <base>...HEAD` (or vs HEAD when no base). Best-effort:
-/// any failure yields an empty list rather than aborting the MOC.
-fn git_changed_files(worktree: &Path, base: Option<&str>) -> Vec<String> {
-    let mut cmd = Command::new("git");
-    cmd.arg("-C").arg(worktree).arg("diff").arg("--name-only");
-    match base {
-        Some(b) if !b.is_empty() => {
-            cmd.arg(format!("{b}...HEAD"));
-        }
-        _ => {
-            cmd.arg("HEAD");
-        }
-    }
-    let Ok(out) = cmd.output() else {
-        return Vec::new();
-    };
-    if !out.status.success() {
-        return Vec::new();
-    }
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty())
-        .collect()
-}
-
-/// Pull the activity feed for `session_name` out of the continuous log: the
-/// lines between `### Activity` and `### Session ended` under the most recent
-/// matching `## Session "<name>"` header.
-fn extract_session_activity(log_path: &Path, session_name: &str) -> Option<String> {
+/// The most recent `## Session "<name>"` block (header through the next session
+/// header or EOF). Source for activity / model / files.
+fn read_session_block(log_path: &Path, session_name: &str) -> Option<String> {
     let content = std::fs::read_to_string(log_path).ok()?;
     let header = format!("## Session \"{session_name}\" —");
     let start = content.rmatch_indices(&header).next().map(|(i, _)| i)?;
     let rest = &content[start..];
-    // Block ends at the next session header or EOF.
     let block_end = rest[header.len()..]
         .find("\n## Session ")
         .map(|i| header.len() + i)
         .unwrap_or(rest.len());
-    let block = &rest[..block_end];
+    Some(rest[..block_end].to_string())
+}
+
+/// Footer `- Model:` wins over the header's `- Agent: X (model)` parenthetical.
+fn extract_session_model(log_path: &Path, session_name: &str) -> Option<String> {
+    let block = read_session_block(log_path, session_name)?;
+    for line in block.lines() {
+        if let Some(m) = line.strip_prefix("- Model: ") {
+            let m = m.trim();
+            if !m.is_empty() {
+                return Some(m.to_string());
+            }
+        }
+    }
+    for line in block.lines() {
+        if let Some(after) = line.strip_prefix("- Agent: ")
+            && let (Some(o), Some(c)) = (after.find('('), after.rfind(')'))
+            && c > o + 1
+        {
+            return Some(after[o + 1..c].trim().to_string());
+        }
+    }
+    None
+}
+
+fn extract_session_activity(log_path: &Path, session_name: &str) -> Option<String> {
+    let block = read_session_block(log_path, session_name)?;
     let activity = match block.find("### Activity") {
         Some(a) => {
             let after = &block[a + "### Activity".len()..];
@@ -229,6 +225,24 @@ fn extract_session_activity(log_path: &Path, session_name: &str) -> Option<Strin
         None => block.trim().to_string(),
     };
     Some(activity)
+}
+
+/// The log's `Edit` lines are per-session; a git diff vs base would surface the
+/// whole branch (worktree setup, prior commits) the user didn't touch this run.
+fn extract_session_files(log_path: &Path, session_name: &str) -> Vec<String> {
+    let Some(block) = read_session_block(log_path, session_name) else {
+        return Vec::new();
+    };
+    let mut files = Vec::new();
+    for line in block.lines() {
+        if let Some(idx) = line.find("· Edit ") {
+            let f = line[idx + "· Edit ".len()..].trim();
+            if !f.is_empty() && !files.iter().any(|x| x == f) {
+                files.push(f.to_string());
+            }
+        }
+    }
+    files
 }
 
 /// Bare note names from `[[Note]]`, `[[Note|alias]]`, `[[Note#h]]`, `[[Note^b]]`.
@@ -369,6 +383,39 @@ mod tests {
     }
 
     #[test]
+    fn extract_model_prefers_footer_then_header() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.md");
+        std::fs::write(&a, "## Session \"A\" — t\n- Agent: cc (sonnet)\n\n### Activity\n\n### Session ended at z\n- Model: opus\n").unwrap();
+        assert_eq!(extract_session_model(&a, "A").as_deref(), Some("opus"));
+        let b = dir.path().join("b.md");
+        std::fs::write(
+            &b,
+            "## Session \"B\" — t\n- Agent: cc (sonnet)\n\n### Activity\n",
+        )
+        .unwrap();
+        assert_eq!(extract_session_model(&b, "B").as_deref(), Some("sonnet"));
+        let c = dir.path().join("c.md");
+        std::fs::write(&c, "## Session \"C\" — t\n- Agent: cc\n\n### Activity\n").unwrap();
+        assert!(extract_session_model(&c, "C").is_none());
+    }
+
+    #[test]
+    fn extract_files_lists_unique_edits_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("log.md");
+        std::fs::write(
+            &log,
+            "## Session \"W\" — t\n- Agent: cc\n\n### Activity\n- t · Edit src/a.rs\n- t · Read src/b.rs\n- t · Edit src/a.rs\n- t · Tool Bash\n- t · Edit src/c.rs\n",
+        )
+        .unwrap();
+        assert_eq!(
+            extract_session_files(&log, "W"),
+            vec!["src/a.rs", "src/c.rs"]
+        );
+    }
+
+    #[test]
     fn wikilinks_parse_bare_names_dedup() {
         let links = parse_wikilinks(
             "see [[Auth]] and [[Auth|the auth note]] and [[DB#schema]] and [[N^b1]]",
@@ -381,10 +428,10 @@ mod tests {
         let md = render_moc(
             "id1",
             "cc",
+            None,
             "My Sess",
             "2024-01-01T00:00:00Z",
             "2024-01-01T01:00:00Z",
-            0.0,
             &[],
             0,
             "",

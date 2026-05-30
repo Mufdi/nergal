@@ -366,10 +366,10 @@ fn session_log_line(event: &HookEvent) -> Option<String> {
             }
             other => format!("Tool {other}"),
         }),
-        HookEvent::Stop { stop_reason, .. } => Some(format!(
-            "Stop (reason: {})",
-            stop_reason.as_deref().unwrap_or("—")
-        )),
+        HookEvent::Stop { stop_reason, .. } => stop_reason
+            .as_deref()
+            .filter(|r| !r.is_empty())
+            .map(|r| format!("Stop (reason: {r})")),
         HookEvent::TaskCreated { task_subject, .. } => task_subject
             .as_deref()
             .map(|s| format!("Task created: \"{s}\"")),
@@ -396,6 +396,27 @@ fn session_log_line(event: &HookEvent) -> Option<String> {
     }
 }
 
+fn model_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
+    static C: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> =
+        std::sync::OnceLock::new();
+    C.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// The model is only known once StatusLine/AgentStatus arrives (after
+/// SessionStart), so it lands in the log footer, not the header.
+fn cache_model(csid: Option<&str>, model_name: &Option<String>) {
+    if let (Some(csid), Some(m)) = (csid, model_name.as_deref())
+        && !m.is_empty()
+        && let Ok(mut c) = model_cache().lock()
+    {
+        c.insert(csid.to_string(), m.to_string());
+    }
+}
+
+fn cached_model(csid: &str) -> Option<String> {
+    model_cache().lock().ok().and_then(|c| c.get(csid).cloned())
+}
+
 /// SessionEnd obsidian finalization: write the #2 log footer and, if the moc
 /// channel is set, drop a marker + spawn the detached MOC/backlink runner.
 fn finalize_session_obsidian(db: &SharedDb, csid: Option<&str>) {
@@ -414,12 +435,6 @@ fn finalize_session_obsidian(db: &SharedDb, csid: Option<&str>) {
         Ok(c) => c,
         Err(_) => return,
     };
-    let cost = guard
-        .get_cost(&session.id)
-        .ok()
-        .flatten()
-        .map(|c| c.total_usd)
-        .unwrap_or(0.0);
     let tasks_done = guard
         .get_visible_tasks(&session.id)
         .map(|ts| {
@@ -436,8 +451,12 @@ fn finalize_session_obsidian(db: &SharedDb, csid: Option<&str>) {
         .filter(|s| !s.is_empty())
         .is_some()
     {
-        let _ =
-            crate::obsidian::channels::SessionLogWriter::end_session(&cfg, cost, &[], tasks_done);
+        let _ = crate::obsidian::channels::SessionLogWriter::end_session(
+            &cfg,
+            cached_model(csid).as_deref(),
+            &[],
+            tasks_done,
+        );
     }
     if cfg.moc_path.as_deref().filter(|s| !s.is_empty()).is_some() {
         let _ = crate::obsidian::post_session::write_marker(
@@ -447,6 +466,9 @@ fn finalize_session_obsidian(db: &SharedDb, csid: Option<&str>) {
             "SessionEnd",
         );
         let _ = crate::obsidian::post_session::spawn_runner_detached();
+    }
+    if let Ok(mut c) = model_cache().lock() {
+        c.remove(csid);
     }
 }
 
@@ -513,15 +535,26 @@ fn process_event(
             );
 
             if let Some((cfg, session)) = session_log_cfg(db, cluihud_session_id) {
+                // Worktree sessions log their worktree; direct sessions fall back
+                // to the workspace repo path so Cwd is never a bare "?".
                 let log_cwd = session
                     .worktree_path
                     .as_ref()
-                    .map(|p| p.display().to_string());
+                    .map(|p| p.display().to_string())
+                    .or_else(|| {
+                        db.lock()
+                            .ok()
+                            .and_then(|g| {
+                                g.workspace_repo_path(&session.workspace_id).ok().flatten()
+                            })
+                            .map(|p| p.display().to_string())
+                    });
+                let model = cluihud_session_id.and_then(cached_model);
                 let _ = crate::obsidian::channels::SessionLogWriter::start_session(
                     &cfg,
                     &session.name,
                     &session.agent_id,
-                    None,
+                    model.as_deref(),
                     log_cwd.as_deref(),
                 );
             }
@@ -836,6 +869,7 @@ fn process_event(
             // AgentStatus shape so the frontend has a single listener. Kept
             // for back-compat while installed statusline scripts still emit
             // the old hook_event_name.
+            cache_model(cluihud_session_id, model_name);
             emit_agent_status(
                 app,
                 AgentStatusEmit {
@@ -869,6 +903,7 @@ fn process_event(
             rate_7d_resets_at,
             effort_level,
         } => {
+            cache_model(cluihud_session_id, model_name);
             emit_agent_status(
                 app,
                 AgentStatusEmit {

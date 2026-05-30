@@ -86,7 +86,10 @@ pub fn spawn_runner_detached() -> Result<()> {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
 
-    let mut cmd = Command::new("cluihud");
+    // Re-exec the running binary (dev or installed), not a PATH lookup that
+    // could hit a stale `cluihud` lacking the post-session subcommand.
+    let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("cluihud"));
+    let mut cmd = Command::new(exe);
     cmd.arg("post-session")
         .stdin(Stdio::null())
         .stdout(Stdio::null())

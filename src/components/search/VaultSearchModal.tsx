@@ -15,6 +15,7 @@ import { vaultSearchScopeAtom, obsidianConfigAtom } from "@/stores/obsidian";
 import { toastsAtom } from "@/stores/toast";
 import { openInObsidian } from "@/lib/obsidian";
 import { invoke } from "@/lib/tauri";
+import * as terminalService from "@/components/terminal/terminalService";
 import {
   scratchpadActiveTabIdAtom,
   scratchpadContentAtom,
@@ -107,8 +108,12 @@ export function VaultSearchModal() {
     try {
       await invoke("write_to_session_pty", {
         sessionId: activeSessionId,
-        data: `> Source: [[${noteWikiName(hit)}]]\r`,
+        // The agent only sees the PTY — it can't resolve a vault [[name]], so
+        // send the readable absolute path. No trailing \r: the citation lands in
+        // the prompt for the user to keep typing before submitting.
+        data: `> Source: ${hit.path} `,
       });
+      terminalService.focusActive();
     } catch (err) {
       setToasts({ message: "Send to agent failed", description: String(err), type: "error" });
     }

@@ -14,6 +14,7 @@ impl QuickCaptureWriter {
         cfg: &ResolvedObsidianConfig,
         text: &str,
         tag: Option<&str>,
+        project_path: Option<&str>,
     ) -> Result<Option<std::path::PathBuf>> {
         let Some(path_str) = cfg.quick_capture_path.as_deref().filter(|s| !s.is_empty()) else {
             return Ok(None);
@@ -23,6 +24,9 @@ impl QuickCaptureWriter {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("creating parent dir {}", parent.display()))?;
         }
+        let is_new = std::fs::metadata(path)
+            .map(|m| m.len() == 0)
+            .unwrap_or(true);
         // O_APPEND so concurrent sessions in the same workspace interleave
         // at line boundaries instead of byte-stomping each other.
         let mut file = OpenOptions::new()
@@ -30,6 +34,15 @@ impl QuickCaptureWriter {
             .append(true)
             .open(path)
             .with_context(|| format!("opening quick_capture {}", path.display()))?;
+        // Only the first write seeds the deep link, so captures don't repeat it.
+        if is_new && let Some(repo) = project_path.filter(|p| !p.is_empty()) {
+            let header = format!(
+                "# Inbox\n\n[Open in Nergal](cluihud://open-workspace?path={})\n",
+                crate::obsidian::bootstrap::encode_uri_component(repo)
+            );
+            file.write_all(header.as_bytes())
+                .with_context(|| format!("writing inbox header to {}", path.display()))?;
+        }
         let tag = tag.unwrap_or("nergal-inbox");
         let block = format!(
             "\n\n## {}\n{}\n\n#{}\n",
@@ -74,15 +87,20 @@ impl SessionLogWriter {
         model_name: Option<&str>,
         cwd: Option<&str>,
     ) -> Result<()> {
+        if let Some(p) = cfg.session_log_path.as_deref().filter(|s| !s.is_empty()) {
+            rotate_if_large(Path::new(p));
+        }
         let Some(mut file) = Self::open(cfg)? else {
             return Ok(());
         };
+        let agent_line = match model_name {
+            Some(m) if !m.is_empty() => format!("- Agent: {agent_id} ({m})"),
+            _ => format!("- Agent: {agent_id}"),
+        };
         let block = format!(
-            "\n## Session \"{name}\" — {ts}\n- Agent: {agent} ({model})\n- Cwd: {cwd}\n\n### Activity\n",
+            "\n## Session \"{name}\" — {ts}\n{agent_line}\n- Cwd: {cwd}\n\n### Activity\n",
             name = session_name,
-            ts = iso_timestamp(),
-            agent = agent_id,
-            model = model_name.unwrap_or("unknown"),
+            ts = human_timestamp_local(),
             cwd = cwd.unwrap_or("?"),
         );
         file.write_all(block.as_bytes())?;
@@ -94,14 +112,14 @@ impl SessionLogWriter {
         let Some(mut file) = Self::open(cfg)? else {
             return Ok(());
         };
-        let entry = format!("- {} · {}\n", iso_timestamp(), line);
+        let entry = format!("- {} · {}\n", human_timestamp_local(), line);
         file.write_all(entry.as_bytes())?;
         Ok(())
     }
 
     pub fn end_session(
         cfg: &ResolvedObsidianConfig,
-        cost_usd: f64,
+        model: Option<&str>,
         files: &[String],
         tasks_completed: usize,
     ) -> Result<()> {
@@ -126,16 +144,46 @@ impl SessionLogWriter {
                 basenames.join(", ")
             )
         };
+        let model_line = match model {
+            Some(m) if !m.is_empty() => format!("- Model: {m}\n"),
+            _ => String::new(),
+        };
         let block = format!(
-            "\n### Session ended at {ts}\n- Final cost: ${cost:.4}\n{files_line}\n- Tasks completed: {tc}\n",
-            ts = iso_timestamp(),
-            cost = cost_usd,
+            "\n### Session ended at {ts}\n{model_line}{files_line}\n- Tasks completed: {tc}\n",
+            ts = human_timestamp_local(),
             tc = tasks_completed,
         );
         file.write_all(block.as_bytes())?;
         file.sync_all().ok();
         Ok(())
     }
+}
+
+/// Keeps the file the user (and the agent) reads bounded; overflow rolls to an
+/// archive sibling. ~128KB ≈ a comfortable single read, not a many-thousand-line wall.
+const MAX_LOG_BYTES: u64 = 128 * 1024;
+
+fn rotate_if_large(path: &Path) {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return;
+    };
+    if meta.len() <= MAX_LOG_BYTES {
+        return;
+    }
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let archive = archive_path(path);
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&archive) {
+        let _ = f.write_all(content.as_bytes());
+    }
+    let _ = std::fs::write(path, b"");
+}
+
+fn archive_path(path: &Path) -> std::path::PathBuf {
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("log");
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("md");
+    path.with_file_name(format!("{stem} (archive).{ext}"))
 }
 
 pub fn iso_timestamp() -> String {
@@ -291,7 +339,7 @@ mod tests {
     #[test]
     fn append_noop_when_path_unset() {
         let cfg = ObsidianConfig::defaults();
-        let out = QuickCaptureWriter::append(&cfg, "hello", None).unwrap();
+        let out = QuickCaptureWriter::append(&cfg, "hello", None, None).unwrap();
         assert!(out.is_none());
     }
 
@@ -303,12 +351,15 @@ mod tests {
             quick_capture_path: Some(target.to_string_lossy().into_owned()),
             ..ObsidianConfig::defaults()
         };
-        let out = QuickCaptureWriter::append(&cfg, "a thought", None).unwrap();
+        let out =
+            QuickCaptureWriter::append(&cfg, "a thought", None, Some("/home/me/proj")).unwrap();
         assert_eq!(out.as_deref(), Some(target.as_path()));
         let contents = std::fs::read_to_string(&target).unwrap();
         assert!(contents.contains("a thought"));
         assert!(contents.contains("#nergal-inbox"));
-        assert!(contents.starts_with("\n\n## "));
+        // Fresh inbox gets the one-time Open-in-Nergal deep link.
+        assert!(contents.starts_with("# Inbox"));
+        assert!(contents.contains("cluihud://open-workspace?path=%2Fhome%2Fme%2Fproj"));
     }
 
     #[test]
@@ -319,7 +370,7 @@ mod tests {
             quick_capture_path: Some(target.to_string_lossy().into_owned()),
             ..ObsidianConfig::defaults()
         };
-        QuickCaptureWriter::append(&cfg, "hi", Some("brain-dump")).unwrap();
+        QuickCaptureWriter::append(&cfg, "hi", Some("brain-dump"), None).unwrap();
         let contents = std::fs::read_to_string(&target).unwrap();
         assert!(contents.contains("#brain-dump"));
         assert!(!contents.contains("#nergal-inbox"));
@@ -342,14 +393,15 @@ mod tests {
         )
         .unwrap();
         SessionLogWriter::append_event(&cfg, "Edit src/auth.rs").unwrap();
-        SessionLogWriter::end_session(&cfg, 0.1234, &["/repo/src/auth.rs".to_string()], 2).unwrap();
+        SessionLogWriter::end_session(&cfg, Some("opus"), &["/repo/src/auth.rs".to_string()], 2)
+            .unwrap();
         let c = std::fs::read_to_string(&target).unwrap();
         assert!(c.contains("## Session \"Auth refactor\""));
         assert!(c.contains("- Agent: claude-code (opus)"));
+        assert!(c.contains("- Model: opus"));
         assert!(c.contains("### Activity"));
         assert!(c.contains("· Edit src/auth.rs"));
         assert!(c.contains("### Session ended at"));
-        assert!(c.contains("Final cost: $0.1234"));
         assert!(c.contains("Files touched: 1 (auth.rs)"));
         assert!(c.contains("Tasks completed: 2"));
     }
@@ -359,7 +411,23 @@ mod tests {
         let cfg = ObsidianConfig::defaults();
         SessionLogWriter::start_session(&cfg, "x", "claude-code", None, None).unwrap();
         SessionLogWriter::append_event(&cfg, "evt").unwrap();
-        SessionLogWriter::end_session(&cfg, 0.0, &[], 0).unwrap();
+        SessionLogWriter::end_session(&cfg, None, &[], 0).unwrap();
+    }
+
+    #[test]
+    fn log_rotates_when_oversized() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("Logs.md");
+        std::fs::write(&target, "x".repeat(MAX_LOG_BYTES as usize + 1)).unwrap();
+        let cfg = ObsidianConfig {
+            session_log_path: Some(target.to_string_lossy().into_owned()),
+            ..ObsidianConfig::defaults()
+        };
+        SessionLogWriter::start_session(&cfg, "S", "cc", None, None).unwrap();
+        assert!(dir.path().join("Logs (archive).md").exists());
+        let active = std::fs::read_to_string(&target).unwrap();
+        assert!(active.len() < MAX_LOG_BYTES as usize);
+        assert!(active.contains("## Session \"S\""));
     }
 
     #[test]
@@ -370,8 +438,8 @@ mod tests {
             quick_capture_path: Some(target.to_string_lossy().into_owned()),
             ..ObsidianConfig::defaults()
         };
-        QuickCaptureWriter::append(&cfg, "first", None).unwrap();
-        QuickCaptureWriter::append(&cfg, "second", None).unwrap();
+        QuickCaptureWriter::append(&cfg, "first", None, None).unwrap();
+        QuickCaptureWriter::append(&cfg, "second", None, None).unwrap();
         let contents = std::fs::read_to_string(&target).unwrap();
         assert!(contents.contains("first"));
         assert!(contents.contains("second"));

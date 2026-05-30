@@ -75,7 +75,7 @@ fn render_template(name: &str, workspace_path: &Path) -> String {
     )
 }
 
-fn encode_uri_component(s: &str) -> String {
+pub(crate) fn encode_uri_component(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for byte in s.bytes() {
         match byte {

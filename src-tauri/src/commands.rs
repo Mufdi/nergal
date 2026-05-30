@@ -3109,14 +3109,26 @@ pub fn obsidian_quick_capture(
     workspace_id: String,
     text: String,
 ) -> Result<String, String> {
-    let resolved = {
+    let (resolved, repo_path) = {
         let db = db.lock().map_err(|e| e.to_string())?;
-        crate::obsidian::config::resolve(&workspace_id, |wid| db.get_obsidian_config(wid))
-            .map_err(|e| e.to_string())?
+        let resolved =
+            crate::obsidian::config::resolve(&workspace_id, |wid| db.get_obsidian_config(wid))
+                .map_err(|e| e.to_string())?;
+        let repo_path = db
+            .workspace_repo_path(&workspace_id)
+            .ok()
+            .flatten()
+            .map(|p| p.to_string_lossy().into_owned());
+        (resolved, repo_path)
     };
-    let written = crate::obsidian::channels::QuickCaptureWriter::append(&resolved, &text, None)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "quick_capture_path not configured for this workspace".to_string())?;
+    let written = crate::obsidian::channels::QuickCaptureWriter::append(
+        &resolved,
+        &text,
+        None,
+        repo_path.as_deref(),
+    )
+    .map_err(|e| e.to_string())?
+    .ok_or_else(|| "quick_capture_path not configured for this workspace".to_string())?;
     let path_str = written.display().to_string();
     let _ = app.emit("obsidian:capture-saved", &path_str);
     Ok(path_str)

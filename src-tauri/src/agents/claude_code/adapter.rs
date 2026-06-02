@@ -170,6 +170,14 @@ impl AgentAdapter for ClaudeCodeAdapter {
                 args.push(id.to_string());
             }
         }
+        // `claude [prompt]` starts an interactive session with the prompt
+        // submitted — so a deep-link `session/new` prompt rides the launch
+        // command instead of being typed in after the REPL is up. Resume modes
+        // are mutually exclusive with a fresh prompt in practice (session/new
+        // never resumes), so appending after the resume args is safe.
+        if let Some(prompt) = ctx.initial_prompt.filter(|p| !p.is_empty()) {
+            args.push(prompt.to_string());
+        }
         let mut env = HashMap::new();
         env.insert("CLUIHUD_SESSION_ID".into(), ctx.session_id.to_string());
         Ok(SpawnSpec { binary, args, env })
@@ -346,6 +354,31 @@ mod tests {
                 spec.args,
                 vec!["--resume".to_string(), "abc-123".to_string()]
             );
+        }
+    }
+
+    #[test]
+    fn spawn_appends_initial_prompt_as_positional_arg() {
+        let a = ClaudeCodeAdapter::new();
+        let cwd = Path::new("/tmp");
+        let ctx = SpawnContext {
+            session_id: "s",
+            cwd,
+            resume_from: None,
+            initial_prompt: Some("implement auth"),
+        };
+        if let Ok(spec) = a.spawn(&ctx) {
+            assert_eq!(spec.args, vec!["implement auth".to_string()]);
+        }
+        // Empty prompt is not appended.
+        let empty = SpawnContext {
+            session_id: "s",
+            cwd,
+            resume_from: None,
+            initial_prompt: Some(""),
+        };
+        if let Ok(spec) = a.spawn(&empty) {
+            assert!(spec.args.is_empty());
         }
     }
 

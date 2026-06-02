@@ -1,10 +1,13 @@
 import { invoke } from "@/lib/tauri";
 import { appStore } from "@/stores/jotaiStore";
 import { toastsAtom } from "@/stores/toast";
+import { openTabAction } from "@/stores/rightPanel";
 import {
   activeSessionIdAtom,
   activeSessionAtom,
+  freshSessionsAtom,
   workspacesAtom,
+  type Session,
   type Workspace,
 } from "@/stores/workspace";
 
@@ -28,7 +31,7 @@ export function dispatchDeepLink(rawUrl: string): void {
       void handleOpenWorkspace(parsed.searchParams.get("path"));
       break;
     case "session":
-      handleSessionRoute(parsed);
+      void handleSessionRoute(parsed);
       break;
     case "open-file":
       handleOpenFile(parsed.searchParams.get("path"), parsed.searchParams.get("line"));
@@ -100,20 +103,126 @@ async function handleOpenWorkspace(path: string | null): Promise<void> {
   }
 }
 
-function handleSessionRoute(parsed: URL): void {
+async function handleSessionRoute(parsed: URL): Promise<void> {
   const sub = parsed.pathname.replace(/^\//, "").split("/")[0];
-  appStore.set(toastsAtom, {
-    type: "info",
-    message: "Deep link received",
-    description: `cluihud://session/${sub || "?"} handler not yet implemented`,
-  });
+  if (sub !== "new") {
+    appStore.set(toastsAtom, {
+      type: "info",
+      message: "Deep link received",
+      description: `cluihud://session/${sub || "?"} is not a known action`,
+    });
+    return;
+  }
+  await handleSessionNew(parsed.searchParams.get("cwd"), parsed.searchParams.get("prompt"));
 }
 
-function handleOpenFile(path: string | null, line: string | null): void {
-  const tail = path ? `${path}${line ? `:${line}` : ""}` : "?";
+/// Derive a short session name from the prompt's first line, so the sidebar row
+/// is recognizable instead of a generic placeholder.
+function sessionNameFromPrompt(prompt: string): string {
+  const firstLine = prompt.split("\n")[0]?.trim() ?? "";
+  if (!firstLine) return "New session";
+  return firstLine.length > 40 ? `${firstLine.slice(0, 40)}…` : firstLine;
+}
+
+async function handleSessionNew(cwd: string | null, prompt: string | null): Promise<void> {
+  if (!cwd) {
+    appStore.set(toastsAtom, {
+      type: "error",
+      message: "Deep link missing cwd",
+      description: "cluihud://session/new requires ?cwd=",
+    });
+    return;
+  }
+  let workspace = appStore.get(workspacesAtom).find((w) => w.repo_path === cwd);
+  if (!workspace) {
+    try {
+      workspace = await invoke<Workspace>("create_workspace", { repoPath: cwd });
+      const created = workspace;
+      appStore.set(workspacesAtom, (prev) => [...prev, created]);
+    } catch (err) {
+      appStore.set(toastsAtom, {
+        type: "error",
+        message: "Failed to open workspace",
+        description: `${cwd} — ${typeof err === "string" ? err : String(err)}`,
+      });
+      return;
+    }
+  }
+  const ws = workspace;
+  const promptText = prompt ?? "";
+  try {
+    const session = await invoke<Session>("create_session", {
+      workspaceId: ws.id,
+      name: sessionNameFromPrompt(promptText),
+      agentId: null,
+    });
+    appStore.set(workspacesAtom, (prev) =>
+      prev.map((w) => (w.id === ws.id ? { ...w, sessions: [...w.sessions, session] } : w)),
+    );
+    appStore.set(freshSessionsAtom, (prev) => new Set([...prev, session.id]));
+    // Stash before activating: activation triggers the PTY spawn that consumes
+    // the prompt, so it must already be queued when start_claude_session runs.
+    if (promptText) {
+      await invoke("queue_session_prompt", { sessionId: session.id, prompt: promptText });
+    }
+    appStore.set(activeSessionIdAtom, session.id);
+    appStore.set(toastsAtom, {
+      type: "success",
+      message: `New session: ${ws.name}`,
+      description: session.name,
+    });
+  } catch (err) {
+    appStore.set(toastsAtom, {
+      type: "error",
+      message: "Failed to create session",
+      description: typeof err === "string" ? err : String(err),
+    });
+  }
+}
+
+function handleOpenFile(path: string | null, lineRaw: string | null): void {
+  if (!path) {
+    appStore.set(toastsAtom, {
+      type: "error",
+      message: "Deep link missing path",
+      description: "cluihud://open-file requires ?path=",
+    });
+    return;
+  }
+  const parsedLine = lineRaw ? Number.parseInt(lineRaw, 10) : null;
+  const line =
+    parsedLine != null && Number.isFinite(parsedLine) && parsedLine >= 1 ? parsedLine : undefined;
+
+  // openTabAction keys off the active session; without one, land on the most
+  // recently touched session of the workspace owning the file.
+  let sessionId = appStore.get(activeSessionIdAtom);
+  if (!sessionId) {
+    const owner = appStore.get(workspacesAtom).find((w) => path.startsWith(w.repo_path));
+    const target =
+      owner && owner.sessions.length > 0
+        ? [...owner.sessions].sort((a, b) => b.updated_at - a.updated_at)[0]
+        : null;
+    if (target) {
+      appStore.set(activeSessionIdAtom, target.id);
+      sessionId = target.id;
+    }
+  }
+  if (!sessionId) {
+    appStore.set(toastsAtom, {
+      type: "info",
+      message: "No session to open the file in",
+      description: "Start or select a session, then retry the link.",
+    });
+    return;
+  }
+
+  const name = path.split("/").pop() ?? path;
+  appStore.set(openTabAction, {
+    tab: { id: `file:${path}`, type: "file", label: name, data: { path, sessionId, line } },
+  });
   appStore.set(toastsAtom, {
-    type: "info",
-    message: "Deep link received",
-    description: `cluihud://open-file (${tail}) handler not yet implemented`,
+    type: "success",
+    message: "Opened file",
+    description: line ? `${name}:${line}` : name,
   });
 }

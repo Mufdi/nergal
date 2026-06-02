@@ -43,6 +43,9 @@ pub struct PtyManager {
     instances: Mutex<HashMap<String, PtyInstance>>,
     /// Maps session_id -> pty_id for idempotency
     session_ptys: Mutex<HashMap<String, String>>,
+    /// session_id -> prompt to submit at spawn (deep link `session/new`).
+    /// Consumed once by `start_claude_session` when it builds the spawn command.
+    pending_prompts: Mutex<HashMap<String, String>>,
     /// Value of `config.terminal_kitty_keyboard` at startup. Applied to every
     /// new `TerminalSession`; runtime toggling would require restarting PTYs.
     kitty_keyboard: bool,
@@ -53,6 +56,7 @@ impl PtyManager {
         Self {
             instances: Mutex::new(HashMap::new()),
             session_ptys: Mutex::new(HashMap::new()),
+            pending_prompts: Mutex::new(HashMap::new()),
             kitty_keyboard,
         }
     }
@@ -316,11 +320,19 @@ pub async fn start_claude_session(
             }
             other => other.map(|s| s.to_string()),
         };
+        // Deep link `session/new` stashes a prompt for the fresh session; the
+        // adapter folds it into the launch command so it submits on spawn
+        // without a timing race against the agent's REPL coming up.
+        let initial_prompt = state
+            .pending_prompts
+            .lock()
+            .ok()
+            .and_then(|mut m| m.remove(&session_id));
         let spawn_ctx = crate::agents::SpawnContext {
             session_id: &session_id,
             cwd: &cwd_path,
             resume_from: resume_owned.as_deref(),
-            initial_prompt: None,
+            initial_prompt: initial_prompt.as_deref(),
         };
         let spec = adapter.spawn(&spawn_ctx).map_err(|e| e.to_string())?;
 
@@ -435,6 +447,27 @@ pub fn write_to_session_pty(
     let mut w = instance.writer.lock().map_err(|e| e.to_string())?;
     w.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
     w.flush().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Stash a prompt to submit when the session's PTY spawns. The deep-link
+/// `session/new` flow calls this after `create_session` and before activating
+/// the session, so `start_claude_session` finds and folds it into the launch
+/// command. No-op for sessions that never start.
+#[tauri::command]
+pub fn queue_session_prompt(
+    state: State<'_, PtyManager>,
+    session_id: String,
+    prompt: String,
+) -> Result<(), String> {
+    if prompt.is_empty() {
+        return Ok(());
+    }
+    state
+        .pending_prompts
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(session_id, prompt);
     Ok(())
 }
 

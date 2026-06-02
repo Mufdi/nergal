@@ -439,8 +439,9 @@ function DocumentContent({ tab }: { tab: Tab }) {
     case "file": {
       const filePath = tab.data?.path as string | undefined;
       const fileSession = tab.data?.sessionId as string | undefined;
+      const gotoLine = tab.data?.line as number | undefined;
       return filePath && fileSession
-        ? <CodeEditor key={tab.id} filePath={filePath} sessionId={fileSession} />
+        ? <CodeEditor key={tab.id} filePath={filePath} sessionId={fileSession} gotoLine={gotoLine ?? null} />
         : <PlaceholderView label={`File: ${filePath ?? "unknown"}`} />;
     }
     case "browser":

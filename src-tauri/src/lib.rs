@@ -284,6 +284,7 @@ pub fn run() {
             pty::start_claude_session,
             pty::kill_session_pty,
             pty::write_to_session_pty,
+            pty::queue_session_prompt,
             pty::resize_session_terminal,
             pty::terminal_input,
             pty::terminal_get_full_grid,

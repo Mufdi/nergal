@@ -68,9 +68,11 @@ interface CodeEditorProps {
   filePath: string;
   sessionId: string;
   readOnly?: boolean;
+  /// 1-based line to reveal + select on open (deep-link `open-file?line=N`).
+  gotoLine?: number | null;
 }
 
-export function CodeEditor({ filePath, sessionId, readOnly = false }: CodeEditorProps) {
+export function CodeEditor({ filePath, sessionId, readOnly = false, gotoLine = null }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const propsRef = useRef({ filePath, sessionId });
@@ -156,6 +158,13 @@ export function CodeEditor({ filePath, sessionId, readOnly = false }: CodeEditor
       const view = new EditorView({ state, parent: container });
       viewRef.current = view;
       view.focus();
+      if (gotoLine && gotoLine >= 1 && gotoLine <= view.state.doc.lines) {
+        const pos = view.state.doc.line(gotoLine).from;
+        view.dispatch({
+          selection: { anchor: pos },
+          effects: EditorView.scrollIntoView(pos, { y: "center" }),
+        });
+      }
       setLoading(false);
     }
 
@@ -187,7 +196,7 @@ export function CodeEditor({ filePath, sessionId, readOnly = false }: CodeEditor
       }
       container.replaceChildren();
     };
-  }, [filePath, sessionId, readOnly, theme]);
+  }, [filePath, sessionId, readOnly, theme, gotoLine]);
 
   if (error) {
     return (

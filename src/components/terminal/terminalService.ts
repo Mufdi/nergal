@@ -92,7 +92,9 @@ let activeId: string | null = null;
 refreshTermTheme();
 
 if (typeof document !== "undefined") {
-  const observer = new MutationObserver(() => {
+  // Re-theme every live terminal: repoint the surface color and, when the
+  // family changed, rebuild the family-keyed metrics + atlas and refit.
+  const restyleTerminals = (): void => {
     refreshTermTheme();
     const dpr = window.devicePixelRatio || 1;
     for (const entry of entries.values()) {
@@ -126,6 +128,20 @@ if (typeof document !== "undefined") {
         fit(entry);
       }
       paintAll(entry);
+    }
+  };
+
+  const observer = new MutationObserver(() => {
+    restyleTerminals();
+    // Self-hosted web fonts (e.g. Ioskeley Mono Term) load lazily via
+    // `font-display: swap`, so the first switch to such a family measures the
+    // fallback and rasterizes the atlas with the wrong glyphs. Once the real
+    // face finishes loading, re-run so metrics + atlas pick it up.
+    if (typeof document.fonts !== "undefined") {
+      const probe = TERM_FONT.size + "px " + TERM_FONT.family;
+      if (!document.fonts.check(probe)) {
+        document.fonts.load(probe).then(restyleTerminals).catch(() => {});
+      }
     }
   });
   observer.observe(document.documentElement, {

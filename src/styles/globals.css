@@ -12,6 +12,18 @@
 @import "@fontsource/unifrakturcook/700.css";
 @import "sweetalert2/dist/sweetalert2.css";
 
+/* Ioskeley Mono Term — self-hosted (OFL-1.1, see assets/fonts/IoskeleyMono-OFL.txt).
+   Free Berkeley Mono lookalike built from Iosevka; the Term cut fixes box-drawing
+   and arrow glyphs for terminal rendering. Not on @fontsource, so it ships as a
+   bundled woff2 rather than an npm import. */
+@font-face {
+  font-family: "Ioskeley Mono Term";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/IoskeleyMonoTerm-Regular.woff2") format("woff2");
+}
+
 /* Canonical Tailwind v4 dark variant bound to data-theme attribute.
    Matches both the element itself (when it carries data-theme="v1-dark")
    and any descendant — same shape as the `[data-theme=dark], [data-theme=dark] *`

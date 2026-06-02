@@ -37,6 +37,8 @@ export const FONT_SPACE_MONO =
   '"Space Mono", "JetBrains Mono Variable", "Menlo", monospace';
 export const FONT_JETBRAINS_MONO =
   '"JetBrains Mono Variable", "JetBrains Mono", "Fira Code", monospace';
+export const FONT_IOSKELEY_MONO =
+  '"Ioskeley Mono Term", "JetBrains Mono Variable", "Fira Code", monospace';
 export const FONT_SOURCE_SERIF =
   '"Source Serif 4 Variable", "Source Serif Pro", Georgia, serif';
 export const FONT_SYSTEM_SERIF = 'Georgia, "Times New Roman", "Iowan Old Style", serif';
@@ -47,8 +49,9 @@ export const FONT_BLACKLETTER =
 
 /// Curated font stacks exposed in the custom-theme editor. Keeping the list
 /// closed (vs. an open text input) avoids users picking fonts the bundle
-/// doesn't ship — every entry here is either bundled via `@fontsource*`
-/// imports in `globals.css` or relies on system fallbacks.
+/// doesn't ship — every entry here is bundled via `@fontsource*` imports or a
+/// self-hosted `@font-face` (e.g. Ioskeley Mono Term) in `globals.css`, or
+/// relies on system fallbacks.
 export interface FontOption {
   id: string;
   label: string;
@@ -66,6 +69,7 @@ export const INTERFACE_FONTS: FontOption[] = [
 export const TERMINAL_FONTS: FontOption[] = [
   { id: "jetbrains-mono", label: "JetBrains Mono", stack: FONT_JETBRAINS_MONO },
   { id: "space-mono", label: "Space Mono", stack: FONT_SPACE_MONO },
+  { id: "ioskeley-mono", label: "Ioskeley Mono", stack: FONT_IOSKELEY_MONO },
 ];
 
 export const MARKDOWN_FONTS: FontOption[] = [

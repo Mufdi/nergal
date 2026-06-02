@@ -12,6 +12,7 @@ import {
 } from "@/stores/search";
 import { activeWorkspaceAtom, activeSessionIdAtom } from "@/stores/workspace";
 import { vaultSearchScopeAtom, obsidianConfigAtom } from "@/stores/obsidian";
+import { focusZoneAtom } from "@/stores/shortcuts";
 import { toastsAtom } from "@/stores/toast";
 import { openInObsidian } from "@/lib/obsidian";
 import { invoke } from "@/lib/tauri";
@@ -50,6 +51,7 @@ export function VaultSearchModal() {
   const scopeMode = useAtomValue(vaultSearchScopeAtom);
   const setScopeMode = useSetAtom(vaultSearchScopeAtom);
   const obsidianConfig = useAtomValue(obsidianConfigAtom);
+  const setFocusZone = useSetAtom(focusZoneAtom);
   const subdir = obsidianConfig?.search_subdir?.trim() || null;
 
   function toggleScope() {
@@ -89,6 +91,12 @@ export function VaultSearchModal() {
 
   function close() {
     setOpen(false);
+    // Hand focus back to the PTY so typing resumes immediately — same pattern
+    // the scratchpad uses on close (rAF lets React finish unmounting first).
+    requestAnimationFrame(() => {
+      setFocusZone("terminal");
+      terminalService.focusActive();
+    });
   }
 
   function openHit(hit: SearchHit) {

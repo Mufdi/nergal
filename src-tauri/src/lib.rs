@@ -328,6 +328,7 @@ pub fn run() {
             commands::get_cost,
             // Workspace commands
             commands::create_workspace,
+            commands::resolve_repo_root,
             commands::get_workspaces,
             commands::delete_workspace,
             // Session commands
@@ -642,7 +643,13 @@ fn queue_close_markers(app: &tauri::AppHandle) {
         else {
             continue;
         };
-        if cfg.moc_path.as_deref().filter(|s| !s.is_empty()).is_none() {
+        let has_log = cfg
+            .session_log_path
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .is_some();
+        let has_moc = cfg.moc_path.as_deref().filter(|s| !s.is_empty()).is_some();
+        if !has_log && !has_moc {
             continue;
         }
         for session in &ws.sessions {
@@ -651,6 +658,13 @@ fn queue_close_markers(app: &tauri::AppHandle) {
             }
             // Dedup against the PTY-EOF trigger that fires as the app tears down.
             if !crate::obsidian::post_session::claim_finalization(&session.id) {
+                continue;
+            }
+            // #2 log footer is in-process and independent of the moc channel.
+            if has_log {
+                crate::hooks::server::write_session_log_footer(&guard, &cfg, &session.id);
+            }
+            if !has_moc {
                 continue;
             }
             if bg {

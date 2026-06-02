@@ -20,6 +20,7 @@ import {
 } from "@/stores/scratchpad";
 import { appStore } from "@/stores/jotaiStore";
 import { useCodeMirrorMentionPicker } from "@/hooks/useCodeMirrorMentionPicker";
+import { obsidianWikilinkClickExtension } from "./obsidianWikilinkExtension";
 
 const AUTOSAVE_DEBOUNCE_MS = 300;
 
@@ -117,6 +118,7 @@ export function ScratchpadEditor({ tabId }: ScratchpadEditorProps) {
           syntaxHighlighting(currentHighlightStyle()),
           keymap.of([indentWithTab, ...searchKeymap]),
           mentionExtRef.current,
+          obsidianWikilinkClickExtension(),
           updateListener,
           EditorView.lineWrapping,
         ],

@@ -630,6 +630,27 @@ pub fn create_workspace(db: State<'_, SharedDb>, repo_path: String) -> Result<Wo
     })
 }
 
+/// Lets a deep-link open a file in a project that isn't a Nergal workspace yet:
+/// the git root is what create_workspace needs. None when the path is outside
+/// any git repo (create_workspace rejects non-git roots).
+#[tauri::command]
+pub fn resolve_repo_root(path: String) -> Option<String> {
+    let start = std::path::PathBuf::from(&path);
+    let mut dir = if start.is_file() {
+        start.parent()?.to_path_buf()
+    } else {
+        start
+    };
+    loop {
+        if dir.join(".git").exists() {
+            return Some(dir.to_string_lossy().into_owned());
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
 #[tauri::command]
 pub fn get_workspaces(
     db: State<'_, SharedDb>,
@@ -826,16 +847,22 @@ pub async fn delete_session(
     // Get session + workspace for worktree cleanup
     let session = db.find_session(&session_id).map_err(|e| e.to_string())?;
 
-    // Snapshot the session synchronously before its row + worktree disappear —
-    // the detached runner can't (it runs after the delete; the git diff needs
-    // the worktree present).
+    // Synchronous because the detached runner can't help here: it runs after
+    // the delete, and its MOC git diff needs the worktree still present.
+    // claim_finalization dedups against the PTY-EOF trigger firing as the PTY
+    // tears down, so the footer isn't appended twice.
     if let Some(s) = &session
         && let Ok(cfg) =
             crate::obsidian::config::resolve(&s.workspace_id, |w| db.get_obsidian_config(w))
-        && cfg.moc_path.as_deref().filter(|p| !p.is_empty()).is_some()
-        && let Ok(Some(moc_path)) = crate::obsidian::moc::MocBuilder::build(&session_id, &cfg, &db)
+        && crate::obsidian::post_session::claim_finalization(&session_id)
     {
-        let _ = crate::obsidian::moc::BacklinkUpdater::propagate(&moc_path, &cfg);
+        crate::hooks::server::write_session_log_footer(&db, &cfg, &session_id);
+        if cfg.moc_path.as_deref().filter(|p| !p.is_empty()).is_some()
+            && let Ok(Some(moc_path)) =
+                crate::obsidian::moc::MocBuilder::build(&session_id, &cfg, &db)
+        {
+            let _ = crate::obsidian::moc::BacklinkUpdater::propagate(&moc_path, &cfg);
+        }
     }
 
     if let Some(session) = &session

@@ -1,5 +1,23 @@
-const WIKILINK_RE =
-  /(?<!\\)\[\[([^\[\]|#^]+?)(?:#([^\[\]|^]+))?(?:\^([^\[\]|]+))?(?:\|([^\[\]]+))?\]\]/g;
+// Single source of truth for the wikilink grammar (simple, #heading, ^block,
+// |alias). Exported as a string so other surfaces (the CodeMirror scratchpad
+// click handler) build their own stateful RegExp instance without sharing
+// lastIndex with this module's global.
+export const WIKILINK_PATTERN =
+  String.raw`(?<!\\)\[\[([^\[\]|#^]+?)(?:#([^\[\]|^]+))?(?:\^([^\[\]|]+))?(?:\|([^\[\]]+))?\]\]`;
+
+const WIKILINK_RE = new RegExp(WIKILINK_PATTERN, "g");
+
+export function buildObsidianUri(
+  vault: string,
+  note: string,
+  heading?: string,
+  block?: string,
+): string {
+  let uri = `obsidian://open?vault=${encode(vault)}&file=${encode(note)}`;
+  if (heading) uri += `#${encode(heading)}`;
+  else if (block) uri += `#^${encode(block)}`;
+  return uri;
+}
 
 export interface RemarkObsidianOptions {
   vaultName?: string | null;
@@ -17,13 +35,6 @@ function encode(s: string): string {
   return encodeURIComponent(s);
 }
 
-function buildUri(vault: string, note: string, heading?: string, block?: string): string {
-  let uri = `obsidian://open?vault=${encode(vault)}&file=${encode(note)}`;
-  if (heading) uri += `#${encode(heading)}`;
-  else if (block) uri += `#^${encode(block)}`;
-  return uri;
-}
-
 function splitTextNode(value: string, vault: string): AnyNode[] | null {
   WIKILINK_RE.lastIndex = 0;
   const parts: AnyNode[] = [];
@@ -36,7 +47,7 @@ function splitTextNode(value: string, vault: string): AnyNode[] | null {
     }
     parts.push({
       type: "link",
-      url: buildUri(vault, note, heading, block),
+      url: buildObsidianUri(vault, note, heading, block),
       children: [{ type: "text", value: alias ?? note }],
     });
     lastIndex = match.index + full.length;

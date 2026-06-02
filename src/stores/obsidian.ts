@@ -150,13 +150,9 @@ export async function setupObsidianListeners(store: Store): Promise<UnlistenFn[]
 
   unlisteners.push(
     await listen<PostSessionStartupPayload>("post-session:startup", (payload) => {
-      if (payload.recovered > 0) {
-        store.set(toastsAtom, {
-          message: "Session snapshots",
-          description: `Caught up on ${payload.recovered} pending session snapshot${payload.recovered === 1 ? "" : "s"}.`,
-          type: "info",
-        });
-      }
+      // Recovery of orphaned markers runs silently — the count is internal
+      // plumbing (often stale sessions) with nothing actionable for the user.
+      // Only surface the two states that warrant action.
       if (payload.last_run_failed) {
         store.set(toastsAtom, {
           message: "Last session snapshot failed",

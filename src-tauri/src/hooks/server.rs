@@ -417,6 +417,39 @@ fn cached_model(csid: &str) -> Option<String> {
     model_cache().lock().ok().and_then(|c| c.get(csid).cloned())
 }
 
+/// In-process (no worktree needed), so the tab-close / app-close paths can call
+/// it before tearing the session down. Shared with the SessionEnd/PTY-EOF
+/// finalizer so the footer lands no matter how the session ends. Callers own the
+/// dedup (claim_finalization); no-op when the session_log channel is unset.
+pub(crate) fn write_session_log_footer(
+    db: &crate::db::Database,
+    cfg: &crate::obsidian::config::ResolvedObsidianConfig,
+    csid: &str,
+) {
+    if cfg
+        .session_log_path
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .is_none()
+    {
+        return;
+    }
+    let tasks_done = db
+        .get_visible_tasks(csid)
+        .map(|ts| {
+            ts.iter()
+                .filter(|t| matches!(t.status, crate::tasks::TaskStatus::Completed))
+                .count()
+        })
+        .unwrap_or(0);
+    let _ = crate::obsidian::channels::SessionLogWriter::end_session(
+        cfg,
+        cached_model(csid).as_deref(),
+        &[],
+        tasks_done,
+    );
+}
+
 /// Session obsidian finalization: write the #2 log footer and, if the moc
 /// channel is set, snapshot the session (detached runner, or inline when the
 /// startup probe found bg processing unavailable). Deduped so the SessionEnd
@@ -440,28 +473,7 @@ pub(crate) fn finalize_session_obsidian(db: &SharedDb, csid: Option<&str>) {
         Ok(c) => c,
         Err(_) => return,
     };
-    let tasks_done = guard
-        .get_visible_tasks(&session.id)
-        .map(|ts| {
-            ts.iter()
-                .filter(|t| matches!(t.status, crate::tasks::TaskStatus::Completed))
-                .count()
-        })
-        .unwrap_or(0);
-
-    if cfg
-        .session_log_path
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .is_some()
-    {
-        let _ = crate::obsidian::channels::SessionLogWriter::end_session(
-            &cfg,
-            cached_model(csid).as_deref(),
-            &[],
-            tasks_done,
-        );
-    }
+    write_session_log_footer(&guard, &cfg, csid);
     if cfg.moc_path.as_deref().filter(|s| !s.is_empty()).is_some() {
         if crate::obsidian::post_session::runner_available() {
             drop(guard); // release the DB lock before spawning the detached runner

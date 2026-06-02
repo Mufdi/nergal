@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { FileText } from "lucide-react";
 
 export interface MentionItem {
@@ -34,7 +35,12 @@ export function MentionPickerOverlay({
 
   if (items.length === 0) return null;
   const activeId = `mention-option-${selectedIndex}`;
-  return (
+  // Portal to <body>: the overlay is fixed-positioned with viewport coords from
+  // CodeMirror's coordsAtPos, but the FloatingPanel card it renders inside has
+  // `transform: scale(1)` (data-[state=open]), which makes the card the
+  // containing block for fixed descendants — so the overlay would anchor to the
+  // card, not the viewport. <body> has no transform, restoring viewport math.
+  return createPortal(
     <div
       ref={listRef}
       role="listbox"
@@ -43,9 +49,15 @@ export function MentionPickerOverlay({
       // Focus stays in the textarea/editor driving the picker; the listbox is
       // navigated remotely, so it must not steal the tab sequence.
       tabIndex={-1}
-      className="cluihud-glow fixed z-[60] max-h-60 w-72 overflow-y-auto rounded-lg border-2 border-primary bg-card py-1 shadow-lg"
+      className="cluihud-glow fixed z-[60] flex max-h-60 w-72 flex-col overflow-hidden rounded-lg border-2 border-primary bg-card shadow-lg"
       style={{ left: position.left, top: position.top }}
     >
+      {hint && (
+        <div className="shrink-0 border-b border-border/40 px-3 py-1 text-[10px] text-muted-foreground/70">
+          {hint}
+        </div>
+      )}
+      <div className="min-h-0 overflow-y-auto py-1">
       {items.map((item, idx) => {
         const isSelected = idx === selectedIndex;
         return (
@@ -76,11 +88,8 @@ export function MentionPickerOverlay({
           </button>
         );
       })}
-      {hint && (
-        <div className="border-t border-border/40 px-3 py-1 text-[10px] text-muted-foreground/70">
-          {hint}
-        </div>
-      )}
-    </div>
+      </div>
+    </div>,
+    document.body,
   );
 }

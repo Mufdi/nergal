@@ -5,11 +5,19 @@ import { openTabAction } from "@/stores/rightPanel";
 import {
   activeSessionIdAtom,
   activeSessionAtom,
+  expandedWorkspaceIdsAtom,
   freshSessionsAtom,
   workspacesAtom,
   type Session,
   type Workspace,
 } from "@/stores/workspace";
+
+/// Expand the workspace in the sidebar so a deep-link-spawned session lands
+/// visible (and the active highlight is on screen), mirroring what creating a
+/// session from the sidebar does.
+function expandWorkspace(wsId: string): void {
+  appStore.set(expandedWorkspaceIdsAtom, (prev) => new Set([...(prev ?? []), wsId]));
+}
 
 export function dispatchDeepLink(rawUrl: string): void {
   let parsed: URL;
@@ -34,7 +42,7 @@ export function dispatchDeepLink(rawUrl: string): void {
       void handleSessionRoute(parsed);
       break;
     case "open-file":
-      handleOpenFile(parsed.searchParams.get("path"), parsed.searchParams.get("line"));
+      void handleOpenFile(parsed.searchParams.get("path"), parsed.searchParams.get("line"));
       break;
     default:
       appStore.set(toastsAtom, {
@@ -116,6 +124,16 @@ async function handleSessionRoute(parsed: URL): Promise<void> {
   await handleSessionNew(parsed.searchParams.get("cwd"), parsed.searchParams.get("prompt"));
 }
 
+/// Honor the user's configured default agent for deep-link sessions instead of
+/// always launching CC. null falls back to the backend's own CC default.
+async function resolveAgentId(repoPath: string): Promise<string | null> {
+  try {
+    return await invoke<string>("resolve_default_agent", { projectPath: repoPath });
+  } catch {
+    return null;
+  }
+}
+
 /// Derive a short session name from the prompt's first line, so the sidebar row
 /// is recognizable instead of a generic placeholder.
 function sessionNameFromPrompt(prompt: string): string {
@@ -154,7 +172,7 @@ async function handleSessionNew(cwd: string | null, prompt: string | null): Prom
     const session = await invoke<Session>("create_session", {
       workspaceId: ws.id,
       name: sessionNameFromPrompt(promptText),
-      agentId: null,
+      agentId: await resolveAgentId(ws.repo_path),
     });
     appStore.set(workspacesAtom, (prev) =>
       prev.map((w) => (w.id === ws.id ? { ...w, sessions: [...w.sessions, session] } : w)),
@@ -165,6 +183,7 @@ async function handleSessionNew(cwd: string | null, prompt: string | null): Prom
     if (promptText) {
       await invoke("queue_session_prompt", { sessionId: session.id, prompt: promptText });
     }
+    expandWorkspace(ws.id);
     appStore.set(activeSessionIdAtom, session.id);
     appStore.set(toastsAtom, {
       type: "success",
@@ -180,7 +199,11 @@ async function handleSessionNew(cwd: string | null, prompt: string | null): Prom
   }
 }
 
-function handleOpenFile(path: string | null, lineRaw: string | null): void {
+function ownsPath(ws: Workspace, path: string): boolean {
+  return path === ws.repo_path || path.startsWith(`${ws.repo_path}/`);
+}
+
+async function handleOpenFile(path: string | null, lineRaw: string | null): Promise<void> {
   if (!path) {
     appStore.set(toastsAtom, {
       type: "error",
@@ -193,27 +216,75 @@ function handleOpenFile(path: string | null, lineRaw: string | null): void {
   const line =
     parsedLine != null && Number.isFinite(parsedLine) && parsedLine >= 1 ? parsedLine : undefined;
 
-  // openTabAction keys off the active session; without one, land on the most
-  // recently touched session of the workspace owning the file.
-  let sessionId = appStore.get(activeSessionIdAtom);
-  if (!sessionId) {
-    const owner = appStore.get(workspacesAtom).find((w) => path.startsWith(w.repo_path));
-    const target =
-      owner && owner.sessions.length > 0
-        ? [...owner.sessions].sort((a, b) => b.updated_at - a.updated_at)[0]
-        : null;
-    if (target) {
-      appStore.set(activeSessionIdAtom, target.id);
-      sessionId = target.id;
+  // A file tab is always bound to a session, so a file from a project that
+  // isn't a workspace yet needs both created before the tab can attach.
+  let workspace = appStore.get(workspacesAtom).find((w) => ownsPath(w, path));
+  if (!workspace) {
+    let root: string | null;
+    try {
+      root = await invoke<string | null>("resolve_repo_root", { path });
+    } catch {
+      root = null;
+    }
+    if (!root) {
+      appStore.set(toastsAtom, {
+        type: "info",
+        message: "File is not inside a git project",
+        description: "Open it in your editor, or add the project as a workspace first.",
+      });
+      return;
+    }
+    workspace = appStore.get(workspacesAtom).find((w) => w.repo_path === root);
+    if (!workspace) {
+      try {
+        const created = await invoke<Workspace>("create_workspace", { repoPath: root });
+        appStore.set(workspacesAtom, (prev) => [...prev, created]);
+        workspace = created;
+      } catch (err) {
+        appStore.set(toastsAtom, {
+          type: "error",
+          message: "Failed to open workspace",
+          description: `${root} — ${typeof err === "string" ? err : String(err)}`,
+        });
+        return;
+      }
     }
   }
-  if (!sessionId) {
-    appStore.set(toastsAtom, {
-      type: "info",
-      message: "No session to open the file in",
-      description: "Start or select a session, then retry the link.",
-    });
-    return;
+  const ws = workspace;
+
+  let sessionId = appStore.get(activeSessionIdAtom);
+  const activeBelongs = sessionId != null && ws.sessions.some((s) => s.id === sessionId);
+  if (!activeBelongs) {
+    const recent =
+      ws.sessions.length > 0
+        ? [...ws.sessions].sort((a, b) => b.updated_at - a.updated_at)[0]
+        : null;
+    if (recent) {
+      sessionId = recent.id;
+    } else {
+      try {
+        const session = await invoke<Session>("create_session", {
+          workspaceId: ws.id,
+          name: "New session",
+          agentId: await resolveAgentId(ws.repo_path),
+        });
+        appStore.set(workspacesAtom, (prev) =>
+          prev.map((w) => (w.id === ws.id ? { ...w, sessions: [...w.sessions, session] } : w)),
+        );
+        appStore.set(freshSessionsAtom, (prev) => new Set([...prev, session.id]));
+        sessionId = session.id;
+      } catch (err) {
+        appStore.set(toastsAtom, {
+          type: "error",
+          message: "Failed to create session",
+          description: typeof err === "string" ? err : String(err),
+        });
+        return;
+      }
+    }
+    // Activating the session spawns its PTY (empty session starts the agent).
+    expandWorkspace(ws.id);
+    appStore.set(activeSessionIdAtom, sessionId);
   }
 
   const name = path.split("/").pop() ?? path;

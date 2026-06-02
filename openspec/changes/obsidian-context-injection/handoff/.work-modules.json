@@ -1,0 +1,27 @@
+{
+  "tier": "XL",
+  "tier_source": "heuristic",
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "iprev_rounds": 0,
+    "reviewer_mode": "n/a-artifacts-only",
+    "reviewer_escalation": null,
+    "gates_phases_run": [],
+    "per_phase_models": {
+      "design": "claude-opus-4-8",
+      "implementation": "deferred",
+      "exploration": "claude-opus-4-8"
+    }
+  },
+  "spec_target": "obsidian-context-injection",
+  "interview_answers": {
+    "non_cc_fallback": "capability-based three tiers (revised from Unsupported-only after 2026 CLI web research)",
+    "storage": "JSON-array column pinned_note_paths on sessions (migration 010)",
+    "scope": "artifacts only; implementation deferred to a future session, split Phase 1 / Phase 2"
+  },
+  "events": [
+    { "type": "scope-decision", "note": "XL not split into Linear subtasks; user chose artifacts-only for a future implementation session" },
+    { "type": "design-revision", "note": "contract widened from CC-only to 3-tier capability after web research confirmed Codex/OpenCode launch-prompt + AGENTS.md cross-tool standard" }
+  ],
+  "interview_ts": "2026-06-01"
+}

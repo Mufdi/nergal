@@ -19,6 +19,7 @@ import {
   scratchpadFocusSignalAtom,
 } from "@/stores/scratchpad";
 import { appStore } from "@/stores/jotaiStore";
+import { useCodeMirrorMentionPicker } from "@/hooks/useCodeMirrorMentionPicker";
 
 const AUTOSAVE_DEBOUNCE_MS = 300;
 
@@ -67,6 +68,11 @@ export function ScratchpadEditor({ tabId }: ScratchpadEditorProps) {
   const conflict = conflictMap[tabId] ?? false;
   const focusSignal = useAtomValue(scratchpadFocusSignalAtom);
   const theme = useThemeName();
+  const { extension: mentionExtension, overlay: mentionOverlay } = useCodeMirrorMentionPicker();
+  // Read live at view creation without adding the (stable) extension to the
+  // effect deps — keeps tab/theme the only triggers for a remount.
+  const mentionExtRef = useRef(mentionExtension);
+  mentionExtRef.current = mentionExtension;
 
   // Keep an up-to-date ref so the autosave closure (created once) sees the
   // current tab — important when the user switches tabs without unmounting.
@@ -110,6 +116,7 @@ export function ScratchpadEditor({ tabId }: ScratchpadEditorProps) {
           markdown(),
           syntaxHighlighting(currentHighlightStyle()),
           keymap.of([indentWithTab, ...searchKeymap]),
+          mentionExtRef.current,
           updateListener,
           EditorView.lineWrapping,
         ],
@@ -173,6 +180,7 @@ export function ScratchpadEditor({ tabId }: ScratchpadEditorProps) {
         </div>
       )}
       <div ref={containerRef} className="flex-1 min-h-0 overflow-auto" />
+      {mentionOverlay}
     </div>
   );
 }

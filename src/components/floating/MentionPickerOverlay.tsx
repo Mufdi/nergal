@@ -33,9 +33,16 @@ export function MentionPickerOverlay({
   }, [selectedIndex]);
 
   if (items.length === 0) return null;
+  const activeId = `mention-option-${selectedIndex}`;
   return (
     <div
       ref={listRef}
+      role="listbox"
+      aria-label="Vault notes"
+      aria-activedescendant={activeId}
+      // Focus stays in the textarea/editor driving the picker; the listbox is
+      // navigated remotely, so it must not steal the tab sequence.
+      tabIndex={-1}
       className="cluihud-glow fixed z-[60] max-h-60 w-72 overflow-y-auto rounded-lg border-2 border-primary bg-card py-1 shadow-lg"
       style={{ left: position.left, top: position.top }}
     >
@@ -44,7 +51,10 @@ export function MentionPickerOverlay({
         return (
           <button
             key={item.key}
+            id={`mention-option-${idx}`}
             type="button"
+            role="option"
+            aria-selected={isSelected}
             data-mention-selected={isSelected ? "" : undefined}
             // mousedown (not click) so selecting doesn't blur the textarea first.
             onMouseDown={(e) => {

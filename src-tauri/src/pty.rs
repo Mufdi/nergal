@@ -2,7 +2,7 @@ use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::terminal::{CluihudTerminalConfig, TerminalHandle, TerminalKeyEvent, TerminalSession};
 
@@ -119,6 +119,8 @@ fn spawn_pty(
     let reader_session = Arc::clone(&terminal.session);
     let reader_notify = Arc::clone(&terminal.notify);
     let ready_tx = Mutex::new(shell_ready_tx);
+    let eof_app = app.clone();
+    let eof_session = session_id.to_owned();
 
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
@@ -143,6 +145,12 @@ fn spawn_pty(
                 }
                 Err(_) => break,
             }
+        }
+        // PTY closed (shell exited / killed / crashed): a definitive session end
+        // that an abnormal exit may have hidden from the SessionEnd hook. Snapshot
+        // obsidian once — deduped against the hook by claim_finalization.
+        if let Some(db) = eof_app.try_state::<crate::db::SharedDb>() {
+            crate::hooks::server::finalize_session_obsidian(db.inner(), Some(&eof_session));
         }
     });
 

@@ -417,10 +417,15 @@ fn cached_model(csid: &str) -> Option<String> {
     model_cache().lock().ok().and_then(|c| c.get(csid).cloned())
 }
 
-/// SessionEnd obsidian finalization: write the #2 log footer and, if the moc
-/// channel is set, drop a marker + spawn the detached MOC/backlink runner.
-fn finalize_session_obsidian(db: &SharedDb, csid: Option<&str>) {
+/// Session obsidian finalization: write the #2 log footer and, if the moc
+/// channel is set, snapshot the session (detached runner, or inline when the
+/// startup probe found bg processing unavailable). Deduped so the SessionEnd
+/// hook and the PTY-EOF trigger produce exactly one snapshot per session.
+pub(crate) fn finalize_session_obsidian(db: &SharedDb, csid: Option<&str>) {
     let Some(csid) = csid else { return };
+    if !crate::obsidian::post_session::claim_finalization(csid) {
+        return;
+    }
     let guard = match db.lock() {
         Ok(g) => g,
         Err(_) => return,
@@ -443,7 +448,6 @@ fn finalize_session_obsidian(db: &SharedDb, csid: Option<&str>) {
                 .count()
         })
         .unwrap_or(0);
-    drop(guard); // release the DB lock before spawning the detached runner
 
     if cfg
         .session_log_path
@@ -459,13 +463,20 @@ fn finalize_session_obsidian(db: &SharedDb, csid: Option<&str>) {
         );
     }
     if cfg.moc_path.as_deref().filter(|s| !s.is_empty()).is_some() {
-        let _ = crate::obsidian::post_session::write_marker(
-            &session.id,
-            &session.workspace_id,
-            &session.agent_id,
-            "SessionEnd",
-        );
-        let _ = crate::obsidian::post_session::spawn_runner_detached();
+        if crate::obsidian::post_session::runner_available() {
+            drop(guard); // release the DB lock before spawning the detached runner
+            let _ = crate::obsidian::post_session::write_marker(
+                &session.id,
+                &session.workspace_id,
+                &session.agent_id,
+                "SessionEnd",
+            );
+            let _ = crate::obsidian::post_session::spawn_runner_detached();
+        } else if let Ok(Some(moc)) =
+            crate::obsidian::moc::MocBuilder::build(&session.id, &cfg, &guard)
+        {
+            let _ = crate::obsidian::moc::BacklinkUpdater::propagate(&moc, &cfg);
+        }
     }
     if let Ok(mut c) = model_cache().lock() {
         c.remove(csid);

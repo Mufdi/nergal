@@ -8,12 +8,21 @@ import {
   type ObsidianTemplate,
 } from "./obsidianTemplates";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import { toastsAtom } from "./toast";
 
 type Store = ReturnType<typeof getDefaultStore>;
 
 export interface ObsidianConfigChangedPayload {
   workspace_id: string;
   config: ResolvedObsidianConfig;
+}
+
+/// Startup outcome of the post-session bg runner (see post_session.rs).
+export interface PostSessionStartupPayload {
+  recovered: number;
+  last_run_failed: boolean;
+  bg_unavailable: boolean;
+  log_path: string;
 }
 
 export const obsidianDefaultConfig: ResolvedObsidianConfig = {
@@ -136,6 +145,32 @@ export async function setupObsidianListeners(store: Store): Promise<UnlistenFn[]
   unlisteners.push(
     await listen<ObsidianTemplate[]>("obsidian:templates-updated", (payload) => {
       store.set(obsidianTemplatesAtom, payload);
+    }),
+  );
+
+  unlisteners.push(
+    await listen<PostSessionStartupPayload>("post-session:startup", (payload) => {
+      if (payload.recovered > 0) {
+        store.set(toastsAtom, {
+          message: "Session snapshots",
+          description: `Caught up on ${payload.recovered} pending session snapshot${payload.recovered === 1 ? "" : "s"}.`,
+          type: "info",
+        });
+      }
+      if (payload.last_run_failed) {
+        store.set(toastsAtom, {
+          message: "Last session snapshot failed",
+          description: `See ${payload.log_path}`,
+          type: "error",
+        });
+      }
+      if (payload.bg_unavailable) {
+        store.set(toastsAtom, {
+          message: "Background snapshots disabled",
+          description: "This host blocks detached processing; snapshots run inline on close.",
+          type: "error",
+        });
+      }
     }),
   );
 

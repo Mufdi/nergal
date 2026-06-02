@@ -232,10 +232,18 @@ pub fn run() {
         reconcile_worktrees(&db_guard);
     }
 
-    // Drain any session-end MOC markers left behind by a previous crash/exit.
-    let recovered = crate::obsidian::post_session::recover_stale(10 * 60 * 1000);
-    if recovered > 0 {
-        tracing::info!("post-session: recovery spawned for {recovered} stale marker(s)");
+    // Probe bg-spawn capability + drain markers a previous crash/exit left
+    // behind. The report drives the recovery/failure toasts emitted from setup
+    // once the frontend has mounted its listeners.
+    let startup_report = match db.lock() {
+        Ok(g) => crate::obsidian::post_session::startup_recover(&g, 10 * 60 * 1000),
+        Err(_) => crate::obsidian::post_session::StartupReport::default(),
+    };
+    if startup_report.recovered > 0 {
+        tracing::info!(
+            "post-session: recovered {} stale marker(s)",
+            startup_report.recovered
+        );
     }
 
     tauri::Builder::default()
@@ -595,6 +603,17 @@ pub fn run() {
                 Err(e) => tracing::warn!("scratchpad watcher failed: {e}"),
             }
 
+            // Surface the startup recovery outcome once the frontend has mounted
+            // its obsidian listeners. The short delay covers the cold-start race
+            // (the same reason deep links are buffered rather than only emitted).
+            if startup_report != crate::obsidian::post_session::StartupReport::default() {
+                let toast_app = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                    let _ = toast_app.emit("post-session:startup", &startup_report);
+                });
+            }
+
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -615,6 +634,7 @@ fn queue_close_markers(app: &tauri::AppHandle) {
         Ok(w) => w,
         Err(_) => return,
     };
+    let bg = crate::obsidian::post_session::runner_available();
     let mut any = false;
     for ws in &workspaces {
         let Ok(cfg) = crate::obsidian::config::resolve(&ws.id, |w| guard.get_obsidian_config(w))
@@ -628,13 +648,24 @@ fn queue_close_markers(app: &tauri::AppHandle) {
             if matches!(session.status, crate::models::SessionStatus::Completed) {
                 continue;
             }
-            let _ = crate::obsidian::post_session::write_marker(
-                &session.id,
-                &ws.id,
-                &session.agent_id,
-                "app-close",
-            );
-            any = true;
+            // Dedup against the PTY-EOF trigger that fires as the app tears down.
+            if !crate::obsidian::post_session::claim_finalization(&session.id) {
+                continue;
+            }
+            if bg {
+                let _ = crate::obsidian::post_session::write_marker(
+                    &session.id,
+                    &ws.id,
+                    &session.agent_id,
+                    "app-close",
+                );
+                any = true;
+            } else if let Ok(Some(moc)) =
+                crate::obsidian::moc::MocBuilder::build(&session.id, &cfg, &guard)
+            {
+                // No bg runner on this host: flush inline before the window closes.
+                let _ = crate::obsidian::moc::BacklinkUpdater::propagate(&moc, &cfg);
+            }
         }
     }
     drop(guard);

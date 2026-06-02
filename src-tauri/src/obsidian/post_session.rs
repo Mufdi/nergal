@@ -7,13 +7,41 @@
 //! MOC snapshot (#11) + reverse backlinks (N1) slot into `process_marker` in a
 //! later phase — the drain/lock/marker lifecycle around them is already final.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
+
+/// Detached-spawn capability, probed once at startup. Default optimistic so the
+/// very first finalize (before the probe lands) still attempts the bg path.
+static RUNNER_HEALTHY: AtomicBool = AtomicBool::new(true);
+
+/// Whether bg session-snapshot processing is available on this host. False on
+/// hardened distros where the probe found the detached child cannot survive.
+pub fn runner_available() -> bool {
+    RUNNER_HEALTHY.load(Ordering::Relaxed)
+}
+
+fn finalized_sessions() -> &'static Mutex<HashSet<String>> {
+    static F: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    F.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Returns true the first time finalization is claimed for `session_id`, false
+/// after. The SessionEnd hook and the PTY-EOF trigger can both fire for one
+/// session; the log footer + marker must run exactly once.
+pub fn claim_finalization(session_id: &str) -> bool {
+    finalized_sessions()
+        .lock()
+        .map(|mut s| s.insert(session_id.to_string()))
+        .unwrap_or(false)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Marker {
@@ -113,21 +141,85 @@ pub fn spawn_runner_detached() -> Result<()> {
     Ok(())
 }
 
+/// Probe whether detached bg processing survives on this host. Some hardened
+/// distros seccomp-kill children of sandboxed desktop apps; detecting it once
+/// lets finalize paths fall back to inline MOC builds instead of stranding
+/// snapshots in markers no runner will ever drain. The probe doubles as the
+/// first real drain — it invokes the same `post-session` subcommand. Sets
+/// `RUNNER_HEALTHY` and returns the result.
+#[cfg(target_os = "linux")]
+pub fn probe_spawn_health() -> bool {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("cluihud"));
+    let mut cmd = Command::new(exe);
+    cmd.arg("post-session")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    // SAFETY: see spawn_runner_detached — setsid in the forked child, no alloc.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(_) => {
+            RUNNER_HEALTHY.store(false, Ordering::Relaxed);
+            return false;
+        }
+    };
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let healthy = match child.try_wait() {
+        // Clean early exit (drained + released the lock) → spawning works.
+        Ok(Some(status)) => status.success(),
+        // Still draining after 200ms → spawning works; it is doing real work.
+        Ok(None) => true,
+        Err(_) => false,
+    };
+    RUNNER_HEALTHY.store(healthy, Ordering::Relaxed);
+    healthy
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn probe_spawn_health() -> bool {
+    true
+}
+
 /// Drain every pending marker under one global lock. Concurrent invocations see
 /// the held lock and exit without work — their markers are covered by the
 /// running drain (they were written before the spawn).
 pub fn run() -> Result<()> {
     let db = crate::db::Database::open().context("opening database for post-session runner")?;
-    drain(&pending_dir(), &lock_path(), &|path| {
+    let n = drain(&pending_dir(), &lock_path(), &|path| {
         process_marker(path, &db)
-    })
+    })?;
+    // A trailing INFO line is the success sentinel the next launch checks for —
+    // its absence (a dangling ERROR as the last line) surfaces a failure toast.
+    log_line(&format!("INFO drained {n} markers"));
+    Ok(())
+}
+
+/// Synchronous drain used when the startup probe found bg spawning unavailable.
+/// Builds MOCs inline against the GUI's own database connection so snapshots are
+/// not lost on hardened distros.
+pub fn drain_inline(db: &crate::db::Database) -> Result<()> {
+    let n = drain(&pending_dir(), &lock_path(), &|path| {
+        process_marker(path, db)
+    })?;
+    log_line(&format!("INFO drained {n} markers (inline)"));
+    Ok(())
 }
 
 /// Lock-guarded drain loop. The per-marker work is injected so the lock/marker
-/// lifecycle stays testable without a database.
-fn drain(dir: &Path, lock_path: &Path, process: &dyn Fn(&Path) -> Result<()>) -> Result<()> {
+/// lifecycle stays testable without a database. Returns the count of markers
+/// processed + removed.
+fn drain(dir: &Path, lock_path: &Path, process: &dyn Fn(&Path) -> Result<()>) -> Result<usize> {
     if !dir.exists() {
-        return Ok(());
+        return Ok(0);
     }
     if let Some(parent) = lock_path.parent() {
         fs::create_dir_all(parent).ok();
@@ -139,9 +231,10 @@ fn drain(dir: &Path, lock_path: &Path, process: &dyn Fn(&Path) -> Result<()>) ->
         .open(lock_path)
         .with_context(|| format!("opening lock {}", lock_path.display()))?;
     if lock_file.try_lock_exclusive().is_err() {
-        return Ok(());
+        return Ok(0);
     }
 
+    let mut drained = 0;
     for entry in fs::read_dir(dir)?.flatten() {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
@@ -150,6 +243,7 @@ fn drain(dir: &Path, lock_path: &Path, process: &dyn Fn(&Path) -> Result<()>) ->
         match process(&path) {
             Ok(()) => {
                 let _ = fs::remove_file(&path);
+                drained += 1;
             }
             Err(e) => {
                 // Leave the marker for the next runner to retry; stderr is nulled
@@ -160,7 +254,7 @@ fn drain(dir: &Path, lock_path: &Path, process: &dyn Fn(&Path) -> Result<()>) ->
     }
     // Lock releases on drop, but be explicit so intent is unambiguous.
     fs2::FileExt::unlock(&lock_file).ok();
-    Ok(())
+    Ok(drained)
 }
 
 fn process_marker(path: &Path, db: &crate::db::Database) -> Result<()> {
@@ -180,15 +274,36 @@ fn process_marker(path: &Path, db: &crate::db::Database) -> Result<()> {
     Ok(())
 }
 
-/// On launch: if any marker is older than `stale_after_ms`, a previous run
-/// exited before draining it — spawn the runner to catch up. Returns how many
-/// stale markers were found (for a "caught up on N" notice).
-pub fn recover_stale(stale_after_ms: u64) -> usize {
-    let stale = count_stale_in(&pending_dir(), stale_after_ms, now_ms());
-    if stale > 0 {
-        let _ = spawn_runner_detached();
+/// What the startup recovery pass found, so the frontend can surface the right
+/// toast once it has mounted.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
+pub struct StartupReport {
+    /// Stale markers (> threshold) found before recovery ran.
+    pub recovered: usize,
+    /// The previous runner's last log line was an ERROR (incomplete drain).
+    pub last_run_failed: bool,
+    /// The spawn probe found bg processing unavailable on this host.
+    pub bg_unavailable: bool,
+    /// Absolute path to the runner log, for the failure toast.
+    pub log_path: String,
+}
+
+/// On launch: probe spawn capability (which doubles as the first drain), and if
+/// bg processing is unavailable drain pending markers inline so nothing is lost.
+/// Returns a report driving the recovery/failure toasts.
+pub fn startup_recover(db: &crate::db::Database, stale_after_ms: u64) -> StartupReport {
+    let recovered = count_stale_in(&pending_dir(), stale_after_ms, now_ms());
+    let last_run_failed = last_run_failed();
+    let healthy = probe_spawn_health();
+    if !healthy {
+        let _ = drain_inline(db);
     }
-    stale
+    StartupReport {
+        recovered,
+        last_run_failed,
+        bg_unavailable: !healthy,
+        log_path: log_file_path().to_string_lossy().into_owned(),
+    }
 }
 
 fn count_stale_in(dir: &Path, stale_after_ms: u64, now: u64) -> usize {
@@ -211,6 +326,37 @@ fn count_stale_in(dir: &Path, stale_after_ms: u64, now: u64) -> usize {
     stale
 }
 
+fn log_file_path() -> PathBuf {
+    config_dir().join("logs").join("post-session.log")
+}
+
+/// Cap on the runner log before it rolls to a numbered generation.
+const MAX_RUNNER_LOG_BYTES: u64 = 5 * 1024 * 1024;
+/// Generations retained beyond the active log (`.1`, `.2`, `.3`).
+const RUNNER_LOG_GENERATIONS: u32 = 3;
+
+fn gen_path(path: &Path, n: u32) -> PathBuf {
+    let mut s = path.as_os_str().to_owned();
+    s.push(format!(".{n}"));
+    PathBuf::from(s)
+}
+
+/// Roll `post-session.log` → `.1` → `.2` → `.3`, dropping the oldest, once the
+/// active file exceeds the cap. Best-effort: a failed rotation just keeps appending.
+fn rotate_runner_log(path: &Path) {
+    let Ok(meta) = fs::metadata(path) else {
+        return;
+    };
+    if meta.len() <= MAX_RUNNER_LOG_BYTES {
+        return;
+    }
+    let _ = fs::remove_file(gen_path(path, RUNNER_LOG_GENERATIONS));
+    for n in (1..RUNNER_LOG_GENERATIONS).rev() {
+        let _ = fs::rename(gen_path(path, n), gen_path(path, n + 1));
+    }
+    let _ = fs::rename(path, gen_path(path, 1));
+}
+
 /// Append-only runner log. The detached process has nulled stdio, so this is the
 /// only place its failures surface (the app tails it on next launch).
 fn log_line(msg: &str) {
@@ -218,14 +364,26 @@ fn log_line(msg: &str) {
     if fs::create_dir_all(&dir).is_err() {
         return;
     }
-    if let Ok(mut f) = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(dir.join("post-session.log"))
-    {
+    let path = dir.join("post-session.log");
+    rotate_runner_log(&path);
+    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&path) {
         use std::io::Write;
         let _ = writeln!(f, "{} {msg}", now_ms());
     }
+}
+
+/// True if the runner log's last non-empty line is an ERROR — a previous drain
+/// died mid-flight. Drives the "last snapshot failed" toast on next launch.
+fn last_run_failed() -> bool {
+    let Ok(content) = fs::read_to_string(log_file_path()) else {
+        return false;
+    };
+    content
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .map(|l| l.contains("ERROR"))
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -253,9 +411,44 @@ mod tests {
         let lock = dir.path().join("post-session.lock");
         write_marker_in(&pending, "a", "ws", "claude-code", "SessionEnd").unwrap();
         write_marker_in(&pending, "b", "ws", "claude-code", "app-close").unwrap();
-        drain(&pending, &lock, &|_| Ok(())).unwrap();
+        let n = drain(&pending, &lock, &|_| Ok(())).unwrap();
+        assert_eq!(n, 2);
         assert!(!pending.join("a.json").exists());
         assert!(!pending.join("b.json").exists());
+    }
+
+    #[test]
+    fn drain_count_excludes_failed_markers() {
+        let dir = tempfile::tempdir().unwrap();
+        let pending = dir.path().join("pending-mocs");
+        let lock = dir.path().join("post-session.lock");
+        write_marker_in(&pending, "ok", "ws", "cc", "SessionEnd").unwrap();
+        write_marker_in(&pending, "bad", "ws", "cc", "SessionEnd").unwrap();
+        let n = drain(&pending, &lock, &|p| {
+            if p.file_stem().and_then(|s| s.to_str()) == Some("bad") {
+                anyhow::bail!("boom");
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(n, 1);
+        // Failed marker survives for retry; succeeded one is gone.
+        assert!(pending.join("bad.json").exists());
+        assert!(!pending.join("ok.json").exists());
+    }
+
+    #[test]
+    fn claim_finalization_is_once_per_session() {
+        let sid = "claim-test-session-unique";
+        assert!(claim_finalization(sid));
+        assert!(!claim_finalization(sid));
+    }
+
+    #[test]
+    fn gen_path_appends_generation_suffix() {
+        let p = Path::new("/tmp/logs/post-session.log");
+        assert_eq!(gen_path(p, 1), Path::new("/tmp/logs/post-session.log.1"));
+        assert_eq!(gen_path(p, 3), Path::new("/tmp/logs/post-session.log.3"));
     }
 
     #[test]

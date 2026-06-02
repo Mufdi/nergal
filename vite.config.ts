@@ -26,6 +26,16 @@ export default defineConfig({
       "@tauri-apps/api/event",
     ],
   },
+  build: {
+    // Single bundle on purpose. Manual vendor chunking split React into a chunk
+    // that evaluated after a module needing it (createContext of undefined →
+    // React never mounts → "loading" forever) — a load-order bug invisible in
+    // `tauri dev`, which doesn't bundle. The bundle loads from disk in a desktop
+    // app, so its size is a non-issue; raise the warning past it rather than
+    // re-introducing fragile manual chunks. For real startup wins, lazy-load
+    // heavy views (codemirror) with dynamic import() — safe, unlike manualChunks.
+    chunkSizeWarningLimit: 2600,
+  },
   server: {
     port: 1420,
     strictPort: true,

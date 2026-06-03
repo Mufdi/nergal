@@ -79,3 +79,39 @@ The system SHALL watch the union of all sessions' pinned note paths with a debou
 
 - **WHEN** the user invokes the re-inject action for a changed note
 - **THEN** the system SHALL re-read the note and write a single labeled block into the session's live PTY
+
+### Requirement: Obsidian reading panel
+The system SHALL provide a read-only right-panel for reading vault notes inside Nergal. The panel SHALL be registered as a singleton right-panel view, openable from a TopBar icon and the keyboard shortcut Ctrl+Shift+Q, and its entry point SHALL be shown only when a vault is configured. The panel SHALL present (a) the active session's pinned notes and (b) a query-driven vault finder, and SHALL render a selected note's body through the existing markdown + wikilink pipeline. The panel SHALL be read-only: it SHALL NOT offer editing, a graph view, or a backlinks view; editing SHALL be delegated to the "Open in Obsidian" affordance. The panel SHALL share the session's `pinned_note_paths` with the pinning feature — it SHALL NOT introduce separate storage.
+
+#### Scenario: Open the panel and read a pinned note
+
+- **WHEN** the user opens the Obsidian panel for a session that has pinned notes
+- **THEN** the panel SHALL list those pinned notes
+- **AND** selecting one SHALL render its body via the markdown + wikilink pipeline
+- **AND** the body SHALL be loaded through a vault-read command guarded to paths under the configured vault root
+
+#### Scenario: Finder scope defaults to whole vault and toggles to the configured subdir
+
+- **WHEN** the user types a query in the panel's vault finder
+- **THEN** the search SHALL default to the whole vault
+- **AND** pressing Ctrl+D SHALL toggle the scope to the configured `search_subdir`
+- **AND** when no `search_subdir` is configured Ctrl+D SHALL be a no-op
+- **AND** this behavior SHALL match the existing vault search modal
+
+#### Scenario: Wikilink navigates within the panel
+
+- **WHEN** the user clicks a `[[wikilink]]` in a note rendered in the panel
+- **THEN** the system SHALL resolve the link to a vault note path and load that note in the panel
+- **AND** holding Ctrl or Cmd while clicking SHALL open the note in Obsidian instead
+- **AND** when the link cannot be resolved to an existing note the system SHALL fall back to opening Obsidian
+
+#### Scenario: Pinning from the panel feeds the injection set
+
+- **WHEN** the user pins a note from the panel's finder
+- **THEN** the note SHALL be added to the session's `pinned_note_paths`
+- **AND** subsequent spawns SHALL include it in the injected context (subject to the agent's injection tier)
+
+#### Scenario: Panel entry point hidden without a vault
+
+- **WHEN** no vault is configured for the active session
+- **THEN** the panel's TopBar entry point SHALL NOT be shown

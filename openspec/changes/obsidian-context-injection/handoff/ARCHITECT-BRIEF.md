@@ -2,7 +2,7 @@
 
 **Project mission**: Nergal is a Linux desktop wrapper for the Claude Code CLI (Tauri 2 + React 19). It runs AROUND the agent CLI in a real PTY, augmenting (not replacing) it via the hook pipeline + transcript watchers. This change adds the *active* half of the vault↔Nergal loop: the agent receives vault knowledge at spawn.
 
-**Status**: artifacts only (2026-06-01). No code written. Implementation deferred to a future session, split into Phase 1 (contract + schema + CC/Codex/OpenCode inject + pin UI) and Phase 2 (N2 hot reload).
+**Status**: artifacts only (2026-06-01; #P reading panel added 2026-06-02). No code written. Implementation deferred to a future session, split into Phase 1 (contract + schema + CC/Codex/OpenCode inject + pin UI), Phase 2 (N2 hot reload), and Phase 3 (#P Obsidian reading panel — read-only viewer reusing markdown+wikilinks, vault search, and the pinned-notes store; depends on Phase 1).
 
 ## Context
 
@@ -36,3 +36,10 @@
 
 - Re-verify OpenCode `--system` flag existence (one 2026 source claims it; CLI reference does not list it). If present, add an `AppendSystemPrompt` variant.
 - Confirm whether `pi` accepts a positional launch prompt; if yes, promote Pi from `Unsupported` to `PromptPreamble`.
+
+## Phase-3 anchors (#P panel — verified 2026-06-02)
+
+- Panel registry: `stores/rightPanel.ts` (`TabType` + `PANEL_CATEGORY_MAP` + `SINGLETON_TYPES`), `TopBar.tsx` `PANEL_BUTTONS` ~L104 (gate on `obsidianEnabledAtom`), `RightPanel.tsx` `viewPanelLabel` ~L375 + `ViewPanelContent` ~L390, `stores/shortcuts.ts` panel-toggle block ~L387 (Ctrl+Shift+Q free; Ctrl+Shift+U forbidden — Ubuntu Unicode entry).
+- Markdown + wikilinks (plugin G): `MarkdownView` reuses `useObsidianRemarkPlugin` + `obsidianUrlTransform` + `openObsidianHref` (`lib/markdown/obsidianMarkdown.ts`). Add an optional `onWikilinkNavigate` prop for in-panel nav.
+- Vault search reuse: `stores/search.ts` (`runSearchAtom`, `searchScopeAtom`), `stores/obsidian.ts` (`vaultSearchScopeAtom`, `obsidianConfigAtom.search_subdir`), `VaultSearchModal.tsx` for the exact Ctrl+D toggle pattern (`e.code === "KeyD"`).
+- New backend: `read_vault_note` + `resolve_vault_note` in `commands.rs` (do NOT reuse `read_file_content` — it is cwd-relative; vault walk lives in `search/mod.rs`).

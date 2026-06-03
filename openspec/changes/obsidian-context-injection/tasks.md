@@ -1,6 +1,6 @@
 # Tasks — obsidian-context-injection
 
-Status: **artifacts only** (2026-06-01). Implementation deferred to a future session. Phases let the future builder land Phase 1 as a verifiable slice before Phase 2.
+Status: **artifacts only** (2026-06-01; #P panel added 2026-06-02). Implementation deferred to a future session. Phases let the future builder land each as a verifiable slice: Phase 1 (contract + schema + inject + pin UI), Phase 2 (hot reload), Phase 3 (#P reading panel, depends on Phase 1).
 
 ## Phase 1 — Contract + schema + CC/Codex/OpenCode inject + pin UI
 
@@ -54,3 +54,32 @@ Status: **artifacts only** (2026-06-01). Implementation deferred to a future ses
 
 ### 2.3 Phase 2 gates
 - [ ] 2.3.1 Full gate suite + manual: edit a pinned note in Obsidian → toast → re-inject → confirm the live agent sees the update.
+
+## Phase 3 — #P Obsidian reading panel
+
+Depends on Phase 1 (`pinnedNotesMapAtom` + pin/unpin commands). Read-only viewer; reuses markdown+wikilinks, vault search, and the pinned-notes store.
+
+### 3.1 Vault-read commands (commands.rs)
+- [ ] 3.1.1 `read_vault_note(path: String) -> Result<String, String>`: canonicalize `path` + the configured `vault_root`; reject if `path` is not under `vault_root` (path-traversal guard); else `fs::read_to_string`. Do NOT reuse `read_file_content` (it is cwd-relative). Register in `lib.rs`.
+- [ ] 3.1.2 `resolve_vault_note(name: String) -> Result<Option<String>, String>`: first `.md` under `vault_root` whose filename stem matches `name` case-insensitively (vault-wide, not scoped to `search_subdir`); reuse the `search/mod.rs` walkdir. Register in `lib.rs`.
+- [ ] 3.1.3 Unit tests: read inside vault OK, read outside vault rejected, resolve hit/miss, case-insensitive match.
+
+### 3.2 Panel registry wiring
+- [ ] 3.2.1 `stores/rightPanel.ts`: add `"obsidian"` to `TabType`, `obsidian: "document"` to `PANEL_CATEGORY_MAP`, `"obsidian"` to `SINGLETON_TYPES`.
+- [ ] 3.2.2 `components/layout/TopBar.tsx`: `PANEL_BUTTONS` entry (label "Obsidian", shortcut "Ctrl+Shift+Q", a lucide icon); show it only when `obsidianEnabledAtom` is true (filter like the plan button).
+- [ ] 3.2.3 `components/layout/RightPanel.tsx`: `viewPanelLabel` → `obsidian: "Obsidian"`; `ViewPanelContent` case → `<ObsidianPanel />`. Do NOT add it to `PICKER_TYPES`.
+- [ ] 3.2.4 `stores/shortcuts.ts`: `open-obsidian-panel` = `ctrl+shift+q` → `togglePanel("obsidian", "Obsidian")`. (Ctrl+Shift+Q verified free; Ctrl+Shift+U forbidden — Ubuntu Unicode entry.)
+
+### 3.3 MarkdownView in-panel wikilink nav
+- [ ] 3.3.1 Add optional `onWikilinkNavigate?: (href: string) => void` to `MarkdownView`. In the `a` handler, for obsidian:// hrefs: if `onWikilinkNavigate` is set AND no Ctrl/Cmd modifier → call it; else → `openObsidianHref` (preserves current behavior for every other consumer).
+
+### 3.4 ObsidianPanel component (components/obsidian/ObsidianPanel.tsx)
+- [ ] 3.4.1 Local state `viewMode: "list" | "reading"` + `currentNotePath`.
+- [ ] 3.4.2 List view — Pinned section: `pinnedNotesMapAtom[activeSessionId]` rows (title = filename sans `.md`), click → reading view, `×` → `unpin_vault_note`. Empty → muted "No pinned notes".
+- [ ] 3.4.3 List view — Finder: reuse `searchScopeAtom={kind:"vault"}` + debounced `runSearchAtom`; local Ctrl+D (`e.code==="KeyD"`) toggles `vaultSearchScopeAtom` (whole ↔ configured `search_subdir`, no-op if unset); hit row click → reading view; "Pin to session" action → `pin_vault_note`. Empty query → "Type to search your vault" hint.
+- [ ] 3.4.4 Reading view: header (title · back · Open in Obsidian · pin/unpin) + `<MarkdownView content={body} onWikilinkNavigate={...} />`. Body via `read_vault_note`. `onWikilinkNavigate`: URL-parse `file` from the `obsidian://open?...&file=…` href → `resolve_vault_note(name)` → path → `read_vault_note` → load; `None` → `openObsidianHref` fallback.
+- [ ] 3.4.5 Disabled state: when `vault_root` is null, show "Configure a vault in Settings → Obsidian" (panel button is already gated, but guard the body too).
+
+### 3.5 Phase 3 gates
+- [ ] 3.5.1 `cargo clippy -- -D warnings && cargo test && cargo fmt --check && npx tsc --noEmit && pnpm build`.
+- [ ] 3.5.2 Manual: Ctrl+Shift+Q opens the panel → pinned notes render → click loads body with wikilinks → wikilink click navigates in-panel, Ctrl+click opens Obsidian → finder defaults to whole vault, Ctrl+D scopes to subdir → pin from finder appears in the session chip and the injected context.

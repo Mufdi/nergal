@@ -17,7 +17,7 @@ import { activeSessionIdAtom } from "@/stores/workspace";
 import { planReviewStatusMapAtom, planStateMapAtom } from "@/stores/plan";
 import { toggleSidebarAtom, toggleRightPanelAtom, focusZoneAtom } from "@/stores/shortcuts";
 
-import { layoutPresetAtom, PRESET_SIZES, sessionLayoutPresetAtom, type LayoutPreset } from "@/stores/layout";
+import { layoutPresetAtom, PRESET_SIZES, sessionLayoutPresetAtom, terminalFullscreenToggleAtom, type LayoutPreset } from "@/stores/layout";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { CommandPalette } from "@/components/command/CommandPalette";
 import { ShipDialog } from "@/components/git/ShipDialog";
@@ -296,6 +296,35 @@ export function Workspace() {
   useEffect(() => {
     if (rightToggle > 0) handleToggleRight();
   }, [rightToggle]);
+
+  const fullscreenToggle = useAtomValue(terminalFullscreenToggleAtom);
+  const fullscreenRestoreRef = useRef<{ sidebar: boolean; right: boolean } | null>(null);
+
+  // Session switches re-apply per-session layout, so a stale restore
+  // snapshot from another session must not win afterwards.
+  useEffect(() => {
+    fullscreenRestoreRef.current = null;
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    if (fullscreenToggle === 0) return;
+    const sidebar = sidebarPanelRef.current;
+    const right = rightPanelRef.current;
+    if (!sidebar || !right) return;
+    if (fullscreenRestoreRef.current === null) {
+      fullscreenRestoreRef.current = { sidebar: !sidebarCollapsed, right: !rightCollapsed };
+      setFocusZone("terminal");
+      requestAnimationFrame(() => terminalService.focusActive());
+      if (!sidebarCollapsed) sidebar.collapse();
+      if (!rightCollapsed) right.collapse();
+    } else {
+      const prev = fullscreenRestoreRef.current;
+      fullscreenRestoreRef.current = null;
+      if (prev.sidebar) sidebar.expand();
+      if (prev.right) right.expand();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fullscreenToggle]);
 
   function handleToggleSidebar() {
     const panel = sidebarPanelRef.current;

@@ -508,6 +508,21 @@ pub fn untracked_files(cwd: &Path) -> Result<Vec<String>> {
         .collect())
 }
 
+/// Rename the current branch in place. Local-only by design: the remote
+/// branch (and any open PR) keeps its name; the next push re-links via -u.
+pub fn rename_current_branch(cwd: &Path, new_name: &str) -> Result<()> {
+    let output = Command::new("git")
+        .args(["branch", "-m", "--", new_name])
+        .current_dir(cwd)
+        .output()
+        .context("failed to execute git branch -m")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git branch -m failed: {stderr}");
+    }
+    Ok(())
+}
+
 /// Stage a single file.
 pub fn stage_file(cwd: &Path, path: &str) -> Result<()> {
     let output = Command::new("git")

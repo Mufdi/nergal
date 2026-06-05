@@ -16,7 +16,7 @@ import {
   currentSpecArtifactAtom,
   type Tab,
 } from "./rightPanel";
-import { layoutPresetAtom, sessionLayoutPresetAtom, applyPresetSignalAtom, type LayoutPreset } from "./layout";
+import { layoutPresetAtom, sessionLayoutPresetAtom, applyPresetSignalAtom, terminalFullscreenToggleAtom, type LayoutPreset } from "./layout";
 import { activityDrawerOpenAtom } from "./activity";
 import { activeConflictedFilesAtom, refreshGitInfoAtom } from "./git";
 import { conflictsZenOpenAtom, selectedConflictFileMapAtom } from "./conflict";
@@ -617,6 +617,9 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     const next = presets[(idx + 1) % presets.length];
     s.set(sessionLayoutPresetAtom, next);
     s.set(applyPresetSignalAtom, (p: number) => p + 1);
+  }},
+  { id: "fullscreen-terminal", label: "Fullscreen Terminal", keys: "ctrl+enter", category: "navigation", keywords: ["fullscreen", "terminal", "maximize", "zen", "collapse"], handler: () => {
+    store().set(terminalFullscreenToggleAtom, (p: number) => p + 1);
   }},
 
   // -- Action --

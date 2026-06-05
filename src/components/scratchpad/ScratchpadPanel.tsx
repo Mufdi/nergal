@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { FloatingPanel } from "@/components/floating/FloatingPanel";
 import * as terminalService from "@/components/terminal/terminalService";
@@ -33,6 +33,7 @@ export function ScratchpadPanel() {
   const setFocusSignal = useSetAtom(scratchpadFocusSignalAtom);
   const setFocusZone = useSetAtom(focusZoneAtom);
   const lastOpenRef = useRef(false);
+  const [focused, setFocused] = useState(false);
 
   // One-shot bootstrap: load tabs + geometry + subscribe watcher events.
   // Idempotent so HMR doesn't double-register.
@@ -93,6 +94,7 @@ export function ScratchpadPanel() {
       }}
       opacity={opacity}
       zIndex={55}
+      accent={focused}
       title={
         <>
           <span className="font-medium">Scratchpad</span>
@@ -100,7 +102,13 @@ export function ScratchpadPanel() {
         </>
       }
     >
-      <div className="flex h-full flex-col">
+      <div
+        className="flex h-full flex-col"
+        onFocusCapture={() => setFocused(true)}
+        onBlurCapture={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) setFocused(false);
+        }}
+      >
         <ScratchpadTabBar />
         <div className="flex-1 min-h-0">
           {activeTabId ? (

@@ -11,6 +11,15 @@ export const activeSessionTasksAtom = atom<Task[]>((get) => {
   return map[id] ?? [];
 });
 
+export const removeTaskAtom = atom(null, (get, set, taskId: string) => {
+  const id = get(activeSessionIdAtom);
+  if (!id) return;
+  set(taskMapAtom, (prev) => {
+    const tasks = prev[id] ?? [];
+    return { ...prev, [id]: tasks.filter((t) => t.id !== taskId) };
+  });
+});
+
 export const clearCompletedTasksAtom = atom(null, (get, set) => {
   const id = get(activeSessionIdAtom);
   if (!id) return;

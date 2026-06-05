@@ -2035,6 +2035,21 @@ pub fn get_git_status(
 }
 
 #[tauri::command]
+pub fn git_rename_branch(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    new_name: String,
+) -> Result<(), String> {
+    let trimmed = new_name.trim();
+    if trimmed.is_empty() {
+        return Err("branch name is empty".into());
+    }
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cwd = resolve_session_cwd(&db, &session_id)?;
+    crate::worktree::rename_current_branch(&cwd, trimmed).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn git_stage_file(
     db: State<'_, SharedDb>,
     session_id: String,

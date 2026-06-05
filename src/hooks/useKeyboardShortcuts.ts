@@ -179,7 +179,14 @@ export function useKeyboardShortcuts() {
       }
 
       // Let CodeMirror handle Ctrl+S when editor is focused
-      const inEditor = (e.target as HTMLElement)?.closest(".cm-editor") != null;
+      const target = e.target as HTMLElement | null;
+      const inEditor = target?.closest(".cm-editor") != null;
+      // Ctrl+Enter is a submit gesture in non-terminal text fields (stash
+      // message, commit message, PR comment) — those scoped handlers win.
+      const inNonTerminalField =
+        (target?.tagName === "INPUT" || target?.tagName === "TEXTAREA"
+          || inEditor || target?.getAttribute("contenteditable") === "true")
+        && !target?.closest("[data-focus-zone='terminal']");
 
       for (const action of registry) {
         const parsed = parseKeys(action.keys);
@@ -191,6 +198,7 @@ export function useKeyboardShortcuts() {
           e.code === parsed.code
         ) {
           if (inEditor && action.id === "save-file") return;
+          if (inNonTerminalField && action.id === "fullscreen-terminal") return;
           e.preventDefault();
           e.stopPropagation();
           action.handler();

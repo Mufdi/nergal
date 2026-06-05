@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { activeSessionTasksAtom, clearCompletedTasksAtom, taskMapAtom } from "@/stores/tasks";
+import { activeSessionTasksAtom, clearCompletedTasksAtom, removeTaskAtom, taskMapAtom } from "@/stores/tasks";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { invoke } from "@/lib/tauri";
 import type { Task } from "@/lib/types";
@@ -22,6 +22,7 @@ const STATUS_COLOR: Record<string, string> = {
 export function TasksIsland() {
   const tasks = useAtomValue(activeSessionTasksAtom);
   const clearCompleted = useSetAtom(clearCompletedTasksAtom);
+  const removeTask = useSetAtom(removeTaskAtom);
   const setTaskMap = useSetAtom(taskMapAtom);
   const sessionId = useAtomValue(activeSessionIdAtom);
   const taskMap = useAtomValue(taskMapAtom);
@@ -84,9 +85,12 @@ export function TasksIsland() {
             const Icon = STATUS_ICON[task.status] ?? Circle;
             const color = STATUS_COLOR[task.status] ?? "text-muted-foreground";
             return (
+              // data-nav-item opts the row into the sidebar's hover/selected
+              // "d" shortcut, which clicks the aria-label="Delete" action.
               <div
                 key={task.id}
-                className="flex items-center gap-2 rounded px-2 py-1 hover:bg-secondary/30"
+                data-nav-item
+                className="group flex items-center gap-2 rounded px-2 py-1 hover:bg-secondary/30"
               >
                 <Icon className={`size-3 flex-shrink-0 ${color} ${task.status === "in_progress" ? "animate-spin" : ""}`} />
                 <TooltipProvider delay={0}>
@@ -94,7 +98,7 @@ export function TasksIsland() {
                     <TooltipTrigger
                       render={
                         <span
-                          className={`truncate text-xs ${task.status === "completed" ? "text-muted-foreground line-through" : "text-foreground"}`}
+                          className={`min-w-0 flex-1 truncate text-xs ${task.status === "completed" ? "text-muted-foreground line-through" : "text-foreground"}`}
                         />
                       }
                     >
@@ -105,6 +109,22 @@ export function TasksIsland() {
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Delete"
+                  onClick={(e) => { e.stopPropagation(); removeTask(task.id); }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      removeTask(task.id);
+                    }
+                  }}
+                  className="hidden size-4 shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:bg-secondary hover:text-foreground transition-colors group-hover:flex"
+                >
+                  <Trash2 className="size-2.5" />
+                </span>
               </div>
             );
           })}

@@ -32,6 +32,7 @@ import {
   CircleDashed,
   Loader2,
   Maximize2,
+  Pencil,
 } from "lucide-react";
 import { Kbd } from "@/components/ui/kbd";
 import { sessionToWorkspaceMapAtom } from "@/stores/workspace";
@@ -78,6 +79,8 @@ export function GitPanel({ sessionId }: GitPanelProps) {
   const setPrInfoMap = useSetAtom(prInfoMapAtom);
   const pendingMergeMap = useAtomValue(pendingMergeMapAtom);
   const setPendingMergeMap = useSetAtom(pendingMergeMapAtom);
+  const [renamingBranch, setRenamingBranch] = useState(false);
+  const [branchInput, setBranchInput] = useState("");
 
   const workspaceId: string | null = sessionToWorkspace[sessionId] ?? null;
   const chipMode: ChipMode = chipModeMap[sessionId] ?? "files";
@@ -270,13 +273,58 @@ export function GitPanel({ sessionId }: GitPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conflictedFiles]);
 
+  async function submitRenameBranch() {
+    const name = branchInput.trim();
+    setRenamingBranch(false);
+    if (!name || name === branch) return;
+    try {
+      await invoke("git_rename_branch", { sessionId, newName: name });
+      setGitHeaderMap((prev) => {
+        const entry = prev[sessionId];
+        return entry ? { ...prev, [sessionId]: { ...entry, branch: name } } : prev;
+      });
+      addToast({ message: "Branch renamed", description: name, type: "success" });
+      refreshGit(sessionId);
+    } catch (err) {
+      addToast({ message: "Rename failed", description: String(err), type: "error" });
+    }
+  }
+
   return (
     <div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-border/50 px-3 py-1.5">
+      <div className="group flex shrink-0 items-center gap-2 border-b border-border/50 px-3 py-1.5">
         <GitBranch size={12} className="text-muted-foreground" />
-        <span className="text-[11px] font-medium text-foreground/80 font-mono truncate">
-          {branch || <span className="text-muted-foreground/40">…</span>}
-        </span>
+        {renamingBranch ? (
+          <input
+            type="text"
+            value={branchInput}
+            autoFocus
+            onChange={(e) => setBranchInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); void submitRenameBranch(); }
+              if (e.key === "Escape") { e.preventDefault(); setRenamingBranch(false); }
+            }}
+            onBlur={() => setRenamingBranch(false)}
+            className="h-5 min-w-0 flex-1 rounded border border-border/50 bg-background px-1.5 font-mono text-[11px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+          />
+        ) : (
+          <>
+            <span className="text-[11px] font-medium text-foreground/80 font-mono truncate">
+              {branch || <span className="text-muted-foreground/40">…</span>}
+            </span>
+            {branch && (
+              <button
+                type="button"
+                aria-label="Rename branch"
+                title="Rename branch (local only — remote and PR keep their name)"
+                onClick={() => { setBranchInput(branch); setRenamingBranch(true); }}
+                className="hidden size-4 shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:bg-secondary hover:text-foreground transition-colors group-hover:flex"
+              >
+                <Pencil size={9} />
+              </button>
+            )}
+          </>
+        )}
         {ahead > 0 && <span className="text-[10px] text-green-400">+{ahead} ahead</span>}
         {prInfo && (
           <>

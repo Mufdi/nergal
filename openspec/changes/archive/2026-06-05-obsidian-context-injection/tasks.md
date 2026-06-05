@@ -42,7 +42,7 @@ Status: **IMPLEMENTED** (2026-06-04, all 3 phases). Backend + frontend landed; f
 
 ### 1.8 Phase 1 gates
 - [x] 1.8.1 `cargo clippy -- -D warnings && cargo test && cargo fmt --check && npx tsc --noEmit && pnpm build`.
-- [ ] 1.8.2 Manual: pin → spawn CC → confirm context reaches the agent; resume → re-injected; Codex session → preamble in first turn; non-supported → honest tooltip.
+- [x] 1.8.2 Manual: pin → spawn CC → confirm context reaches the agent; resume → re-injected; Codex session → preamble in first turn; non-supported → honest tooltip.
 
 ## Phase 2 — N2 hot reload
 
@@ -55,7 +55,7 @@ Status: **IMPLEMENTED** (2026-06-04, all 3 phases). Backend + frontend landed; f
 - [x] 2.2.2 Frontend listener → Sileo toast with an explicit "Re-inject updated version" action (never auto).
 
 ### 2.3 Phase 2 gates
-- [ ] 2.3.1 Full gate suite (DONE) + manual: edit a pinned note in Obsidian → toast → re-inject → confirm the live agent sees the update.
+- [x] 2.3.1 Full gate suite (DONE) + manual: edit a pinned note in Obsidian → toast → re-inject → confirm the live agent sees the update.
 
 ## Phase 3 — #P Obsidian reading panel
 
@@ -84,4 +84,4 @@ Depends on Phase 1 (`pinnedNotesMapAtom` + pin/unpin commands). Read-only viewer
 
 ### 3.5 Phase 3 gates
 - [x] 3.5.1 `cargo clippy -- -D warnings && cargo test && cargo fmt --check && npx tsc --noEmit && pnpm build`.
-- [ ] 3.5.2 Manual: Ctrl+Shift+Q opens the panel → pinned notes render → click loads body with wikilinks → wikilink click navigates in-panel, Ctrl+click opens Obsidian → finder defaults to whole vault, Ctrl+D scopes to subdir → pin from finder appears in the session chip and the injected context.
+- [x] 3.5.2 Manual: Ctrl+Shift+Q opens the panel → pinned notes render → click loads body with wikilinks → wikilink click navigates in-panel, Ctrl+click opens Obsidian → finder defaults to whole vault, Ctrl+D scopes to subdir → pin from finder appears in the session chip and the injected context.

@@ -30,6 +30,7 @@ export interface Workspace {
   repo_path: string;
   sessions: Session[];
   created_at: number;
+  is_git: boolean;
 }
 
 // Core atoms
@@ -54,6 +55,12 @@ export const activeWorkspaceAtom = atom<Workspace | null>((get) => {
   if (!session) return null;
   const workspaces = get(workspacesAtom);
   return workspaces.find((w) => w.id === session.workspace_id) ?? null;
+});
+
+/// Defaults to true while no workspace is resolved yet, so git UI doesn't
+/// flash hidden during boot.
+export const activeWorkspaceIsGitAtom = atom<boolean>((get) => {
+  return get(activeWorkspaceAtom)?.is_git ?? true;
 });
 
 /// Reverse index sessionId → workspaceId. Lets callers (e.g. GitPanel) skip

@@ -147,6 +147,7 @@ const PANEL_BUTTONS: {
 export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps) {
   const sessionId = useAtomValue(activeSessionIdAtom);
   const workspace = useAtomValue(activeWorkspaceAtom);
+  const activeWorkspaceIsGit = workspace?.is_git ?? true;
   const workspaces = useAtomValue(workspacesAtom);
   const activeTab = useAtomValue(activeTabAtom);
   const tabs = useAtomValue(activeTabsAtom);
@@ -508,7 +509,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
         )}
 
         {/* Git session actions */}
-        {sessionId && (
+        {sessionId && activeWorkspaceIsGit && (
           <div className="flex items-center mr-1 gap-0.5 border-r border-border/30 pr-1.5">
             <Tooltip>
               <TooltipTrigger

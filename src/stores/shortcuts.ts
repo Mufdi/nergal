@@ -657,6 +657,10 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
       s.set(toastsAtom, { message: "Ship", description: "No active session", type: "info" });
       return;
     }
+    if (!(s.get(activeWorkspaceAtom)?.is_git ?? true)) {
+      s.set(toastsAtom, { message: "Ship", description: "Not a git workspace — use \"Init git\" in the Git panel first.", type: "info" });
+      return;
+    }
     // Pre-check before opening the modal: don't make the user open and
     // dismiss an empty Ship dialog when there's nothing to do. Open the
     // dialog only when there's actually something to ship (commits in

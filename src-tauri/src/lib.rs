@@ -353,6 +353,7 @@ pub fn run() {
             commands::detect_editors,
             commands::open_in_editor,
             commands::get_git_status,
+            commands::init_git_repo,
             commands::git_rename_branch,
             commands::git_stage_file,
             commands::git_unstage_file,

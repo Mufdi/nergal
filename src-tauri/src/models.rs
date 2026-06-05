@@ -73,7 +73,8 @@ fn default_agent_id_string() -> String {
     "claude-code".to_string()
 }
 
-/// A workspace tied to a git repository root.
+/// A workspace rooted at a directory — usually a git repo, but plain
+/// directories are first-class too (git features gate on `is_git`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Workspace {
     pub id: String,
@@ -81,4 +82,8 @@ pub struct Workspace {
     pub repo_path: PathBuf,
     pub sessions: Vec<Session>,
     pub created_at: u64,
+    /// Runtime property, never persisted: re-checked on load so an
+    /// "Init git" conversion needs no schema migration.
+    #[serde(default)]
+    pub is_git: bool,
 }

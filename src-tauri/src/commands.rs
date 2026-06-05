@@ -598,8 +598,8 @@ pub fn count_spec_annotations_by_prefix(
 #[tauri::command]
 pub fn create_workspace(db: State<'_, SharedDb>, repo_path: String) -> Result<Workspace, String> {
     let path = PathBuf::from(&repo_path);
-    if !crate::worktree::is_git_repo(&path) {
-        return Err("Not a git repository".into());
+    if !path.is_dir() {
+        return Err("Not a directory".into());
     }
 
     let db = db.lock().map_err(|e| e.to_string())?;
@@ -621,6 +621,7 @@ pub fn create_workspace(db: State<'_, SharedDb>, repo_path: String) -> Result<Wo
     Ok(Workspace {
         id,
         name,
+        is_git: crate::worktree::is_git_repo(&path),
         repo_path: path,
         sessions: Vec::new(),
         created_at: std::time::SystemTime::now()
@@ -630,9 +631,22 @@ pub fn create_workspace(db: State<'_, SharedDb>, repo_path: String) -> Result<Wo
     })
 }
 
+#[tauri::command]
+pub fn init_git_repo(db: State<'_, SharedDb>, workspace_id: String) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let repo_path = db
+        .workspace_repo_path(&workspace_id)
+        .map_err(|e| e.to_string())?
+        .ok_or("workspace not found")?;
+    if crate::worktree::is_git_repo(&repo_path) {
+        return Ok(());
+    }
+    crate::worktree::init_repo(&repo_path).map_err(|e| e.to_string())
+}
+
 /// Lets a deep-link open a file in a project that isn't a Nergal workspace yet:
-/// the git root is what create_workspace needs. None when the path is outside
-/// any git repo (create_workspace rejects non-git roots).
+/// the git root is the natural workspace root. None when the path is outside
+/// any git repo — deep links don't auto-create non-git workspaces.
 #[tauri::command]
 pub fn resolve_repo_root(path: String) -> Option<String> {
     let start = std::path::PathBuf::from(&path);
@@ -747,7 +761,11 @@ pub fn create_session(
         .unwrap_or_default()
         .as_secs();
 
-    let (worktree_path, worktree_branch) = if is_first {
+    // Non-git workspaces can't have worktrees — every session shares the
+    // workspace cwd (parallel sessions step on each other; the sidebar
+    // badge communicates the trade-off).
+    let (worktree_path, worktree_branch) = if is_first || !crate::worktree::is_git_repo(&repo_path)
+    {
         (None, None)
     } else {
         let normalized = strip_diacritics(&name);

@@ -253,10 +253,12 @@ impl Database {
                 .filter_map(|r| r.ok())
                 .collect();
 
+            let repo_path = PathBuf::from(repo_path);
             result.push(Workspace {
                 id,
                 name,
-                repo_path: PathBuf::from(repo_path),
+                is_git: crate::worktree::is_git_repo(&repo_path),
+                repo_path,
                 sessions,
                 created_at,
             });

@@ -8,6 +8,20 @@ pub fn is_git_repo(path: &Path) -> bool {
     path.join(".git").exists()
 }
 
+/// Initialize a fresh git repository ("Init git" on a non-git workspace).
+pub fn init_repo(path: &Path) -> Result<()> {
+    let output = Command::new("git")
+        .args(["init"])
+        .current_dir(path)
+        .output()
+        .context("failed to execute git init")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git init failed: {stderr}");
+    }
+    Ok(())
+}
+
 /// List local branch names in the repository.
 pub fn list_branches(repo_path: &Path) -> Result<Vec<String>> {
     let output = Command::new("git")
@@ -300,8 +314,9 @@ pub fn remove_worktree(repo_path: &Path, worktree_path: &Path) -> Result<()> {
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
 
     if worktree_path.exists() {
-        std::fs::remove_dir_all(worktree_path)
-            .with_context(|| format!("removing orphaned worktree dir {}", worktree_path.display()))?;
+        std::fs::remove_dir_all(worktree_path).with_context(|| {
+            format!("removing orphaned worktree dir {}", worktree_path.display())
+        })?;
     }
     let prune = Command::new("git")
         .args(["worktree", "prune"])

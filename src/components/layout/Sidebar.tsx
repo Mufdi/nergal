@@ -700,6 +700,20 @@ function WorkspacesView() {
               <span className="flex-1 truncate text-[11px] font-medium text-foreground/90">
                 {ws.name}
               </span>
+              {!ws.is_git && (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className="shrink-0 rounded bg-amber-500/15 px-1 py-0.5 text-[8px] font-medium uppercase tracking-wider text-amber-400" />
+                    }
+                  >
+                    non-git
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-56 text-[10px]">
+                    No git repo here: sessions share this directory (no worktrees) and Git/Ship/Merge are disabled. Use "Init git" in the Git panel to enable them.
+                  </TooltipContent>
+                </Tooltip>
+              )}
               <Tooltip>
                 <TooltipTrigger
                   render={

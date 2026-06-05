@@ -35,7 +35,7 @@ import {
   Pencil,
 } from "lucide-react";
 import { Kbd } from "@/components/ui/kbd";
-import { sessionToWorkspaceMapAtom } from "@/stores/workspace";
+import { sessionToWorkspaceMapAtom, workspacesAtom, type Workspace } from "@/stores/workspace";
 import { ChipStrip } from "./chips/ChipStrip";
 import { FilesChip } from "./chips/FilesChip";
 import { HistoryChip } from "./chips/HistoryChip";
@@ -84,6 +84,10 @@ export function GitPanel({ sessionId }: GitPanelProps) {
 
   const workspaceId: string | null = sessionToWorkspace[sessionId] ?? null;
   const chipMode: ChipMode = chipModeMap[sessionId] ?? "files";
+  const workspaces = useAtomValue(workspacesAtom);
+  const setWorkspaces = useSetAtom(workspacesAtom);
+  const workspaceIsGit = workspaces.find((w) => w.id === workspaceId)?.is_git ?? true;
+  const [initializingGit, setInitializingGit] = useState(false);
 
   /// All header + counts derive from caches: switching to a session that's
   /// been visited paints the panel instantly with the last-known values.
@@ -273,6 +277,22 @@ export function GitPanel({ sessionId }: GitPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conflictedFiles]);
 
+  async function handleInitGit() {
+    if (!workspaceId || initializingGit) return;
+    setInitializingGit(true);
+    try {
+      await invoke("init_git_repo", { workspaceId });
+      const fresh = await invoke<Workspace[]>("get_workspaces");
+      setWorkspaces(fresh);
+      addToast({ message: "Git initialized", description: "Git features are now enabled.", type: "success" });
+      refreshGit(sessionId);
+    } catch (err) {
+      addToast({ message: "git init failed", description: String(err), type: "error" });
+    } finally {
+      setInitializingGit(false);
+    }
+  }
+
   async function submitRenameBranch() {
     const name = branchInput.trim();
     setRenamingBranch(false);
@@ -288,6 +308,27 @@ export function GitPanel({ sessionId }: GitPanelProps) {
     } catch (err) {
       addToast({ message: "Rename failed", description: String(err), type: "error" });
     }
+  }
+
+  if (!workspaceIsGit) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="flex max-w-xs flex-col items-center gap-3 px-4 text-center">
+          <GitBranch size={24} className="text-muted-foreground/40" />
+          <span className="text-[11px] text-muted-foreground">
+            This workspace is not a git repository. Sessions share the directory and Git, Ship and Merge are disabled.
+          </span>
+          <button
+            onClick={() => void handleInitGit()}
+            disabled={initializingGit}
+            className="flex h-6 items-center gap-1.5 rounded bg-primary px-3 text-[11px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+          >
+            {initializingGit ? <Loader2 size={10} className="animate-spin" /> : <GitBranch size={10} />}
+            Init git
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (

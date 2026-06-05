@@ -2,7 +2,7 @@ import { atom } from "jotai";
 import { activeSessionIdAtom } from "./workspace";
 import { closedTabsStackAtom } from "./shortcuts";
 
-export type TabType = "plan" | "diff" | "spec" | "tasks" | "git" | "transcript" | "file" | "browser";
+export type TabType = "plan" | "diff" | "spec" | "tasks" | "git" | "transcript" | "file" | "browser" | "obsidian" | "obsidiannote";
 
 export type PanelCategory = "document" | "tool";
 
@@ -15,6 +15,8 @@ export const PANEL_CATEGORY_MAP: Record<TabType, PanelCategory> = {
   diff: "tool",
   tasks: "document",
   browser: "tool",
+  obsidian: "document",
+  obsidiannote: "document",
 };
 
 export interface Tab {
@@ -33,7 +35,7 @@ export interface TabState {
   previewTabId: string | null;
 }
 
-const SINGLETON_TYPES: TabType[] = ["tasks", "git", "browser"];
+const SINGLETON_TYPES: TabType[] = ["tasks", "git", "browser", "obsidian"];
 const defaultTabState: TabState = { tabs: [], activeTabId: null, previewTabId: null };
 
 export const expandRightPanelAtom = atom(0);
@@ -110,27 +112,29 @@ export const activeTabIdAtom = atom(
 
 export const openTabAction = atom(
   null,
-  (get, set, params: { tab: Omit<Tab, "pinned" | "dirty" | "category"> & { dirty?: boolean }; isPinned?: boolean }) => {
+  (get, set, params: { tab: Omit<Tab, "pinned" | "dirty" | "category"> & { dirty?: boolean }; isPinned?: boolean; activate?: boolean }) => {
     const sessionId = get(activeSessionIdAtom);
     if (!sessionId) return;
 
     const { tab: partial } = params;
+    const activate = params.activate ?? true;
 
     set(tabOpenedSignalAtom, (n) => n + 1);
     set(tabStateMapAtom, (prev) => {
       const state = prev[sessionId] ?? defaultTabState;
       const isSingleton = SINGLETON_TYPES.includes(partial.type);
+      const focused = (id: string) => (activate ? id : state.activeTabId);
 
       if (isSingleton) {
         const existing = state.tabs.find((t) => t.type === partial.type);
         if (existing) {
-          return { ...prev, [sessionId]: { ...state, activeTabId: existing.id } };
+          return { ...prev, [sessionId]: { ...state, activeTabId: focused(existing.id) } };
         }
       }
 
       const existingById = state.tabs.find((t) => t.id === partial.id);
       if (existingById) {
-        return { ...prev, [sessionId]: { ...state, activeTabId: existingById.id } };
+        return { ...prev, [sessionId]: { ...state, activeTabId: focused(existingById.id) } };
       }
 
       const newTab: Tab = {
@@ -144,7 +148,7 @@ export const openTabAction = atom(
       };
 
       const tabs = [...state.tabs, newTab];
-      return { ...prev, [sessionId]: { ...state, tabs, activeTabId: newTab.id } };
+      return { ...prev, [sessionId]: { ...state, tabs, activeTabId: focused(newTab.id) } };
     });
   },
 );

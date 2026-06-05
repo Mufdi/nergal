@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 
 use super::transcript::parse_transcript_line;
 use crate::agents::{
-    AdapterError, AgentAdapter, AgentCapabilities, AgentCapability, AgentId, DetectionResult,
-    EventSink, PlanCapability, SpawnContext, SpawnSpec, ThemePalette, TranscriptEvent, Transport,
-    write_atomic,
+    AdapterError, AgentAdapter, AgentCapabilities, AgentCapability, AgentId, ContextInjection,
+    DetectionResult, EventSink, PlanCapability, SpawnContext, SpawnSpec, ThemePalette,
+    TranscriptEvent, Transport, fold_prompt_preamble, write_atomic,
 };
 use crate::models::Session;
 
@@ -146,9 +146,21 @@ impl AgentAdapter for CodexAdapter {
                 args.push(id.to_string());
             }
         }
+        // Codex takes the prompt as a positional `[PROMPT]` arg, which the
+        // `resume` subcommand reinterprets as a session id — so the preamble
+        // only rides a fresh launch. Re-inject on resume falls to the next turn.
+        if ctx.resume_from.is_none()
+            && let Some(text) = fold_prompt_preamble(ctx.injected_context, ctx.initial_prompt)
+        {
+            args.push(text);
+        }
         let mut env = HashMap::new();
         env.insert("CLUIHUD_SESSION_ID".into(), ctx.session_id.to_string());
         Ok(SpawnSpec { binary, args, env })
+    }
+
+    fn context_injection(&self) -> ContextInjection {
+        ContextInjection::PromptPreamble
     }
 
     fn parse_transcript_line(&self, line: &str) -> Option<TranscriptEvent> {
@@ -234,6 +246,14 @@ pub use super::setup::run_codex_setup;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn context_injection_tier_is_prompt_preamble() {
+        assert_eq!(
+            CodexAdapter::new().context_injection(),
+            ContextInjection::PromptPreamble
+        );
+    }
 
     #[test]
     fn capabilities_match_codex_design() {
@@ -352,6 +372,7 @@ command = "/usr/bin/foo"
             cwd,
             resume_from: resume,
             initial_prompt: None,
+            injected_context: None,
         };
         if let Ok(spec) = a.spawn(&mk(None)) {
             assert!(spec.args.is_empty());

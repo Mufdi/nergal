@@ -328,11 +328,30 @@ pub async fn start_claude_session(
             .lock()
             .ok()
             .and_then(|mut m| m.remove(&session_id));
+        // Pinned vault notes seed the agent's context. Running here covers both
+        // fresh and resume spawns through the same path, so resume re-injection
+        // is automatic. The adapter's context_injection() tier decides folding.
+        let injected_context: Option<String> = db.lock().ok().and_then(|g| {
+            let session = g.find_session(&session_id).ok().flatten()?;
+            if session.pinned_note_paths.is_empty() {
+                return None;
+            }
+            let vault_root = crate::obsidian::config::resolve(&session.workspace_id, |w| {
+                g.get_obsidian_config(w)
+            })
+            .ok()
+            .and_then(|cfg| cfg.vault_root);
+            crate::obsidian::pinned_notes::assemble_context(
+                &session.pinned_note_paths,
+                vault_root.as_deref(),
+            )
+        });
         let spawn_ctx = crate::agents::SpawnContext {
             session_id: &session_id,
             cwd: &cwd_path,
             resume_from: resume_owned.as_deref(),
             initial_prompt: initial_prompt.as_deref(),
+            injected_context: injected_context.as_deref(),
         };
         let spec = adapter.spawn(&spawn_ctx).map_err(|e| e.to_string())?;
 
@@ -427,14 +446,9 @@ pub async fn start_claude_session(
 
 /// Write data to a session's PTY. Used for sending synthesized prompts
 /// from the sidebar ("/commit …", "/rename …", merge-conflict hints).
-#[tauri::command]
-pub fn write_to_session_pty(
-    state: State<'_, PtyManager>,
-    session_id: String,
-    data: String,
-) -> Result<(), String> {
+fn write_session_data(state: &PtyManager, session_id: &str, data: &str) -> Result<(), String> {
     let session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
-    let Some(pty_id) = session_ptys.get(&session_id) else {
+    let Some(pty_id) = session_ptys.get(session_id) else {
         return Err("no PTY for session".into());
     };
     let pty_id = pty_id.clone();
@@ -448,6 +462,71 @@ pub fn write_to_session_pty(
     w.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
     w.flush().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn write_to_session_pty(
+    state: State<'_, PtyManager>,
+    session_id: String,
+    data: String,
+) -> Result<(), String> {
+    write_session_data(&state, &session_id, &data)
+}
+
+/// Drop terminal control bytes (ESC-introduced sequences + raw C0/C1 controls,
+/// keeping `\n`/`\t`) before injecting a file body into the PTY, so a crafted
+/// note can't drive the agent's terminal via escape codes.
+fn sanitize_for_pty(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\x1b' => {
+                // Skip a CSI/OSC-style sequence's parameter+intermediate bytes
+                // up to and including its final byte (best-effort).
+                for n in chars.by_ref() {
+                    if ('\x40'..='\x7e').contains(&n) {
+                        break;
+                    }
+                }
+            }
+            '\n' | '\t' => out.push(c),
+            '\x00'..='\x1f' | '\x7f' => {}
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Re-read a pinned note and inject its current body into the live PTY as a
+/// labeled block (N2 hot reload). Triggered only by the explicit toast action,
+/// never automatically — a running agent shouldn't be surprised mid-turn.
+/// Guards the path under the session's vault and strips terminal control bytes.
+#[tauri::command]
+pub fn reinject_pinned_note(
+    state: State<'_, PtyManager>,
+    db: State<'_, crate::db::SharedDb>,
+    session_id: String,
+    path: String,
+) -> Result<(), String> {
+    let vault_root = db
+        .lock()
+        .ok()
+        .and_then(|g| crate::commands::vault_root_for_session(&g, &session_id));
+    match vault_root {
+        Some(root) if crate::obsidian::pinned_notes::is_within_vault(&root, &path) => {}
+        _ => return Err("note is outside the configured vault".to_string()),
+    }
+    let body = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let name = std::path::Path::new(&path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.clone());
+    let block = format!(
+        "\n> Pinned vault note [[{name}]] (context):\n{}\n",
+        sanitize_for_pty(body.trim_end())
+    );
+    write_session_data(&state, &session_id, &block)
 }
 
 /// Stash a prompt to submit when the session's PTY spawns. The deep-link
@@ -483,6 +562,10 @@ pub fn kill_session_pty(state: State<'_, PtyManager>, session_id: String) -> Res
         let mut instances = state.instances.lock().map_err(|e| e.to_string())?;
         instances.remove(&id);
     }
+
+    // Drop the ephemeral system-prompt file written for AppendSystemPromptFile
+    // adapters; absent (non-CC, or no pins) → harmless no-op.
+    let _ = std::fs::remove_file(crate::agents::spawn_context_file(&session_id));
 
     Ok(())
 }

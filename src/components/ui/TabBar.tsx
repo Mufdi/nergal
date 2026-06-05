@@ -19,10 +19,14 @@ import {
   ScrollText,
   Globe,
   MoreHorizontal,
+  Pin,
   X,
 } from "lucide-react";
+import { ObsidianIcon } from "@/components/icons/ObsidianIcon";
+import { activeSessionPinnedNotesAtom } from "@/stores/pinnedNotes";
+import type { ComponentType } from "react";
 
-const TAB_ICONS: Record<TabType, typeof FileText> = {
+const TAB_ICONS: Record<TabType, ComponentType<{ size?: number | string; className?: string }>> = {
   plan: FileText,
   file: FileCode,
   diff: GitCompareArrows,
@@ -31,12 +35,18 @@ const TAB_ICONS: Record<TabType, typeof FileText> = {
   git: GitBranch,
   transcript: ScrollText,
   browser: Globe,
+  obsidian: ObsidianIcon,
+  obsidiannote: ObsidianIcon,
 };
 
 export function TabBar() {
   const tabs = useAtomValue(activeTabsAtom);
   const activeTab = useAtomValue(activeTabAtom);
+  const pinnedPaths = useAtomValue(activeSessionPinnedNotesAtom);
   const setActiveTabId = useSetAtom(activeTabIdAtom);
+
+  const isContextPinned = (tab: Tab) =>
+    tab.type === "obsidiannote" && pinnedPaths.includes(tab.data?.path as string);
   const closeTab = useSetAtom(closeTabAction);
   const reorderTabs = useSetAtom(reorderTabsAction);
 
@@ -108,6 +118,7 @@ export function TabBar() {
             key={tab.id}
             tab={tab}
             isActive={activeTab?.id === tab.id}
+            contextPinned={isContextPinned(tab)}
             dragOver={dragOverId === tab.id ? dropSideRef.current : null}
             onClick={() => setActiveTabId(tab.id)}
             onClose={() => closeTab(tab.id)}
@@ -167,6 +178,7 @@ export function TabBar() {
 function TabItem({
   tab,
   isActive,
+  contextPinned,
   dragOver,
   onClick,
   onClose,
@@ -177,6 +189,7 @@ function TabItem({
 }: {
   tab: Tab;
   isActive: boolean;
+  contextPinned: boolean;
   dragOver: "left" | "right" | null;
   onClick: () => void;
   onClose: () => void;
@@ -209,6 +222,9 @@ function TabItem({
     >
       <Icon size={12} className="shrink-0" />
       <span className="truncate">{tab.label}</span>
+      {contextPinned && (
+        <Pin size={10} className="shrink-0 text-primary" aria-label="Pinned as context" />
+      )}
       <div className="ml-auto shrink-0">
         {tab.dirty ? (
           <span className="block size-1 rounded-full bg-foreground" />

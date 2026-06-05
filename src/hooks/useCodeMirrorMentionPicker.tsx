@@ -4,7 +4,8 @@ import { Prec, type Extension } from "@codemirror/state";
 import { EditorView, keymap, type ViewUpdate } from "@codemirror/view";
 import { invoke } from "@/lib/tauri";
 import { obsidianEnabledAtom, vaultSearchScopeAtom, obsidianConfigAtom } from "@/stores/obsidian";
-import { activeWorkspaceAtom } from "@/stores/workspace";
+import { activeWorkspaceAtom, activeSessionIdAtom } from "@/stores/workspace";
+import { pinNoteAtom } from "@/stores/pinnedNotes";
 import type { SearchHit } from "@/stores/search";
 import { buildCitation, findActiveMention, type MentionToken } from "@/lib/mentionPicker";
 import { MentionPickerOverlay } from "@/components/floating/MentionPickerOverlay";
@@ -29,6 +30,10 @@ export function useCodeMirrorMentionPicker(): { extension: Extension; overlay: R
   const scopeMode = useAtomValue(vaultSearchScopeAtom);
   const setScopeMode = useSetAtom(vaultSearchScopeAtom);
   const cfg = useAtomValue(obsidianConfigAtom);
+  const activeSessionId = useAtomValue(activeSessionIdAtom);
+  const pinNote = useSetAtom(pinNoteAtom);
+  const sessionIdRef = useRef<string | null>(null);
+  sessionIdRef.current = activeSessionId;
 
   const [items, setItems] = useState<SearchHit[]>([]);
   const [open, setOpen] = useState(false);
@@ -79,6 +84,14 @@ export function useCodeMirrorMentionPicker(): { extension: Extension; overlay: R
     view.focus();
     close();
   }, [close]);
+
+  // Shift+Enter pins to the active session instead of citing inline.
+  const pinHit = useCallback((hit: SearchHit) => {
+    const sid = sessionIdRef.current;
+    if (sid) void pinNote({ sessionId: sid, path: hit.path });
+    viewRef.current?.focus();
+    close();
+  }, [close, pinNote]);
 
   const recompute = useCallback(
     (view: EditorView) => {
@@ -195,6 +208,16 @@ export function useCodeMirrorMentionPicker(): { extension: Extension; overlay: R
           },
         },
         {
+          key: "Shift-Enter",
+          run: () => {
+            if (!openRef.current) return false;
+            const hit = itemsRef.current[selectedRef.current];
+            if (!hit) return false;
+            pinHit(hit);
+            return true;
+          },
+        },
+        {
           key: "Enter",
           run: () => {
             if (!openRef.current) return false;
@@ -218,7 +241,7 @@ export function useCodeMirrorMentionPicker(): { extension: Extension; overlay: R
     );
 
     return [listener, navKeys];
-  }, [recompute, close, insertCitation, setScopeMode]);
+  }, [recompute, close, insertCitation, pinHit, setScopeMode]);
 
   const overlay =
     enabled && open ? (
@@ -237,8 +260,8 @@ export function useCodeMirrorMentionPicker(): { extension: Extension; overlay: R
         onHover={setSelectedIndex}
         hint={
           subdirAvailRef.current
-            ? `Ctrl+D: ${scopeMode === "subdir" ? subdirAvailRef.current : "whole vault"}`
-            : undefined
+            ? `Ctrl+D: ${scopeMode === "subdir" ? subdirAvailRef.current : "whole vault"} · Shift+Enter: pin`
+            : "Shift+Enter: pin to session"
         }
       />
     ) : null;

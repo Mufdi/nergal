@@ -278,6 +278,7 @@ pub fn run() {
         .manage(agent_state.clone())
         .manage(ScratchpadState::new(scratchpad_root.clone()))
         .manage(crate::obsidian::templates_watcher::TemplatesWatcherState::new())
+        .manage(crate::obsidian::pinned_notes_watcher::PinnedNotesWatcherState::new())
         .manage(PendingDeepLinks::default())
         .invoke_handler(tauri::generate_handler![
             // PTY commands
@@ -399,6 +400,13 @@ pub fn run() {
             commands::obsidian_create_project_note,
             commands::obsidian_watch_templates,
             commands::obsidian_quick_capture,
+            commands::pin_vault_note,
+            commands::unpin_vault_note,
+            commands::list_pinned_notes,
+            commands::get_context_injection_tier,
+            commands::read_vault_note,
+            commands::resolve_vault_note,
+            pty::reinject_pinned_note,
             commands::drain_pending_deeplinks,
             commands::search,
             pty::write_to_session_pty,
@@ -603,6 +611,23 @@ pub fn run() {
                     );
                 }
                 Err(e) => tracing::warn!("scratchpad watcher failed: {e}"),
+            }
+
+            // A crashed prior run may have left pinned-note bodies on disk.
+            crate::agents::clear_stale_spawn_context();
+
+            // Seed the pinned-notes hot-reload watcher from pins persisted
+            // across the last run, so re-launching restores the watch set.
+            {
+                let pin_state =
+                    app.state::<crate::obsidian::pinned_notes_watcher::PinnedNotesWatcherState>();
+                let db_state = app.state::<crate::db::SharedDb>();
+                let pins = db_state.lock().ok().and_then(|g| g.all_pinned_notes().ok());
+                if let Some(pins) = pins
+                    && let Err(e) = pin_state.rebuild(&pins, app_handle.clone())
+                {
+                    tracing::warn!("initial pinned-notes watcher seed failed: {e}");
+                }
             }
 
             // Surface the startup recovery outcome once the frontend has mounted

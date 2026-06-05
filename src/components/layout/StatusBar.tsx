@@ -3,6 +3,7 @@ import { useAtomValue, useSetAtom } from "jotai";
 import { activeSessionIdAtom, activeModeAtom, activeCwdAtom, activeAgentStatusAtom } from "@/stores/workspace";
 import { activeGitInfoAtom, refreshGitInfoAtom } from "@/stores/git";
 import { loadSessionFilesAtom } from "@/stores/files";
+import { loadPinnedNotesAtom } from "@/stores/pinnedNotes";
 import { activitySummaryAtom, activityDrawerOpenAtom } from "@/stores/activity";
 import { activeAgentMetadataAtom } from "@/stores/agent";
 import {
@@ -62,6 +63,7 @@ export function StatusBar() {
   const gitInfo = useAtomValue(activeGitInfoAtom);
   const refreshGit = useSetAtom(refreshGitInfoAtom);
   const loadFiles = useSetAtom(loadSessionFilesAtom);
+  const loadPinned = useSetAtom(loadPinnedNotesAtom);
   const cwd = useAtomValue(activeCwdAtom);
   const summary = useAtomValue(activitySummaryAtom);
   const setDrawerOpen = useSetAtom(activityDrawerOpenAtom);
@@ -73,6 +75,7 @@ export function StatusBar() {
     if (sessionId) {
       refreshGit(sessionId);
       loadFiles(sessionId);
+      loadPinned(sessionId);
     }
   }, [sessionId]);
 

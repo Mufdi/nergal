@@ -16,9 +16,9 @@ use dashmap::DashMap;
 
 use super::sse_client::{SessionIdMap, SseClient};
 use crate::agents::{
-    AdapterError, AgentAdapter, AgentCapabilities, AgentCapability, AgentId, DetectionResult,
-    EventSink, PlanCapability, SpawnContext, SpawnSpec, ThemePalette, TranscriptEvent, Transport,
-    write_atomic,
+    AdapterError, AgentAdapter, AgentCapabilities, AgentCapability, AgentId, ContextInjection,
+    DetectionResult, EventSink, PlanCapability, SpawnContext, SpawnSpec, ThemePalette,
+    TranscriptEvent, Transport, fold_prompt_preamble, write_atomic,
 };
 use crate::models::Session;
 
@@ -185,9 +185,23 @@ impl AgentAdapter for OpenCodeAdapter {
                 args.push(id.to_string());
             }
         }
+        // `--prompt` rides only a FRESH launch: it lands as the agent's first
+        // turn, so re-submitting it on resume injects a stray turn into the
+        // existing conversation (observed to hang the TUI). On resume the
+        // context already lives in history from the original spawn.
+        if ctx.resume_from.is_none()
+            && let Some(text) = fold_prompt_preamble(ctx.injected_context, ctx.initial_prompt)
+        {
+            args.push("--prompt".into());
+            args.push(text);
+        }
         let mut env = HashMap::new();
         env.insert("CLUIHUD_SESSION_ID".into(), ctx.session_id.to_string());
         Ok(SpawnSpec { binary, args, env })
+    }
+
+    fn context_injection(&self) -> ContextInjection {
+        ContextInjection::PromptPreamble
     }
 
     fn parse_transcript_line(&self, _line: &str) -> Option<TranscriptEvent> {
@@ -370,6 +384,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn context_injection_tier_is_prompt_preamble() {
+        assert_eq!(
+            OpenCodeAdapter::new().context_injection(),
+            ContextInjection::PromptPreamble
+        );
+    }
+
+    #[test]
     fn capabilities_match_terminal_plus_sse_flow() {
         let a = OpenCodeAdapter::new();
         let caps = a.capabilities().flags;
@@ -515,6 +537,7 @@ mod tests {
             cwd,
             resume_from: None,
             initial_prompt: None,
+            injected_context: None,
         };
         if let Ok(spec) = a.spawn(&ctx) {
             assert!(spec.args.iter().any(|a| a == "--port"));
@@ -532,6 +555,7 @@ mod tests {
             cwd,
             resume_from: resume,
             initial_prompt: None,
+            injected_context: None,
         };
         if let Ok(spec) = a.spawn(&mk(Some("continue"))) {
             assert!(spec.args.iter().any(|a| a == "--continue"));

@@ -8,7 +8,18 @@ import {
   type ObsidianTemplate,
 } from "./obsidianTemplates";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import { sileo } from "sileo";
 import { toastsAtom } from "./toast";
+
+export interface PinnedNoteChangedPayload {
+  session_id: string;
+  path: string;
+}
+
+function noteName(path: string): string {
+  const base = path.split("/").pop() ?? path;
+  return base.replace(/\.md$/i, "");
+}
 
 type Store = ReturnType<typeof getDefaultStore>;
 
@@ -41,6 +52,9 @@ export const obsidianConfigAtom = atom<ResolvedObsidianConfig | null>(null);
 
 // "subdir" is a no-op unless the active config has a non-empty search_subdir.
 export const vaultSearchScopeAtom = atom<"whole" | "subdir">("whole");
+
+/// Whether the vault-note finder overlay (Ctrl+Shift+Q / Ctrl+Shift+K) is open.
+export const obsidianFinderOpenAtom = atom(false);
 
 export const obsidianEnabledAtom = atom((get) => {
   const cfg = get(obsidianConfigAtom);
@@ -145,6 +159,33 @@ export async function setupObsidianListeners(store: Store): Promise<UnlistenFn[]
   unlisteners.push(
     await listen<ObsidianTemplate[]>("obsidian:templates-updated", (payload) => {
       store.set(obsidianTemplatesAtom, payload);
+    }),
+  );
+
+  // N2 hot reload: a pinned note changed on disk. Offer an explicit re-inject —
+  // never automatic, so a running agent isn't surprised mid-turn.
+  unlisteners.push(
+    await listen<PinnedNoteChangedPayload>("vault:pinned-note-changed", (payload) => {
+      sileo.action({
+        title: "Pinned note updated",
+        description: `${noteName(payload.path)} changed in Obsidian.`,
+        fill: "#171717",
+        button: {
+          title: "Re-inject updated version",
+          onClick: () => {
+            void invoke("reinject_pinned_note", {
+              sessionId: payload.session_id,
+              path: payload.path,
+            }).catch((err) => {
+              store.set(toastsAtom, {
+                message: "Re-inject failed",
+                description: String(err),
+                type: "error",
+              });
+            });
+          },
+        },
+      });
     }),
   );
 

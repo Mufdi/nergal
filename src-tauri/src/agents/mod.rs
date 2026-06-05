@@ -289,6 +289,92 @@ pub struct SpawnContext<'a> {
     /// marker, etc. The adapter interprets it.
     pub resume_from: Option<&'a str>,
     pub initial_prompt: Option<&'a str>,
+    /// Assembled pinned-note bodies to seed the session with vault context.
+    /// Folded into the launch command per [`AgentAdapter::context_injection`].
+    /// `None` (the default at every call site) leaves spawn byte-identical to
+    /// pre-injection behavior.
+    pub injected_context: Option<&'a str>,
+}
+
+/// How an adapter accepts a context block at spawn. The variant decides how
+/// [`SpawnContext::injected_context`] is folded into the launch command.
+/// Capability-based so each agent uses its best available channel — verified
+/// against 2026 CLI docs (see `design.md` research note), not a CC-only
+/// assumption.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContextInjection {
+    /// Ephemeral per-spawn system prompt via an arbitrary-path flag. The notes
+    /// are system context, isolated per session, auto-cleaned. (Claude Code:
+    /// `--append-system-prompt-file <path>`.) The gold standard.
+    AppendSystemPromptFile,
+    /// Per-invocation system-prompt append passed inline as a flag value. Same
+    /// system-context semantics as the file variant, but the body rides argv.
+    /// (Pi: `--append-system-prompt <text>`.)
+    AppendSystemPrompt,
+    /// Fold the block into the launch prompt as a labeled preamble. Delivered
+    /// at spawn non-interactively, but as the agent's first *turn*, not system
+    /// context. (Codex positional `PROMPT`; OpenCode `--prompt`.)
+    PromptPreamble,
+    /// No clean spawn-time channel (only fixed-path persistent project files).
+    /// Pin records but injection is skipped; the UI says so. No agent currently
+    /// lands here — kept for future adapters + the trait default.
+    Unsupported,
+}
+
+impl ContextInjection {
+    /// Stable wire string for the frontend, which uses the tier to phrase the
+    /// pin chip's honesty tooltip per session.
+    pub fn as_wire(&self) -> &'static str {
+        match self {
+            Self::AppendSystemPromptFile => "append_system_prompt_file",
+            Self::AppendSystemPrompt => "append_system_prompt",
+            Self::PromptPreamble => "prompt_preamble",
+            Self::Unsupported => "unsupported",
+        }
+    }
+}
+
+/// Path of the ephemeral per-session system-prompt file written by adapters
+/// that use [`ContextInjection::AppendSystemPromptFile`]. The PTY layer removes
+/// it on session teardown.
+pub fn spawn_context_dir() -> PathBuf {
+    let config_root = dirs::config_dir().unwrap_or_else(|| {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("/"))
+            .join(".config")
+    });
+    config_root.join("cluihud").join("spawn-context")
+}
+
+pub fn spawn_context_file(session_id: &str) -> PathBuf {
+    spawn_context_dir().join(format!("{session_id}.md"))
+}
+
+/// Delete any leftover spawn-context files from a previous run. Called once at
+/// startup, when no session is live, so a crash can't leak pinned-note bodies.
+pub fn clear_stale_spawn_context() {
+    if let Ok(dir) = std::fs::read_dir(spawn_context_dir()) {
+        for entry in dir.flatten() {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// Combine an already-labeled context block with the user's initial prompt into
+/// one launch-prompt string for [`ContextInjection::PromptPreamble`] adapters.
+/// Returns `None` when neither is present so callers can skip the arg entirely.
+pub fn fold_prompt_preamble(
+    injected_context: Option<&str>,
+    initial_prompt: Option<&str>,
+) -> Option<String> {
+    let ctx_block = injected_context.filter(|c| !c.is_empty());
+    let prompt = initial_prompt.filter(|p| !p.is_empty());
+    match (ctx_block, prompt) {
+        (Some(c), Some(p)) => Some(format!("{c}\n\n{p}")),
+        (Some(c), None) => Some(c.to_string()),
+        (None, Some(p)) => Some(p.to_string()),
+        (None, None) => None,
+    }
 }
 
 /// Spawn descriptor returned by an adapter; the runtime hands it to the PTY
@@ -443,6 +529,13 @@ pub trait AgentAdapter: Send + Sync {
 
     fn spawn(&self, ctx: &SpawnContext<'_>) -> Result<SpawnSpec, AdapterError>;
 
+    /// How this adapter folds [`SpawnContext::injected_context`] into the
+    /// launch command. Default `Unsupported` keeps untouched adapters safe —
+    /// they ignore the injected context and the UI declares it so.
+    fn context_injection(&self) -> ContextInjection {
+        ContextInjection::Unsupported
+    }
+
     /// Per-line transcript parsing. SHALL emit [`TranscriptEvent::Cost`] when
     /// the line carries usage; the runtime's [`SessionCostAggregator`] owns the
     /// running totals (raw_cost is per-line, totals are per-session).
@@ -517,6 +610,40 @@ pub trait AgentAdapter: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fold_prompt_preamble_combines_both() {
+        let out = fold_prompt_preamble(Some("# ctx\nbody"), Some("do the thing")).unwrap();
+        assert_eq!(out, "# ctx\nbody\n\ndo the thing");
+    }
+
+    #[test]
+    fn fold_prompt_preamble_context_only() {
+        assert_eq!(
+            fold_prompt_preamble(Some("# ctx"), None).as_deref(),
+            Some("# ctx")
+        );
+    }
+
+    #[test]
+    fn fold_prompt_preamble_prompt_only() {
+        assert_eq!(
+            fold_prompt_preamble(None, Some("hi")).as_deref(),
+            Some("hi")
+        );
+    }
+
+    #[test]
+    fn fold_prompt_preamble_empties_are_none() {
+        assert!(fold_prompt_preamble(None, None).is_none());
+        assert!(fold_prompt_preamble(Some(""), Some("")).is_none());
+    }
+
+    #[test]
+    fn spawn_context_file_is_under_cluihud_config() {
+        let p = spawn_context_file("sess-1");
+        assert!(p.ends_with("cluihud/spawn-context/sess-1.md"));
+    }
 
     #[test]
     fn agent_id_accepts_valid_inputs() {

@@ -18,6 +18,10 @@ export interface Session {
   /// Wire-form capability bitset emitted by the backend on session creation
   /// so the frontend can gate UI synchronously without a separate fetch.
   agent_capabilities?: string[];
+  /// Absolute vault-note paths pinned to this session (obsidian-context
+  /// -injection). Seeds the chip's initial count; runtime mutations live in
+  /// `pinnedNotesMapAtom`.
+  pinned_note_paths?: string[];
 }
 
 export interface Workspace {

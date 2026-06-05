@@ -27,8 +27,9 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 
 use crate::agents::{
-    AdapterError, AgentAdapter, AgentCapabilities, AgentCapability, AgentId, DetectionResult,
-    EventSink, PlanCapability, PlanDecision, SpawnContext, SpawnSpec, TranscriptEvent, Transport,
+    AdapterError, AgentAdapter, AgentCapabilities, AgentCapability, AgentId, ContextInjection,
+    DetectionResult, EventSink, PlanCapability, PlanDecision, SpawnContext, SpawnSpec,
+    TranscriptEvent, Transport,
 };
 use crate::models::Session;
 
@@ -170,6 +171,18 @@ impl AgentAdapter for ClaudeCodeAdapter {
                 args.push(id.to_string());
             }
         }
+        // Pinned-note context rides as an ephemeral system prompt, kept
+        // distinct from the user's first turn and isolated per session. Flag
+        // must precede the positional prompt below.
+        if let Some(context) = ctx.injected_context.filter(|c| !c.is_empty()) {
+            let path = crate::agents::spawn_context_file(ctx.session_id);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(AdapterError::Io)?;
+            }
+            std::fs::write(&path, context).map_err(AdapterError::Io)?;
+            args.push("--append-system-prompt-file".into());
+            args.push(path.display().to_string());
+        }
         // `claude [prompt]` starts an interactive session with the prompt
         // submitted — so a deep-link `session/new` prompt rides the launch
         // command instead of being typed in after the REPL is up. Resume modes
@@ -181,6 +194,10 @@ impl AgentAdapter for ClaudeCodeAdapter {
         let mut env = HashMap::new();
         env.insert("CLUIHUD_SESSION_ID".into(), ctx.session_id.to_string());
         Ok(SpawnSpec { binary, args, env })
+    }
+
+    fn context_injection(&self) -> ContextInjection {
+        ContextInjection::AppendSystemPromptFile
     }
 
     fn parse_transcript_line(&self, line: &str) -> Option<TranscriptEvent> {
@@ -314,6 +331,7 @@ mod tests {
             cwd,
             resume_from: None,
             initial_prompt: None,
+            injected_context: None,
         };
         // `claude` may not exist on this machine; if it doesn't, the spawn
         // returns Transport(NotFound). Either way, the session_id env wiring
@@ -335,6 +353,7 @@ mod tests {
             cwd,
             resume_from: resume,
             initial_prompt: None,
+            injected_context: None,
         };
         // None → no resume flag
         if let Ok(spec) = a.spawn(&mk(None)) {
@@ -366,6 +385,7 @@ mod tests {
             cwd,
             resume_from: None,
             initial_prompt: Some("implement auth"),
+            injected_context: None,
         };
         if let Ok(spec) = a.spawn(&ctx) {
             assert_eq!(spec.args, vec!["implement auth".to_string()]);
@@ -376,9 +396,58 @@ mod tests {
             cwd,
             resume_from: None,
             initial_prompt: Some(""),
+            injected_context: None,
         };
         if let Ok(spec) = a.spawn(&empty) {
             assert!(spec.args.is_empty());
+        }
+    }
+
+    #[test]
+    fn spawn_injects_context_as_append_system_prompt_file() {
+        let a = ClaudeCodeAdapter::new();
+        let cwd = Path::new("/tmp");
+        let ctx = SpawnContext {
+            session_id: "cc-inject-test",
+            cwd,
+            resume_from: None,
+            initial_prompt: None,
+            injected_context: Some("# Pinned vault context\n\nhello"),
+        };
+        if let Ok(spec) = a.spawn(&ctx) {
+            let path = crate::agents::spawn_context_file("cc-inject-test");
+            let path_str = path.display().to_string();
+            assert!(spec.args.iter().any(|x| x == "--append-system-prompt-file"));
+            assert!(spec.args.iter().any(|x| x == &path_str));
+            assert_eq!(
+                std::fs::read_to_string(&path).unwrap(),
+                "# Pinned vault context\n\nhello"
+            );
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+
+    #[test]
+    fn context_injection_tier_is_append_system_prompt_file() {
+        assert_eq!(
+            ClaudeCodeAdapter::new().context_injection(),
+            ContextInjection::AppendSystemPromptFile
+        );
+    }
+
+    #[test]
+    fn spawn_without_context_omits_append_flag() {
+        let a = ClaudeCodeAdapter::new();
+        let cwd = Path::new("/tmp");
+        let ctx = SpawnContext {
+            session_id: "cc-no-inject",
+            cwd,
+            resume_from: None,
+            initial_prompt: None,
+            injected_context: None,
+        };
+        if let Ok(spec) = a.spawn(&ctx) {
+            assert!(!spec.args.iter().any(|x| x == "--append-system-prompt-file"));
         }
     }
 

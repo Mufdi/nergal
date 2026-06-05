@@ -62,6 +62,11 @@ pub struct Session {
     /// separately.
     #[serde(default)]
     pub agent_capabilities: Vec<String>,
+    /// Absolute vault-note paths pinned to this session; their bodies seed the
+    /// agent's context at spawn + resume. Persisted as a JSON array column
+    /// (migration `010`).
+    #[serde(default)]
+    pub pinned_note_paths: Vec<String>,
 }
 
 fn default_agent_id_string() -> String {

@@ -19,18 +19,18 @@ pub struct SpawnContext<'a> {
 /// each agent uses its best available channel — verified against 2026 CLI docs
 /// (see research note below), not a CC-only assumption.
 pub enum ContextInjection {
-    /// Ephemeral per-spawn system prompt via an arbitrary-path flag. The notes
-    /// are system context, isolated per session, auto-cleaned. (Claude Code:
-    /// `--append-system-prompt-file <path>`.) The gold standard.
+    /// Ephemeral per-spawn system prompt via an arbitrary-path flag (file).
+    /// (Claude Code: `--append-system-prompt-file <path>`.) The gold standard.
     AppendSystemPromptFile,
-    /// Fold the block into the launch prompt as a labeled preamble. Delivered
-    /// at spawn non-interactively, but as the agent's first *turn*, not system
-    /// context. (Codex positional `PROMPT`; OpenCode `--prompt`.)
+    /// Per-invocation system-prompt append passed inline as a flag value — same
+    /// system-context semantics, body on argv. (Pi: `--append-system-prompt`.)
+    AppendSystemPrompt,
+    /// Fold the block into the launch prompt as a labeled preamble (agent's
+    /// first *turn*, not system context). (OpenCode `--prompt`; Codex positional
+    /// `PROMPT`, fresh launch only.)
     PromptPreamble,
-    /// No clean spawn-time channel (only fixed-path project files like
-    /// AGENTS.md / .pi/APPEND_SYSTEM.md, which are persistent + not per-session).
-    /// Pin records but injection is skipped; the UI says so. (Pi, pending a
-    /// per-invocation flag — its APPEND_SYSTEM.md is project-scoped.)
+    /// No clean spawn-time channel. Pin records but injection is skipped; the UI
+    /// says so. No agent currently lands here (kept for future adapters).
     Unsupported,
 }
 
@@ -44,12 +44,19 @@ trait AgentAdapter {
 
 - **Claude Code** → `AppendSystemPromptFile`: write the block to `~/.config/cluihud/spawn-context/<session_id>.md`, push `--append-system-prompt-file <path>`. System context, distinct from the user's first message, survives the whole session.
 - **Codex** → `PromptPreamble`: prepend the context (fenced + labeled) to the positional `PROMPT` arg. Codex also auto-reads `AGENTS.md`, but that is project-scoped/persistent — wrong for per-session pins.
-- **OpenCode** → `PromptPreamble`: fold into `--prompt`. (Re-verify whether the shipped CLI exposes a `--system` flag — one 2026 source claims it; the CLI reference does not list it. If it does, prefer a new `AppendSystemPrompt` variant for OpenCode.)
+- **OpenCode** → `PromptPreamble` via `--prompt`. Verified against the **shipped binary** 2026-06-04: `--prompt <text>` is a global flag (listed alongside `--port`/`--hostname`/`--continue`/`--session`), so it composes with cluihud's TUI spawn and re-injects on resume. (An earlier web-doc pass wrongly reported no `--prompt`; the installed CLI settled it.)
+- **Pi** → `AppendSystemPrompt` via `--append-system-prompt <text>`. Verified against the **shipped binary** 2026-06-04: a per-invocation inline system-prompt append (not the fixed-path `.pi/APPEND_SYSTEM.md`), so real system context, re-applied on resume. This is the only adapter on the inline-append tier; the body rides argv (within the 128KB single-arg limit, comfortably above the 64KB context cap).
 - **Pi** → `Unsupported` for now: its only system-prompt-append channels are fixed-path files (`.pi/APPEND_SYSTEM.md`, `AGENTS.md`) that are project-scoped and persistent, so they can't carry ephemeral per-session context cleanly. Revisit if Pi adds a per-invocation flag. (Verify Pi's launch-prompt arg in Phase 1 — if it takes a positional prompt, Pi can move to `PromptPreamble`.)
 
 ### Research note (2026 CLI capabilities)
 
-The "only CC can inject" premise was wrong. Findings: CC `--append-system-prompt[-file]`; Codex positional `PROMPT` + hierarchical `AGENTS.md` (Linux-Foundation cross-tool standard) + interactive injection; OpenCode `--prompt`/`--agent`/`AGENTS.md`; Pi `.pi/SYSTEM.md`/`APPEND_SYSTEM.md` + `AGENTS.md`. The real differentiator is **ephemeral per-invocation arbitrary-path** injection (CC only) vs. **fixed-path project files** (everyone, but persistent + not session-scoped) vs. **launch prompt** (Codex/OpenCode, delivered-but-as-user-turn). The contract captures this as 3 capability tiers instead of a CC binary.
+The "only CC can inject" premise was wrong, and so was a mid-implementation over-correction to "OpenCode/Pi Unsupported" — both were settled by probing the **installed binaries** 2026-06-04 (the authoritative source; web docs lagged the shipped CLIs). Verified per agent:
+- **CC** `--append-system-prompt-file <path>` → `AppendSystemPromptFile` (file, system context, the gold standard).
+- **Pi** `--append-system-prompt <text>` → `AppendSystemPrompt` (per-invocation inline system context; distinct from its fixed-path `.pi/APPEND_SYSTEM.md`).
+- **OpenCode** `--prompt <text>` (global flag) → `PromptPreamble` (launch prompt, composes with the TUI + resume flags).
+- **Codex** (not installed locally) bare-interactive positional `PROMPT` → `PromptPreamble` (fresh launch only — after `resume` the positional is a session id, so resume re-inject is skipped).
+
+The contract is **4 capability tiers**: `AppendSystemPromptFile` (CC), `AppendSystemPrompt` (Pi), `PromptPreamble` (OpenCode + Codex), `Unsupported` (no agent currently — default for future adapters). Net: every installed agent injects pinned context at spawn; the `Unsupported` honesty path is retained but unused.
 
 **Why not the AGENTS.md cross-tool standard for everyone?** It is project-scoped + persistent: it would pollute the user's repo, and sessions sharing a cwd (the first session of a workspace runs in the repo root, not a worktree) would clobber each other. Per-session ephemeral injection beats a shared persistent file. AGENTS.md stays the user's own concern.
 

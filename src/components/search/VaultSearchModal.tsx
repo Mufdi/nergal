@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { Search, FileText, Send, NotebookPen } from "lucide-react";
+import { Search, FileText, Send, NotebookPen, Pin } from "lucide-react";
 import {
   searchModalOpenAtom,
   searchQueryAtom,
@@ -15,6 +15,7 @@ import { vaultSearchScopeAtom, obsidianConfigAtom } from "@/stores/obsidian";
 import { focusZoneAtom } from "@/stores/shortcuts";
 import { toastsAtom } from "@/stores/toast";
 import { openInObsidian } from "@/lib/obsidian";
+import { pinNoteAtom } from "@/stores/pinnedNotes";
 import { invoke } from "@/lib/tauri";
 import * as terminalService from "@/components/terminal/terminalService";
 import {
@@ -48,6 +49,7 @@ export function VaultSearchModal() {
   const workspace = useAtomValue(activeWorkspaceAtom);
   const activeSessionId = useAtomValue(activeSessionIdAtom);
   const setToasts = useSetAtom(toastsAtom);
+  const pinNote = useSetAtom(pinNoteAtom);
   const scopeMode = useAtomValue(vaultSearchScopeAtom);
   const setScopeMode = useSetAtom(vaultSearchScopeAtom);
   const obsidianConfig = useAtomValue(obsidianConfigAtom);
@@ -127,6 +129,24 @@ export function VaultSearchModal() {
     }
   }
 
+  async function pinToSession(hit: SearchHit) {
+    if (!activeSessionId) {
+      setToasts({ message: "Pin to session", description: "No active session.", type: "info" });
+      return;
+    }
+    close();
+    try {
+      await pinNote({ sessionId: activeSessionId, path: hit.path });
+      setToasts({
+        message: "Pinned to session",
+        description: `${displayLabel(hit)} — injected at the next spawn/resume.`,
+        type: "success",
+      });
+    } catch (err) {
+      setToasts({ message: "Pin failed", description: String(err), type: "error" });
+    }
+  }
+
   async function citeInScratchpad(hit: SearchHit) {
     const tabId = appStore.get(scratchpadActiveTabIdAtom);
     if (!tabId) {
@@ -173,7 +193,8 @@ export function VaultSearchModal() {
         e.preventDefault();
         const hit = results[selectedIndex];
         if (!hit) return;
-        if (e.altKey) void citeInScratchpad(hit);
+        if (e.shiftKey) void pinToSession(hit);
+        else if (e.altKey) void citeInScratchpad(hit);
         else if (e.ctrlKey || e.metaKey) void sendToAgent(hit);
         else openHit(hit);
       }
@@ -240,7 +261,7 @@ export function VaultSearchModal() {
             <div className="flex flex-col items-center gap-1 py-6">
               <span className="text-xs text-muted-foreground">Type to search your vault</span>
               <span className="text-[10px] text-muted-foreground/60">
-                Enter: open · Ctrl+Enter: send to agent · Alt+Enter: cite
+                Enter: open · Ctrl+Enter: send · Alt+Enter: cite · Shift+Enter: pin
               </span>
             </div>
           )}
@@ -273,6 +294,9 @@ export function VaultSearchModal() {
                     isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"
                   }`}
                 >
+                  <ActionButton title="Pin to session (Shift+Enter)" onClick={() => void pinToSession(hit)}>
+                    <Pin className="size-3" />
+                  </ActionButton>
                   <ActionButton title="Send to agent (Ctrl+Enter)" onClick={() => void sendToAgent(hit)}>
                     <Send className="size-3" />
                   </ActionButton>

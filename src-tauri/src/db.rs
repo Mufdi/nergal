@@ -47,6 +47,24 @@ fn now_secs() -> u64 {
         .as_secs()
 }
 
+/// Parse the nullable `pinned_note_paths` JSON-array column into a `Vec`.
+/// NULL, empty, or malformed → empty vec (a corrupt column must not break
+/// session loading).
+fn parse_pinned_note_paths(raw: Option<String>) -> Vec<String> {
+    let Some(s) = raw.filter(|s| !s.trim().is_empty()) else {
+        return Vec::new();
+    };
+    match serde_json::from_str(&s) {
+        Ok(v) => v,
+        Err(e) => {
+            // A corrupt column drops this session from hot-reload silently
+            // otherwise; surface it so it's diagnosable.
+            tracing::warn!(error = %e, "malformed pinned_note_paths JSON; treating as empty");
+            Vec::new()
+        }
+    }
+}
+
 impl Database {
     /// Open (or create) the database at the standard config path.
     pub fn open() -> Result<Self> {
@@ -93,6 +111,7 @@ impl Database {
             include_str!("../migrations/007_agent_id.sql"),
             include_str!("../migrations/008_obsidian_config.sql"),
             include_str!("../migrations/009_obsidian_search_subdir.sql"),
+            include_str!("../migrations/010_pinned_notes.sql"),
         ];
 
         for (i, sql) in migrations.iter().enumerate() {
@@ -196,7 +215,7 @@ impl Database {
         )?;
         let mut sess_stmt = self
             .conn
-            .prepare("SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id FROM sessions WHERE workspace_id = ?1 ORDER BY created_at")?;
+            .prepare("SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, pinned_note_paths FROM sessions WHERE workspace_id = ?1 ORDER BY created_at")?;
 
         let workspaces = ws_stmt.query_map([], |row| {
             Ok((
@@ -228,6 +247,7 @@ impl Database {
                         agent_id: row.get(9)?,
                         agent_internal_session_id: row.get(10)?,
                         agent_capabilities: Vec::new(),
+                        pinned_note_paths: parse_pinned_note_paths(row.get(11)?),
                     })
                 })?
                 .filter_map(|r| r.ok())
@@ -288,7 +308,7 @@ impl Database {
 
     pub fn find_session(&self, id: &str) -> Result<Option<Session>> {
         let result = self.conn.query_row(
-            "SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id FROM sessions WHERE id = ?1",
+            "SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, pinned_note_paths FROM sessions WHERE id = ?1",
             [id],
             |row| Ok(Session {
                 id: row.get(0)?,
@@ -303,6 +323,7 @@ impl Database {
                 agent_id: row.get(9)?,
                 agent_internal_session_id: row.get(10)?,
                 agent_capabilities: Vec::new(),
+                pinned_note_paths: parse_pinned_note_paths(row.get(11)?),
             }),
         );
         match result {
@@ -387,6 +408,67 @@ impl Database {
         self.conn.execute(
             "UPDATE sessions SET worktree_path = NULL, worktree_branch = NULL, status = 'idle', updated_at = ?1 WHERE id = ?2",
             params![now_secs(), id],
+        )?;
+        Ok(())
+    }
+
+    // ── Pinned vault notes ──
+
+    pub fn get_pinned_notes(&self, session_id: &str) -> Result<Vec<String>> {
+        let raw: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT pinned_note_paths FROM sessions WHERE id = ?1",
+                [session_id],
+                |r| r.get(0),
+            )
+            .ok()
+            .flatten();
+        Ok(parse_pinned_note_paths(raw))
+    }
+
+    /// Append `path` to a session's pinned notes. Idempotent: an already-pinned
+    /// path is a no-op so order stays stable and the agent isn't re-fed dupes.
+    pub fn add_pinned_note(&self, session_id: &str, path: &str) -> Result<()> {
+        let mut paths = self.get_pinned_notes(session_id)?;
+        if paths.iter().any(|p| p == path) {
+            return Ok(());
+        }
+        paths.push(path.to_string());
+        self.write_pinned_notes(session_id, &paths)
+    }
+
+    pub fn remove_pinned_note(&self, session_id: &str, path: &str) -> Result<()> {
+        let mut paths = self.get_pinned_notes(session_id)?;
+        paths.retain(|p| p != path);
+        self.write_pinned_notes(session_id, &paths)
+    }
+
+    /// Every session that has at least one pinned note, with its paths. Feeds
+    /// the hot-reload watcher's union of watched files.
+    pub fn all_pinned_notes(&self) -> Result<Vec<(String, Vec<String>)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, pinned_note_paths FROM sessions \
+             WHERE pinned_note_paths IS NOT NULL AND pinned_note_paths != ''",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, parse_pinned_note_paths(r.get(1)?)))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (id, paths) = row?;
+            if !paths.is_empty() {
+                out.push((id, paths));
+            }
+        }
+        Ok(out)
+    }
+
+    fn write_pinned_notes(&self, session_id: &str, paths: &[String]) -> Result<()> {
+        let json = serde_json::to_string(paths).unwrap_or_else(|_| "[]".to_string());
+        self.conn.execute(
+            "UPDATE sessions SET pinned_note_paths = ?1, updated_at = ?2 WHERE id = ?3",
+            params![json, now_secs(), session_id],
         )?;
         Ok(())
     }
@@ -768,5 +850,80 @@ impl Database {
             [workspace_id],
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{Session, SessionStatus};
+
+    fn in_memory() -> Database {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        let db = Database { conn };
+        db.migrate().unwrap();
+        db
+    }
+
+    fn seed_session(db: &Database, sid: &str) {
+        db.create_workspace("ws1", "ws", "/tmp/repo").unwrap();
+        let s = Session {
+            id: sid.to_string(),
+            name: "s".into(),
+            workspace_id: "ws1".into(),
+            worktree_path: None,
+            worktree_branch: None,
+            merge_target: None,
+            status: SessionStatus::Idle,
+            created_at: 0,
+            updated_at: 0,
+            agent_id: "claude-code".into(),
+            agent_internal_session_id: None,
+            agent_capabilities: Vec::new(),
+            pinned_note_paths: Vec::new(),
+        };
+        db.create_session(&s).unwrap();
+    }
+
+    #[test]
+    fn parse_pinned_handles_null_and_garbage() {
+        assert!(parse_pinned_note_paths(None).is_empty());
+        assert!(parse_pinned_note_paths(Some("".into())).is_empty());
+        assert!(parse_pinned_note_paths(Some("not json".into())).is_empty());
+        assert_eq!(
+            parse_pinned_note_paths(Some(r#"["/a.md","/b.md"]"#.into())),
+            vec!["/a.md".to_string(), "/b.md".to_string()]
+        );
+    }
+
+    #[test]
+    fn pinned_notes_round_trip_with_dedup_and_order() {
+        let db = in_memory();
+        seed_session(&db, "sess");
+        assert!(db.get_pinned_notes("sess").unwrap().is_empty());
+
+        db.add_pinned_note("sess", "/vault/a.md").unwrap();
+        db.add_pinned_note("sess", "/vault/b.md").unwrap();
+        db.add_pinned_note("sess", "/vault/a.md").unwrap(); // dup → no-op
+        assert_eq!(
+            db.get_pinned_notes("sess").unwrap(),
+            vec!["/vault/a.md".to_string(), "/vault/b.md".to_string()]
+        );
+
+        db.remove_pinned_note("sess", "/vault/a.md").unwrap();
+        assert_eq!(
+            db.get_pinned_notes("sess").unwrap(),
+            vec!["/vault/b.md".to_string()]
+        );
+    }
+
+    #[test]
+    fn pinned_notes_survive_find_session() {
+        let db = in_memory();
+        seed_session(&db, "sess");
+        db.add_pinned_note("sess", "/vault/x.md").unwrap();
+        let loaded = db.find_session("sess").unwrap().unwrap();
+        assert_eq!(loaded.pinned_note_paths, vec!["/vault/x.md".to_string()]);
     }
 }

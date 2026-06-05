@@ -27,7 +27,7 @@ import { softCloseSessionAction, undoSessionCloseAction, hasPendingSessionCloseA
 import { invoke as invokeCmd } from "@/lib/tauri";
 import { scratchpadOpenAtom } from "./scratchpad";
 import { browserToggleModeAction } from "./browser";
-import { obsidianEnabledAtom } from "./obsidian";
+import { obsidianEnabledAtom, obsidianFinderOpenAtom } from "./obsidian";
 import { quickCaptureOpenAtom } from "./quickCapture";
 import { searchModalOpenAtom, searchScopeAtom } from "./search";
 import { openInObsidian } from "@/lib/obsidian";
@@ -390,10 +390,15 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   { id: "open-spec", label: "Open Spec Panel", keys: "ctrl+shift+s", category: "panel", keywords: ["spec", "openspec", "panel"], handler: () => togglePanel("spec", "Spec") },
   { id: "open-git", label: "Open Git Panel", keys: "ctrl+shift+g", category: "panel", keywords: ["git", "branch", "panel"], handler: () => togglePanel("git", "Git") },
   { id: "open-browser", label: "Open Browser Panel", keys: "ctrl+alt+b", category: "panel", keywords: ["browser", "preview", "web", "iframe", "localhost", "panel"], handler: () => togglePanel("browser", "Browser") },
+  { id: "open-obsidian-finder", label: "Find Vault Note", keys: "ctrl+shift+q", category: "panel", keywords: ["obsidian", "vault", "notes", "finder", "search"], handler: () => store().set(obsidianFinderOpenAtom, (prev: boolean) => !prev) },
   { id: "browser-focus-url", label: "Focus Browser URL Bar", keys: "ctrl+l", category: "panel", keywords: ["browser", "url", "focus", "address"], handler: () => {
     document.dispatchEvent(new CustomEvent("cluihud:browser-focus-url"));
   }},
   { id: "toggle-file-picker", label: "Toggle File Picker", keys: "ctrl+shift+k", category: "panel", keywords: ["file", "picker", "browse", "explorer"], handler: () => {
+    if (store().get(activeTabAtom)?.type === "obsidiannote") {
+      store().set(obsidianFinderOpenAtom, (prev: boolean) => !prev);
+      return;
+    }
     document.dispatchEvent(new CustomEvent("cluihud:toggle-file-picker"));
   }},
   { id: "toggle-activity", label: "Toggle Activity Drawer", keys: "ctrl+shift+l", category: "panel", keywords: ["activity", "log", "timeline", "drawer"], handler: () => store().set(activityDrawerOpenAtom, (prev: boolean) => !prev) },

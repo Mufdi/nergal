@@ -12,9 +12,9 @@ use super::jsonl_tail::{JsonlTailHandle, LineParser, start_tail};
 use super::session_resolver::{encode_cwd_to_pi_path, extract_pi_session_uuid, wait_for_jsonl};
 use super::transcript::parse_transcript_line;
 use crate::agents::{
-    AdapterError, AgentAdapter, AgentCapabilities, AgentCapability, AgentId, DetectionResult,
-    EventSink, PlanCapability, SpawnContext, SpawnSpec, ThemePalette, TranscriptEvent, Transport,
-    write_atomic,
+    AdapterError, AgentAdapter, AgentCapabilities, AgentCapability, AgentId, ContextInjection,
+    DetectionResult, EventSink, PlanCapability, SpawnContext, SpawnSpec, ThemePalette,
+    TranscriptEvent, Transport, write_atomic,
 };
 use crate::models::Session;
 
@@ -153,9 +153,20 @@ impl AgentAdapter for PiAdapter {
                 args.push(id.to_string());
             }
         }
+        // Pi exposes a per-invocation `--append-system-prompt <text>` (verified
+        // against the shipped CLI 2026-06-04) — real system context, not a user
+        // turn. Re-applied on resume since spawn runs the same path each time.
+        if let Some(context) = ctx.injected_context.filter(|c| !c.is_empty()) {
+            args.push("--append-system-prompt".into());
+            args.push(context.to_string());
+        }
         let mut env = HashMap::new();
         env.insert("CLUIHUD_SESSION_ID".into(), ctx.session_id.to_string());
         Ok(SpawnSpec { binary, args, env })
+    }
+
+    fn context_injection(&self) -> ContextInjection {
+        ContextInjection::AppendSystemPrompt
     }
 
     fn parse_transcript_line(&self, line: &str) -> Option<TranscriptEvent> {
@@ -341,6 +352,14 @@ fn build_pi_theme(palette: &ThemePalette) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn context_injection_tier_is_append_system_prompt() {
+        assert_eq!(
+            PiAdapter::new().context_injection(),
+            ContextInjection::AppendSystemPrompt
+        );
+    }
 
     #[test]
     fn capabilities_match_pi_design_constraints() {
@@ -532,6 +551,7 @@ mod tests {
             cwd,
             resume_from: resume,
             initial_prompt: None,
+            injected_context: None,
         };
         if let Ok(spec) = a.spawn(&mk(None)) {
             assert!(spec.args.is_empty());

@@ -790,6 +790,7 @@ pub fn create_session(
         agent_id: agent_id.as_str().to_string(),
         agent_internal_session_id: None,
         agent_capabilities,
+        pinned_note_paths: Vec::new(),
     };
 
     db.create_session(&session).map_err(|e| e.to_string())?;
@@ -3224,4 +3225,274 @@ pub async fn search(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+// ── Pinned vault notes (obsidian-context-injection #3/#H) ──
+
+/// Read the full pin union from the DB and rewatch it (N2 hot reload). Logged,
+/// never fatal — a watcher hiccup must not fail the pin/unpin itself.
+fn rebuild_pinned_watcher(
+    db: &SharedDb,
+    watcher: &crate::obsidian::pinned_notes_watcher::PinnedNotesWatcherState,
+    app: &AppHandle,
+) {
+    let pins = db.lock().ok().and_then(|g| g.all_pinned_notes().ok());
+    if let Some(pins) = pins
+        && let Err(e) = watcher.rebuild(&pins, app.clone())
+    {
+        tracing::warn!("pinned-notes watcher rebuild failed: {e}");
+    }
+}
+
+/// Resolve the vault_root configured for the workspace owning `session_id`.
+pub(crate) fn vault_root_for_session(
+    db: &crate::db::Database,
+    session_id: &str,
+) -> Option<PathBuf> {
+    let session = db.find_session(session_id).ok().flatten()?;
+    let cfg =
+        crate::obsidian::config::resolve(&session.workspace_id, |w| db.get_obsidian_config(w))
+            .ok()?;
+    cfg.vault_root
+        .filter(|v| !v.trim().is_empty())
+        .map(PathBuf::from)
+}
+
+/// Pin a vault note to a session; its body seeds the agent context on the next
+/// spawn/resume. Returns the updated pin list, rewatches the pin union for hot
+/// reload, and emits `vault:pins-changed`. Rejects paths outside the workspace
+/// vault — a pinned path is read at spawn, so the guard belongs at write time.
+#[tauri::command]
+pub fn pin_vault_note(
+    app: AppHandle,
+    db: State<'_, SharedDb>,
+    watcher: State<'_, crate::obsidian::pinned_notes_watcher::PinnedNotesWatcherState>,
+    session_id: String,
+    path: String,
+) -> Result<Vec<String>, String> {
+    let paths = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        if let Some(root) = vault_root_for_session(&db, &session_id)
+            && !crate::obsidian::pinned_notes::is_within_vault(&root, &path)
+        {
+            return Err("note is outside the configured vault".to_string());
+        }
+        db.add_pinned_note(&session_id, &path)
+            .map_err(|e| e.to_string())?;
+        db.get_pinned_notes(&session_id)
+            .map_err(|e| e.to_string())?
+    };
+    rebuild_pinned_watcher(&db, &watcher, &app);
+    Ok(paths)
+}
+
+#[tauri::command]
+pub fn unpin_vault_note(
+    app: AppHandle,
+    db: State<'_, SharedDb>,
+    watcher: State<'_, crate::obsidian::pinned_notes_watcher::PinnedNotesWatcherState>,
+    session_id: String,
+    path: String,
+) -> Result<Vec<String>, String> {
+    let paths = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        db.remove_pinned_note(&session_id, &path)
+            .map_err(|e| e.to_string())?;
+        db.get_pinned_notes(&session_id)
+            .map_err(|e| e.to_string())?
+    };
+    rebuild_pinned_watcher(&db, &watcher, &app);
+    Ok(paths)
+}
+
+#[tauri::command]
+pub fn list_pinned_notes(
+    db: State<'_, SharedDb>,
+    session_id: String,
+) -> Result<Vec<String>, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    db.get_pinned_notes(&session_id).map_err(|e| e.to_string())
+}
+
+/// Wire string of the active adapter's context-injection tier for a session
+/// (`append_system_prompt_file` | `prompt_preamble` | `unsupported`), so the
+/// pin chip can phrase an honest tooltip per agent.
+#[tauri::command]
+pub fn get_context_injection_tier(
+    agents: State<'_, AgentRuntimeState>,
+    db: State<'_, SharedDb>,
+    session_id: String,
+) -> Result<String, String> {
+    let agent_id = agents
+        .resolve(&session_id)
+        .or_else(|| {
+            db.lock()
+                .ok()
+                .and_then(|g| g.find_session(&session_id).ok().flatten())
+                .and_then(|s| AgentId::new(&s.agent_id).ok())
+        })
+        .unwrap_or_else(AgentId::claude_code);
+    let tier = agents
+        .registry
+        .get(&agent_id)
+        .map(|a| a.context_injection())
+        .unwrap_or(crate::agents::ContextInjection::Unsupported);
+    Ok(tier.as_wire().to_string())
+}
+
+// ── Vault note reading (#P Obsidian panel) ──
+
+fn resolve_vault_root(db: &SharedDb, workspace_id: &str) -> Result<PathBuf, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cfg = crate::obsidian::config::resolve(workspace_id, |w| db.get_obsidian_config(w))
+        .map_err(|e| e.to_string())?;
+    cfg.vault_root
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| "no vault configured".to_string())
+}
+
+/// Read a note body, rejecting any path that escapes `vault_root` after
+/// canonicalization (path-traversal guard). Pure core for `read_vault_note`.
+fn read_note_guarded(vault_root: &std::path::Path, path: &str) -> Result<String, String> {
+    let canon_root = std::fs::canonicalize(vault_root).map_err(|e| e.to_string())?;
+    let canon_path = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
+    if !canon_path.starts_with(&canon_root) {
+        return Err("note is outside the configured vault".to_string());
+    }
+    std::fs::read_to_string(&canon_path).map_err(|e| e.to_string())
+}
+
+/// Resolve a wikilink target to the first matching `.md` under `vault_root`:
+/// a vault-relative path match (when the name is path-qualified) else a
+/// case-insensitive filename-stem match. Pure core for `resolve_vault_note`.
+fn resolve_note_in_vault(vault_root: &std::path::Path, name: &str) -> Option<String> {
+    let cleaned = name.trim().trim_start_matches('/');
+    let cleaned = cleaned.strip_suffix(".md").unwrap_or(cleaned);
+    let want_path = cleaned.to_lowercase();
+    let want_stem = std::path::Path::new(cleaned)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_lowercase())
+        .unwrap_or_else(|| want_path.clone());
+    // An exact vault-relative path match wins over a bare filename-stem match,
+    // and must beat walk order — otherwise a stem hit in an earlier folder
+    // shadows the path-qualified note the wikilink actually names.
+    let mut stem_fallback: Option<String> = None;
+    for entry in walkdir::WalkDir::new(vault_root)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let p = entry.path();
+        if p.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        let rel = p.strip_prefix(vault_root).unwrap_or(p);
+        let rel_noext = rel.with_extension("").to_string_lossy().to_lowercase();
+        if rel_noext == want_path {
+            return Some(p.display().to_string());
+        }
+        if stem_fallback.is_none()
+            && p.file_stem()
+                .map(|s| s.to_string_lossy().to_lowercase())
+                .as_deref()
+                == Some(want_stem.as_str())
+        {
+            stem_fallback = Some(p.display().to_string());
+        }
+    }
+    stem_fallback
+}
+
+/// Read a vault note's body for the #P panel. Guarded under the workspace's
+/// vault_root — do NOT use `read_file_content` (it is cwd/workspace-relative).
+#[tauri::command]
+pub fn read_vault_note(
+    db: State<'_, SharedDb>,
+    workspace_id: String,
+    path: String,
+) -> Result<String, String> {
+    let vault_root = resolve_vault_root(&db, &workspace_id)?;
+    read_note_guarded(&vault_root, &path)
+}
+
+/// Resolve a wikilink `[[name]]` to an absolute path under vault_root (vault-
+/// wide, like Obsidian), or `None` when unresolved (caller falls back to
+/// opening Obsidian to create it).
+#[tauri::command]
+pub fn resolve_vault_note(
+    db: State<'_, SharedDb>,
+    workspace_id: String,
+    name: String,
+) -> Result<Option<String>, String> {
+    let vault_root = resolve_vault_root(&db, &workspace_id)?;
+    Ok(resolve_note_in_vault(&vault_root, &name))
+}
+
+#[cfg(test)]
+mod vault_read_tests {
+    use super::{read_note_guarded, resolve_note_in_vault};
+    use std::io::Write;
+    use std::path::Path;
+
+    fn write_note(dir: &Path, rel: &str, body: &str) {
+        let path = dir.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(body.as_bytes()).unwrap();
+    }
+
+    #[test]
+    fn read_inside_vault_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        write_note(dir.path(), "Note.md", "body text");
+        let p = dir.path().join("Note.md").display().to_string();
+        assert_eq!(read_note_guarded(dir.path(), &p).unwrap(), "body text");
+    }
+
+    #[test]
+    fn read_outside_vault_rejected() {
+        let vault = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        write_note(outside.path(), "Secret.md", "nope");
+        let p = outside.path().join("Secret.md").display().to_string();
+        assert!(read_note_guarded(vault.path(), &p).is_err());
+    }
+
+    #[test]
+    fn resolve_hit_by_stem_case_insensitive() {
+        let dir = tempfile::tempdir().unwrap();
+        write_note(dir.path(), "Projects/Alpha.md", "a");
+        assert!(resolve_note_in_vault(dir.path(), "alpha").is_some());
+        assert!(resolve_note_in_vault(dir.path(), "ALPHA").is_some());
+    }
+
+    #[test]
+    fn resolve_path_qualified_beats_stem_in_other_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        write_note(dir.path(), "A/Target.md", "a");
+        write_note(dir.path(), "B/Target.md", "b");
+        let hit = resolve_note_in_vault(dir.path(), "B/Target").unwrap();
+        assert!(hit.ends_with("B/Target.md"), "got {hit}");
+    }
+
+    #[test]
+    fn resolve_hit_by_relative_path() {
+        let dir = tempfile::tempdir().unwrap();
+        write_note(dir.path(), "Projects/Beta.md", "b");
+        let hit = resolve_note_in_vault(dir.path(), "Projects/Beta").unwrap();
+        assert!(hit.ends_with("Projects/Beta.md"));
+    }
+
+    #[test]
+    fn resolve_miss_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        write_note(dir.path(), "Note.md", "x");
+        assert!(resolve_note_in_vault(dir.path(), "Nonexistent").is_none());
+    }
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, type ComponentType } from "react";
 import { useAtomValue, useSetAtom, useAtom } from "jotai";
 import {
   activeSessionIdAtom,
@@ -22,6 +22,12 @@ import { activeGitInfoAtom, refreshGitInfoAtom, conflictedFilesMapAtom, refreshC
 import { selectedConflictFileMapAtom } from "@/stores/conflict";
 import { gitChipModeAtom } from "@/stores/git";
 import { pendingAsksAtom, pendingAttentionAtom } from "@/stores/askUser";
+import {
+  pinnedNotesMapAtom,
+  injectionTierMapAtom,
+  type ContextInjectionTier,
+} from "@/stores/pinnedNotes";
+import { obsidianEnabledAtom, obsidianFinderOpenAtom } from "@/stores/obsidian";
 import { toastsAtom } from "@/stores/toast";
 import { configAtom } from "@/stores/config";
 import { activePlanCapabilityAtom, fetchPlanCapabilityAction } from "@/stores/plan";
@@ -45,7 +51,9 @@ import {
   GitMerge,
   Loader2,
   AlertTriangle,
+  Pin,
 } from "lucide-react";
+import { ObsidianIcon } from "@/components/icons/ObsidianIcon";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Tooltip,
@@ -101,13 +109,38 @@ function EditorIcon({ editorId, size = 14 }: { editorId: string; size?: number }
   return <ExternalLink size={size} className="shrink-0" />;
 }
 
-const PANEL_BUTTONS: { type: TabType; label: string; shortcut: string; icon: typeof FileText }[] = [
+/// Honest per-session tooltip for the pinned-notes chip. The tier governs
+/// whether (and how) the pins actually reach the agent, so a non-CC session
+/// never silently implies its pins are injected.
+function pinnedChipTooltip(
+  count: number,
+  tier: ContextInjectionTier | undefined,
+  agentId: string | undefined,
+): string {
+  const noun = count === 1 ? "pinned note" : "pinned notes";
+  switch (tier) {
+    case "prompt_preamble":
+      return `${count} ${noun} · injected as the first message`;
+    case "unsupported":
+      return `${count} ${noun} · injection unsupported for ${agentId ?? "this agent"}`;
+    default:
+      return `${count} ${noun}`;
+  }
+}
+
+const PANEL_BUTTONS: {
+  type: TabType;
+  label: string;
+  shortcut: string;
+  icon: ComponentType<{ size?: number | string; className?: string }>;
+}[] = [
   { type: "plan", label: "Plan", shortcut: "Ctrl+Shift+P", icon: FileText },
   { type: "file", label: "Files", shortcut: "Ctrl+Shift+F", icon: Files },
   { type: "diff", label: "Diff", shortcut: "Ctrl+Shift+D", icon: GitCompareArrows },
   { type: "spec", label: "Spec", shortcut: "Ctrl+Shift+S", icon: ClipboardList },
   { type: "git", label: "Git", shortcut: "Ctrl+Shift+G", icon: GitBranch },
   { type: "browser", label: "Browser", shortcut: "Ctrl+Alt+B", icon: Globe },
+  { type: "obsidian", label: "Obsidian", shortcut: "Ctrl+Shift+Q", icon: ObsidianIcon },
 ];
 
 
@@ -127,9 +160,13 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   }, [sessionId, fetchPlanCapability]);
 
   const planAvailable = planCapability?.kind !== "NotApplicable";
-  const visiblePanelButtons = planAvailable
-    ? PANEL_BUTTONS
-    : PANEL_BUTTONS.filter((b) => b.type !== "plan");
+  const obsidianEnabled = useAtomValue(obsidianEnabledAtom);
+  const [obsidianFinderOpen, setObsidianFinderOpen] = useAtom(obsidianFinderOpenAtom);
+  const visiblePanelButtons = PANEL_BUTTONS.filter((b) => {
+    if (b.type === "plan" && !planAvailable) return false;
+    if (b.type === "obsidian" && !obsidianEnabled) return false;
+    return true;
+  });
 
   const setActiveSessionId = useSetAtom(activeSessionIdAtom);
   const [sessionTabIds, setSessionTabIds] = useAtom(sessionTabIdsAtom);
@@ -144,6 +181,8 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   const refreshConflicts = useSetAtom(refreshConflictedFilesAtom);
   const activeGitInfo = useAtomValue(activeGitInfoAtom);
   const conflictedFilesMap = useAtomValue(conflictedFilesMapAtom);
+  const pinnedNotesMap = useAtomValue(pinnedNotesMapAtom);
+  const injectionTierMap = useAtomValue(injectionTierMapAtom);
   const activeConflictedFiles = useAtomValue(activeConflictedFilesAtom);
   const setSelectedConflictMap = useSetAtom(selectedConflictFileMapAtom);
   const setChipModeMap = useSetAtom(gitChipModeAtom);
@@ -204,6 +243,10 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   }
 
   function handleOpenPanel(type: TabType) {
+    if (type === "obsidian") {
+      setObsidianFinderOpen((prev) => !prev);
+      return;
+    }
     if (activeTab?.type === type && rightPanelVisible) {
       setToggleRight((n) => n + 1);
       return;
@@ -362,6 +405,21 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
               {(conflictedFilesMap[tabId]?.length ?? 0) > 0 && (
                 <span title={`${conflictedFilesMap[tabId].length} conflicted file(s)`} className="flex size-1.5 shrink-0 rounded-full bg-red-500 animate-pulse" />
               )}
+
+              {/* Pinned-notes chip */}
+              {(() => {
+                const count = (pinnedNotesMap[tabId] ?? entry.session.pinned_note_paths ?? []).length;
+                if (count === 0) return null;
+                return (
+                  <span
+                    title={pinnedChipTooltip(count, injectionTierMap[tabId], entry.session.agent_id)}
+                    className="flex shrink-0 items-center gap-0.5 text-[10px] text-muted-foreground/70"
+                  >
+                    <Pin className="size-2.5" />
+                    {count}
+                  </span>
+                );
+              })()}
 
               {/* Close button */}
               <span
@@ -533,7 +591,9 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
 
         {/* Panel buttons */}
         {visiblePanelButtons.map((btn) => {
-          const isActive = rightPanelVisible && (activePanelView === btn.type || activeTab?.type === btn.type);
+          const isActive = btn.type === "obsidian"
+            ? obsidianFinderOpen
+            : rightPanelVisible && (activePanelView === btn.type || activeTab?.type === btn.type);
           const Icon = btn.icon;
           return (
             <Tooltip key={btn.type}>

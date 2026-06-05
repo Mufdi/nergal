@@ -5,9 +5,13 @@ import { useObsidianRemarkPlugin, isObsidianHref, openObsidianHref, obsidianUrlT
 
 interface MarkdownViewProps {
   content: string;
+  /// When set, obsidian:// wikilinks navigate in-place via this callback
+  /// (unless Ctrl/Cmd is held → open in Obsidian). Other consumers omit it and
+  /// keep the default open-in-Obsidian behavior.
+  onWikilinkNavigate?: (href: string) => void;
 }
 
-export function MarkdownView({ content }: MarkdownViewProps) {
+export function MarkdownView({ content, onWikilinkNavigate }: MarkdownViewProps) {
   const obsidianPlugin = useObsidianRemarkPlugin();
   return (
     <div className="prose-invert max-w-none px-4 py-3 text-[12px] text-text">
@@ -61,7 +65,11 @@ export function MarkdownView({ content }: MarkdownViewProps) {
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    openObsidianHref(href!);
+                    if (onWikilinkNavigate && !(e.metaKey || e.ctrlKey)) {
+                      onWikilinkNavigate(href!);
+                    } else {
+                      openObsidianHref(href!);
+                    }
                   }}
                   className="text-accent underline cursor-pointer"
                   role="link"

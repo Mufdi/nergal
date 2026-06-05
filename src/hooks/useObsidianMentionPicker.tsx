@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObjec
 import { useAtomValue, useSetAtom } from "jotai";
 import { invoke } from "@/lib/tauri";
 import { obsidianEnabledAtom, vaultSearchScopeAtom, obsidianConfigAtom } from "@/stores/obsidian";
-import { activeWorkspaceAtom } from "@/stores/workspace";
+import { activeWorkspaceAtom, activeSessionIdAtom } from "@/stores/workspace";
+import { pinNoteAtom } from "@/stores/pinnedNotes";
 import type { SearchHit } from "@/stores/search";
 import {
   applyMention,
@@ -47,6 +48,10 @@ export function useObsidianMentionPicker(
   const scopeMode = useAtomValue(vaultSearchScopeAtom);
   const setScopeMode = useSetAtom(vaultSearchScopeAtom);
   const cfg = useAtomValue(obsidianConfigAtom);
+  const activeSessionId = useAtomValue(activeSessionIdAtom);
+  const pinNote = useSetAtom(pinNoteAtom);
+  const sessionIdRef = useRef<string | null>(null);
+  sessionIdRef.current = activeSessionId;
 
   const [items, setItems] = useState<SearchHit[]>([]);
   const [open, setOpen] = useState(false);
@@ -99,6 +104,17 @@ export function useObsidianMentionPicker(
       close();
     },
     [close, textareaRef],
+  );
+
+  // Shift+Enter pins the selected note to the active session (injected at the
+  // next spawn/resume) instead of citing it inline.
+  const pinHit = useCallback(
+    (hit: SearchHit) => {
+      const sid = sessionIdRef.current;
+      if (sid) void pinNote({ sessionId: sid, path: hit.path });
+      close();
+    },
+    [close, pinNote],
   );
 
   useEffect(() => {
@@ -201,6 +217,15 @@ export function useObsidianMentionPicker(
         setSelectedIndex((p) => Math.max(p - 1, 0));
         return;
       }
+      if (e.key === "Enter" && e.shiftKey) {
+        const hit = itemsRef.current[selectedRef.current];
+        if (hit) {
+          e.preventDefault();
+          e.stopPropagation();
+          pinHit(hit);
+        }
+        return;
+      }
       if (e.key === "Enter" || e.key === "Tab") {
         // Ctrl+Enter belongs to the textarea owner (submit comment).
         if (e.ctrlKey || e.metaKey) return;
@@ -231,7 +256,7 @@ export function useObsidianMentionPicker(
       el.removeEventListener("blur", onBlur);
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [enabled, workspace?.id, close, insertCitation, textareaRef, active]);
+  }, [enabled, workspace?.id, close, insertCitation, pinHit, textareaRef, active]);
 
   if (!enabled || !open) return null;
   return (
@@ -250,8 +275,8 @@ export function useObsidianMentionPicker(
       onHover={setSelectedIndex}
       hint={
         subdirAvailRef.current
-          ? `Ctrl+D: ${scopeMode === "subdir" ? subdirAvailRef.current : "whole vault"}`
-          : undefined
+          ? `Ctrl+D: ${scopeMode === "subdir" ? subdirAvailRef.current : "whole vault"} · Shift+Enter: pin`
+          : "Shift+Enter: pin to session"
       }
     />
   );

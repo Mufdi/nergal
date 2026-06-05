@@ -3,6 +3,8 @@ pub mod channels;
 pub mod config;
 pub mod moc;
 pub mod paths;
+pub mod pinned_notes;
+pub mod pinned_notes_watcher;
 pub mod post_session;
 pub mod templates;
 pub mod templates_watcher;

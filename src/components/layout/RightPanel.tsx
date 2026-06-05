@@ -27,6 +27,7 @@ import { SpecListView } from "@/components/panel/SpecListView";
 import { SpecPanel } from "@/components/spec/SpecPanel";
 import { GitPanel } from "@/components/git/GitPanel";
 import { FileBrowser } from "@/components/files/FileBrowser";
+import { ObsidianNoteView } from "@/components/obsidian/ObsidianNoteView";
 import { CodeEditor } from "@/components/editor/CodeEditor";
 import { DagGraph } from "@/components/activity/DagGraph";
 import { DOCK_SLOT_ATTR } from "@/components/browser/BrowserHost";
@@ -382,6 +383,8 @@ function viewPanelLabel(view: TabType): string {
     git: "Git",
     transcript: "Transcript",
     browser: "Browser",
+    obsidian: "Obsidian",
+    obsidiannote: "Obsidian",
   };
   return labels[view];
 }
@@ -446,6 +449,12 @@ function DocumentContent({ tab }: { tab: Tab }) {
     }
     case "browser":
       return <BrowserDockSlot />;
+    case "obsidiannote": {
+      const notePath = tab.data?.path as string | undefined;
+      return notePath
+        ? <ObsidianNoteView key={tab.id} tabId={tab.id} path={notePath} />
+        : <PlaceholderView label="Select a note" />;
+    }
     default:
       return null;
   }

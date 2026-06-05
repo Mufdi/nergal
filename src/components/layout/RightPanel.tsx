@@ -28,6 +28,8 @@ import { SpecPanel } from "@/components/spec/SpecPanel";
 import { GitPanel } from "@/components/git/GitPanel";
 import { FileBrowser } from "@/components/files/FileBrowser";
 import { ObsidianNoteView } from "@/components/obsidian/ObsidianNoteView";
+import { VaultNoteFinder } from "@/components/obsidian/VaultNoteFinder";
+import * as terminalService from "@/components/terminal/terminalService";
 import { CodeEditor } from "@/components/editor/CodeEditor";
 import { DagGraph } from "@/components/activity/DagGraph";
 import { DOCK_SLOT_ATTR } from "@/components/browser/BrowserHost";
@@ -37,7 +39,7 @@ import { activeSessionFilesAtom } from "@/stores/files";
 import { TabBar } from "@/components/ui/TabBar";
 import { FolderOpen } from "lucide-react";
 
-const PICKER_TYPES: TabType[] = ["plan", "file", "diff", "spec"];
+const PICKER_TYPES: TabType[] = ["plan", "file", "diff", "spec", "obsidiannote"];
 
 interface RightPanelProps {
   collapsed: boolean;
@@ -131,6 +133,14 @@ export function RightPanel({ collapsed }: RightPanelProps) {
     setPreviousZone("panel");
   }
 
+  // Focus must shift before the layout preset collapses the panel, else
+  // activeElement orphans to <body> (same constraint as handleToggleRight).
+  function closeFinderView() {
+    setActivePanelView(null);
+    setFocusZone("terminal");
+    requestAnimationFrame(() => terminalService.focusActive());
+  }
+
   function handlePanelKeyDown(e: React.KeyboardEvent) {
     if (e.ctrlKey || e.altKey || pickerOpen) return;
     if (!activeTab) return;
@@ -195,10 +205,14 @@ export function RightPanel({ collapsed }: RightPanelProps) {
         </div>
 
         {hasPicker && pickerOpen && (
-          <FilePickerOverlay
-            type={activeTab.type}
-            onClose={() => setPickerOpen(false)}
-          />
+          activeTab.type === "obsidiannote" ? (
+            <VaultPickerOverlay onClose={() => setPickerOpen(false)} />
+          ) : (
+            <FilePickerOverlay
+              type={activeTab.type}
+              onClose={() => setPickerOpen(false)}
+            />
+          )
         )}
       </div>
     );
@@ -234,7 +248,11 @@ export function RightPanel({ collapsed }: RightPanelProps) {
         <div className="flex-1 overflow-hidden">
           {hasPanelPicker ? (
             <div className="flex h-full items-center justify-center px-6">
-              <NavigablePickerContainer type={activePanelView} />
+              {activePanelView === "obsidiannote" ? (
+                <VaultNoteFinder onClose={closeFinderView} />
+              ) : (
+                <NavigablePickerContainer type={activePanelView} />
+              )}
             </div>
           ) : (
             <div className="h-full overflow-y-auto">
@@ -356,6 +374,19 @@ function FilePickerOverlay({ type, onClose }: { type: TabType; onClose: () => vo
   );
 }
 
+/// Skips NavigablePickerContainer: its delayed self-focus would steal focus
+/// from the finder's search input.
+function VaultPickerOverlay({ onClose }: { onClose: () => void }) {
+  return (
+    <>
+      <div className="absolute inset-0 z-30 bg-scrim cluihud-blur-md" onClick={onClose} />
+      <div className="absolute inset-0 z-40 flex items-center justify-center px-6 pointer-events-none">
+        <VaultNoteFinder onClose={onClose} className="pointer-events-auto" />
+      </div>
+    </>
+  );
+}
+
 function PickerContent({ type }: { type: TabType }) {
   switch (type) {
     case "plan":
@@ -383,7 +414,6 @@ function viewPanelLabel(view: TabType): string {
     git: "Git",
     transcript: "Transcript",
     browser: "Browser",
-    obsidian: "Obsidian",
     obsidiannote: "Obsidian",
   };
   return labels[view];

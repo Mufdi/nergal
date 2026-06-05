@@ -53,9 +53,6 @@ export const obsidianConfigAtom = atom<ResolvedObsidianConfig | null>(null);
 // "subdir" is a no-op unless the active config has a non-empty search_subdir.
 export const vaultSearchScopeAtom = atom<"whole" | "subdir">("whole");
 
-/// Whether the vault-note finder overlay (Ctrl+Shift+Q / Ctrl+Shift+K) is open.
-export const obsidianFinderOpenAtom = atom(false);
-
 export const obsidianEnabledAtom = atom((get) => {
   const cfg = get(obsidianConfigAtom);
   return cfg?.vault_root != null && cfg.vault_root !== "";

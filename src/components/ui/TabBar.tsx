@@ -35,7 +35,6 @@ const TAB_ICONS: Record<TabType, ComponentType<{ size?: number | string; classNa
   git: GitBranch,
   transcript: ScrollText,
   browser: Globe,
-  obsidian: ObsidianIcon,
   obsidiannote: ObsidianIcon,
 };
 

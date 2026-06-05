@@ -27,7 +27,7 @@ import {
   injectionTierMapAtom,
   type ContextInjectionTier,
 } from "@/stores/pinnedNotes";
-import { obsidianEnabledAtom, obsidianFinderOpenAtom } from "@/stores/obsidian";
+import { obsidianEnabledAtom } from "@/stores/obsidian";
 import { toastsAtom } from "@/stores/toast";
 import { configAtom } from "@/stores/config";
 import { activePlanCapabilityAtom, fetchPlanCapabilityAction } from "@/stores/plan";
@@ -140,7 +140,7 @@ const PANEL_BUTTONS: {
   { type: "spec", label: "Spec", shortcut: "Ctrl+Shift+S", icon: ClipboardList },
   { type: "git", label: "Git", shortcut: "Ctrl+Shift+G", icon: GitBranch },
   { type: "browser", label: "Browser", shortcut: "Ctrl+Alt+B", icon: Globe },
-  { type: "obsidian", label: "Obsidian", shortcut: "Ctrl+Shift+Q", icon: ObsidianIcon },
+  { type: "obsidiannote", label: "Obsidian", shortcut: "Ctrl+Shift+Q", icon: ObsidianIcon },
 ];
 
 
@@ -161,10 +161,9 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
 
   const planAvailable = planCapability?.kind !== "NotApplicable";
   const obsidianEnabled = useAtomValue(obsidianEnabledAtom);
-  const [obsidianFinderOpen, setObsidianFinderOpen] = useAtom(obsidianFinderOpenAtom);
   const visiblePanelButtons = PANEL_BUTTONS.filter((b) => {
     if (b.type === "plan" && !planAvailable) return false;
-    if (b.type === "obsidian" && !obsidianEnabled) return false;
+    if (b.type === "obsidiannote" && !obsidianEnabled) return false;
     return true;
   });
 
@@ -243,10 +242,6 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   }
 
   function handleOpenPanel(type: TabType) {
-    if (type === "obsidian") {
-      setObsidianFinderOpen((prev) => !prev);
-      return;
-    }
     if (activeTab?.type === type && rightPanelVisible) {
       setToggleRight((n) => n + 1);
       return;
@@ -591,9 +586,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
 
         {/* Panel buttons */}
         {visiblePanelButtons.map((btn) => {
-          const isActive = btn.type === "obsidian"
-            ? obsidianFinderOpen
-            : rightPanelVisible && (activePanelView === btn.type || activeTab?.type === btn.type);
+          const isActive = rightPanelVisible && (activePanelView === btn.type || activeTab?.type === btn.type);
           const Icon = btn.icon;
           return (
             <Tooltip key={btn.type}>

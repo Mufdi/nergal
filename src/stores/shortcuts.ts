@@ -27,7 +27,7 @@ import { softCloseSessionAction, undoSessionCloseAction, hasPendingSessionCloseA
 import { invoke as invokeCmd } from "@/lib/tauri";
 import { scratchpadOpenAtom } from "./scratchpad";
 import { browserToggleModeAction } from "./browser";
-import { obsidianEnabledAtom, obsidianFinderOpenAtom } from "./obsidian";
+import { obsidianEnabledAtom } from "./obsidian";
 import { quickCaptureOpenAtom } from "./quickCapture";
 import { searchModalOpenAtom, searchScopeAtom } from "./search";
 import { openInObsidian } from "@/lib/obsidian";
@@ -136,6 +136,10 @@ function togglePanel(type: Tab["type"], _label: string) {
     // are "peek" interactions, not a close intent).
     if (currentView === type && !currentActiveTab) {
       s.set(activePanelViewAtom, null);
+      // Shift focus before the preset collapses the panel, else activeElement
+      // orphans to <body> (same constraint as Workspace.handleToggleRight).
+      s.set(focusZoneAtom, "terminal");
+      requestAnimationFrame(() => terminalService.focusActive());
     } else {
       s.set(toggleRightPanelAtom, (p: number) => p + 1);
     }
@@ -390,15 +394,31 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   { id: "open-spec", label: "Open Spec Panel", keys: "ctrl+shift+s", category: "panel", keywords: ["spec", "openspec", "panel"], handler: () => togglePanel("spec", "Spec") },
   { id: "open-git", label: "Open Git Panel", keys: "ctrl+shift+g", category: "panel", keywords: ["git", "branch", "panel"], handler: () => togglePanel("git", "Git") },
   { id: "open-browser", label: "Open Browser Panel", keys: "ctrl+alt+b", category: "panel", keywords: ["browser", "preview", "web", "iframe", "localhost", "panel"], handler: () => togglePanel("browser", "Browser") },
-  { id: "open-obsidian-finder", label: "Find Vault Note", keys: "ctrl+shift+q", category: "panel", keywords: ["obsidian", "vault", "notes", "finder", "search"], handler: () => store().set(obsidianFinderOpenAtom, (prev: boolean) => !prev) },
+  { id: "open-obsidian-finder", label: "Open Obsidian Panel", keys: "ctrl+shift+q", category: "panel", keywords: ["obsidian", "vault", "notes", "finder", "search", "panel"], handler: () => {
+    const s = store();
+    const ws = s.get(activeWorkspaceAtom);
+    if (!ws) {
+      s.set(toastsAtom, {
+        message: "Obsidian panel",
+        description: "No active session — open one to resolve the target vault.",
+        type: "info",
+      });
+      return;
+    }
+    if (!s.get(obsidianEnabledAtom)) {
+      s.set(toastsAtom, {
+        message: "Obsidian not configured for this workspace",
+        description: `Set vault_root for ${ws.name} in Settings → Obsidian Integration.`,
+        type: "info",
+      });
+      return;
+    }
+    togglePanel("obsidiannote", "Obsidian");
+  }},
   { id: "browser-focus-url", label: "Focus Browser URL Bar", keys: "ctrl+l", category: "panel", keywords: ["browser", "url", "focus", "address"], handler: () => {
     document.dispatchEvent(new CustomEvent("cluihud:browser-focus-url"));
   }},
   { id: "toggle-file-picker", label: "Toggle File Picker", keys: "ctrl+shift+k", category: "panel", keywords: ["file", "picker", "browse", "explorer"], handler: () => {
-    if (store().get(activeTabAtom)?.type === "obsidiannote") {
-      store().set(obsidianFinderOpenAtom, (prev: boolean) => !prev);
-      return;
-    }
     document.dispatchEvent(new CustomEvent("cluihud:toggle-file-picker"));
   }},
   { id: "toggle-activity", label: "Toggle Activity Drawer", keys: "ctrl+shift+l", category: "panel", keywords: ["activity", "log", "timeline", "drawer"], handler: () => store().set(activityDrawerOpenAtom, (prev: boolean) => !prev) },

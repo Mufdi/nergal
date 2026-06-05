@@ -1,8 +1,11 @@
 import { atom } from "jotai";
 import { activeSessionIdAtom } from "./workspace";
 import { closedTabsStackAtom } from "./shortcuts";
+// Safe cycle with pinnedNotes.ts: both sides only touch the imported atoms inside callbacks.
+import { pinnedNotesMapAtom } from "./pinnedNotes";
+import { toastsAtom } from "./toast";
 
-export type TabType = "plan" | "diff" | "spec" | "tasks" | "git" | "transcript" | "file" | "browser" | "obsidian" | "obsidiannote";
+export type TabType = "plan" | "diff" | "spec" | "tasks" | "git" | "transcript" | "file" | "browser" | "obsidiannote";
 
 export type PanelCategory = "document" | "tool";
 
@@ -15,7 +18,6 @@ export const PANEL_CATEGORY_MAP: Record<TabType, PanelCategory> = {
   diff: "tool",
   tasks: "document",
   browser: "tool",
-  obsidian: "document",
   obsidiannote: "document",
 };
 
@@ -35,7 +37,7 @@ export interface TabState {
   previewTabId: string | null;
 }
 
-const SINGLETON_TYPES: TabType[] = ["tasks", "git", "browser", "obsidian"];
+const SINGLETON_TYPES: TabType[] = ["tasks", "git", "browser"];
 const defaultTabState: TabState = { tabs: [], activeTabId: null, previewTabId: null };
 
 export const expandRightPanelAtom = atom(0);
@@ -156,6 +158,21 @@ export const openTabAction = atom(
 export const closeTabAction = atom(null, (get, set, tabId: string) => {
   const sessionId = get(activeSessionIdAtom);
   if (!sessionId) return;
+
+  // Closing a context-pinned note would silently desync the pin from the
+  // agent's context — require an explicit unpin first.
+  const target = (get(tabStateMapAtom)[sessionId] ?? defaultTabState).tabs.find((t) => t.id === tabId);
+  if (target?.type === "obsidiannote") {
+    const pinned = get(pinnedNotesMapAtom)[sessionId] ?? [];
+    if (pinned.includes(target.data?.path as string)) {
+      set(toastsAtom, {
+        message: "Note is pinned to the session",
+        description: "Unpin it first to close the tab.",
+        type: "info",
+      });
+      return;
+    }
+  }
 
   set(tabStateMapAtom, (prev) => {
     const state = prev[sessionId] ?? defaultTabState;

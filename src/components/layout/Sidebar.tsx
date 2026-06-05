@@ -16,6 +16,7 @@ import {
   type Session,
 } from "@/stores/workspace";
 import { openTabAction } from "@/stores/rightPanel";
+import { appStore } from "@/stores/jotaiStore";
 import { toastsAtom } from "@/stores/toast";
 import { bootstrapPromptAtom } from "@/stores/obsidian";
 import { SessionRow } from "@/components/session/SessionRow";
@@ -70,11 +71,17 @@ export function Sidebar({ collapsed }: SidebarProps) {
       const mouseHovered = document.querySelectorAll<HTMLElement>(
         "[data-focus-zone='sidebar'] [data-nav-item]:hover",
       );
+      // The selected-row fallback is only valid while the sidebar is the
+      // active zone — `data-nav-selected` persists after the user moves on,
+      // and a stale match here would steal "d"/"r" from other panels (a
+      // stash drop used to open the delete-session modal, BUG-03 v0.2.0).
       const row =
         mouseHovered[mouseHovered.length - 1] ??
-        document.querySelector<HTMLElement>(
-          "[data-focus-zone='sidebar'] [data-nav-item][data-nav-selected='true']",
-        );
+        (appStore.get(focusZoneAtom) === "sidebar"
+          ? document.querySelector<HTMLElement>(
+              "[data-focus-zone='sidebar'] [data-nav-item][data-nav-selected='true']",
+            )
+          : null);
       if (!row) return;
       const isDelete = e.key === "d" || e.key === "D";
       const action = isDelete

@@ -69,6 +69,31 @@ function store() {
   return appStore;
 }
 
+/// Zen routing for the Git panel depends on the active chip — exported so
+/// the GitPanel header button and the Ctrl+Shift+0 shortcut share one path
+/// (the button used to always fire expand-zen-git, dead-ending on the
+/// Conflicts chip — BUG-04 v0.2.0).
+export function expandGitZen(sessionId: string) {
+  const s = store();
+  const chipMap = s.get(gitChipModeAtom);
+  const chip = chipMap[sessionId] ?? "files";
+  if (chip === "conflicts") {
+    s.set(conflictsZenOpenAtom, (v) => !v);
+    return;
+  }
+  if (chip === "prs") {
+    // PRs chip owns the Zen target (it knows which PR is selected). The
+    // workspaceId lets the chip filter its listener so other workspaces'
+    // chips don't react to a Zen request meant for this one.
+    const workspaces = s.get(workspacesAtom);
+    const ws = workspaces.find((w) => w.sessions.some((sx) => sx.id === sessionId));
+    if (!ws) return;
+    document.dispatchEvent(new CustomEvent("cluihud:expand-zen-pr", { detail: { workspaceId: ws.id } }));
+    return;
+  }
+  document.dispatchEvent(new CustomEvent("cluihud:expand-zen-git", { detail: { sessionId } }));
+}
+
 /// Workspace whose sessions currently show shortcut numbers. Prefers the
 /// Ctrl+Alt+N-focused workspace while the sidebar still owns focus, otherwise
 /// falls back to the workspace containing the active session.
@@ -581,23 +606,7 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
       return;
     }
     if (panelType === "git") {
-      const chipMap = s.get(gitChipModeAtom);
-      const chip = chipMap[sessionId] ?? "files";
-      if (chip === "conflicts") {
-        s.set(conflictsZenOpenAtom, (v) => !v);
-        return;
-      }
-      if (chip === "prs") {
-        // PRs chip owns the Zen target (it knows which PR is selected). The
-        // workspaceId lets the chip filter its listener so other workspaces'
-        // chips don't react to a Zen request meant for this one.
-        const workspaces = s.get(workspacesAtom);
-        const ws = workspaces.find((w) => w.sessions.some((sx) => sx.id === sessionId));
-        if (!ws) return;
-        document.dispatchEvent(new CustomEvent("cluihud:expand-zen-pr", { detail: { workspaceId: ws.id } }));
-        return;
-      }
-      document.dispatchEvent(new CustomEvent("cluihud:expand-zen-git", { detail: { sessionId } }));
+      expandGitZen(sessionId);
     }
   }},
   { id: "cycle-layout", label: "Cycle Layout Preset", keys: "ctrl+shift+i", category: "navigation", keywords: ["layout", "preset", "cycle", "resize"], handler: () => {

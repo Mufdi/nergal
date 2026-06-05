@@ -540,10 +540,14 @@ export function ShipDialog() {
           <DialogTitle>Ship session</DialogTitle>
         </DialogHeader>
 
-        {/* Body is the only stretchy region — header + armed line + footer
+        {/* Body is the only shrinkable region — header + armed line + footer
             stay visible at any modal height, so a 50-file stage never hides
-            the action buttons. */}
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-1">
+            the action buttons. `flex-auto`, NOT `flex-1`: under WebKitGTK a
+            basis-0 child contributes zero intrinsic height to the fixed
+            inset-0 m-auto h-fit DialogContent, collapsing the body to 0px
+            (BUG-05 v0.2.0 — modal showed only the buttons; Chromium lays
+            the same tree out fine). */}
+        <div className="flex min-h-0 flex-auto flex-col gap-4 overflow-y-auto pr-1">
 
         {loading && (
           <div className="flex items-center gap-2 py-4">

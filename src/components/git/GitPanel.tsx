@@ -20,7 +20,7 @@ import {
   type PrChecks,
   type PrSummary,
 } from "@/stores/git";
-import { triggerMergeAtom } from "@/stores/shortcuts";
+import { triggerMergeAtom, expandGitZen } from "@/stores/shortcuts";
 import { toastsAtom } from "@/stores/toast";
 import { selectedConflictFileMapAtom } from "@/stores/conflict";
 import { useSetAtom, useAtomValue } from "jotai";
@@ -292,7 +292,7 @@ export function GitPanel({ sessionId }: GitPanelProps) {
           </>
         )}
         <button
-          onClick={() => document.dispatchEvent(new CustomEvent("cluihud:expand-zen-git", { detail: { sessionId } }))}
+          onClick={() => expandGitZen(sessionId)}
           className="ml-auto flex h-5 items-center gap-1 rounded text-muted-foreground hover:text-foreground hover:bg-secondary px-1.5 transition-colors"
           title="Expand to Zen mode"
         >

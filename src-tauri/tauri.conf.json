@@ -53,7 +53,8 @@
           "libgtk-3-0",
           "gstreamer1.0-plugins-base",
           "gstreamer1.0-plugins-good",
-          "git"
+          "git",
+          "xdg-utils"
         ],
         "desktopTemplate": "main.desktop"
       },
@@ -63,7 +64,8 @@
           "gtk3",
           "gstreamer1-plugins-base",
           "gstreamer1-plugins-good",
-          "git"
+          "git",
+          "xdg-utils"
         ],
         "desktopTemplate": "main.desktop"
       }

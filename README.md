@@ -80,6 +80,16 @@ The result is a keyboard-first HUD where the agent stays in the centerpiece term
 
 See [`docs/architecture.md`](./docs/architecture.md) for the full breakdown.
 
+## Install
+
+Grab the latest `.deb`, `.rpm`, or `.AppImage` from [Releases](https://github.com/Mufdi/nergal/releases). For Debian/Ubuntu, prefer `apt` over bare `dpkg -i` so runtime dependencies (`git`, `xdg-utils`, WebKitGTK, GStreamer) resolve automatically:
+
+```bash
+sudo apt install ./Nergal_*.deb
+```
+
+The About section warns if any required system tool is missing.
+
 ## Quick start
 
 ```bash

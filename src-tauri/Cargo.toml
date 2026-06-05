@@ -29,6 +29,11 @@ tauri-plugin-clipboard-manager = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+# Updater "reveal in file manager": FileManager1.ShowItems over D-Bus
+# (file highlight + activation token so GNOME raises the window — xdg-open
+# spawns carry no token and lose to focus-stealing prevention). Already in
+# the tree transitively; tokio feature reuses our runtime.
+zbus = { version = "5", default-features = false, features = ["tokio"] }
 # Direct dep on arboard so we can write to the OS clipboard inside
 # `spawn_blocking`. The clipboard plugin's own `write_text` runs on the
 # tokio runtime and its Wayland backend makes synchronous I/O to wl-clipboard

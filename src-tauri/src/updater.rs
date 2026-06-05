@@ -7,7 +7,7 @@
 //! same download-and-reveal flow.
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
@@ -50,6 +50,25 @@ pub fn detect_install_source() -> InstallSource {
 #[tauri::command]
 pub fn get_install_source() -> InstallSource {
     detect_install_source()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemHealth {
+    pub missing_binaries: Vec<String>,
+}
+
+/// Surfaces installs that skipped dependency resolution (`dpkg -i` without
+/// apt) in the About section, instead of letting reveal/clone/update flows
+/// fail silently at first use.
+#[tauri::command]
+pub fn check_system_health() -> SystemHealth {
+    let missing_binaries = ["git", "xdg-open", "xdg-user-dir"]
+        .into_iter()
+        .filter(|bin| which::which(bin).is_err())
+        .map(str::to_string)
+        .collect();
+    SystemHealth { missing_binaries }
 }
 
 #[derive(serde::Deserialize)]
@@ -217,8 +236,51 @@ fn resolve_downloads_dir() -> Result<PathBuf, String> {
     Ok(home.join("Downloads"))
 }
 
+/// Filename comes from the frontend; reject anything that would
+/// escape the Downloads dir.
+fn validate_filename(filename: &str) -> Result<(), String> {
+    if filename.is_empty()
+        || filename.contains('/')
+        || filename.contains('\\')
+        || filename.contains("..")
+    {
+        return Err("invalid filename".into());
+    }
+    Ok(())
+}
+
+/// A staged download counts as complete only when its size matches the
+/// release asset byte count — a partial file from an interrupted download
+/// must not short-circuit the re-download.
+async fn staged_download_complete(target: &Path, expected_size: Option<u64>) -> bool {
+    match tokio::fs::metadata(target).await {
+        Ok(meta) => meta.is_file() && expected_size.is_some_and(|s| meta.len() == s),
+        Err(_) => false,
+    }
+}
+
+/// Lets the UI land directly on the "downloaded" state when the asset was
+/// already staged in a previous visit to the About section.
 #[tauri::command]
-pub async fn download_app_update(url: String, filename: String) -> Result<String, String> {
+pub async fn find_downloaded_update(
+    filename: String,
+    expected_size: Option<u64>,
+) -> Result<Option<String>, String> {
+    validate_filename(&filename)?;
+    let target = resolve_downloads_dir()?.join(&filename);
+    if staged_download_complete(&target, expected_size).await {
+        Ok(Some(target.to_string_lossy().into_owned()))
+    } else {
+        Ok(None)
+    }
+}
+
+#[tauri::command]
+pub async fn download_app_update(
+    url: String,
+    filename: String,
+    expected_size: Option<u64>,
+) -> Result<String, String> {
     // Host allow-list closes a path that would otherwise let the
     // frontend coerce this command into fetching arbitrary URLs.
     if !url.starts_with("https://github.com/")
@@ -226,16 +288,15 @@ pub async fn download_app_update(url: String, filename: String) -> Result<String
     {
         return Err("refusing to download outside github.com hosts".into());
     }
-    // Filename comes from the frontend; reject anything that would
-    // escape the Downloads dir.
-    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
-        return Err("invalid filename".into());
-    }
+    validate_filename(&filename)?;
     let dir = resolve_downloads_dir()?;
     tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|e| format!("create downloads dir: {e}"))?;
     let target = dir.join(&filename);
+    if staged_download_complete(&target, expected_size).await {
+        return Ok(target.to_string_lossy().into_owned());
+    }
     let client = reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .timeout(std::time::Duration::from_secs(120))
@@ -259,16 +320,45 @@ pub async fn download_app_update(url: String, filename: String) -> Result<String
     Ok(target.to_string_lossy().into_owned())
 }
 
-/// `xdg-open` (vs. nautilus/dolphin/thunar directly) so the user's
-/// configured default file manager wins, regardless of DE.
+/// FileManager1 is the freedesktop reveal interface (Nautilus, Dolphin,
+/// Nemo all implement it): it highlights the file and the D-Bus activation
+/// carries a startup token, so GNOME raises the window instead of letting
+/// focus-stealing prevention bury it — the failure mode of a bare
+/// `xdg-open` spawn. The spawn survives only as fallback for DEs without
+/// the service.
+async fn show_items_via_dbus(path: &Path) -> Result<(), String> {
+    let uri = url::Url::from_file_path(path)
+        .map_err(|_| "path is not absolute".to_string())?
+        .to_string();
+    let conn = zbus::Connection::session()
+        .await
+        .map_err(|e| format!("session bus: {e}"))?;
+    conn.call_method(
+        Some("org.freedesktop.FileManager1"),
+        "/org/freedesktop/FileManager1",
+        Some("org.freedesktop.FileManager1"),
+        "ShowItems",
+        &(vec![uri], String::new()),
+    )
+    .await
+    .map_err(|e| format!("ShowItems: {e}"))?;
+    Ok(())
+}
+
 #[tauri::command]
-pub fn reveal_in_downloads(path: String) -> Result<(), String> {
+pub async fn reveal_in_downloads(path: String) -> Result<(), String> {
     let p = PathBuf::from(&path);
+    if !p.is_file() {
+        return Err("downloaded file no longer exists".into());
+    }
+    let Err(dbus_err) = show_items_via_dbus(&p).await else {
+        return Ok(());
+    };
     let dir = p.parent().ok_or_else(|| "path has no parent".to_string())?;
     std::process::Command::new("xdg-open")
         .arg(dir)
         .spawn()
-        .map_err(|e| format!("xdg-open: {e}"))?;
+        .map_err(|e| format!("FileManager1 ({dbus_err}); xdg-open: {e}"))?;
     Ok(())
 }
 
@@ -301,6 +391,7 @@ mod tests {
         let err = rt.block_on(download_app_update(
             "https://github.com/x/x/releases/foo.deb".into(),
             "../../etc/passwd".into(),
+            None,
         ));
         assert!(err.is_err());
     }
@@ -311,7 +402,34 @@ mod tests {
         let err = rt.block_on(download_app_update(
             "https://evil.example.com/payload.deb".into(),
             "payload.deb".into(),
+            None,
         ));
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn staged_download_requires_exact_size_match() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Nergal_0.2.0_amd64.deb");
+        std::fs::write(&path, b"12345").unwrap();
+        assert!(rt.block_on(staged_download_complete(&path, Some(5))));
+        // Partial download (size mismatch) must trigger a re-download.
+        assert!(!rt.block_on(staged_download_complete(&path, Some(9999))));
+        // Unknown asset size: completeness can't be proven, so re-download.
+        assert!(!rt.block_on(staged_download_complete(&path, None)));
+        assert!(!rt.block_on(staged_download_complete(
+            &dir.path().join("missing.deb"),
+            Some(5)
+        )));
+    }
+
+    #[test]
+    fn filename_validator_rejects_escapes() {
+        assert!(validate_filename("Nergal_0.2.0_amd64.deb").is_ok());
+        assert!(validate_filename("").is_err());
+        assert!(validate_filename("a/b.deb").is_err());
+        assert!(validate_filename("a\\b.deb").is_err());
+        assert!(validate_filename("..deb..").is_err());
     }
 }

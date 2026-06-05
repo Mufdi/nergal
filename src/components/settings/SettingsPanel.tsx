@@ -22,6 +22,7 @@ import { CheckCircle2, AlertTriangle, XCircle, Info, FolderTree, Bot, Pencil, Pa
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { open as openShell } from "@tauri-apps/plugin-shell";
+import { toastsAtom } from "@/stores/toast";
 import { check as checkUpdater } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { HexColorPicker } from "react-colorful";
@@ -1312,10 +1313,16 @@ type UpdateState =
   | { kind: "appimage_installed" }
   | { kind: "error"; message: string };
 
+function debFilename(result: UpdateCheckResult): string {
+  return result.debAssetUrl?.split("/").pop() ?? `Nergal_${result.latestVersion}_amd64.deb`;
+}
+
 function AboutSection({ appVersion }: { appVersion: string }) {
   const [installSource, setInstallSource] = useState<InstallSource>("unknown");
   const [updateState, setUpdateState] = useState<UpdateState>({ kind: "idle" });
   const [currentRelease, setCurrentRelease] = useState<CurrentReleaseInfo | null>(null);
+  const [missingBinaries, setMissingBinaries] = useState<string[]>([]);
+  const pushToast = useSetAtom(toastsAtom);
 
   useEffect(() => {
     invoke<InstallSource>("get_install_source")
@@ -1324,17 +1331,32 @@ function AboutSection({ appVersion }: { appVersion: string }) {
     invoke<CurrentReleaseInfo | null>("get_current_release_notes")
       .then(setCurrentRelease)
       .catch(() => setCurrentRelease(null));
+    invoke<{ missingBinaries: string[] }>("check_system_health")
+      .then((health) => setMissingBinaries(health.missingBinaries))
+      .catch(() => setMissingBinaries([]));
   }, []);
 
   async function handleCheck() {
     setUpdateState({ kind: "checking" });
     try {
       const result = await invoke<UpdateCheckResult>("check_app_update");
-      if (result.hasUpdate) {
-        setUpdateState({ kind: "available", result });
-      } else {
+      if (!result.hasUpdate) {
         setUpdateState({ kind: "up_to_date", latest: result.latestVersion });
+        return;
       }
+      // A previous visit may have already staged the asset — land on
+      // "downloaded" instead of offering a redundant re-download.
+      if (installSource === "deb" && result.debAssetUrl) {
+        const staged = await invoke<string | null>("find_downloaded_update", {
+          filename: debFilename(result),
+          expectedSize: result.debAssetSize,
+        }).catch(() => null);
+        if (staged) {
+          setUpdateState({ kind: "downloaded", path: staged });
+          return;
+        }
+      }
+      setUpdateState({ kind: "available", result });
     } catch (err) {
       setUpdateState({ kind: "error", message: String(err) });
     }
@@ -1344,10 +1366,10 @@ function AboutSection({ appVersion }: { appVersion: string }) {
     if (!result.debAssetUrl) return;
     setUpdateState({ kind: "downloading" });
     try {
-      const filename = result.debAssetUrl.split("/").pop() ?? `Nergal_${result.latestVersion}_amd64.deb`;
       const path = await invoke<string>("download_app_update", {
         url: result.debAssetUrl,
-        filename,
+        filename: debFilename(result),
+        expectedSize: result.debAssetSize,
       });
       setUpdateState({ kind: "downloaded", path });
     } catch (err) {
@@ -1396,7 +1418,7 @@ function AboutSection({ appVersion }: { appVersion: string }) {
     try {
       await invoke("reveal_in_downloads", { path });
     } catch (err) {
-      console.error("[about] reveal failed:", err);
+      pushToast({ message: "Could not reveal the download", description: String(err), type: "error" });
     }
   }
 
@@ -1413,6 +1435,22 @@ function AboutSection({ appVersion }: { appVersion: string }) {
 
   return (
     <div className="space-y-5">
+      {missingBinaries.length > 0 && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-500">
+          <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+          <span>
+            Missing system tools:{" "}
+            <code className="rounded bg-amber-500/20 px-1 font-mono text-[10px]">
+              {missingBinaries.join(", ")}
+            </code>
+            . Some features (git panels, file reveal, updates) won't work. Install them with{" "}
+            <code className="rounded bg-amber-500/20 px-1 font-mono text-[10px]">
+              sudo apt install {missingBinaries.map((b) => (b.startsWith("xdg-") ? "xdg-utils" : b)).filter((v, i, a) => a.indexOf(v) === i).join(" ")}
+            </code>
+            .
+          </span>
+        </div>
+      )}
       <div className="grid gap-1">
         <Label>Application</Label>
         <div className="rounded-md border border-border/40 bg-card/50 p-3 text-sm">

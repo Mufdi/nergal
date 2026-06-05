@@ -28,10 +28,17 @@ pub fn list_templates_from_dir(dir: &Path) -> Result<Vec<Template>> {
     for entry in std::fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
         let Ok(entry) = entry else { continue };
         let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
         let Some(filename) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
-        if !filename.starts_with("template-") || !filename.ends_with(".md") {
+        // Obsidian's Templates plugin treats every note in the folder as a
+        // template — no naming convention. The old `template-` prefix
+        // requirement silently hid real vaults' templates (BUG-08 v0.2.0);
+        // it survives only as an optional prefix stripped from the name.
+        if filename.starts_with('.') || !filename.ends_with(".md") {
             continue;
         }
         let raw = match std::fs::read_to_string(&path) {
@@ -137,14 +144,26 @@ mod tests {
     }
 
     #[test]
-    fn list_ignores_non_template_files() {
+    fn list_includes_all_md_files_no_prefix_required() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("random.md"), "ignored").unwrap();
+        std::fs::write(dir.path().join("Daily Note.md"), "body").unwrap();
         std::fs::write(dir.path().join("template-yes.md"), "body").unwrap();
         let cfg = cfg_with_templates(dir.path().to_str().unwrap());
         let out = list_templates(&cfg).unwrap();
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn list_ignores_non_md_dotfiles_and_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("notes.txt"), "no").unwrap();
+        std::fs::write(dir.path().join(".hidden.md"), "no").unwrap();
+        std::fs::create_dir(dir.path().join("nested.md")).unwrap();
+        std::fs::write(dir.path().join("real.md"), "yes").unwrap();
+        let cfg = cfg_with_templates(dir.path().to_str().unwrap());
+        let out = list_templates(&cfg).unwrap();
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].filename, "template-yes.md");
+        assert_eq!(out[0].filename, "real.md");
     }
 
     #[test]

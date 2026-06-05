@@ -72,6 +72,50 @@ pub fn expand_home(path: &str) -> String {
     trimmed.to_string()
 }
 
+// Linux filesystems are case-sensitive but users type paths from memory
+// ("~/documents/obsidian23"). Walk the path segment by segment: when a
+// segment doesn't exist verbatim and exactly one sibling matches
+// case-insensitively, take the on-disk spelling. Correction stops at the
+// first segment without a unique match — the tail may name files that
+// don't exist yet (e.g. a quick-capture target), so it passes through as
+// typed.
+pub fn resolve_case_insensitive(path: &str) -> String {
+    use std::path::Component;
+    let p = Path::new(path);
+    if !p.is_absolute() {
+        return path.to_string();
+    }
+    let mut resolved = PathBuf::new();
+    let mut correcting = true;
+    for comp in p.components() {
+        match comp {
+            Component::Normal(seg) if correcting => {
+                if resolved.join(seg).exists() {
+                    resolved.push(seg);
+                    continue;
+                }
+                let target = seg.to_string_lossy().to_lowercase();
+                let mut matches = match std::fs::read_dir(&resolved) {
+                    Ok(rd) => rd
+                        .filter_map(|e| e.ok())
+                        .map(|e| e.file_name())
+                        .filter(|n| n.to_string_lossy().to_lowercase() == target)
+                        .collect::<Vec<_>>(),
+                    Err(_) => Vec::new(),
+                };
+                if matches.len() == 1 {
+                    resolved.push(matches.remove(0));
+                } else {
+                    resolved.push(seg);
+                    correcting = false;
+                }
+            }
+            other => resolved.push(other.as_os_str()),
+        }
+    }
+    resolved.to_string_lossy().into_owned()
+}
+
 // Trailing slashes from user input lead to double-slash bugs when we do
 // naive `format!("{root}/Projects/...")`. Normalize at save time.
 fn strip_trailing_slashes(s: &str) -> String {
@@ -89,7 +133,7 @@ fn expand_field(field: &mut Option<String>) {
         *field = if expanded.is_empty() {
             None
         } else {
-            Some(expanded)
+            Some(resolve_case_insensitive(&expanded))
         };
     }
 }
@@ -307,6 +351,66 @@ mod tests {
             cfg.quick_capture_path.as_deref(),
             Some(format!("{home_str}/Documents/Obsidian23/Inbox.md").as_str())
         );
+    }
+
+    #[test]
+    fn case_insensitive_corrects_unique_match() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Documents").join("Obsidian23")).unwrap();
+        let typed = dir
+            .path()
+            .join("documents")
+            .join("obsidian23")
+            .to_string_lossy()
+            .into_owned();
+        let expected = dir
+            .path()
+            .join("Documents")
+            .join("Obsidian23")
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(resolve_case_insensitive(&typed), expected);
+    }
+
+    #[test]
+    fn case_insensitive_keeps_exact_match_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Vault")).unwrap();
+        let exact = dir.path().join("Vault").to_string_lossy().into_owned();
+        assert_eq!(resolve_case_insensitive(&exact), exact);
+    }
+
+    #[test]
+    fn case_insensitive_ambiguous_match_passes_through() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Vault")).unwrap();
+        std::fs::create_dir_all(dir.path().join("vault")).unwrap();
+        let typed = dir.path().join("VAULT").to_string_lossy().into_owned();
+        assert_eq!(resolve_case_insensitive(&typed), typed);
+    }
+
+    #[test]
+    fn case_insensitive_leaves_nonexistent_tail_as_typed() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Vault")).unwrap();
+        let typed = dir
+            .path()
+            .join("vault")
+            .join("Future Note.md")
+            .to_string_lossy()
+            .into_owned();
+        let expected = dir
+            .path()
+            .join("Vault")
+            .join("Future Note.md")
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(resolve_case_insensitive(&typed), expected);
+    }
+
+    #[test]
+    fn case_insensitive_relative_path_untouched() {
+        assert_eq!(resolve_case_insensitive("relative/path"), "relative/path");
     }
 
     #[test]

@@ -282,7 +282,10 @@ pub fn create_worktree(repo_path: &Path, slug: &str) -> Result<PathBuf> {
     anyhow::bail!("git worktree add failed: {stderr}");
 }
 
-/// Remove a git worktree forcefully.
+/// Remove a git worktree forcefully. When `git worktree remove` refuses
+/// (already-deleted dir, locked worktree, dirty submodule), fall back to
+/// deleting the directory and pruning the stale registration — otherwise
+/// the entry lingers in `git worktree list` forever.
 pub fn remove_worktree(repo_path: &Path, worktree_path: &Path) -> Result<()> {
     let output = Command::new("git")
         .args(["worktree", "remove", "--force"])
@@ -291,11 +294,24 @@ pub fn remove_worktree(repo_path: &Path, worktree_path: &Path) -> Result<()> {
         .output()
         .context("failed to execute git worktree remove")?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git worktree remove failed: {stderr}");
+    if output.status.success() {
+        return Ok(());
     }
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
 
+    if worktree_path.exists() {
+        std::fs::remove_dir_all(worktree_path)
+            .with_context(|| format!("removing orphaned worktree dir {}", worktree_path.display()))?;
+    }
+    let prune = Command::new("git")
+        .args(["worktree", "prune"])
+        .current_dir(repo_path)
+        .output()
+        .context("failed to execute git worktree prune")?;
+    if !prune.status.success() {
+        let prune_err = String::from_utf8_lossy(&prune.stderr);
+        anyhow::bail!("git worktree remove failed ({stderr}); prune also failed: {prune_err}");
+    }
     Ok(())
 }
 

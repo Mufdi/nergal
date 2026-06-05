@@ -143,6 +143,45 @@ export async function confirm(opts: ConfirmOptions): Promise<boolean> {
   return result.isConfirmed;
 }
 
+export interface PromptOptions {
+  title: string;
+  body?: string;
+  initialValue?: string;
+  placeholder?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+}
+
+/// Text-input modal. Returns the trimmed value, or null on cancel/empty.
+export async function promptText(opts: PromptOptions): Promise<string | null> {
+  const result: SweetAlertResult = await Swal.fire(
+    baseOptions("question", {
+      title: opts.title,
+      html: opts.body,
+      input: "text",
+      inputValue: opts.initialValue ?? "",
+      inputPlaceholder: opts.placeholder,
+      showCancelButton: true,
+      confirmButtonText: opts.confirmLabel ?? "Save",
+      cancelButtonText: opts.cancelLabel ?? "Cancel",
+      reverseButtons: true,
+      customClass: {
+        popup: "cluihud-swal-popup",
+        title: "cluihud-swal-title",
+        htmlContainer: "cluihud-swal-body",
+        actions: "cluihud-swal-actions",
+        icon: "cluihud-swal-icon",
+        input: "cluihud-swal-input",
+        confirmButton: "cluihud-swal-confirm",
+        cancelButton: "cluihud-swal-cancel",
+      },
+    }),
+  );
+  if (!result.isConfirmed) return null;
+  const value = typeof result.value === "string" ? result.value.trim() : "";
+  return value.length > 0 ? value : null;
+}
+
 /// Single-button info/error/success notice. Resolves when dismissed.
 export async function notify(
   kind: "info" | "success" | "error" | "warning",

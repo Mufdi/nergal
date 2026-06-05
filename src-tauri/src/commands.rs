@@ -871,8 +871,14 @@ pub async fn delete_session(
         && let Some(repo_path) = db
             .workspace_repo_path(&session.workspace_id)
             .map_err(|e| e.to_string())?
+        && let Err(e) = crate::worktree::remove_worktree(&repo_path, wt_path)
     {
-        let _ = crate::worktree::remove_worktree(&repo_path, wt_path);
+        tracing::warn!(
+            session_id = %session_id,
+            worktree = %wt_path.display(),
+            error = %e,
+            "worktree cleanup failed; session delete continues",
+        );
     }
 
     agents.forget_session(&session_id);

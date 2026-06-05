@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { configAtom } from "@/stores/config";
 import { useFocusPulse } from "@/hooks/useFocusPulse";
-import { confirm as swalConfirm } from "@/lib/swal";
+import { confirm as swalConfirm, promptText } from "@/lib/swal";
+import { Pencil, Trash2 } from "lucide-react";
 import { focusZoneAtom, previousNonTerminalZoneAtom, triggerResumeSessionAtom, triggerNewSessionAtom, triggerAddWorkspaceAtom, triggerMergeAtom, triggerJumpToProjectAtom, sidebarSelectedIdxAtom, focusedWorkspaceIdAtom } from "@/stores/shortcuts";
 import {
   workspacesAtom,
@@ -194,6 +195,66 @@ function renameCommandFor(agentId: string): string | null {
   }
 }
 
+/// Rename + delete shared by the expanded SessionRow callbacks and the
+/// collapsed-sidebar hover popover, so both surfaces stay in lockstep.
+function useSessionActions() {
+  const setWorkspaces = useSetAtom(workspacesAtom);
+  const setSessionTabIds = useSetAtom(sessionTabIdsAtom);
+  const activeSessionId = useAtomValue(activeSessionIdAtom);
+  const setActiveSessionId = useSetAtom(activeSessionIdAtom);
+  const setFocusZone = useSetAtom(focusZoneAtom);
+
+  function renameSession(session: Session, newName: string) {
+    invoke("rename_session", { sessionId: session.id, name: newName })
+      .then(() => {
+        if (terminalService.hasTerminal(session.id)) {
+          const cmd = renameCommandFor(session.agent_id ?? "claude-code");
+          if (cmd) {
+            terminalService.writeToSession(session.id, `${cmd} ${newName}\r`).catch(() => {});
+          }
+        }
+        setWorkspaces((prev) =>
+          prev.map((w) => ({
+            ...w,
+            sessions: w.sessions.map((sess) =>
+              sess.id === session.id ? { ...sess, name: newName } : sess,
+            ),
+          })),
+        );
+        setFocusZone("terminal");
+        requestAnimationFrame(() => terminalService.focusActive());
+      })
+      .catch(() => {});
+  }
+
+  async function deleteSession(session: Session) {
+    const ok = await swalConfirm({
+      title: "Delete session?",
+      body: `<strong>${session.name}</strong> will be removed and its terminal closed.`,
+      confirmLabel: "Delete",
+      cancelLabel: "Cancel",
+      kind: "warning",
+      destructive: true,
+    });
+    if (!ok) return;
+    terminalService.destroy(session.id);
+    invoke("delete_session", { sessionId: session.id })
+      .then(() => {
+        setWorkspaces((prev) =>
+          prev.map((w) => ({
+            ...w,
+            sessions: w.sessions.filter((sess) => sess.id !== session.id),
+          })),
+        );
+        setSessionTabIds((prev) => prev.filter((id) => id !== session.id));
+        if (activeSessionId === session.id) setActiveSessionId(null);
+      })
+      .catch(() => {});
+  }
+
+  return { renameSession, deleteSession };
+}
+
 function CollapsedSidebar() {
   const workspaces = useAtomValue(workspacesAtom);
   const activeSessionId = useAtomValue(activeSessionIdAtom);
@@ -205,12 +266,22 @@ function CollapsedSidebar() {
   const showAccent = config.panel_focus_pulse ? isPulsing : isActive;
   const borderClass = showAccent ? "border-primary" : "border-border";
   const dotGridClass = config.sidebar_dot_grid ? "cluihud-dot-grid" : "";
+  const { renameSession, deleteSession } = useSessionActions();
 
   const sessionsWithWs = workspaces.flatMap((w) =>
     w.sessions
       .filter((s) => s.status !== "completed")
       .map((s) => ({ session: s, workspaceName: w.name }))
   );
+
+  async function handleRename(session: Session) {
+    const name = await promptText({
+      title: "Rename session",
+      initialValue: session.name,
+      confirmLabel: "Rename",
+    });
+    if (name && name !== session.name) renameSession(session, name);
+  }
 
   return (
     <TooltipProvider delay={0}>
@@ -231,7 +302,25 @@ function CollapsedSidebar() {
           <TooltipContent side="right" className="p-0" sideOffset={4}>
             <div className="px-2.5 py-1.5">
               <p className="text-[9px] text-muted-foreground">{workspaceName}</p>
-              <p className="text-[11px] font-medium">{s.name}</p>
+              <div className="flex items-center gap-1.5">
+                <p className="text-[11px] font-medium">{s.name}</p>
+                <button
+                  type="button"
+                  aria-label="Rename"
+                  onClick={() => void handleRename(s)}
+                  className="flex size-4 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                >
+                  <Pencil className="size-2.5" />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Delete"
+                  onClick={() => void deleteSession(s)}
+                  className="flex size-4 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-red-400 transition-colors"
+                >
+                  <Trash2 className="size-2.5" />
+                </button>
+              </div>
             </div>
           </TooltipContent>
         </Tooltip>
@@ -247,6 +336,7 @@ function CollapsedSidebar() {
 let lastNewSessionConsumed = 0;
 
 function WorkspacesView() {
+  const { renameSession, deleteSession } = useSessionActions();
   const workspaces = useAtomValue(workspacesAtom);
   const setWorkspaces = useSetAtom(workspacesAtom);
   const activeSessionId = useAtomValue(activeSessionIdAtom);
@@ -653,52 +743,8 @@ function WorkspacesView() {
                     isActive={activeSessionId === s.id}
                     shortcutNumber={shortcutNumber}
                     onSelect={() => handleSessionClick(s)}
-                    onRename={(newName) => {
-                      invoke("rename_session", { sessionId: s.id, name: newName })
-                        .then(() => {
-                          if (terminalService.hasTerminal(s.id)) {
-                            const cmd = renameCommandFor(s.agent_id ?? "claude-code");
-                            if (cmd) {
-                              terminalService.writeToSession(s.id, `${cmd} ${newName}\r`).catch(() => {});
-                            }
-                          }
-                          setWorkspaces((prev) =>
-                            prev.map((w) => ({
-                              ...w,
-                              sessions: w.sessions.map((sess) =>
-                                sess.id === s.id ? { ...sess, name: newName } : sess,
-                              ),
-                            })),
-                          );
-                          setFocusZoneDirect("terminal");
-                          requestAnimationFrame(() => terminalService.focusActive());
-                        })
-                        .catch(() => {});
-                    }}
-                    onDelete={async () => {
-                      const ok = await swalConfirm({
-                        title: "Delete session?",
-                        body: `<strong>${s.name}</strong> will be removed and its terminal closed.`,
-                        confirmLabel: "Delete",
-                        cancelLabel: "Cancel",
-                        kind: "warning",
-                        destructive: true,
-                      });
-                      if (!ok) return;
-                      terminalService.destroy(s.id);
-                      invoke("delete_session", { sessionId: s.id })
-                        .then(() => {
-                          setWorkspaces((prev) =>
-                            prev.map((w) => ({
-                              ...w,
-                              sessions: w.sessions.filter((sess) => sess.id !== s.id),
-                            })),
-                          );
-                          setSessionTabIds((prev) => prev.filter((id) => id !== s.id));
-                          if (activeSessionId === s.id) setActiveSessionId(null);
-                        })
-                        .catch(() => {});
-                    }}
+                    onRename={(newName) => renameSession(s, newName)}
+                    onDelete={() => void deleteSession(s)}
                   />
                   );
                 })}

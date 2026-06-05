@@ -118,8 +118,11 @@ export function Workspace() {
     prevSwitchSessionRef.current = activeSessionId;
     if (isFirstMount) return;
 
-    // If new session has a pending plan review, open it
-    if (planReviewMap[activeSessionId] === "pending_review") {
+    // If new session has a pending plan review, open it — unless the user
+    // explicitly hid the right panel in this session (saved gesture in
+    // rightCollapsedMap). Re-expanding over that gesture was the one switch
+    // path that ignored the override (BUG-06 v0.2.0).
+    if (planReviewMap[activeSessionId] === "pending_review" && rightCollapsedMap[activeSessionId] !== true) {
       const planState = planStateMap[activeSessionId];
       if (planState) {
         const planName = planState.path.split("/").pop()?.replace(".md", "") ?? "Plan";
@@ -140,9 +143,15 @@ export function Workspace() {
     // with view=null → "terminal-focus" preset → right collapsed (default).
 
     // Focus terminal on session switch so the user can type immediately.
+    // Double rAF: the layout-preset effect's rAF (expand/collapse) and any
+    // panel-content mounts it triggers run in between — asserting focus
+    // after them keeps restored panel views from outracing the terminal
+    // (BUG-09 v0.2.0).
     requestAnimationFrame(() => {
-      setFocusZone("terminal");
-      terminalService.focusActive();
+      requestAnimationFrame(() => {
+        setFocusZone("terminal");
+        terminalService.focusActive();
+      });
     });
   }, [activeSessionId]);
 

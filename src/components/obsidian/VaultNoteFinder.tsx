@@ -14,6 +14,8 @@ import {
   vaultSearchScopeAtom,
 } from "@/stores/obsidian";
 import { toastsAtom } from "@/stores/toast";
+import { focusZoneAtom } from "@/stores/shortcuts";
+import { appStore } from "@/stores/jotaiStore";
 import { invoke } from "@/lib/tauri";
 
 const DEBOUNCE_MS = 200;
@@ -49,8 +51,14 @@ export function VaultNoteFinder({ onClose, className }: { onClose: () => void; c
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
+  // Autofocus only when the panel is the active zone (user opened the
+  // finder). The finder also mounts on session switches that restore an
+  // obsidiannote view — stealing focus there broke the "switch lands on
+  // the terminal prompt" contract (BUG-09 v0.2.0).
   useEffect(() => {
-    requestAnimationFrame(() => inputRef.current?.focus());
+    requestAnimationFrame(() => {
+      if (appStore.get(focusZoneAtom) === "panel") inputRef.current?.focus();
+    });
   }, []);
 
   const runSearch = useCallback(async () => {

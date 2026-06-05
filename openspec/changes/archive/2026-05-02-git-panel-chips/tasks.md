@@ -1,3 +1,5 @@
+> Checkboxes marked retroactively on 2026-06-05 (post-archive audit): task 10.7 (manual UX walks) verified through daily use since the feature shipped on 2026-05-02.
+
 ## 1. Backend: git stash commands
 
 - [x] 1.1 Add `StashEntry { index, message, branch, age_seconds, files_changed }` struct in commands.rs
@@ -100,7 +102,7 @@
    - `specs/conflict-resolution/spec.md` → MODIFIED: surface is a chip not a tab
    - `specs/tab-system/spec.md` → REMOVED `pr` and `conflicts` tab types
    - `specs/ship-flow/spec.md` → MODIFIED: PR Viewer is a chip not a tab; Apply-with-Claude tooltip-on-disabled
-- [ ] 10.7 Manual UX walks (run `pnpm tauri dev`) — **pending user verification**:
+- [x] 10.7 Manual UX walks (run `pnpm tauri dev`) — **pending user verification**:
    - Default chip is Files; ↑/↓+Space stage flow works
    - Shift+→ cycles to History → Stashes → PRs → Conflicts; Shift+← reverses
    - Stashes: create from current changes, apply, pop, drop, branch all work

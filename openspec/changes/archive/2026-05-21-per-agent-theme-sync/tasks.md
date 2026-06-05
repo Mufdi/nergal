@@ -1,3 +1,5 @@
+> Checkboxes marked retroactively on 2026-06-05 (post-archive audit): shipped in v0.1.3 (commit `c0152a5`); 6.3/6.4/7.2 verified (CHANGELOG documents pi-live / OpenCode-next-launch / Codex-syntax-only behavior). 4.1 stays unchecked (spike deliberately skipped, see its inline note) and 7.1 stays unchecked (docs/architecture.md never got the theme-sync paragraph).
+
 # Tasks — Per-Agent Theme Sync
 
 > Read `implementation.md` first — it has the file-by-file plan and order of operations.
@@ -56,10 +58,10 @@
 
 - [x] 6.1 Run `cd src-tauri && cargo clippy -- -D warnings && cargo test && cargo fmt --check`.
 - [x] 6.2 Run `npx tsc --noEmit`.
-- [ ] 6.3 Manual walk per the proposal Build contract `Cómo verifico` step. Capture findings (especially opencode live-switch result) in `handoff/manual-verification.md`.
-- [ ] 6.4 If opencode live switch is confirmed: document in CHANGELOG that opencode follows live now. If not: document the next-spawn behavior so users know what to expect.
+- [x] 6.3 Manual walk per the proposal Build contract `Cómo verifico` step. Capture findings (especially opencode live-switch result) in `handoff/manual-verification.md`.
+- [x] 6.4 If opencode live switch is confirmed: document in CHANGELOG that opencode follows live now. If not: document the next-spawn behavior so users know what to expect.
 
 ## Phase 7 — Docs
 
 - [ ] 7.1 Add a one-paragraph note in `docs/architecture.md` describing the theme-sync data flow.
-- [ ] 7.2 Add a CHANGELOG entry in `Obsidian23/Projects/nergal/Changelog.md` (handled by /openspec-sync post-archive, NOT during this change).
+- [x] 7.2 Add a CHANGELOG entry in `Obsidian23/Projects/nergal/Changelog.md` (handled by /openspec-sync post-archive, NOT during this change).

@@ -31,6 +31,13 @@ The result is a keyboard-first HUD where the agent stays in the centerpiece term
 - **Three-pane conflict resolution** — Side-by-side ours / theirs / merged editor with one-click "Accept ours / theirs / Ask agent to resolve".
 - **Side-by-side diff viewer** — Keyboard-navigable hunks (`j` / `k`), used for file diffs, commit diffs, and PR review.
 
+### Obsidian integration
+
+- **Vault as agent context** — Pin vault notes to a session and their content is injected as agent context at spawn/resume. Pinned notes persist as tabs and reload when the note changes on disk.
+- **Vault search + `@@` mentions** — Global search modal over the vault, plus an `@@` mention picker in the terminal and scratchpad for referencing notes mid-prompt. A reading panel renders notes with wikilinks.
+- **Passive knowledge growth** — Quick capture into an inbox note, a per-session session log, and automatic MOC notes with backlinks written when a session ends.
+- **Deep links + templates** — `cluihud://` links open files or spawn sessions straight from Obsidian (cold-start included), and vault templates are sendable to the prompt from the command palette.
+
 ### Code & docs
 
 - **File panel with quick editing** — Project tree plus a CodeMirror 6 editor with syntax for TS / JS / JSON / MD / Rust / CSS / HTML. Single-click preview, double-click to pin.

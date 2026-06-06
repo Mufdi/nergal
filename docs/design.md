@@ -1,11 +1,69 @@
+---
+# Machine-readable design tokens (R0162 format — google-labs-code/design.md:
+# YAML front matter for agents, Markdown prose for rationale). Runtime source
+# of truth is src/styles/globals.css; this block mirrors it for agent
+# consumption. Update both together.
+name: Nergal (cluihud)
+identity: >-
+  Linear dark + factory.ai orange + JetBrains Air islands. Keyboard-first
+  desktop wrapper for agent CLIs. Dense, IDE-like, dark-only.
+mode: dark-only
+colors:
+  background: "#141415"        # root canvas; visible only as 1px gutter between islands
+  card: "#0a0a0b"              # islands: panels, sidebar, top/status bar, modals, terminal
+  popover: "#1c1c1e"
+  secondary: "#1c1c1e"         # hover/active fills inside islands (= muted)
+  secondary-foreground: "#a0a0a3"
+  muted-foreground: "#5c5c5f"
+  foreground: "#ededef"
+  primary: "#f97316"           # affirmative accent; ONE purpose: active path / chosen option / focus
+  primary-foreground: "#0a0a0b"
+  destructive: "#ef4444"       # subtle by default: bg-destructive/10, never solid
+  border: "rgba(255,255,255,0.08)"
+  input: "rgba(255,255,255,0.12)"
+encoded-colors:                # semantic states beyond active/passive — never swap for primary
+  success: green-500           # additions, working state, ship
+  error: red-500               # conflicts, deletions, close, errors
+  warning: yellow-500          # pending annotations, thresholds, file-modified
+  thinking: sky-400            # session active, not yet busy
+  comment: blue-400            # comment annotations, tool-use activity
+typography:
+  family: "Geist Variable (--font-sans); mono only inside Kbd"
+  scale-px: [16, 14, 12, 11, 10, 9]
+  section-caps: "text-[10px] font-medium uppercase tracking-wider text-muted-foreground"
+  aligned-numbers: tabular-nums
+radius:
+  sm: 0.225rem                 # kbd, palette key chips
+  md: 0.300rem                 # small buttons, indicator dots
+  lg: 0.375rem                 # DEFAULT: buttons, inputs, cards, islands
+  xl: 0.525rem                 # modal surfaces only
+  pill: 0.975rem               # badges only
+spacing:
+  island-gap: gap-1
+  outer-gutter: p-1            # produces the floating-islands feel — never remove
+  input-padding: px-2.5 py-1
+  row-padding: px-3 py-1
+surfaces:
+  tiers: [background, card, secondary]   # exactly three; no new background colors
+signature-patterns:
+  active-row: "inset 2px orange left bar via box-shadow"
+  choice-card: "border-orange-500 bg-orange-500/10 (picked but uncommitted)"
+  status-dot: "size-1.5 rounded-full"
+interaction-patterns: ./patterns.md
+---
+
 # cluihud — Design System
 
 > **Identity**: Linear dark + factory.ai orange + JetBrains Air islands.
 > A keyboard-first desktop wrapper for Claude Code. Dense, IDE-like, dark-only. Surfaces nest in three tiers; orange (`#f97316`) is reserved for affirmative state and the user's path of action.
 
-This file is the source of truth for new components. Read it before adding UI.
-The runtime tokens live in `src/styles/globals.css`; this document explains
-*why* they exist and *when* to use them.
+This file is the source of truth for **visual style**: tokens, surfaces,
+component anatomy, motion. Read it before adding UI. Interaction behavior
+(keyboard navigation, selection flows, chip-strips) lives in
+[`patterns.md`](./patterns.md). The runtime tokens live in
+`src/styles/globals.css`; this document explains *why* they exist and *when*
+to use them, and the YAML front matter above mirrors them machine-readably
+(R0162 format).
 
 ---
 
@@ -462,43 +520,10 @@ window chrome.
 
 ## 5. Keyboard navigation primitives
 
-cluihud is keyboard-first. Two systems collaborate:
-
-### 5.1 Focus zones
-
-The Workspace divides the UI into **zones** (sidebar, terminal, panel). Each
-zone is marked with `data-focus-zone="<name>"` on a focusable container.
-Keystroke handlers in zones use `e.currentTarget.querySelector("[data-nav-item]")`
-to locate items.
-
-`zone-flash` (§4) plays when the focus zone changes, giving visual confirmation.
-
-### 5.2 Nav-item attributes
-
-Inside any zone, list items participate in arrow-key navigation by setting:
-
-| Attribute | Required? | Purpose |
-|-----------|-----------|---------|
-| `data-nav-item` | yes | Marks the element as navigable |
-| `data-nav-selected` | runtime | Set/cleared by handler; styles via CSS rule in `globals.css` |
-| `data-nav-expanded` | tree only | `"true"` / `"false"` for arrow-left/right collapse |
-| `data-nav-chevron` | tree only | If present, arrow-left/right delegates to this child |
-
-**The CSS rule that visualizes selection** is in `globals.css` (search for
-`[data-nav-selected]`):
-```
-background: var(--secondary) !important;
-color: var(--foreground) !important;
-```
-
-### 5.3 Modal-specific keyboard
-
-Decision-list modals (Resume, ProjectPicker) bind their own `keydown` at
-`window` level with **capture: true** — base-ui Dialog tries to intercept
-Enter/Escape and we override that. They also focus a `tabIndex={0}` div with
-`focus:ring-1 focus:ring-orange-500/50` so the user sees which list is active.
-
-Number-key shortcuts (`1`–`9`) jump to indexed items in pickers and sidebar.
+Moved to [`patterns.md`](./patterns.md) §5 (focus zones, `data-nav-item`
+attributes, modal keyboard, terminal interception) — behavior, not styling.
+The visual side stays here: `zone-flash` (§4) and the `[data-nav-selected]`
+CSS rule in `globals.css`.
 
 ---
 
@@ -665,7 +690,10 @@ When you add or significantly change a component:
 2. If it introduces a new primitive (e.g. fills the §7.1 Select gap) — move
    the entry from §7 (Open) to §3 (Component patterns) with the actual tokens.
 3. If it introduces a new color, animation, or surface tier — update §1, §4,
-   or §2 *and* note why the new addition was necessary.
+   or §2, mirror it in the YAML front matter, *and* note why the new addition
+   was necessary.
+4. If it's interaction behavior (keyboard, selection flow) — it belongs in
+   `patterns.md`, not here.
 
-Keep this file under ~700 lines. If a section needs more depth, link to a
-focused sub-doc rather than expanding here.
+Keep the prose under ~700 lines (front matter excluded). If a section needs
+more depth, link to a focused sub-doc rather than expanding here.

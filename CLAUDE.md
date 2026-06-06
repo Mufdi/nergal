@@ -100,5 +100,6 @@ Read on demand when working in the relevant area:
 - [`docs/architecture.md`](./docs/architecture.md) — stack, file tree, IPC patterns, event flow.
 - [`docs/conventions.md`](./docs/conventions.md) — Rust + React/TS coding standards.
 - [`docs/hooks.md`](./docs/hooks.md) — hook system, plan-review flow, ask-user interception, settings.json snippet.
-- [`docs/design.md`](./docs/design.md) — design system: tokens, components, decision rules. Read before touching UI.
+- [`docs/design.md`](./docs/design.md) — design system (visual): R0162 YAML tokens + components + decision rules. Read before touching UI.
+- [`docs/patterns.md`](./docs/patterns.md) — interaction patterns: keyboard nav tiers, chip-strips, file picker, focus zones. Read before adding shortcuts or panel navigation.
 - [`openspec/specs/`](./openspec/specs/) — feature contracts. Read the relevant spec before implementing or proposing a change.

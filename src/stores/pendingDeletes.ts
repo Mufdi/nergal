@@ -14,16 +14,23 @@ import * as terminalService from "@/components/terminal/terminalService";
 import { invoke } from "@/lib/tauri";
 
 const DELETE_GRACE_MS = 5_000;
+/// Slack between the countdown reaching 0 and the physical deletion, so an
+/// Undo clicked at the last visible second still lands before the timer.
+const FINALIZE_SLACK_MS = 2_000;
 
 /// Timers are disposable resources, not data — kept outside Jotai.
 const graceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-function cancelTimer(key: string): void {
+function cancelTimer(key: string): boolean {
   const handle = graceTimers.get(key);
-  if (handle !== undefined) {
-    clearTimeout(handle);
-    graceTimers.delete(key);
-  }
+  if (handle === undefined) return false;
+  clearTimeout(handle);
+  graceTimers.delete(key);
+  return true;
+}
+
+function tooLateToast(): void {
+  sileo.error({ title: "Too late", description: "Already deleted.", fill: "#171717" });
 }
 
 function insertAt<T>(list: T[], item: T, index: number): T[] {
@@ -60,8 +67,11 @@ export const deleteSessionWithGraceAction = atom(null, (get, set, session: Sessi
     button: {
       title: "Undo",
       onClick: () => {
-        cancelTimer(session.id);
         sileo.dismiss(toastId);
+        if (!cancelTimer(session.id)) {
+          tooLateToast();
+          return;
+        }
         appStore.set(workspacesAtom, (prev) =>
           prev.map((w) => {
             if (w.id !== wsId || w.sessions.some((s) => s.id === session.id)) return w;
@@ -83,9 +93,10 @@ export const deleteSessionWithGraceAction = atom(null, (get, set, session: Sessi
     session.id,
     setTimeout(() => {
       graceTimers.delete(session.id);
+      sileo.dismiss(toastId);
       terminalService.destroy(session.id);
       invoke("delete_session", { sessionId: session.id }).catch(() => {});
-    }, DELETE_GRACE_MS),
+    }, DELETE_GRACE_MS + FINALIZE_SLACK_MS),
   );
 });
 
@@ -113,8 +124,11 @@ export const deleteWorkspaceWithGraceAction = atom(null, (get, set, workspace: W
     button: {
       title: "Undo",
       onClick: () => {
-        cancelTimer(workspace.id);
         sileo.dismiss(toastId);
+        if (!cancelTimer(workspace.id)) {
+          tooLateToast();
+          return;
+        }
         appStore.set(workspacesAtom, (prev) =>
           prev.some((w) => w.id === workspace.id) ? prev : insertAt(prev, workspace, wsIndex),
         );
@@ -135,8 +149,9 @@ export const deleteWorkspaceWithGraceAction = atom(null, (get, set, workspace: W
     workspace.id,
     setTimeout(() => {
       graceTimers.delete(workspace.id);
+      sileo.dismiss(toastId);
       for (const id of sessionIds) terminalService.destroy(id);
       invoke("delete_workspace", { workspaceId: workspace.id }).catch(() => {});
-    }, DELETE_GRACE_MS),
+    }, DELETE_GRACE_MS + FINALIZE_SLACK_MS),
   );
 });

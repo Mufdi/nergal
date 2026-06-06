@@ -360,6 +360,14 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_worktree_branch(&self, id: &str, branch: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE sessions SET worktree_branch = ?1, updated_at = ?2 WHERE id = ?3",
+            params![branch, now_secs(), id],
+        )?;
+        Ok(())
+    }
+
     /// Persist the agent-internal session id (e.g. Pi UUID, Codex rollout id)
     /// so resume flows can pass it back via `--session <id>` after a cluihud
     /// restart. Idempotent.

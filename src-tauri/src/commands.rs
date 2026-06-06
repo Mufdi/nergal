@@ -2076,8 +2076,19 @@ pub fn git_rename_branch(
         return Err("branch name is empty".into());
     }
     let db = db.lock().map_err(|e| e.to_string())?;
+    let Some(session) = db.find_session(&session_id).map_err(|e| e.to_string())? else {
+        return Err("session not found".into());
+    };
     let cwd = resolve_session_cwd(&db, &session_id)?;
-    crate::worktree::rename_current_branch(&cwd, trimmed).map_err(|e| e.to_string())
+    crate::worktree::rename_current_branch(&cwd, trimmed).map_err(|e| e.to_string())?;
+    // get_session_git_info, ship and cleanup all read worktree_branch from
+    // the DB — without this update the UI reverts to the old name and
+    // cleanup later deletes the wrong branch.
+    if session.worktree_branch.is_some() {
+        db.update_worktree_branch(&session_id, trimmed)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]

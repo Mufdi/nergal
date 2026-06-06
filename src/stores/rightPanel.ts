@@ -121,7 +121,9 @@ export const openTabAction = atom(
     const { tab: partial } = params;
     const activate = params.activate ?? true;
 
-    set(tabOpenedSignalAtom, (n) => n + 1);
+    // activate:false restores are background ops (pinned-note tabs on a
+    // session switch) — the signal would focus the panel.
+    if (activate) set(tabOpenedSignalAtom, (n) => n + 1);
     set(tabStateMapAtom, (prev) => {
       const state = prev[sessionId] ?? defaultTabState;
       const isSingleton = SINGLETON_TYPES.includes(partial.type);

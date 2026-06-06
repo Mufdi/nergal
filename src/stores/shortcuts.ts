@@ -29,6 +29,7 @@ import { invoke as invokeCmd } from "@/lib/tauri";
 import { scratchpadOpenAtom } from "./scratchpad";
 import { browserToggleModeAction } from "./browser";
 import { obsidianEnabledAtom } from "./obsidian";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { quickCaptureOpenAtom } from "./quickCapture";
 import { searchModalOpenAtom, searchScopeAtom } from "./search";
 import { openInObsidian } from "@/lib/obsidian";
@@ -621,7 +622,9 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   }},
   { id: "fullscreen-terminal", label: "Fullscreen Terminal", keys: "ctrl+enter", category: "navigation", keywords: ["fullscreen", "terminal", "maximize", "zen", "collapse"], handler: () => {
     const s = store();
-    s.set(terminalFullscreenAtom, (v: boolean) => !v);
+    const next = !s.get(terminalFullscreenAtom);
+    s.set(terminalFullscreenAtom, next);
+    void getCurrentWindow().setFullscreen(next).catch(() => {});
     focusZone("terminal");
   }},
 
@@ -689,7 +692,7 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   { id: "rename-branch", label: "Rename Branch", keys: "ctrl+alt+r", category: "action", keywords: ["branch", "rename", "git"], handler: () => {
     store().set(renameBranchSignalAtom, (p: number) => p + 1);
   }},
-  { id: "clear-completed-tasks", label: "Clear Completed Tasks", keys: "ctrl+alt+d", category: "action", keywords: ["tasks", "clear", "done", "completed", "delete"], handler: () => {
+  { id: "clear-completed-tasks", label: "Clear Completed Tasks", keys: "ctrl+alt+x", category: "action", keywords: ["tasks", "clear", "done", "completed", "delete"], handler: () => {
     const s = store();
     const done = s.get(activeSessionTasksAtom).filter((t) => t.status === "completed").length;
     if (done === 0) {

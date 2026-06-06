@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { appStore } from "@/stores/jotaiStore";
+import { focusZoneAtom } from "@/stores/shortcuts";
 import { EditorView, keymap } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { basicSetup } from "codemirror";
@@ -157,7 +159,7 @@ export function CodeEditor({ filePath, sessionId, readOnly = false, gotoLine = n
 
       const view = new EditorView({ state, parent: container });
       viewRef.current = view;
-      view.focus();
+      if (appStore.get(focusZoneAtom) === "panel") view.focus();
       if (gotoLine && gotoLine >= 1 && gotoLine <= view.state.doc.lines) {
         const pos = view.state.doc.line(gotoLine).from;
         view.dispatch({

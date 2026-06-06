@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { commandPaletteOpenAtom, shortcutRegistryAtom, type ShortcutAction } from "@/stores/shortcuts";
+import { commandPaletteOpenAtom, shortcutRegistryAtom, focusZoneAtom, type ShortcutAction } from "@/stores/shortcuts";
+import * as terminalService from "@/components/terminal/terminalService";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { obsidianTemplatesAtom, type ObsidianTemplate } from "@/stores/obsidianTemplates";
 import { toastsAtom } from "@/stores/toast";
@@ -14,6 +15,7 @@ export function CommandPalette() {
   const templates = useAtomValue(obsidianTemplatesAtom);
   const activeSessionId = useAtomValue(activeSessionIdAtom);
   const setToasts = useSetAtom(toastsAtom);
+  const setFocusZone = useSetAtom(focusZoneAtom);
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -120,6 +122,8 @@ export function CommandPalette() {
         sessionId: activeSessionId,
         data: `${template.body}\r`,
       });
+      setFocusZone("terminal");
+      requestAnimationFrame(() => terminalService.focusActive());
     } catch (err) {
       setToasts({ message: "Template send failed", description: String(err), type: "error" });
     }

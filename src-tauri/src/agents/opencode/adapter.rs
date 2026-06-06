@@ -185,6 +185,16 @@ impl AgentAdapter for OpenCodeAdapter {
                 args.push(id.to_string());
             }
         }
+        // Permission preset: only Plan maps — `--agent plan` selects the
+        // built-in read-only plan agent (verified in `opencode --help`
+        // 2026-06-06). AcceptEdits/Bypass have no CLI flag (permissions are
+        // opencode.json config) and are skipped.
+        if let Some(opts) = ctx.launch_options
+            && opts.permission_preset == crate::models::PermissionPreset::Plan
+        {
+            args.push("--agent".into());
+            args.push("plan".into());
+        }
         // `--prompt` rides only a FRESH launch: it lands as the agent's first
         // turn, so re-submitting it on resume injects a stray turn into the
         // existing conversation (observed to hang the TUI). On resume the
@@ -198,6 +208,13 @@ impl AgentAdapter for OpenCodeAdapter {
         let mut env = HashMap::new();
         env.insert("CLUIHUD_SESSION_ID".into(), ctx.session_id.to_string());
         Ok(SpawnSpec { binary, args, env })
+    }
+
+    fn permission_presets(&self) -> &'static [crate::models::PermissionPreset] {
+        use crate::models::PermissionPreset as P;
+        // AcceptEdits/Bypass have no CLI flag (permissions live in
+        // opencode.json config); Plan maps to `--agent plan`.
+        &[P::Default, P::Plan]
     }
 
     fn context_injection(&self) -> ContextInjection {
@@ -538,6 +555,7 @@ mod tests {
             resume_from: None,
             initial_prompt: None,
             injected_context: None,
+            launch_options: None,
         };
         if let Ok(spec) = a.spawn(&ctx) {
             assert!(spec.args.iter().any(|a| a == "--port"));
@@ -556,6 +574,7 @@ mod tests {
             resume_from: resume,
             initial_prompt: None,
             injected_context: None,
+            launch_options: None,
         };
         if let Ok(spec) = a.spawn(&mk(Some("continue"))) {
             assert!(spec.args.iter().any(|a| a == "--continue"));

@@ -47,6 +47,19 @@ fn now_secs() -> u64 {
         .as_secs()
 }
 
+/// Parse the nullable `launch_options` JSON column. NULL, empty, or
+/// malformed → `None` (a corrupt column must not break session loading).
+fn parse_launch_options(raw: Option<String>) -> Option<crate::models::LaunchOptions> {
+    let s = raw.filter(|s| !s.trim().is_empty())?;
+    match serde_json::from_str(&s) {
+        Ok(v) => Some(v),
+        Err(e) => {
+            tracing::warn!(error = %e, "malformed launch_options JSON; treating as none");
+            None
+        }
+    }
+}
+
 /// Parse the nullable `pinned_note_paths` JSON-array column into a `Vec`.
 /// NULL, empty, or malformed → empty vec (a corrupt column must not break
 /// session loading).
@@ -112,6 +125,7 @@ impl Database {
             include_str!("../migrations/008_obsidian_config.sql"),
             include_str!("../migrations/009_obsidian_search_subdir.sql"),
             include_str!("../migrations/010_pinned_notes.sql"),
+            include_str!("../migrations/011_launch_options.sql"),
         ];
 
         for (i, sql) in migrations.iter().enumerate() {
@@ -215,7 +229,7 @@ impl Database {
         )?;
         let mut sess_stmt = self
             .conn
-            .prepare("SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, pinned_note_paths FROM sessions WHERE workspace_id = ?1 ORDER BY created_at")?;
+            .prepare("SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, pinned_note_paths, launch_options FROM sessions WHERE workspace_id = ?1 ORDER BY created_at")?;
 
         let workspaces = ws_stmt.query_map([], |row| {
             Ok((
@@ -248,6 +262,7 @@ impl Database {
                         agent_internal_session_id: row.get(10)?,
                         agent_capabilities: Vec::new(),
                         pinned_note_paths: parse_pinned_note_paths(row.get(11)?),
+                        launch_options: parse_launch_options(row.get(12)?),
                     })
                 })?
                 .filter_map(|r| r.ok())
@@ -290,7 +305,7 @@ impl Database {
 
     pub fn create_session(&self, session: &Session) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO sessions (id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO sessions (id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, launch_options) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 session.id,
                 session.workspace_id,
@@ -303,6 +318,10 @@ impl Database {
                 session.updated_at,
                 session.agent_id,
                 session.agent_internal_session_id,
+                session
+                    .launch_options
+                    .as_ref()
+                    .and_then(|o| serde_json::to_string(o).ok()),
             ],
         )?;
         Ok(())
@@ -310,7 +329,7 @@ impl Database {
 
     pub fn find_session(&self, id: &str) -> Result<Option<Session>> {
         let result = self.conn.query_row(
-            "SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, pinned_note_paths FROM sessions WHERE id = ?1",
+            "SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, pinned_note_paths, launch_options FROM sessions WHERE id = ?1",
             [id],
             |row| Ok(Session {
                 id: row.get(0)?,
@@ -326,6 +345,7 @@ impl Database {
                 agent_internal_session_id: row.get(10)?,
                 agent_capabilities: Vec::new(),
                 pinned_note_paths: parse_pinned_note_paths(row.get(11)?),
+                launch_options: parse_launch_options(row.get(12)?),
             }),
         );
         match result {
@@ -892,8 +912,48 @@ mod tests {
             agent_internal_session_id: None,
             agent_capabilities: Vec::new(),
             pinned_note_paths: Vec::new(),
+            launch_options: None,
         };
         db.create_session(&s).unwrap();
+    }
+
+    #[test]
+    fn launch_options_round_trip() {
+        use crate::models::{LaunchOptions, PermissionPreset};
+        let db = in_memory();
+        db.create_workspace("ws1", "ws", "/tmp/repo").unwrap();
+        let s = Session {
+            id: "s-lo".to_string(),
+            name: "s".into(),
+            workspace_id: "ws1".into(),
+            worktree_path: None,
+            worktree_branch: None,
+            merge_target: None,
+            status: SessionStatus::Idle,
+            created_at: 0,
+            updated_at: 0,
+            agent_id: "claude-code".into(),
+            agent_internal_session_id: None,
+            agent_capabilities: Vec::new(),
+            pinned_note_paths: Vec::new(),
+            launch_options: Some(LaunchOptions {
+                permission_preset: PermissionPreset::AcceptEdits,
+                allow_skip_in_cycle: false,
+                startup_command: Some("nvm use 20".into()),
+            }),
+        };
+        db.create_session(&s).unwrap();
+        let loaded = db.find_session("s-lo").unwrap().unwrap();
+        let opts = loaded.launch_options.unwrap();
+        assert_eq!(opts.permission_preset, PermissionPreset::AcceptEdits);
+        assert_eq!(opts.startup_command.as_deref(), Some("nvm use 20"));
+    }
+
+    #[test]
+    fn parse_launch_options_handles_null_and_garbage() {
+        assert!(parse_launch_options(None).is_none());
+        assert!(parse_launch_options(Some("".into())).is_none());
+        assert!(parse_launch_options(Some("not json".into())).is_none());
     }
 
     #[test]

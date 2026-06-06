@@ -1,6 +1,21 @@
 import { atom } from "jotai";
 import type { CostSummary } from "@/lib/types";
 
+/// Mirrors `PermissionPreset` in src-tauri/src/models.rs (kebab-case wire
+/// form). One mode per session — CC's `--dangerously-skip-permissions` is
+/// the documented equivalent of `--permission-mode bypassPermissions`, so
+/// "bypass" is a mode like the rest, never combinable with plan/accept.
+export type PermissionPreset = "default" | "plan" | "accept-edits" | "auto" | "bypass";
+
+/// Mirrors `LaunchOptions` in src-tauri/src/models.rs.
+export interface LaunchOptions {
+  permission_preset: PermissionPreset;
+  /// CC `--allow-dangerously-skip-permissions`: adds bypass to the Shift+Tab
+  /// cycle without starting in it. Composes with any non-bypass preset.
+  allow_skip_in_cycle: boolean;
+  startup_command: string | null;
+}
+
 export interface Session {
   id: string;
   name: string;
@@ -22,6 +37,8 @@ export interface Session {
   /// -injection). Seeds the chip's initial count; runtime mutations live in
   /// `pinnedNotesMapAtom`.
   pinned_note_paths?: string[];
+  /// Launch options chosen at creation; re-applied on resume by the backend.
+  launch_options?: LaunchOptions | null;
 }
 
 export interface Workspace {

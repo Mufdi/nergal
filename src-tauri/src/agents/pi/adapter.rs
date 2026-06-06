@@ -153,6 +153,10 @@ impl AgentAdapter for PiAdapter {
                 args.push(id.to_string());
             }
         }
+        // Permission presets are skipped for Pi: `pi --help` (2026-06-06)
+        // exposes no permission/approval flags, and `--plan` only exists when
+        // the community plan-mode extension is installed — not reliable.
+        //
         // Pi exposes a per-invocation `--append-system-prompt <text>` (verified
         // against the shipped CLI 2026-06-04) — real system context, not a user
         // turn. Re-applied on resume since spawn runs the same path each time.
@@ -552,6 +556,7 @@ mod tests {
             resume_from: resume,
             initial_prompt: None,
             injected_context: None,
+            launch_options: None,
         };
         if let Ok(spec) = a.spawn(&mk(None)) {
             assert!(spec.args.is_empty());

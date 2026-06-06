@@ -157,6 +157,13 @@ export interface AvailableAgent {
   config_path: string | null;
   version: string | null;
   capabilities: string[];
+  /// Kebab-case permission presets the adapter maps to real CLI flags
+  /// ("default", "plan", "accept-edits", "auto", "bypass"). Drives the
+  /// launch-options list in the agent picker.
+  permission_presets: string[];
+  /// Whether the adapter maps `allow_skip_in_cycle` to a real flag (CC
+  /// `--allow-dangerously-skip-permissions`).
+  allow_skip_cycle_supported: boolean;
 }
 
 export interface ThemePalette {

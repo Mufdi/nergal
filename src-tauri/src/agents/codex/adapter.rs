@@ -146,6 +146,23 @@ impl AgentAdapter for CodexAdapter {
                 args.push(id.to_string());
             }
         }
+        // Permission preset → Codex approval flags (per openai/codex docs;
+        // binary not present on the dev machine to verify, hence fresh-launch
+        // only — `codex resume <id> --full-auto` arg order is unverified).
+        // Plan/Auto are unmapped: Codex plan mode is TUI-only, no CLI flag.
+        if ctx.resume_from.is_none()
+            && let Some(opts) = ctx.launch_options
+        {
+            match opts.permission_preset {
+                crate::models::PermissionPreset::AcceptEdits => {
+                    args.push("--full-auto".into());
+                }
+                crate::models::PermissionPreset::Bypass => {
+                    args.push("--dangerously-bypass-approvals-and-sandbox".into());
+                }
+                _ => {}
+            }
+        }
         // Codex takes the prompt as a positional `[PROMPT]` arg, which the
         // `resume` subcommand reinterprets as a session id — so the preamble
         // only rides a fresh launch. Re-inject on resume falls to the next turn.
@@ -157,6 +174,12 @@ impl AgentAdapter for CodexAdapter {
         let mut env = HashMap::new();
         env.insert("CLUIHUD_SESSION_ID".into(), ctx.session_id.to_string());
         Ok(SpawnSpec { binary, args, env })
+    }
+
+    fn permission_presets(&self) -> &'static [crate::models::PermissionPreset] {
+        use crate::models::PermissionPreset as P;
+        // No Plan/Auto: Codex plan mode is TUI-only, no CLI flag.
+        &[P::Default, P::AcceptEdits, P::Bypass]
     }
 
     fn context_injection(&self) -> ContextInjection {
@@ -373,6 +396,7 @@ command = "/usr/bin/foo"
             resume_from: resume,
             initial_prompt: None,
             injected_context: None,
+            launch_options: None,
         };
         if let Ok(spec) = a.spawn(&mk(None)) {
             assert!(spec.args.is_empty());

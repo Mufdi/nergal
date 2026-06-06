@@ -294,6 +294,11 @@ pub struct SpawnContext<'a> {
     /// `None` (the default at every call site) leaves spawn byte-identical to
     /// pre-injection behavior.
     pub injected_context: Option<&'a str>,
+    /// Per-session launch options from the session row. Adapters map
+    /// `permission_preset` to their native flags (presets without a verified
+    /// flag are skipped); `startup_command` is handled by the PTY layer, not
+    /// the adapter.
+    pub launch_options: Option<&'a crate::models::LaunchOptions>,
 }
 
 /// How an adapter accepts a context block at spawn. The variant decides how
@@ -528,6 +533,22 @@ pub trait AgentAdapter: Send + Sync {
     }
 
     fn spawn(&self, ctx: &SpawnContext<'_>) -> Result<SpawnSpec, AdapterError>;
+
+    /// Permission presets this adapter maps to verified native flags in
+    /// [`spawn`](Self::spawn). The session-creation UI offers only what's
+    /// listed here, so unsupported presets are unreachable instead of
+    /// silently ignored. Default: only `Default` (no flags).
+    fn permission_presets(&self) -> &'static [crate::models::PermissionPreset] {
+        &[crate::models::PermissionPreset::Default]
+    }
+
+    /// Whether [`spawn`](Self::spawn) maps
+    /// [`LaunchOptions::allow_skip_in_cycle`](crate::models::LaunchOptions)
+    /// to a real flag (CC `--allow-dangerously-skip-permissions`). Gates the
+    /// toggle in the UI.
+    fn supports_allow_skip_cycle(&self) -> bool {
+        false
+    }
 
     /// How this adapter folds [`SpawnContext::injected_context`] into the
     /// launch command. Default `Unsupported` keeps untouched adapters safe —

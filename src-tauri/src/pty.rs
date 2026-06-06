@@ -346,12 +346,20 @@ pub async fn start_claude_session(
                 vault_root.as_deref(),
             )
         });
+        // Launch options persist on the session row, so resume re-applies
+        // them through this same path (preset flags + startup prelude).
+        let launch_options: Option<crate::models::LaunchOptions> = db
+            .lock()
+            .ok()
+            .and_then(|g| g.find_session(&session_id).ok().flatten())
+            .and_then(|s| s.launch_options);
         let spawn_ctx = crate::agents::SpawnContext {
             session_id: &session_id,
             cwd: &cwd_path,
             resume_from: resume_owned.as_deref(),
             initial_prompt: initial_prompt.as_deref(),
             injected_context: injected_context.as_deref(),
+            launch_options: launch_options.as_ref(),
         };
         let spec = adapter.spawn(&spawn_ctx).map_err(|e| e.to_string())?;
 
@@ -364,7 +372,19 @@ pub async fn start_claude_session(
         // `cd` right before the binary closes that gap.
         let cwd_str = cwd_path.display().to_string();
         let cwd_escaped = cwd_str.replace('\'', "'\\''");
-        let mut cmd = format!(" cd '{cwd_escaped}' && {}", spec.binary.display());
+        // The user's startup prelude runs between `cd` and the agent binary,
+        // verbatim (it's the user's own shell on their own machine — same
+        // trust level as typing it). A failing prelude aborts the launch via
+        // `&&`, which is the honest outcome: the user asked for setup first.
+        let prelude = launch_options
+            .as_ref()
+            .and_then(|o| o.startup_command.as_deref())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let mut cmd = match prelude {
+            Some(p) => format!(" cd '{cwd_escaped}' && {p} && {}", spec.binary.display()),
+            None => format!(" cd '{cwd_escaped}' && {}", spec.binary.display()),
+        };
         for arg in &spec.args {
             // Quote args containing whitespace/special chars; for the args we
             // emit today (`--continue`, `--resume`, plain UUIDs) this is a

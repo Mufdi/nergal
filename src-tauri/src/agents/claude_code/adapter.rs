@@ -171,6 +171,39 @@ impl AgentAdapter for ClaudeCodeAdapter {
                 args.push(id.to_string());
             }
         }
+        // Permission preset → native CC flags. One mode per session:
+        // `--dangerously-skip-permissions` is the documented equivalent of
+        // `--permission-mode bypassPermissions`, so it is NOT combinable
+        // with plan/acceptEdits (bypass silently wins — verified 2026-06-06
+        // against the CLI reference). Valid alongside --resume/--continue;
+        // must precede the positional prompt below.
+        if let Some(opts) = ctx.launch_options {
+            match opts.permission_preset {
+                crate::models::PermissionPreset::Default => {}
+                crate::models::PermissionPreset::Plan => {
+                    args.push("--permission-mode".into());
+                    args.push("plan".into());
+                }
+                crate::models::PermissionPreset::AcceptEdits => {
+                    args.push("--permission-mode".into());
+                    args.push("acceptEdits".into());
+                }
+                crate::models::PermissionPreset::Auto => {
+                    args.push("--permission-mode".into());
+                    args.push("auto".into());
+                }
+                crate::models::PermissionPreset::Bypass => {
+                    args.push("--dangerously-skip-permissions".into());
+                }
+            }
+            // Adds bypass to the Shift+Tab cycle without starting in it —
+            // redundant (and skipped) when already starting in bypass.
+            if opts.allow_skip_in_cycle
+                && opts.permission_preset != crate::models::PermissionPreset::Bypass
+            {
+                args.push("--allow-dangerously-skip-permissions".into());
+            }
+        }
         // Pinned-note context rides as an ephemeral system prompt, kept
         // distinct from the user's first turn and isolated per session. Flag
         // must precede the positional prompt below.
@@ -194,6 +227,15 @@ impl AgentAdapter for ClaudeCodeAdapter {
         let mut env = HashMap::new();
         env.insert("CLUIHUD_SESSION_ID".into(), ctx.session_id.to_string());
         Ok(SpawnSpec { binary, args, env })
+    }
+
+    fn permission_presets(&self) -> &'static [crate::models::PermissionPreset] {
+        use crate::models::PermissionPreset as P;
+        &[P::Default, P::Plan, P::AcceptEdits, P::Auto, P::Bypass]
+    }
+
+    fn supports_allow_skip_cycle(&self) -> bool {
+        true
     }
 
     fn context_injection(&self) -> ContextInjection {
@@ -332,6 +374,7 @@ mod tests {
             resume_from: None,
             initial_prompt: None,
             injected_context: None,
+            launch_options: None,
         };
         // `claude` may not exist on this machine; if it doesn't, the spawn
         // returns Transport(NotFound). Either way, the session_id env wiring
@@ -354,6 +397,7 @@ mod tests {
             resume_from: resume,
             initial_prompt: None,
             injected_context: None,
+            launch_options: None,
         };
         // None → no resume flag
         if let Ok(spec) = a.spawn(&mk(None)) {
@@ -377,6 +421,68 @@ mod tests {
     }
 
     #[test]
+    fn spawn_maps_permission_presets_to_cc_flags() {
+        use crate::models::{LaunchOptions, PermissionPreset};
+        let a = ClaudeCodeAdapter::new();
+        let cwd = Path::new("/tmp");
+        let mk = |preset: PermissionPreset| LaunchOptions {
+            permission_preset: preset,
+            allow_skip_in_cycle: false,
+            startup_command: None,
+        };
+        let spawn_with = |opts: &LaunchOptions| {
+            a.spawn(&SpawnContext {
+                session_id: "s",
+                cwd,
+                resume_from: None,
+                initial_prompt: None,
+                injected_context: None,
+                launch_options: Some(opts),
+            })
+        };
+        if let Ok(spec) = spawn_with(&mk(PermissionPreset::Default)) {
+            assert!(spec.args.is_empty());
+        }
+        if let Ok(spec) = spawn_with(&mk(PermissionPreset::Plan)) {
+            assert_eq!(spec.args, vec!["--permission-mode", "plan"]);
+        }
+        if let Ok(spec) = spawn_with(&mk(PermissionPreset::AcceptEdits)) {
+            assert_eq!(spec.args, vec!["--permission-mode", "acceptEdits"]);
+        }
+        if let Ok(spec) = spawn_with(&mk(PermissionPreset::Auto)) {
+            assert_eq!(spec.args, vec!["--permission-mode", "auto"]);
+        }
+        if let Ok(spec) = spawn_with(&mk(PermissionPreset::Bypass)) {
+            assert_eq!(spec.args, vec!["--dangerously-skip-permissions"]);
+        }
+        // allow_skip_in_cycle composes with a non-bypass preset…
+        let plan_plus_allow = LaunchOptions {
+            permission_preset: PermissionPreset::Plan,
+            allow_skip_in_cycle: true,
+            startup_command: None,
+        };
+        if let Ok(spec) = spawn_with(&plan_plus_allow) {
+            assert_eq!(
+                spec.args,
+                vec![
+                    "--permission-mode",
+                    "plan",
+                    "--allow-dangerously-skip-permissions"
+                ]
+            );
+        }
+        // …and is dropped as redundant when already starting in bypass.
+        let bypass_plus_allow = LaunchOptions {
+            permission_preset: PermissionPreset::Bypass,
+            allow_skip_in_cycle: true,
+            startup_command: None,
+        };
+        if let Ok(spec) = spawn_with(&bypass_plus_allow) {
+            assert_eq!(spec.args, vec!["--dangerously-skip-permissions"]);
+        }
+    }
+
+    #[test]
     fn spawn_appends_initial_prompt_as_positional_arg() {
         let a = ClaudeCodeAdapter::new();
         let cwd = Path::new("/tmp");
@@ -386,6 +492,7 @@ mod tests {
             resume_from: None,
             initial_prompt: Some("implement auth"),
             injected_context: None,
+            launch_options: None,
         };
         if let Ok(spec) = a.spawn(&ctx) {
             assert_eq!(spec.args, vec!["implement auth".to_string()]);
@@ -397,6 +504,7 @@ mod tests {
             resume_from: None,
             initial_prompt: Some(""),
             injected_context: None,
+            launch_options: None,
         };
         if let Ok(spec) = a.spawn(&empty) {
             assert!(spec.args.is_empty());
@@ -413,6 +521,7 @@ mod tests {
             resume_from: None,
             initial_prompt: None,
             injected_context: Some("# Pinned vault context\n\nhello"),
+            launch_options: None,
         };
         if let Ok(spec) = a.spawn(&ctx) {
             let path = crate::agents::spawn_context_file("cc-inject-test");
@@ -445,6 +554,7 @@ mod tests {
             resume_from: None,
             initial_prompt: None,
             injected_context: None,
+            launch_options: None,
         };
         if let Ok(spec) = a.spawn(&ctx) {
             assert!(!spec.args.iter().any(|x| x == "--append-system-prompt-file"));

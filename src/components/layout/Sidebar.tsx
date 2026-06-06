@@ -16,6 +16,7 @@ import {
   expandedWorkspaceIdsAtom,
   type Workspace,
   type Session,
+  type LaunchOptions,
 } from "@/stores/workspace";
 import { openTabAction } from "@/stores/rightPanel";
 import { appStore } from "@/stores/jotaiStore";
@@ -540,12 +541,18 @@ function WorkspacesView() {
     requestAnimationFrame(() => terminalService.focusActive());
   }
 
-  async function spawnSession(workspaceId: string, sessionName: string, agentId: string | null) {
+  async function spawnSession(
+    workspaceId: string,
+    sessionName: string,
+    agentId: string | null,
+    launchOptions: LaunchOptions | null,
+  ) {
     try {
       const session = await invoke<Session>("create_session", {
         workspaceId,
         name: sessionName,
         agentId,
+        launchOptions,
       });
 
       setWorkspaces((prev) =>
@@ -577,9 +584,10 @@ function WorkspacesView() {
     const sessionName = newSessionName.trim();
     if (!sessionName) return;
 
-    // Detect installed agents. If only one is available, skip the picker for
-    // zero-friction (matches today's CC-only behavior). Otherwise open the
-    // picker pre-selected on the resolved default.
+    // The picker now opens even with a single installed agent: it's also the
+    // launch-options surface (permission mode, skip, startup command), so
+    // skipping it would make those unreachable. Enter passes straight
+    // through, so the single-agent cost is one keypress.
     let agents: AvailableAgent[] = [];
     try {
       agents = await invoke<AvailableAgent[]>("list_available_agents");
@@ -587,9 +595,10 @@ function WorkspacesView() {
       agents = [];
     }
     const installed = agents.filter((a) => a.installed);
-    if (installed.length <= 1) {
-      const onlyId = installed[0]?.id ?? null;
-      await spawnSession(workspaceId, sessionName, onlyId);
+    if (installed.length === 0) {
+      // Nothing detected — fall back to the backend's CC default rather than
+      // showing an empty modal.
+      await spawnSession(workspaceId, sessionName, null, null);
       return;
     }
 
@@ -801,10 +810,10 @@ function WorkspacesView() {
           agents={agentPicker.agents}
           sessionName={agentPicker.sessionName}
           preselectedId={agentPicker.defaultId}
-          onPick={(agentId) => {
+          onPick={(agentId, launchOptions) => {
             const { workspaceId, sessionName } = agentPicker;
             setAgentPicker(null);
-            void spawnSession(workspaceId, sessionName, agentId);
+            void spawnSession(workspaceId, sessionName, agentId, launchOptions);
           }}
         />
       )}

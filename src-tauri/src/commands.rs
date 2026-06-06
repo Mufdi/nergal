@@ -750,6 +750,7 @@ pub fn create_session(
     workspace_id: String,
     name: String,
     agent_id: Option<String>,
+    launch_options: Option<crate::models::LaunchOptions>,
 ) -> Result<Session, String> {
     let db = db.lock().map_err(|e| e.to_string())?;
 
@@ -816,6 +817,9 @@ pub fn create_session(
         agent_internal_session_id: None,
         agent_capabilities,
         pinned_note_paths: Vec::new(),
+        // Drop all-default options so the column stays NULL for the common
+        // case (and resume short-circuits the lookup).
+        launch_options: launch_options.filter(|o| !o.is_noop()),
     };
 
     db.create_session(&session).map_err(|e| e.to_string())?;
@@ -2828,6 +2832,13 @@ pub struct AvailableAgent {
     pub config_path: Option<String>,
     pub version: Option<String>,
     pub capabilities: Vec<String>,
+    /// Kebab-case wire form of the adapter's supported permission presets
+    /// (`["default", "plan", …]`). Drives the launch-options UI in the
+    /// agent picker.
+    pub permission_presets: Vec<String>,
+    /// Whether the adapter maps `allow_skip_in_cycle` to a real flag (CC
+    /// `--allow-dangerously-skip-permissions`).
+    pub allow_skip_cycle_supported: bool,
 }
 
 /// Returns the registered adapters with their current detection status. Used
@@ -2846,6 +2857,15 @@ pub async fn list_available_agents(
         };
         let cap_value = serde_json::to_value(adapter.capabilities().flags).unwrap_or_default();
         let capabilities: Vec<String> = serde_json::from_value(cap_value).unwrap_or_default();
+        let permission_presets: Vec<String> = adapter
+            .permission_presets()
+            .iter()
+            .filter_map(|p| {
+                serde_json::to_value(p)
+                    .ok()
+                    .and_then(|v| v.as_str().map(String::from))
+            })
+            .collect();
         out.push(AvailableAgent {
             id: id.as_str().to_string(),
             display_name: adapter.display_name().to_string(),
@@ -2854,6 +2874,8 @@ pub async fn list_available_agents(
             config_path: det.config_path.map(|p| p.display().to_string()),
             version: det.version,
             capabilities,
+            permission_presets,
+            allow_skip_cycle_supported: adapter.supports_allow_skip_cycle(),
         });
     }
     Ok(out)

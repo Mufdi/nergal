@@ -67,6 +67,61 @@ pub struct Session {
     /// (migration `010`).
     #[serde(default)]
     pub pinned_note_paths: Vec<String>,
+    /// Per-session launch options chosen at creation. Persisted as a JSON
+    /// column (migration `011`) so resume re-applies them — the spawn path is
+    /// shared between fresh and resumed sessions.
+    #[serde(default)]
+    pub launch_options: Option<LaunchOptions>,
+}
+
+/// Initial permission *mode* for the session — exactly one value, mirroring
+/// CC's `--permission-mode` (whose `bypassPermissions` value is what
+/// `--dangerously-skip-permissions` aliases — per the CLI reference they are
+/// equivalent, so "skip" is a mode, NOT a flag composable with plan/accept:
+/// passing both silently starts in bypass). Adapters map each preset to
+/// their native flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PermissionPreset {
+    #[default]
+    Default,
+    Plan,
+    AcceptEdits,
+    /// CC `--permission-mode auto` (v2.1.83+).
+    Auto,
+    /// Skip all permission prompts — CC `--dangerously-skip-permissions`,
+    /// Codex `--dangerously-bypass-approvals-and-sandbox`.
+    Bypass,
+}
+
+/// Options applied when the agent process is launched.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LaunchOptions {
+    #[serde(default)]
+    pub permission_preset: PermissionPreset,
+    /// CC `--allow-dangerously-skip-permissions`: adds bypassPermissions to
+    /// the Shift+Tab mode cycle WITHOUT starting in it ("plan now, bypass
+    /// later"). Unlike `Bypass`, this composes with any preset — and is
+    /// redundant when the preset already is `Bypass`.
+    #[serde(default)]
+    pub allow_skip_in_cycle: bool,
+    /// Shell prelude run in the PTY before the agent binary (`nvm use`,
+    /// `source .env`, …). Long-running commands don't belong here — they
+    /// would block the agent from ever starting.
+    #[serde(default)]
+    pub startup_command: Option<String>,
+}
+
+impl LaunchOptions {
+    /// `None`-equivalent check so callers can skip persisting empty options.
+    pub fn is_noop(&self) -> bool {
+        self.permission_preset == PermissionPreset::Default
+            && !self.allow_skip_in_cycle
+            && self
+                .startup_command
+                .as_deref()
+                .is_none_or(|s| s.trim().is_empty())
+    }
 }
 
 fn default_agent_id_string() -> String {

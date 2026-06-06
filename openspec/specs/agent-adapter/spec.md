@@ -301,3 +301,30 @@ A Tauri command `apply_theme_to_agents(palette: ThemePalette)` SHALL forward to 
 - **AND** SHALL continue invoking `apply_theme` on the remaining capable adapters
 - **AND** the top-level Tauri command SHALL return `Ok(())` regardless
 
+
+### Requirement: SpawnContext carries launch options and adapters declare permission presets
+
+`SpawnContext` SHALL include `launch_options: Option<&LaunchOptions>` where `LaunchOptions { permission_preset, allow_skip_in_cycle, startup_command }` (defined in `models.rs`, persisted on the session row as a JSON column). Adapters SHALL map `permission_preset` to their native flags inside `spawn()` and SHALL declare what they support via:
+
+- `permission_presets() -> &'static [PermissionPreset]` — the presets the adapter maps to **verified** native flags. Default impl returns `[Default]` only. The UI SHALL offer only the declared presets, so unsupported values are unreachable instead of silently ignored.
+- `supports_allow_skip_cycle() -> bool` — whether the adapter maps `allow_skip_in_cycle` to a real flag. Default `false`.
+
+`PermissionPreset` SHALL be a single-value enum (`Default | Plan | AcceptEdits | Auto | Bypass`): one permission mode per session, mirroring Claude Code's `--permission-mode`, whose documented equivalence `--dangerously-skip-permissions ≡ --permission-mode bypassPermissions` makes "skip" a mode rather than a composable flag. `startup_command` SHALL be handled by the PTY layer (agent-agnostic shell prelude), never by adapters.
+
+#### Scenario: CC maps every preset to its native flag
+
+- **WHEN** `ClaudeCodeAdapter::spawn` runs with a `permission_preset` of Plan, AcceptEdits, Auto, or Bypass
+- **THEN** the args SHALL contain `--permission-mode plan|acceptEdits|auto` respectively, or `--dangerously-skip-permissions` for Bypass
+- **AND** with `allow_skip_in_cycle: true` and a non-Bypass preset, the args SHALL also contain `--allow-dangerously-skip-permissions`
+- **AND** with `allow_skip_in_cycle: true` and the Bypass preset, the redundant allow flag SHALL be omitted
+
+#### Scenario: Adapter without a mapping never sees the preset offered
+
+- **WHEN** the agent picker renders launch options for an adapter whose `permission_presets()` returns only `[Default]` (e.g. Pi)
+- **THEN** no preset rows SHALL be offered for that agent
+
+#### Scenario: Launch options re-apply on resume
+
+- **WHEN** a session with persisted launch options is resumed (same `start_claude_session` path as a fresh spawn)
+- **THEN** the preset flags SHALL be re-applied to the launch command
+- **AND** the startup command prelude SHALL run again in the fresh shell

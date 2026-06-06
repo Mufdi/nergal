@@ -156,3 +156,19 @@ The active artifact SHALL be visually distinguished and switching artifacts SHAL
 - **AND** the specs tab SHALL render its aggregate count badge (summed across all spec files in the change)
 - **AND** counts SHALL update reactively when annotations are added or removed
 
+
+### Requirement: OpenSpec directory is configurable per workspace
+
+Each workspace SHALL resolve its OpenSpec directory via an optional override (`workspace_config.openspec_dir`, migration `012`), defaulting to `<repo>/openspec` when unset. The override lets specs live outside the code repo so the repo stays clean. All read/write/list/search/open-in-editor paths SHALL resolve through this override; settings SHALL expose it under the Paths section, prefilled with the computed default.
+
+#### Scenario: Override redirects spec resolution
+
+- **WHEN** a workspace has `openspec_dir` set to a directory outside the repo
+- **THEN** `list_openspec_changes`, `read_openspec_artifact`, `write_openspec_artifact`, search, and open-in-editor SHALL resolve against that directory
+- **AND** clearing the override (empty value) SHALL revert to `<repo>/openspec`
+
+#### Scenario: Settings field prefills the default
+
+- **WHEN** the user opens Settings → Paths for a workspace with no override
+- **THEN** the OpenSpec Directory field SHALL show the computed default `<repo>/openspec`
+- **AND** applying a value equal to the default SHALL store no override (NULL)

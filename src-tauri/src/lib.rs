@@ -351,6 +351,8 @@ pub fn run() {
             commands::list_openspec_changes,
             commands::read_openspec_artifact,
             commands::write_openspec_artifact,
+            commands::get_workspace_openspec_dir,
+            commands::set_workspace_openspec_dir,
             commands::detect_editors,
             commands::open_in_editor,
             commands::get_git_status,

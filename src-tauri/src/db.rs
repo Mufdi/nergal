@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::agents::claude_code::cost::CostSummary;
 use crate::models::{Session, SessionStatus, Workspace};
@@ -126,6 +126,7 @@ impl Database {
             include_str!("../migrations/009_obsidian_search_subdir.sql"),
             include_str!("../migrations/010_pinned_notes.sql"),
             include_str!("../migrations/011_launch_options.sql"),
+            include_str!("../migrations/012_workspace_openspec_dir.sql"),
         ];
 
         for (i, sql) in migrations.iter().enumerate() {
@@ -881,6 +882,39 @@ impl Database {
         )?;
         Ok(())
     }
+
+    // ── Per-workspace OpenSpec dir override ──
+
+    /// The configured OpenSpec directory for a workspace, or `None` when it
+    /// uses the default (`<repo>/openspec`). Empty string is treated as None.
+    pub fn get_workspace_openspec_dir(&self, workspace_id: &str) -> Result<Option<String>> {
+        let raw: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT openspec_dir FROM workspace_config WHERE workspace_id = ?1",
+                [workspace_id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(raw.filter(|s| !s.trim().is_empty()))
+    }
+
+    /// Set (or clear, with `None`) the OpenSpec dir override for a workspace.
+    pub fn set_workspace_openspec_dir(
+        &self,
+        workspace_id: &str,
+        openspec_dir: Option<&str>,
+    ) -> Result<()> {
+        let value = openspec_dir.map(str::trim).filter(|s| !s.is_empty());
+        self.conn.execute(
+            "INSERT INTO workspace_config (workspace_id, openspec_dir, updated_at) \
+             VALUES (?1, ?2, ?3) \
+             ON CONFLICT(workspace_id) DO UPDATE SET openspec_dir=?2, updated_at=?3",
+            params![workspace_id, value, now_secs()],
+        )?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -915,6 +949,24 @@ mod tests {
             launch_options: None,
         };
         db.create_session(&s).unwrap();
+    }
+
+    #[test]
+    fn workspace_openspec_dir_override() {
+        let db = in_memory();
+        db.create_workspace("ws1", "ws", "/tmp/repo").unwrap();
+        // Default: none.
+        assert!(db.get_workspace_openspec_dir("ws1").unwrap().is_none());
+        // Set + read back.
+        db.set_workspace_openspec_dir("ws1", Some("/specs/ws1"))
+            .unwrap();
+        assert_eq!(
+            db.get_workspace_openspec_dir("ws1").unwrap().as_deref(),
+            Some("/specs/ws1")
+        );
+        // Empty string clears to default.
+        db.set_workspace_openspec_dir("ws1", Some("  ")).unwrap();
+        assert!(db.get_workspace_openspec_dir("ws1").unwrap().is_none());
     }
 
     #[test]

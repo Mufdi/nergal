@@ -1519,6 +1519,25 @@ fn resolve_session_cwd(db: &crate::db::Database, session_id: &str) -> Result<Pat
     }
 }
 
+/// Resolve a session's OpenSpec directory: the workspace override if set,
+/// else `<session cwd>/openspec`. The override lets specs live outside the
+/// code repo so the repo stays clean (per-workspace, migration `012`).
+fn resolve_openspec_dir(db: &crate::db::Database, session_id: &str) -> Result<PathBuf, String> {
+    let cwd = resolve_session_cwd(db, session_id)?;
+    let workspace_id = db
+        .find_session(session_id)
+        .map_err(|e: anyhow::Error| e.to_string())?
+        .map(|s| s.workspace_id);
+    if let Some(wid) = workspace_id
+        && let Some(dir) = db
+            .get_workspace_openspec_dir(&wid)
+            .map_err(|e: anyhow::Error| e.to_string())?
+    {
+        return Ok(PathBuf::from(crate::obsidian::config::expand_home(&dir)));
+    }
+    Ok(cwd.join("openspec"))
+}
+
 fn scan_change_dir(dir: &std::path::Path, status: &str) -> Option<OpenSpecChange> {
     if !dir.is_dir() {
         return None;
@@ -1613,8 +1632,8 @@ pub fn list_openspec_changes(
     session_id: String,
 ) -> Result<Vec<OpenSpecChange>, String> {
     let db = db.lock().map_err(|e| e.to_string())?;
-    let cwd = resolve_session_cwd(&db, &session_id)?;
-    let changes_dir = cwd.join("openspec").join("changes");
+    let openspec_dir = resolve_openspec_dir(&db, &session_id)?;
+    let changes_dir = openspec_dir.join("changes");
 
     if !changes_dir.exists() {
         return Ok(vec![]);
@@ -1650,7 +1669,7 @@ pub fn list_openspec_changes(
     }
 
     // Also scan master specs as a virtual "specs" entry
-    let master_dir = cwd.join("openspec").join("specs");
+    let master_dir = openspec_dir.join("specs");
     if master_dir.is_dir() {
         let mut master_specs = Vec::new();
         if let Ok(entries) = std::fs::read_dir(&master_dir) {
@@ -1696,8 +1715,7 @@ pub fn read_openspec_artifact(
     artifact_path: String,
 ) -> Result<String, String> {
     let db = db.lock().map_err(|e| e.to_string())?;
-    let cwd = resolve_session_cwd(&db, &session_id)?;
-    let openspec_dir = cwd.join("openspec");
+    let openspec_dir = resolve_openspec_dir(&db, &session_id)?;
 
     // Master specs live at openspec/specs/
     let file_path = if change_name == "_master" {
@@ -1735,8 +1753,8 @@ pub fn write_openspec_artifact(
     }
 
     let db = db.lock().map_err(|e| e.to_string())?;
-    let cwd = resolve_session_cwd(&db, &session_id)?;
-    let change_dir = cwd.join("openspec").join("changes").join(&change_name);
+    let openspec_dir = resolve_openspec_dir(&db, &session_id)?;
+    let change_dir = openspec_dir.join("changes").join(&change_name);
 
     if !change_dir.exists() {
         return Err("change not found or is archived".into());
@@ -1751,6 +1769,46 @@ pub fn write_openspec_artifact(
 
     std::fs::write(&file_path, &content)
         .map_err(|e| format!("failed to write {}: {e}", file_path.display()))
+}
+
+/// The OpenSpec dir override for a workspace, plus the computed default
+/// (`<repo>/openspec`) so the settings field can prefill it. `configured` is
+/// None when the workspace uses the default.
+#[derive(serde::Serialize)]
+pub struct OpenSpecDirInfo {
+    pub configured: Option<String>,
+    pub default_dir: String,
+}
+
+#[tauri::command]
+pub fn get_workspace_openspec_dir(
+    db: State<'_, SharedDb>,
+    workspace_id: String,
+) -> Result<OpenSpecDirInfo, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let repo_path = db
+        .workspace_repo_path(&workspace_id)
+        .map_err(|e| e.to_string())?
+        .ok_or("workspace not found")?;
+    let configured = db
+        .get_workspace_openspec_dir(&workspace_id)
+        .map_err(|e| e.to_string())?;
+    Ok(OpenSpecDirInfo {
+        configured,
+        default_dir: repo_path.join("openspec").display().to_string(),
+    })
+}
+
+/// Set (empty/whitespace → clear to default) the workspace OpenSpec override.
+#[tauri::command]
+pub fn set_workspace_openspec_dir(
+    db: State<'_, SharedDb>,
+    workspace_id: String,
+    openspec_dir: Option<String>,
+) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    db.set_workspace_openspec_dir(&workspace_id, openspec_dir.as_deref())
+        .map_err(|e| e.to_string())
 }
 
 // -- Editor commands --
@@ -1856,7 +1914,7 @@ pub fn open_in_editor(
         Some(fp.clone())
     } else if let (Some(change), Some(artifact)) = (&spec_change_name, &spec_artifact_path) {
         // Resolve openspec artifact to absolute path
-        let changes_dir = cwd.join("openspec").join("changes");
+        let changes_dir = resolve_openspec_dir(&db, &session_id)?.join("changes");
         let change_dir = changes_dir.join(change);
         let path = if change_dir.exists() {
             change_dir.join(artifact)
@@ -3266,7 +3324,14 @@ pub async fn search(
         let mut openspec_dir = None;
         for ws in db.get_workspaces().map_err(|e| e.to_string())? {
             if Some(&ws.id) == active_workspace_id.as_ref() {
-                let candidate = ws.repo_path.join("openspec");
+                // Honor the per-workspace override (specs living outside the
+                // repo); fall back to <repo>/openspec.
+                let candidate = db
+                    .get_workspace_openspec_dir(&ws.id)
+                    .ok()
+                    .flatten()
+                    .map(|d| std::path::PathBuf::from(crate::obsidian::config::expand_home(&d)))
+                    .unwrap_or_else(|| ws.repo_path.join("openspec"));
                 if candidate.is_dir() {
                     openspec_dir = Some(candidate);
                 }

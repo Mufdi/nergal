@@ -250,6 +250,114 @@ function ScratchpadPathField() {
   );
 }
 
+/// Per-workspace OpenSpec directory override. Lets specs live outside the
+/// code repo (e.g. a sibling dir) so the repo stays clean. Prefills with the
+/// computed default (`<repo>/openspec`) when unset.
+function OpenSpecPathField() {
+  const workspaces = useAtomValue(workspacesAtom);
+  const activeWorkspace = useAtomValue(activeWorkspaceAtom);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const effective = activeWorkspace ?? workspaces.find((w) => w.id === selectedId) ?? workspaces[0] ?? null;
+  const [draft, setDraft] = useState("");
+  const [defaultDir, setDefaultDir] = useState("");
+  const [configured, setConfigured] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!effective) return;
+    let cancelled = false;
+    invoke<{ configured: string | null; default_dir: string }>("get_workspace_openspec_dir", {
+      workspaceId: effective.id,
+    })
+      .then((info) => {
+        if (cancelled) return;
+        setDefaultDir(info.default_dir);
+        setConfigured(info.configured);
+        // Prefill with the default so the user edits from a real path.
+        setDraft(info.configured ?? info.default_dir);
+      })
+      .catch((err) => console.error("[settings] get_workspace_openspec_dir failed:", err));
+    return () => {
+      cancelled = true;
+    };
+  }, [effective?.id]);
+
+  async function handleApply() {
+    if (!effective) return;
+    setBusy(true);
+    try {
+      // Setting the value back to the default clears the override (NULL).
+      const next = draft.trim() === defaultDir.trim() ? null : draft.trim() || null;
+      await invoke("set_workspace_openspec_dir", { workspaceId: effective.id, openspecDir: next });
+      setConfigured(next);
+    } catch (err) {
+      console.error("[settings] set_workspace_openspec_dir failed:", err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleReset() {
+    if (!effective) return;
+    setBusy(true);
+    try {
+      await invoke("set_workspace_openspec_dir", { workspaceId: effective.id, openspecDir: null });
+      setConfigured(null);
+      setDraft(defaultDir);
+    } catch (err) {
+      console.error("[settings] reset openspec dir failed:", err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!effective) {
+    return (
+      <div className="grid gap-1.5">
+        <Label>OpenSpec Directory</Label>
+        <p className="text-xs text-muted-foreground">Add a workspace to configure its specs path.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-2">
+      <Label htmlFor="setting-openspec-dir">OpenSpec Directory</Label>
+      {workspaces.length > 1 && !activeWorkspace && (
+        <Select
+          id="setting-openspec-workspace"
+          value={effective.id}
+          onValueChange={setSelectedId}
+          options={workspaces.map((w) => ({ value: w.id, label: w.name }))}
+        />
+      )}
+      <div className="flex gap-2">
+        <Input
+          id="setting-openspec-dir"
+          type="text"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder={defaultDir}
+          className="flex-1"
+        />
+        <Button variant="outline" size="sm" onClick={handleApply} disabled={busy || !draft.trim()}>
+          Apply
+        </Button>
+      </div>
+      <div className="flex gap-2">
+        <Button variant="ghost" size="xs" onClick={handleReset} disabled={busy || configured === null}>
+          Reset to default
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Where this workspace's <code>openspec/</code> lives. Set a path outside the repo to keep specs
+        separate from code. Defaults to <code>{defaultDir || "<repo>/openspec"}</code>
+        {configured ? "." : " (currently using the default)."}
+      </p>
+    </div>
+  );
+}
+
 function useEffectiveObsidianWorkspace(): {
   workspaces: Workspace[];
   activeWorkspace: Workspace | null;
@@ -2211,6 +2319,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
                     Unix socket where hooks send events. Edit via config file if you need to change it.
                   </p>
                 </div>
+                <OpenSpecPathField />
               </div>
             )}
 

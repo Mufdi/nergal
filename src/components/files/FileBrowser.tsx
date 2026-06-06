@@ -1,4 +1,5 @@
 import { useEffect, useCallback, useRef, useState, useMemo } from "react";
+import { focusIfPanelZone } from "@/lib/panelFocus";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { fileBrowserStateMapAtom, openTabAction } from "@/stores/rightPanel";
@@ -59,8 +60,8 @@ export function FileBrowser() {
   );
 
   useEffect(() => {
-    searchRef.current?.focus();
-    if (lastOpened) {
+    focusIfPanelZone(searchRef.current);
+    if (lastOpened && document.activeElement === searchRef.current) {
       searchRef.current?.select();
     }
   }, [lastOpened]);

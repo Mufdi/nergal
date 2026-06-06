@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { activeSessionIdAtom, activeModeAtom, activeCwdAtom, activeAgentStatusAtom } from "@/stores/workspace";
-import { activeGitInfoAtom, refreshGitInfoAtom } from "@/stores/git";
+import { activeGitInfoAtom, refreshGitInfoAtom, renameBranchSignalAtom } from "@/stores/git";
 import { loadSessionFilesAtom } from "@/stores/files";
 import { loadPinnedNotesAtom } from "@/stores/pinnedNotes";
 import { activitySummaryAtom, activityDrawerOpenAtom } from "@/stores/activity";
@@ -13,7 +13,7 @@ import {
 } from "@/stores/browser";
 import { openTabAction } from "@/stores/rightPanel";
 import { Badge } from "@/components/ui/badge";
-import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock, Globe, CalendarRange } from "lucide-react";
+import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock, Globe, CalendarRange, Pencil } from "lucide-react";
 import {
   Tooltip,
   TooltipTrigger,
@@ -62,6 +62,7 @@ export function StatusBar() {
   const mode = useAtomValue(activeModeAtom);
   const gitInfo = useAtomValue(activeGitInfoAtom);
   const refreshGit = useSetAtom(refreshGitInfoAtom);
+  const setRenameBranchSignal = useSetAtom(renameBranchSignalAtom);
   const loadFiles = useSetAtom(loadSessionFilesAtom);
   const loadPinned = useSetAtom(loadPinnedNotesAtom);
   const cwd = useAtomValue(activeCwdAtom);
@@ -109,7 +110,7 @@ export function StatusBar() {
           </Tooltip>
         )}
         {gitInfo && (
-          <div className="flex items-center gap-1">
+          <div className="group flex items-center gap-1">
             <GitBranch className="size-3 shrink-0" />
             <Tooltip>
               <TooltipTrigger className="cursor-default max-w-40 truncate">
@@ -117,6 +118,15 @@ export function StatusBar() {
               </TooltipTrigger>
               <TooltipContent>{gitInfo.branch}</TooltipContent>
             </Tooltip>
+            <button
+              type="button"
+              aria-label="Rename branch"
+              title="Rename branch (Ctrl+Alt+R)"
+              onClick={() => setRenameBranchSignal((p) => p + 1)}
+              className="hidden size-4 shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:bg-secondary hover:text-foreground transition-colors group-hover:flex"
+            >
+              <Pencil className="size-2.5" />
+            </button>
             {gitInfo.dirty && (
               <span className="inline-block size-1.5 shrink-0 rounded-full bg-orange-500" aria-label="Uncommitted changes" />
             )}

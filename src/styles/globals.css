@@ -865,19 +865,6 @@ body,
   outline: 2px solid var(--foreground) !important;
   outline-offset: 2px !important;
 }
-.cluihud-swal-input {
-  background: var(--background) !important;
-  color: var(--foreground) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: 6px !important;
-  font-size: 0.85rem !important;
-  padding: 0.35rem 0.6rem !important;
-  box-shadow: none !important;
-}
-.cluihud-swal-input:focus {
-  border-color: var(--primary) !important;
-  box-shadow: none !important;
-}
 .swal2-container.swal2-backdrop-show {
   background: var(--scrim) !important;
 }

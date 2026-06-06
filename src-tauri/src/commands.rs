@@ -60,7 +60,7 @@ pub struct PathValidation {
 }
 
 #[tauri::command]
-pub fn validate_path(path: String, kind: String) -> PathValidation {
+pub fn validate_path(path: String, kind: String, case_insensitive: Option<bool>) -> PathValidation {
     fn expand_home(input: &str) -> PathBuf {
         if let Some(rest) = input.strip_prefix("~/")
             && let Some(home) = dirs::home_dir()
@@ -113,7 +113,14 @@ pub fn validate_path(path: String, kind: String) -> PathValidation {
         };
     }
 
-    let resolved = expand_home(&path);
+    let mut resolved = expand_home(&path);
+    // Mirrors the save-time normalization of Obsidian path fields, so live
+    // validation doesn't reject a path that Apply would accept.
+    if case_insensitive == Some(true) && std::fs::metadata(&resolved).is_err() {
+        resolved = PathBuf::from(crate::obsidian::config::resolve_case_insensitive(
+            &resolved.to_string_lossy(),
+        ));
+    }
     let metadata = std::fs::metadata(&resolved);
     match metadata {
         Ok(meta) => {

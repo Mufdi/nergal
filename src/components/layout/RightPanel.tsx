@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { focusIfPanelZone } from "@/lib/panelFocus";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   activeTabAtom,
@@ -297,7 +298,7 @@ function NavigablePickerContainer({ type, className }: { type: TabType; classNam
     const timer = setTimeout(() => {
       const items = getItems();
       if (items[0]) items[0].setAttribute("data-nav-selected", "true");
-      containerRef.current?.focus();
+      focusIfPanelZone(containerRef.current);
     }, 50);
     return () => clearTimeout(timer);
   }, [type]);

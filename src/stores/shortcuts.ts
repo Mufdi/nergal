@@ -16,9 +16,10 @@ import {
   currentSpecArtifactAtom,
   type Tab,
 } from "./rightPanel";
-import { layoutPresetAtom, sessionLayoutPresetAtom, applyPresetSignalAtom, terminalFullscreenToggleAtom, type LayoutPreset } from "./layout";
+import { layoutPresetAtom, sessionLayoutPresetAtom, applyPresetSignalAtom, terminalFullscreenAtom, type LayoutPreset } from "./layout";
 import { activityDrawerOpenAtom } from "./activity";
-import { activeConflictedFilesAtom, refreshGitInfoAtom } from "./git";
+import { activeConflictedFilesAtom, refreshGitInfoAtom, renameBranchSignalAtom } from "./git";
+import { activeSessionTasksAtom, clearCompletedTasksAtom } from "./tasks";
 import { conflictsZenOpenAtom, selectedConflictFileMapAtom } from "./conflict";
 import { gitChipModeAtom } from "./git";
 import { triggerShipAtom } from "./ship";
@@ -619,7 +620,9 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     s.set(applyPresetSignalAtom, (p: number) => p + 1);
   }},
   { id: "fullscreen-terminal", label: "Fullscreen Terminal", keys: "ctrl+enter", category: "navigation", keywords: ["fullscreen", "terminal", "maximize", "zen", "collapse"], handler: () => {
-    store().set(terminalFullscreenToggleAtom, (p: number) => p + 1);
+    const s = store();
+    s.set(terminalFullscreenAtom, (v: boolean) => !v);
+    focusZone("terminal");
   }},
 
   // -- Action --
@@ -682,6 +685,19 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
       }
       s.set(triggerShipAtom, { tick: Date.now(), sessionId: sid, inlineMessage: null });
     });
+  }},
+  { id: "rename-branch", label: "Rename Branch", keys: "ctrl+alt+r", category: "action", keywords: ["branch", "rename", "git"], handler: () => {
+    store().set(renameBranchSignalAtom, (p: number) => p + 1);
+  }},
+  { id: "clear-completed-tasks", label: "Clear Completed Tasks", keys: "ctrl+alt+d", category: "action", keywords: ["tasks", "clear", "done", "completed", "delete"], handler: () => {
+    const s = store();
+    const done = s.get(activeSessionTasksAtom).filter((t) => t.status === "completed").length;
+    if (done === 0) {
+      s.set(toastsAtom, { message: "Tasks", description: "No completed tasks to clear", type: "info" });
+      return;
+    }
+    s.set(clearCompletedTasksAtom);
+    s.set(toastsAtom, { message: "Tasks", description: `Cleared ${done} completed task${done === 1 ? "" : "s"}`, type: "success" });
   }},
   { id: "complete-merge", label: "Complete Merge", keys: "ctrl+alt+enter", category: "action", keywords: ["merge", "complete", "finish"], handler: () => {
     const s = store();

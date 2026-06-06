@@ -13,7 +13,7 @@ const SOFT_CLOSE_TTL_MS = 5_000;
 /// up the interval on unmount (toast dismiss / undo / TTL expire). Built
 /// with `createElement` because this file is .ts (not .tsx) — moving it to
 /// .tsx would force a cascade of import-path updates for one tiny widget.
-function CountdownLabel({ sessionName, deadline }: { sessionName: string; deadline: number }) {
+export function CountdownLabel({ sessionName, deadline }: { sessionName: string; deadline: number }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 200);

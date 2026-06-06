@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { focusIfPanelZone } from "@/lib/panelFocus";
 import { useAtomValue } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
 import { activeSessionFilesAtom } from "@/stores/files";
@@ -482,7 +483,7 @@ export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen, i
 
   // Focus on mount
   useEffect(() => {
-    scrollRef.current?.focus();
+    focusIfPanelZone(scrollRef.current);
   }, [filePath]);
 
   // Keyboard: J/K and Alt+Up/Down for hunks, Space for collapse.

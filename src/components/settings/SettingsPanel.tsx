@@ -66,6 +66,7 @@ function ValidatedPathField({
   help,
   value,
   onChange,
+  caseInsensitive = false,
 }: {
   configKey: string;
   label: string;
@@ -74,6 +75,7 @@ function ValidatedPathField({
   help?: string;
   value: string;
   onChange: (v: string) => void;
+  caseInsensitive?: boolean;
 }) {
   const [validation, setValidation] = useState<PathValidation | null>(null);
   const [validating, setValidating] = useState(false);
@@ -85,7 +87,7 @@ function ValidatedPathField({
     }
     setValidating(true);
     try {
-      const result = await invoke<PathValidation>("validate_path", { path, kind });
+      const result = await invoke<PathValidation>("validate_path", { path, kind, caseInsensitive });
       setValidation(result);
     } catch (err) {
       setValidation({
@@ -99,7 +101,7 @@ function ValidatedPathField({
     } finally {
       setValidating(false);
     }
-  }, [kind]);
+  }, [kind, caseInsensitive]);
 
   useEffect(() => {
     const handle = setTimeout(() => runValidation(value), 250);
@@ -354,6 +356,7 @@ function ObsidianSection() {
         label="Vault root"
         placeholder="/path/to/vault"
         kind="dir"
+        caseInsensitive
         help="Master switch. When unset, every Obsidian feature stays invisible."
         value={draft.vault_root ?? ""}
         onChange={(v) => setField("vault_root", nullableString(v))}

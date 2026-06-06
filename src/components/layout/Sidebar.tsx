@@ -2,8 +2,10 @@ import { useState, useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { configAtom } from "@/stores/config";
 import { useFocusPulse } from "@/hooks/useFocusPulse";
-import { confirm as swalConfirm, promptText } from "@/lib/swal";
+import { confirm as swalConfirm } from "@/lib/swal";
 import { Pencil, Trash2 } from "lucide-react";
+import { TextInputDialog } from "@/components/ui/TextInputDialog";
+import { deleteSessionWithGraceAction, deleteWorkspaceWithGraceAction } from "@/stores/pendingDeletes";
 import { focusZoneAtom, previousNonTerminalZoneAtom, triggerResumeSessionAtom, triggerNewSessionAtom, triggerAddWorkspaceAtom, triggerMergeAtom, triggerJumpToProjectAtom, sidebarSelectedIdxAtom, focusedWorkspaceIdAtom } from "@/stores/shortcuts";
 import {
   workspacesAtom,
@@ -11,7 +13,6 @@ import {
   sessionLaunchModeAtom,
   freshSessionsAtom,
   activeSessionAtom,
-  sessionTabIdsAtom,
   expandedWorkspaceIdsAtom,
   type Workspace,
   type Session,
@@ -199,10 +200,8 @@ function renameCommandFor(agentId: string): string | null {
 /// collapsed-sidebar hover popover, so both surfaces stay in lockstep.
 function useSessionActions() {
   const setWorkspaces = useSetAtom(workspacesAtom);
-  const setSessionTabIds = useSetAtom(sessionTabIdsAtom);
-  const activeSessionId = useAtomValue(activeSessionIdAtom);
-  const setActiveSessionId = useSetAtom(activeSessionIdAtom);
   const setFocusZone = useSetAtom(focusZoneAtom);
+  const deleteWithGrace = useSetAtom(deleteSessionWithGraceAction);
 
   function renameSession(session: Session, newName: string) {
     invoke("rename_session", { sessionId: session.id, name: newName })
@@ -237,19 +236,7 @@ function useSessionActions() {
       destructive: true,
     });
     if (!ok) return;
-    terminalService.destroy(session.id);
-    invoke("delete_session", { sessionId: session.id })
-      .then(() => {
-        setWorkspaces((prev) =>
-          prev.map((w) => ({
-            ...w,
-            sessions: w.sessions.filter((sess) => sess.id !== session.id),
-          })),
-        );
-        setSessionTabIds((prev) => prev.filter((id) => id !== session.id));
-        if (activeSessionId === session.id) setActiveSessionId(null);
-      })
-      .catch(() => {});
+    deleteWithGrace(session);
   }
 
   return { renameSession, deleteSession };
@@ -267,21 +254,13 @@ function CollapsedSidebar() {
   const borderClass = showAccent ? "border-primary" : "border-border";
   const dotGridClass = config.sidebar_dot_grid ? "cluihud-dot-grid" : "";
   const { renameSession, deleteSession } = useSessionActions();
+  const [renameTarget, setRenameTarget] = useState<Session | null>(null);
 
   const sessionsWithWs = workspaces.flatMap((w) =>
     w.sessions
       .filter((s) => s.status !== "completed")
       .map((s) => ({ session: s, workspaceName: w.name }))
   );
-
-  async function handleRename(session: Session) {
-    const name = await promptText({
-      title: "Rename session",
-      initialValue: session.name,
-      confirmLabel: "Rename",
-    });
-    if (name && name !== session.name) renameSession(session, name);
-  }
 
   return (
     <TooltipProvider delay={0}>
@@ -307,7 +286,7 @@ function CollapsedSidebar() {
                 <button
                   type="button"
                   aria-label="Rename"
-                  onClick={() => void handleRename(s)}
+                  onClick={() => setRenameTarget(s)}
                   className="flex size-4 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
                 >
                   <Pencil className="size-2.5" />
@@ -326,6 +305,16 @@ function CollapsedSidebar() {
         </Tooltip>
       ))}
     </div>
+    <TextInputDialog
+      open={renameTarget !== null}
+      onOpenChange={(o) => { if (!o) setRenameTarget(null); }}
+      title="Rename session"
+      initialValue={renameTarget?.name ?? ""}
+      confirmLabel="Rename"
+      onSubmit={(name) => {
+        if (renameTarget && name !== renameTarget.name) renameSession(renameTarget, name);
+      }}
+    />
     </TooltipProvider>
   );
 }
@@ -337,6 +326,7 @@ let lastNewSessionConsumed = 0;
 
 function WorkspacesView() {
   const { renameSession, deleteSession } = useSessionActions();
+  const deleteWorkspaceWithGrace = useSetAtom(deleteWorkspaceWithGraceAction);
   const workspaces = useAtomValue(workspacesAtom);
   const setWorkspaces = useSetAtom(workspacesAtom);
   const activeSessionId = useAtomValue(activeSessionIdAtom);
@@ -344,7 +334,6 @@ function WorkspacesView() {
   const setLaunchMode = useSetAtom(sessionLaunchModeAtom);
   const freshSessions = useAtomValue(freshSessionsAtom);
   const setFreshSessions = useSetAtom(freshSessionsAtom);
-  const setSessionTabIds = useSetAtom(sessionTabIdsAtom);
   const expandedFromAtom = useAtomValue(expandedWorkspaceIdsAtom);
   const setExpandedAtom = useSetAtom(expandedWorkspaceIdsAtom);
   const openTab = useSetAtom(openTabAction);
@@ -523,27 +512,12 @@ function WorkspacesView() {
       destructive: true,
     });
     if (!ok) return;
-    for (const s of ws.sessions) {
-      terminalService.destroy(s.id);
-    }
-    try {
-      await invoke("delete_workspace", { workspaceId: ws.id });
-      const removedIds = new Set(ws.sessions.map((s) => s.id));
-      setWorkspaces((prev) => prev.filter((w) => w.id !== ws.id));
-      setExpandedIds((prev) => {
-        const next = new Set(prev);
-        next.delete(ws.id);
-        return next;
-      });
-      // Without this, Ctrl+Shift+Tab would still cycle into the deleted
-      // workspace's tab ids and leave the UI on a session that no longer
-      // exists.
-      setSessionTabIds((prev) => prev.filter((id) => !removedIds.has(id)));
-      if (activeSessionId && removedIds.has(activeSessionId)) {
-        setActiveSessionId(null);
-      }
-    } catch {
-    }
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(ws.id);
+      return next;
+    });
+    deleteWorkspaceWithGrace(ws);
   }
 
   function handleSessionClick(session: Session) {

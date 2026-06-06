@@ -36,6 +36,8 @@ export interface PrAnnotation {
 
 export const gitInfoMapAtom = atom<Record<string, GitInfo>>({});
 
+export const renameBranchSignalAtom = atom(0);
+
 export const activeGitInfoAtom = atom<GitInfo | null>((get) => {
   const id = get(activeSessionIdAtom);
   if (!id) return null;

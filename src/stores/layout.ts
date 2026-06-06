@@ -64,6 +64,7 @@ export const sessionLayoutPresetAtom = atom(
 /// Signals Workspace to transition. Incremented when preset changes should be applied.
 export const applyPresetSignalAtom = atom(0);
 
-/// Counter signal: the collapse/restore bookkeeping lives in Workspace,
-/// which holds the panel refs.
-export const terminalFullscreenToggleAtom = atom(0);
+/// Ghostty-style fullscreen: the terminal pane overlays the whole window
+/// (fixed inset-0) without reparenting the canvas or touching the panel
+/// layout underneath.
+export const terminalFullscreenAtom = atom(false);

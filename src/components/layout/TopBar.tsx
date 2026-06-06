@@ -15,7 +15,7 @@ import {
   currentSpecArtifactAtom,
   type TabType,
 } from "@/stores/rightPanel";
-import { toggleRightPanelAtom, triggerMergeAtom } from "@/stores/shortcuts";
+import { toggleRightPanelAtom, triggerMergeAtom, focusZoneAtom } from "@/stores/shortcuts";
 import { softCloseSessionAction } from "@/stores/sessionTabs";
 import { triggerShipAtom } from "@/stores/ship";
 import { activeGitInfoAtom, refreshGitInfoAtom, conflictedFilesMapAtom, refreshConflictedFilesAtom, activeConflictedFilesAtom } from "@/stores/git";
@@ -174,6 +174,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   const setActiveTabId = useSetAtom(activeTabIdAtom);
   const setActivePanelView = useSetAtom(activePanelViewAtom);
   const setExpand = useSetAtom(expandRightPanelAtom);
+  const setFocusZone = useSetAtom(focusZoneAtom);
   const setToggleRight = useSetAtom(toggleRightPanelAtom);
   const setTriggerMerge = useSetAtom(triggerMergeAtom);
   const setTriggerShip = useSetAtom(triggerShipAtom);
@@ -259,6 +260,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
       setActiveTabId(null);
     }
     setActivePanelView(type);
+    setFocusZone("panel");
     setExpand((n) => n + 1);
   }
 

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { focusIfPanelZone } from "@/lib/panelFocus";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
 import { currentSpecArtifactAtom, specSubTabMapAtom } from "@/stores/rightPanel";
@@ -636,7 +637,7 @@ function SpecsList({ specs, onSelect }: { specs: SpecEntry[]; onSelect: (path: s
   const selectedIdxRef = useRef(0);
 
   useEffect(() => {
-    containerRef.current?.focus();
+    focusIfPanelZone(containerRef.current);
     selectedIdxRef.current = 0;
     requestAnimationFrame(() => {
       const items = containerRef.current?.querySelectorAll("[data-nav-item]");

@@ -38,7 +38,7 @@ export function CommandPalette() {
       }
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        setSelectedIndex((prev) => Math.min(prev + 1, filtered.length - 1));
+        setSelectedIndex((prev) => Math.min(prev + 1, filtered.length + filteredTemplates.length - 1));
         return;
       }
       if (e.key === "ArrowUp") {
@@ -52,14 +52,17 @@ export function CommandPalette() {
         if (action) {
           setOpen(false);
           action.handler();
+          return;
         }
+        const template = filteredTemplates[selectedIndex - filtered.length];
+        if (template) void sendTemplate(template);
         return;
       }
     }
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, selectedIndex, query]);
+  }, [isOpen, selectedIndex, query, templates]);
 
   useEffect(() => {
     if (!isOpen || !listRef.current) return;
@@ -199,21 +202,29 @@ export function CommandPalette() {
                   templates
                 </span>
               </div>
-              {filteredTemplates.map((t) => (
-                <button
-                  key={t.filename}
-                  type="button"
-                  onClick={() => sendTemplate(t)}
-                  className="flex w-full items-start justify-between gap-3 px-3 py-1.5 text-left text-foreground/80 hover:bg-secondary/50"
-                >
-                  <span className="flex flex-col gap-0.5">
-                    <span className="text-xs">Send template: {t.name}</span>
-                    {t.description && (
-                      <span className="text-[10px] text-muted-foreground">{t.description}</span>
-                    )}
-                  </span>
-                </button>
-              ))}
+              {filteredTemplates.map((t) => {
+                const idx = flatIndex++;
+                const isSelected = idx === selectedIndex;
+                return (
+                  <button
+                    key={t.filename}
+                    type="button"
+                    data-palette-selected={isSelected ? "true" : undefined}
+                    onClick={() => sendTemplate(t)}
+                    onMouseEnter={() => setSelectedIndex(idx)}
+                    className={`flex w-full items-start justify-between gap-3 px-3 py-1.5 text-left transition-colors ${
+                      isSelected ? "bg-secondary text-foreground" : "text-foreground/80 hover:bg-secondary/50"
+                    }`}
+                  >
+                    <span className="flex flex-col gap-0.5">
+                      <span className="text-xs">Send template: {t.name}</span>
+                      {t.description && (
+                        <span className="text-[10px] text-muted-foreground">{t.description}</span>
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           )}
           {filteredContextual.length > 0 && (

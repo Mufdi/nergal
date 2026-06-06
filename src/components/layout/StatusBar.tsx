@@ -13,9 +13,11 @@ import {
 } from "@/stores/browser";
 import { openTabAction } from "@/stores/rightPanel";
 import { Badge } from "@/components/ui/badge";
-import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock, Globe, CalendarRange, Pencil } from "lucide-react";
+import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock, Globe, CalendarRange, Pencil, TriangleAlert, Timer } from "lucide-react";
+import { activeIncidentsAtom } from "@/stores/statusFeed";
 import {
   Tooltip,
+  TooltipProvider,
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
@@ -44,11 +46,16 @@ function rateLimitColor(pct: number | null): string {
   return "text-muted-foreground";
 }
 
-function contextBarColor(pct: number | null): string {
-  if (pct == null) return "bg-muted-foreground/30";
-  if (pct >= 90) return "bg-red-500";
-  if (pct >= 70) return "bg-yellow-500";
-  return "bg-primary";
+/// Text progress bar for tooltips — the inline bars moved into hover to keep
+/// the bar chrome quiet (user request 2026-06-06).
+function asciiBar(pct: number, width = 12): string {
+  const filled = Math.max(0, Math.min(width, Math.round((pct / 100) * width)));
+  return "█".repeat(filled) + "░".repeat(width - filled);
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}K`;
+  return `${Math.round(n)}`;
 }
 
 function modeDotColor(mode: string): string {
@@ -93,6 +100,8 @@ export function StatusBar() {
   const ctxPct = sl.context_used_pct != null ? Math.round(sl.context_used_pct) : null;
 
   return (
+    // delay={0}: status-bar hovers respond instantly, same as sidebar rows.
+    <TooltipProvider delay={0}>
     <footer
       className="flex h-7 items-center justify-between bg-card px-3 text-[11px] leading-none"
       role="status"
@@ -188,42 +197,50 @@ export function StatusBar() {
         </Tooltip>
 
         <LocalhostPortChips />
+        <IncidentChips />
       </div>
 
-      {/* Right: context %, rate limits, model, duration */}
+      {/* Right: context %, rate limits, model, duration. Progress bars live
+          in the tooltips (ASCII) — inline only the colored percentages. */}
       <div className="flex items-center gap-2.5 text-muted-foreground">
         {ctxPct != null && (
           <Tooltip>
             <TooltipTrigger className="flex cursor-default items-center gap-1">
               <Gauge className="size-3 shrink-0" />
-              <div className="flex h-2 w-12 items-center overflow-hidden rounded-full bg-muted">
-                <div
-                  className={`h-full rounded-full transition-all ${contextBarColor(ctxPct)}`}
-                  style={{ width: `${Math.min(ctxPct, 100)}%` }}
-                />
-              </div>
-              <span>{ctxPct}%</span>
+              <span className={rateLimitColor(ctxPct)}>{ctxPct}%</span>
             </TooltipTrigger>
-            <TooltipContent>
-              Context window: {ctxPct}% used
-              {sl.context_window_size && ` (${(sl.context_window_size / 1000).toFixed(0)}K)`}
+            <TooltipContent className="flex-col items-start gap-0.5">
+              <span className="font-mono text-[10px]">{asciiBar(ctxPct)} {ctxPct}%</span>
+              <span>
+                Context window
+                {sl.context_window_size != null && (
+                  <>
+                    : {formatTokens((sl.context_window_size * ctxPct) / 100)} /{" "}
+                    {formatTokens(sl.context_window_size)} tokens
+                  </>
+                )}
+              </span>
             </TooltipContent>
           </Tooltip>
         )}
 
         {sl.rate_5h_pct != null && (
           <Tooltip>
-            <TooltipTrigger className={`cursor-default ${rateLimitColor(sl.rate_5h_pct)}`}>
-              5h:{Math.round(sl.rate_5h_pct)}%
+            <TooltipTrigger className="flex cursor-default items-center gap-1">
+              <Timer className="size-3 shrink-0" />
+              <span className={rateLimitColor(sl.rate_5h_pct)}>{Math.round(sl.rate_5h_pct)}%</span>
               {sl.rate_5h_resets_at && (
-                <span className="text-muted-foreground/60"> {new Date(sl.rate_5h_resets_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}</span>
+                <span className="text-muted-foreground/60">{new Date(sl.rate_5h_resets_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}</span>
               )}
             </TooltipTrigger>
-            <TooltipContent>
-              5-hour rate limit: {sl.rate_5h_pct.toFixed(1)}% used
-              {sl.rate_5h_resets_at && (
-                <> — resets {new Date(sl.rate_5h_resets_at * 1000).toLocaleTimeString([], { hour12: false })}</>
-              )}
+            <TooltipContent className="flex-col items-start gap-0.5">
+              <span className="font-mono text-[10px]">{asciiBar(sl.rate_5h_pct)} {sl.rate_5h_pct.toFixed(1)}%</span>
+              <span>
+                5-hour rate limit
+                {sl.rate_5h_resets_at && (
+                  <> — resets {new Date(sl.rate_5h_resets_at * 1000).toLocaleTimeString([], { hour12: false })}</>
+                )}
+              </span>
             </TooltipContent>
           </Tooltip>
         )}
@@ -260,39 +277,96 @@ export function StatusBar() {
           <Tooltip>
             <TooltipTrigger className="flex cursor-default items-center gap-1">
               <CalendarRange className="size-3 shrink-0" />
-              <div className="flex h-2 w-12 items-center overflow-hidden rounded-full bg-muted">
-                <div
-                  className={`h-full rounded-full transition-all ${contextBarColor(sl.rate_7d_pct)}`}
-                  style={{ width: `${Math.min(sl.rate_7d_pct, 100)}%` }}
-                />
-              </div>
               <span className={rateLimitColor(sl.rate_7d_pct)}>{Math.round(sl.rate_7d_pct)}%</span>
             </TooltipTrigger>
-            <TooltipContent>
-              Weekly rate limit: {sl.rate_7d_pct.toFixed(1)}% used
-              {sl.rate_7d_resets_at && (
-                <> — resets {new Date(sl.rate_7d_resets_at * 1000).toLocaleString([], { hour12: false })}</>
-              )}
+            <TooltipContent className="flex-col items-start gap-0.5">
+              <span className="font-mono text-[10px]">{asciiBar(sl.rate_7d_pct)} {sl.rate_7d_pct.toFixed(1)}%</span>
+              <span>
+                Weekly rate limit
+                {sl.rate_7d_resets_at && (
+                  <> — resets {new Date(sl.rate_7d_resets_at * 1000).toLocaleString([], { hour12: false })}</>
+                )}
+              </span>
             </TooltipContent>
           </Tooltip>
         )}
       </div>
     </footer>
+    </TooltipProvider>
   );
 }
 
-/// Renders one chip per localhost port detected by the Rust scanner. Click
-/// opens (or focuses) the browser panel and navigates to that port.
+/// One chip per provider with an active incident (status.claude.com /
+/// status.openai.com, polled by the Rust feed). Hidden while everything is
+/// operational. Click opens the provider's status page in the browser panel.
+function IncidentChips() {
+  const incidents = useAtomValue(activeIncidentsAtom);
+  const sessionId = useAtomValue(activeSessionIdAtom);
+  const newTab = useSetAtom(browserNewTabAction);
+  const setMode = useSetAtom(browserSetModeAction);
+  const openTab = useSetAtom(openTabAction);
+
+  if (incidents.length === 0) return null;
+
+  async function openStatusPage(url: string) {
+    if (!sessionId) return;
+    setMode({ sessionId, mode: "dock" });
+    openTab({
+      tab: { id: `browser:${sessionId}`, type: "browser", label: "Browser" },
+    });
+    try {
+      await newTab({ sessionId, url });
+    } catch {
+      /* status page URLs are hardcoded https — validate_url can't reject them */
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      {incidents.map((s) => (
+        <Tooltip key={s.provider}>
+          <TooltipTrigger
+            onClick={() => openStatusPage(s.url)}
+            disabled={!sessionId}
+            className={`flex shrink-0 items-center gap-1 rounded px-1.5 py-0 text-[10px] font-medium transition-colors disabled:opacity-40 ${
+              s.indicator === "minor"
+                ? "bg-yellow-500/15 text-yellow-400 hover:bg-yellow-500/25"
+                : "bg-red-500/15 text-red-400 hover:bg-red-500/25"
+            }`}
+          >
+            <TriangleAlert className="size-3 shrink-0" />
+            {s.provider === "claude" ? "Claude" : "OpenAI"}
+          </TooltipTrigger>
+          <TooltipContent>
+            {s.description} — click to open {s.url}
+          </TooltipContent>
+        </Tooltip>
+      ))}
+    </div>
+  );
+}
+
+/// Single "ports" chip for the dev servers detected by the Rust scanner.
+/// Dimmed and inert while no ports are listening; with ports it opens an
+/// upward popover listing them — click a port to open it in the browser
+/// panel. Replaces the old horizontal scroll strip (one chip per port),
+/// which pushed status icons around on busy projects.
 function LocalhostPortChips() {
   const ports = useAtomValue(localhostPortsAtom);
   const sessionId = useAtomValue(activeSessionIdAtom);
   const newTab = useSetAtom(browserNewTabAction);
   const setMode = useSetAtom(browserSetModeAction);
   const openTab = useSetAtom(openTabAction);
+  const [open, setOpen] = useState(false);
+  const hasPorts = ports.length > 0;
 
-  if (ports.length === 0) return null;
+  // The popover must not outlive its content (last dev server dies while open).
+  useEffect(() => {
+    if (!hasPorts) setOpen(false);
+  }, [hasPorts]);
 
   async function openPort(port: number) {
+    setOpen(false);
     if (!sessionId) return;
     setMode({ sessionId, mode: "dock" });
     openTab({
@@ -307,24 +381,49 @@ function LocalhostPortChips() {
   }
 
   return (
-    // Bounded width + horizontal scroll so a project with 10+ open dev
-    // servers can't push status icons off-screen on a narrow window.
-    <div className="flex min-w-0 items-center gap-1">
-      <Globe className="size-3 shrink-0 text-muted-foreground/60" />
-      <div className="scrollbar-none flex max-w-[16rem] items-center gap-1 overflow-x-auto">
-        {ports.map((port) => (
-          <Tooltip key={port}>
-            <TooltipTrigger
-              onClick={() => openPort(port)}
-              disabled={!sessionId}
-              className="shrink-0 rounded border border-border/40 px-1.5 py-0 font-mono text-[10px] text-muted-foreground transition-colors hover:border-primary/40 hover:bg-secondary hover:text-foreground disabled:opacity-40"
-            >
-              :{port}
-            </TooltipTrigger>
-            <TooltipContent>Open http://localhost:{port}</TooltipContent>
-          </Tooltip>
-        ))}
-      </div>
+    <div className="relative flex items-center">
+      <Tooltip>
+        <TooltipTrigger
+          onClick={() => hasPorts && setOpen((v) => !v)}
+          disabled={!hasPorts}
+          aria-expanded={open}
+          className={`flex items-center gap-1 rounded px-1.5 py-0 text-[10px] transition-colors ${
+            hasPorts
+              ? "text-muted-foreground hover:bg-secondary hover:text-foreground"
+              : "text-muted-foreground/40 cursor-default"
+          } ${open ? "bg-secondary text-foreground" : ""}`}
+        >
+          <Globe className="size-3 shrink-0" />
+          ports
+          {hasPorts && (
+            <span className="flex h-3.5 items-center justify-center rounded-full bg-primary/15 px-1 text-[9px] font-medium tabular-nums text-primary">
+              {ports.length}
+            </span>
+          )}
+        </TooltipTrigger>
+        <TooltipContent>
+          {hasPorts ? "Listening dev servers — click to list" : "No dev servers detected"}
+        </TooltipContent>
+      </Tooltip>
+      {open && (
+        <>
+          {/* Outside-click catcher — same pattern as the TopBar/TabBar dropdowns. */}
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute bottom-full left-1/2 z-50 mb-1.5 max-h-48 w-40 -translate-x-1/2 overflow-y-auto rounded-md border border-border bg-card py-1 shadow-lg">
+            {ports.map((port) => (
+              <button
+                key={port}
+                onClick={() => openPort(port)}
+                disabled={!sessionId}
+                className="flex w-full items-center gap-2 px-2.5 py-1 text-left font-mono text-[10px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-40"
+              >
+                <span className="inline-block size-1.5 shrink-0 rounded-full bg-green-500" aria-hidden="true" />
+                localhost:{port}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

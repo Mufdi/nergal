@@ -11,6 +11,7 @@ import { refreshGitInfoAtom } from "./git";
 import { addActivityAtom } from "./activity";
 import { toastsAtom } from "./toast";
 import { localhostPortsAtom } from "./browser";
+import { providerStatusAtom, type ProviderStatus } from "./statusFeed";
 import { notify } from "@/lib/notifications";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
@@ -262,6 +263,27 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
   unlisteners.push(
     await listen<number[]>("localhost:ports-changed", (payload) => {
       set(localhostPortsAtom, payload ?? []);
+    }),
+  );
+
+  // Provider status feed (status.claude.com / status.openai.com). The
+  // backend emits only on change, so an incident *transition* is toast-worthy
+  // here; the persistent surface is the StatusBar chip reading the atom.
+  unlisteners.push(
+    await listen<ProviderStatus[]>("status:providers", (payload) => {
+      const next = payload ?? [];
+      const prev = get(providerStatusAtom);
+      for (const s of next) {
+        if (s.indicator === "none" || s.indicator === "unknown") continue;
+        const before = prev.find((p) => p.provider === s.provider);
+        if (!before || before.indicator !== s.indicator) {
+          set(toastsAtom, {
+            message: `${s.provider === "claude" ? "Claude" : "OpenAI"} status: ${s.description}`,
+            type: "error",
+          });
+        }
+      }
+      set(providerStatusAtom, next);
     }),
   );
 

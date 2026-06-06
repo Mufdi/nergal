@@ -3,6 +3,7 @@ mod browser;
 mod commands;
 pub mod config;
 mod db;
+mod feeds;
 pub mod hooks;
 mod models;
 pub mod obsidian;
@@ -510,6 +511,14 @@ pub fn run() {
             let browser_app = app_handle.clone();
             tauri::async_runtime::spawn(async move {
                 browser::run_port_scanner(browser_app).await;
+            });
+
+            // Provider status feed (status.claude.com + status.openai.com).
+            // Emits `status:providers` on change; the status bar surfaces
+            // active incidents.
+            let feed_app = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                feeds::run_status_feed(feed_app).await;
             });
 
             // Plan watcher is dynamic: one notify::Watcher whose watch set

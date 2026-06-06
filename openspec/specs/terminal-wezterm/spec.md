@@ -126,3 +126,23 @@ A config flag SHALL gate the new terminal path so both implementations can coexi
 - **THEN** the new wezterm-term-based terminal SHALL be used
 - **AND** no xterm.js code SHALL be loaded for that session
 
+
+### Requirement: Wheel scrollback follows the terminal-emulator standard
+
+In the primary screen, wheel input SHALL scroll the local scrollback at the terminal-emulator standard rate of 3 lines per wheel notch (one notch = 40 px of WebKitGTK pixel delta, or 1 unit in `DOM_DELTA_LINE` mode). Fractional deltas (hi-res wheels, touchpads) SHALL be accumulated across events rather than rounded per event, so no travel is lost.
+
+#### Scenario: Discrete wheel notch scrolls 3 lines
+
+- **WHEN** the user rolls a discrete mouse wheel one notch over the terminal in the primary screen
+- **THEN** the viewport SHALL move 3 lines
+
+#### Scenario: Hi-res wheel deltas accumulate
+
+- **WHEN** a hi-res wheel emits several sub-line pixel deltas for a single notch
+- **THEN** the fractional values SHALL accumulate in a remainder and the viewport SHALL move the same total distance as a discrete notch
+- **AND** a direction change SHALL discard the leftover remainder
+
+#### Scenario: Alt screen forwards wheel to the app
+
+- **WHEN** the alternate screen is active (agent TUI, vim, less)
+- **THEN** wheel events SHALL be forwarded to the running application via wezterm-term's mouse pipeline instead of scrolling local scrollback

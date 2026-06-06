@@ -77,6 +77,10 @@ interface Entry {
   /// that single ghost event instead of blanket-suppressing keydowns for
   /// a long window (which is what dropped the user's fast-typing chars).
   lastComposed: { text: string; at: number } | null;
+  /// Fractional wheel remainder. Hi-res wheels and touchpads emit many
+  /// sub-line deltas; without accumulation each one rounds to 0 and the
+  /// scroll loses most of its travel.
+  wheelAccum: number;
 }
 
 // ── Module state ──
@@ -297,6 +301,7 @@ export async function show(
       hoveredHyperlink: null,
       composing: false,
       lastComposed: null,
+      wheelAccum: 0,
     };
 
     wireInput(entry);
@@ -650,18 +655,31 @@ function wireInput(entry: Entry): void {
     "wheel",
     (e) => {
       e.preventDefault();
-      let lines: number;
+      // Terminal standard (VTE, kitty, Ghostty): 3 lines per wheel notch.
+      // WebKitGTK reports one notch as a 40px pixel delta (its
+      // pixelsPerLineStep), and hi-res wheels split that into many sub-line
+      // events — so map 40px → 3 lines uniformly and carry the fractional
+      // remainder in an accumulator instead of rounding each event (rounding
+      // dropped most hi-res travel: each fragment rounded to 0). Touchpads
+      // ride the same mapping, like every GTK terminal.
+      let raw: number;
       switch (e.deltaMode) {
         case WheelEvent.DOM_DELTA_LINE:
-          lines = Math.round(e.deltaY);
+          raw = e.deltaY * 3;
           break;
         case WheelEvent.DOM_DELTA_PAGE:
-          lines = Math.round(e.deltaY * entry.rows);
+          raw = e.deltaY * entry.rows;
           break;
         default:
-          lines = Math.round(e.deltaY / entry.metrics.cssHeight);
+          raw = (e.deltaY / 40) * 3;
           break;
       }
+      // Direction change discards the leftover so it can't fight the new
+      // gesture's first event.
+      if (Math.sign(raw) !== Math.sign(entry.wheelAccum)) entry.wheelAccum = 0;
+      entry.wheelAccum += raw;
+      const lines = Math.trunc(entry.wheelAccum);
+      entry.wheelAccum -= lines;
       if (lines === 0) return;
       const cell = mouseToCell(entry, e) ?? { col: 0, row: 0 };
       invoke("terminal_scroll", {

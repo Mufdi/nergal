@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.2.0 — 2026-06-05
+
+* Added a full Obsidian vault integration, configured per-workspace in Settings → Obsidian (with an optional global TOML override): quick capture into an inbox note (Ctrl+Alt+Q), a per-session session-log channel, and automatic MOC notes with reverse backlinks written when a session ends
+* Added vault search: a global search modal over the vault (with optional subdirectory scoping) plus an `@@` mention picker in the terminal and scratchpad for inserting vault note references mid-prompt
+* Added vault note pinning with agent context injection: pin notes to a session and their content is injected as agent context at spawn/resume (Claude Code and Pi via system-prompt file, OpenCode and Codex via launch prompt); pinned notes persist as pinned tabs and hot-reload when the note changes on disk
+* Added an Obsidian note reading panel with wikilink rendering and a vault note finder in the right panel (Ctrl+Shift+Q)
+* Added `cluihud://` deep links: open a file or spawn a session in Nergal straight from Obsidian or any other app, including cold-start when Nergal isn't running
+* Added Obsidian templates to the command palette: every note in the configured templates folder can be sent to the agent prompt, fully keyboard-navigable
+* Added first-class non-git workspaces: any directory can now be a workspace — sessions share the directory (no worktrees), the sidebar shows a non-git badge, and the Git panel offers an "Init git" button to convert in place
+* Added branch rename without leaving the app: inline from the Git panel header, from the pencil next to the branch in the status bar, or globally via Ctrl+Alt+R; local-only by design, so the remote branch and any open PR keep their name
+* Added a Ctrl+Enter fullscreen terminal: the terminal takes over the whole screen (OS fullscreen included) and a second press restores the previous layout
+* Added an undo window for destructive deletes: removing a session or a workspace shows a 5-second countdown toast with Undo, and the PTY, DB row and worktree are only destroyed after the window expires
+* Added session actions to the collapsed sidebar: hovering a session dot now offers rename and delete
+* Added per-task delete in the sidebar tasks island (hover the row or press `d`), plus Ctrl+Alt+X to clear all completed tasks at once
+* Added an install health check in About: missing system tools (git, xdg-utils) surface as an amber banner with the suggested install command, and the `.deb`/`.rpm` packages now declare xdg-utils as a dependency
+* Added Ioskeley Mono Term as a terminal font option
+* Fixed "Reveal in file manager" after downloading an update doing nothing: the reveal now uses the freedesktop FileManager1 D-Bus interface so the file-manager window actually raises with the file highlighted, falling back to xdg-open on other desktops
+* Fixed update downloads restarting from scratch when revisiting the About section; a fully staged `.deb` in Downloads is detected and offered for reveal instead of re-downloading
+* Fixed pressing `d` to drop a stash opening the delete-session modal instead — the sidebar's hover shortcut no longer hijacks keys based on a stale row selection
+* Fixed the expand-to-Zen button in the Git panel doing nothing while the Conflicts chip was active; the button now routes by active chip exactly like Ctrl+Shift+0
+* Fixed the Ship modal rendering only its action buttons with no stage list or title/body fields — a WebKitGTK flex-layout quirk collapsed the modal body to zero height
+* Fixed the right panel re-opening on session switch over an explicit hide when a plan review was parked pending
+* Fixed focus after switching session tabs: it now always lands on the terminal prompt — restored panels (Obsidian finder, file browser, plan/spec/diff pickers, open file editors, pinned-note tabs) used to steal focus or silently swallow keystrokes
+* Fixed Obsidian settings paths failing on wrong capitalization: paths now resolve case-insensitively against the on-disk spelling, both at save time and in the live validation
+* Fixed Obsidian templates not appearing in the command palette unless their filenames carried an undocumented `template-` prefix; every `.md` note in the folder now counts, matching Obsidian's own Templates plugin
+* Fixed branch renames appearing to succeed without persisting: the rename now also updates the session record that the UI, Ship and cleanup flows read from
+* Fixed deleted sessions leaving stale entries in `git worktree list`: cleanup falls back to removing the orphaned directory and pruning the registration when git refuses
+* Fixed the terminal canvas remaining visible after soft-closing the last session tab
+* Fixed a React nested-button warning in the sidebar session rows
+* Improved the scratchpad with the same focused-panel accent border the docked panels use
+
 ## v0.1.4 — 2026-05-24
 
 * Added per-agent gating for the Plan view; it's now hidden on agents that don't persist plans to disk (OpenCode, Codex, Pi), and switching to Plan on those sessions auto-redirects to Files

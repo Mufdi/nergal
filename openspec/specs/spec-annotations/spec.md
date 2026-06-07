@@ -172,3 +172,15 @@ Each workspace SHALL resolve its OpenSpec directory via an optional override (`w
 - **WHEN** the user opens Settings → Paths for a workspace with no override
 - **THEN** the OpenSpec Directory field SHALL show the computed default `<repo>/openspec`
 - **AND** applying a value equal to the default SHALL store no override (NULL)
+
+#### Scenario: Watcher follows the resolved openspec dir
+
+- **WHEN** the active session changes (or its override is saved)
+- **THEN** the frontend SHALL call `watch_openspec_for_session`, re-targeting the file watcher at that session's resolved openspec dir
+- **AND** `openspec:changed` SHALL fire for edits made under an override that lives outside the repo
+
+#### Scenario: Path field validates live and saves with Settings
+
+- **WHEN** the user edits the OpenSpec Directory field
+- **THEN** it SHALL validate case-insensitively (like Obsidian paths) without a per-field Apply button
+- **AND** the value SHALL persist on the global Settings Save

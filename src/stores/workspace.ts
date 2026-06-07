@@ -91,6 +91,18 @@ export const sessionToWorkspaceMapAtom = atom<Record<string, string>>((get) => {
   return map;
 });
 
+/// Draft state for the Settings → Paths OpenSpec field. Held in an atom (not
+/// local component state) so the global Settings Save button can flush it
+/// without a dedicated Apply button. `baseline` is the value as loaded, so
+/// Save can skip a no-op write.
+export interface OpenspecDirDraft {
+  workspaceId: string;
+  value: string;
+  defaultDir: string;
+  baseline: string;
+}
+export const openspecDirDraftAtom = atom<OpenspecDirDraft | null>(null);
+
 // Session tabs — ordered list of session IDs open as tabs in the TopBar
 export const sessionTabIdsAtom = atom<string[]>([]);
 

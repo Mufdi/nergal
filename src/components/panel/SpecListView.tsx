@@ -36,6 +36,11 @@ export function SpecListView() {
   // Refresh on mount, on openspec:changed (watcher), and on files:modified (hook)
   useEffect(() => {
     refresh();
+    // Point the file watcher at this session's resolved openspec dir so
+    // openspec:changed fires for overrides that live outside the repo.
+    if (sessionId) {
+      invoke("watch_openspec_for_session", { sessionId }).catch(() => {});
+    }
     const unlisteners: (() => void)[] = [];
 
     listen("openspec:changed", () => refresh())

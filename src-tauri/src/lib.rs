@@ -24,7 +24,6 @@ use agents::state::AgentRuntimeState;
 use config::Config;
 use db::Database;
 use hooks::server::start_hook_server;
-use openspec::OpenSpecWatcher;
 use plan_state::PlanStateManager;
 use pty::PtyManager;
 use scratchpad::commands::ScratchpadState;
@@ -353,6 +352,7 @@ pub fn run() {
             commands::write_openspec_artifact,
             commands::get_workspace_openspec_dir,
             commands::set_workspace_openspec_dir,
+            commands::watch_openspec_for_session,
             commands::detect_editors,
             commands::open_in_editor,
             commands::get_git_status,
@@ -583,30 +583,30 @@ pub fn run() {
                 );
             }
 
-            // OpenSpec watcher — watches the project's openspec/ dir
-            // During dev, cwd may be src-tauri/, so also check parent
-            let cwd = std::env::current_dir().unwrap_or_default();
-            let openspec_dir = if cwd.join("openspec").exists() {
-                cwd.join("openspec")
-            } else if let Some(parent) = cwd.parent() {
-                parent.join("openspec")
-            } else {
-                cwd.join("openspec")
-            };
-            if openspec_dir.exists() {
-                match OpenSpecWatcher::new(&openspec_dir, app_handle.clone()) {
-                    Ok(watcher) => {
-                        Box::leak(Box::new(watcher));
-                        tracing::info!("openspec watcher started on {}", openspec_dir.display());
-                    }
-                    Err(e) => tracing::warn!("failed to start openspec watcher: {e}"),
+            // OpenSpec watcher — re-targetable so it follows the active
+            // session's resolved openspec dir (including per-workspace
+            // overrides outside the repo). Seeded with the process-cwd dir for
+            // the common single-project / dev case; `watch_openspec_for_session`
+            // re-points it as the frontend switches sessions.
+            let openspec_watcher: openspec::SharedOpenSpecWatcher = std::sync::Arc::new(
+                std::sync::Mutex::new(openspec::OpenSpecWatcher::new(app_handle.clone())),
+            );
+            {
+                let cwd = std::env::current_dir().unwrap_or_default();
+                let seed = if cwd.join("openspec").exists() {
+                    cwd.join("openspec")
+                } else if let Some(parent) = cwd.parent().filter(|p| p.join("openspec").exists()) {
+                    parent.join("openspec")
+                } else {
+                    cwd.join("openspec")
+                };
+                if let Ok(mut w) = openspec_watcher.lock()
+                    && let Err(e) = w.retarget(&seed)
+                {
+                    tracing::warn!("failed to seed openspec watcher: {e}");
                 }
-            } else {
-                tracing::info!(
-                    "openspec directory does not exist yet, skipping watcher: {}",
-                    openspec_dir.display()
-                );
             }
+            app.manage(openspec_watcher);
 
             // Scratchpad watcher (lives for the lifetime of the app, owned
             // by the managed ScratchpadState so set_path can replace it).

@@ -1533,7 +1533,12 @@ fn resolve_openspec_dir(db: &crate::db::Database, session_id: &str) -> Result<Pa
             .get_workspace_openspec_dir(&wid)
             .map_err(|e: anyhow::Error| e.to_string())?
     {
-        return Ok(PathBuf::from(crate::obsidian::config::expand_home(&dir)));
+        // Resolve case-insensitively so a path typed with the wrong case still
+        // resolves on Linux's case-sensitive fs (same fix as Obsidian paths).
+        let expanded = crate::obsidian::config::expand_home(&dir);
+        return Ok(PathBuf::from(
+            crate::obsidian::config::resolve_case_insensitive(&expanded),
+        ));
     }
     Ok(cwd.join("openspec"))
 }
@@ -1808,6 +1813,26 @@ pub fn set_workspace_openspec_dir(
 ) -> Result<(), String> {
     let db = db.lock().map_err(|e| e.to_string())?;
     db.set_workspace_openspec_dir(&workspace_id, openspec_dir.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+/// Re-target the OpenSpec file watcher at a session's resolved openspec dir so
+/// `openspec:changed` fires for external edits too. The frontend calls this
+/// when the active session changes and right after the override is saved.
+#[tauri::command]
+pub fn watch_openspec_for_session(
+    db: State<'_, SharedDb>,
+    watcher: State<'_, crate::openspec::SharedOpenSpecWatcher>,
+    session_id: String,
+) -> Result<(), String> {
+    let dir = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        resolve_openspec_dir(&db, &session_id)?
+    };
+    watcher
+        .lock()
+        .map_err(|e| e.to_string())?
+        .retarget(&dir)
         .map_err(|e| e.to_string())
 }
 
@@ -3330,7 +3355,12 @@ pub async fn search(
                     .get_workspace_openspec_dir(&ws.id)
                     .ok()
                     .flatten()
-                    .map(|d| std::path::PathBuf::from(crate::obsidian::config::expand_home(&d)))
+                    .map(|d| {
+                        let expanded = crate::obsidian::config::expand_home(&d);
+                        std::path::PathBuf::from(crate::obsidian::config::resolve_case_insensitive(
+                            &expanded,
+                        ))
+                    })
                     .unwrap_or_else(|| ws.repo_path.join("openspec"));
                 if candidate.is_dir() {
                     openspec_dir = Some(candidate);

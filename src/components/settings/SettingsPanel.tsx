@@ -37,7 +37,8 @@ import {
   resetObsidianDraftAtom,
   saveObsidianConfigAtom,
 } from "@/stores/obsidian";
-import { activeWorkspaceAtom, workspacesAtom, type Workspace } from "@/stores/workspace";
+import { activeWorkspaceAtom, workspacesAtom, activeSessionIdAtom, openspecDirDraftAtom, type Workspace } from "@/stores/workspace";
+import { appStore } from "@/stores/jotaiStore";
 import type { ResolvedObsidianConfig } from "@/lib/types";
 import { ObsidianIcon } from "@/components/icons/ObsidianIcon";
 import type { ObsidianConfig } from "@/lib/types";
@@ -250,66 +251,41 @@ function ScratchpadPathField() {
   );
 }
 
-/// Per-workspace OpenSpec directory override. Lets specs live outside the
-/// code repo (e.g. a sibling dir) so the repo stays clean. Prefills with the
-/// computed default (`<repo>/openspec`) when unset.
+/// Per-workspace OpenSpec directory override. Lets specs live outside the code
+/// repo so the repo stays clean. Validates live (case-insensitive, like the
+/// Obsidian paths) and persists on the global Settings Save — no Apply button.
 function OpenSpecPathField() {
   const workspaces = useAtomValue(workspacesAtom);
   const activeWorkspace = useAtomValue(activeWorkspaceAtom);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const effective = activeWorkspace ?? workspaces.find((w) => w.id === selectedId) ?? workspaces[0] ?? null;
-  const [draft, setDraft] = useState("");
-  const [defaultDir, setDefaultDir] = useState("");
-  const [configured, setConfigured] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [draft, setDraft] = useAtom(openspecDirDraftAtom);
 
   useEffect(() => {
-    if (!effective) return;
+    if (!effective) {
+      setDraft(null);
+      return;
+    }
     let cancelled = false;
     invoke<{ configured: string | null; default_dir: string }>("get_workspace_openspec_dir", {
       workspaceId: effective.id,
     })
       .then((info) => {
         if (cancelled) return;
-        setDefaultDir(info.default_dir);
-        setConfigured(info.configured);
         // Prefill with the default so the user edits from a real path.
-        setDraft(info.configured ?? info.default_dir);
+        const initial = info.configured ?? info.default_dir;
+        setDraft({
+          workspaceId: effective.id,
+          value: initial,
+          defaultDir: info.default_dir,
+          baseline: initial,
+        });
       })
       .catch((err) => console.error("[settings] get_workspace_openspec_dir failed:", err));
     return () => {
       cancelled = true;
     };
-  }, [effective?.id]);
-
-  async function handleApply() {
-    if (!effective) return;
-    setBusy(true);
-    try {
-      // Setting the value back to the default clears the override (NULL).
-      const next = draft.trim() === defaultDir.trim() ? null : draft.trim() || null;
-      await invoke("set_workspace_openspec_dir", { workspaceId: effective.id, openspecDir: next });
-      setConfigured(next);
-    } catch (err) {
-      console.error("[settings] set_workspace_openspec_dir failed:", err);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleReset() {
-    if (!effective) return;
-    setBusy(true);
-    try {
-      await invoke("set_workspace_openspec_dir", { workspaceId: effective.id, openspecDir: null });
-      setConfigured(null);
-      setDraft(defaultDir);
-    } catch (err) {
-      console.error("[settings] reset openspec dir failed:", err);
-    } finally {
-      setBusy(false);
-    }
-  }
+  }, [effective?.id, setDraft]);
 
   if (!effective) {
     return (
@@ -322,7 +298,6 @@ function OpenSpecPathField() {
 
   return (
     <div className="grid gap-2">
-      <Label htmlFor="setting-openspec-dir">OpenSpec Directory</Label>
       {workspaces.length > 1 && !activeWorkspace && (
         <Select
           id="setting-openspec-workspace"
@@ -331,29 +306,16 @@ function OpenSpecPathField() {
           options={workspaces.map((w) => ({ value: w.id, label: w.name }))}
         />
       )}
-      <div className="flex gap-2">
-        <Input
-          id="setting-openspec-dir"
-          type="text"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder={defaultDir}
-          className="flex-1"
-        />
-        <Button variant="outline" size="sm" onClick={handleApply} disabled={busy || !draft.trim()}>
-          Apply
-        </Button>
-      </div>
-      <div className="flex gap-2">
-        <Button variant="ghost" size="xs" onClick={handleReset} disabled={busy || configured === null}>
-          Reset to default
-        </Button>
-      </div>
-      <p className="text-xs text-muted-foreground">
-        Where this workspace's <code>openspec/</code> lives. Set a path outside the repo to keep specs
-        separate from code. Defaults to <code>{defaultDir || "<repo>/openspec"}</code>
-        {configured ? "." : " (currently using the default)."}
-      </p>
+      <ValidatedPathField
+        configKey="openspec_dir"
+        label="OpenSpec Directory"
+        placeholder={draft?.defaultDir ?? "<repo>/openspec"}
+        kind="dir"
+        caseInsensitive
+        help="Where this workspace's openspec/ lives. Set a path outside the repo to keep specs separate from code; clear (or match the default) to use <repo>/openspec. Saved with Settings."
+        value={draft?.value ?? ""}
+        onChange={(v) => setDraft((prev) => (prev ? { ...prev, value: v } : prev))}
+      />
     </div>
   );
 }
@@ -1946,6 +1908,7 @@ function formatBytes(bytes: number): string {
 
 export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
   const [config, setConfig] = useAtom(configAtom);
+  const activeSessionId = useAtomValue(activeSessionIdAtom);
   const [editors, setEditors] = useState<EditorInfo[]>([]);
   const [activeSection, setActiveSection] = useState<SectionId>("paths");
   const agents = useAtomValue(availableAgentsAtom);
@@ -2211,6 +2174,15 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
 
   function handleSave() {
     invoke("save_config", { config }).catch(() => {});
+    // Per-workspace OpenSpec override rides the same Save (it lives in the DB,
+    // not the global config). Skip a no-op write; match-default clears it.
+    const od = appStore.get(openspecDirDraftAtom);
+    if (od && od.value.trim() !== od.baseline.trim()) {
+      const next = od.value.trim() === od.defaultDir.trim() ? null : od.value.trim() || null;
+      invoke("set_workspace_openspec_dir", { workspaceId: od.workspaceId, openspecDir: next })
+        .then(() => invoke("watch_openspec_for_session", { sessionId: activeSessionId }).catch(() => {}))
+        .catch((err) => console.error("[settings] set_workspace_openspec_dir failed:", err));
+    }
     onOpenChange(false);
   }
 

@@ -743,6 +743,7 @@ pub fn delete_workspace(db: State<'_, SharedDb>, workspace_id: String) -> Result
 // -- Session commands --
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command surface — collapsing to a struct breaks the JS call shape.
 pub fn create_session(
     db: State<'_, SharedDb>,
     agents: State<'_, AgentRuntimeState>,
@@ -751,6 +752,7 @@ pub fn create_session(
     name: String,
     agent_id: Option<String>,
     launch_options: Option<crate::models::LaunchOptions>,
+    env_shells: Option<Vec<crate::models::EnvShellDef>>,
 ) -> Result<Session, String> {
     let db = db.lock().map_err(|e| e.to_string())?;
 
@@ -820,6 +822,11 @@ pub fn create_session(
         // Drop all-default options so the column stays NULL for the common
         // case (and resume short-circuits the lookup).
         launch_options: launch_options.filter(|o| !o.is_noop()),
+        env_shells: env_shells
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|d| !d.command.trim().is_empty())
+            .collect(),
     };
 
     db.create_session(&session).map_err(|e| e.to_string())?;
@@ -1813,6 +1820,42 @@ pub fn set_workspace_openspec_dir(
 ) -> Result<(), String> {
     let db = db.lock().map_err(|e| e.to_string())?;
     db.set_workspace_openspec_dir(&workspace_id, openspec_dir.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn update_session_env_shells(
+    db: State<'_, SharedDb>,
+    session_id: String,
+    env_shells: Vec<crate::models::EnvShellDef>,
+) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    db.update_session_env_shells(&session_id, &env_shells)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_workspace_env_shell_suggestions(
+    db: State<'_, SharedDb>,
+    workspace_id: String,
+) -> Result<Vec<crate::models::EnvShellDef>, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    db.get_workspace_env_shell_suggestions(&workspace_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_workspace_env_shell_suggestions(
+    db: State<'_, SharedDb>,
+    workspace_id: String,
+    suggestions: Vec<crate::models::EnvShellDef>,
+) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let cleaned: Vec<crate::models::EnvShellDef> = suggestions
+        .into_iter()
+        .filter(|s| !s.command.trim().is_empty())
+        .collect();
+    db.set_workspace_env_shell_suggestions(&workspace_id, &cleaned)
         .map_err(|e| e.to_string())
 }
 

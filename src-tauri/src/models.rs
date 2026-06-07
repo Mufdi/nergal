@@ -72,6 +72,20 @@ pub struct Session {
     /// shared between fresh and resumed sessions.
     #[serde(default)]
     pub launch_options: Option<LaunchOptions>,
+    /// Environment shells `(label, command)` spawned in the quake terminal:
+    /// auto-run at creation, pre-filled on re-open. Persisted as a JSON
+    /// column (migration `013`).
+    #[serde(default)]
+    pub env_shells: Vec<EnvShellDef>,
+}
+
+/// One environment shell: a long-running command (`pnpm dev`, `docker
+/// compose up`) that gets its own quake shell — never the agent terminal,
+/// where a non-exiting command would block the agent launch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvShellDef {
+    pub label: String,
+    pub command: String,
 }
 
 /// Initial permission *mode* for the session — exactly one value, mirroring

@@ -147,6 +147,32 @@ impl TerminalSession {
         &self.terminal
     }
 
+    /// Cursor column on the live screen.
+    pub fn cursor_col(&self) -> usize {
+        self.terminal.cursor_pos().x
+    }
+
+    /// Plain text of the live-screen row the cursor sits on. Used by the
+    /// aux-shell command tracker at Enter: the displayed line carries what
+    /// keystroke mirroring can't see (history recall, tab completion).
+    pub fn cursor_line_text(&self) -> String {
+        let y = self.terminal.cursor_pos().y.max(0) as usize;
+        let screen = self.terminal.screen();
+        let start = screen
+            .scrollback_rows()
+            .saturating_sub(screen.physical_rows);
+        let row = start + y;
+        let lines = screen.lines_in_phys_range(row..row + 1);
+        let Some(line) = lines.first() else {
+            return String::new();
+        };
+        let mut text = String::new();
+        for cell in line.visible_cells() {
+            text.push_str(cell.str());
+        }
+        text.trim_end().to_string()
+    }
+
     /// Current scroll position, in lines above the live bottom. `0` means the
     /// viewport is pinned to the live PTY output.
     pub fn scroll_offset(&self) -> usize {

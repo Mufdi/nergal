@@ -60,6 +60,21 @@ fn parse_launch_options(raw: Option<String>) -> Option<crate::models::LaunchOpti
     }
 }
 
+/// Parse the nullable `env_shells` JSON column. NULL, empty, or malformed →
+/// empty vec (a corrupt column must not break session loading).
+fn parse_env_shells(raw: Option<String>) -> Vec<crate::models::EnvShellDef> {
+    let Some(s) = raw.filter(|s| !s.trim().is_empty()) else {
+        return Vec::new();
+    };
+    match serde_json::from_str(&s) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "malformed env_shells JSON; treating as empty");
+            Vec::new()
+        }
+    }
+}
+
 /// Parse the nullable `pinned_note_paths` JSON-array column into a `Vec`.
 /// NULL, empty, or malformed → empty vec (a corrupt column must not break
 /// session loading).
@@ -127,6 +142,8 @@ impl Database {
             include_str!("../migrations/010_pinned_notes.sql"),
             include_str!("../migrations/011_launch_options.sql"),
             include_str!("../migrations/012_workspace_openspec_dir.sql"),
+            include_str!("../migrations/013_env_shells.sql"),
+            include_str!("../migrations/014_env_shell_suggestions.sql"),
         ];
 
         for (i, sql) in migrations.iter().enumerate() {
@@ -230,7 +247,7 @@ impl Database {
         )?;
         let mut sess_stmt = self
             .conn
-            .prepare("SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, pinned_note_paths, launch_options FROM sessions WHERE workspace_id = ?1 ORDER BY created_at")?;
+            .prepare("SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, pinned_note_paths, launch_options, env_shells FROM sessions WHERE workspace_id = ?1 ORDER BY created_at")?;
 
         let workspaces = ws_stmt.query_map([], |row| {
             Ok((
@@ -264,6 +281,7 @@ impl Database {
                         agent_capabilities: Vec::new(),
                         pinned_note_paths: parse_pinned_note_paths(row.get(11)?),
                         launch_options: parse_launch_options(row.get(12)?),
+                        env_shells: parse_env_shells(row.get(13)?),
                     })
                 })?
                 .filter_map(|r| r.ok())
@@ -306,7 +324,7 @@ impl Database {
 
     pub fn create_session(&self, session: &Session) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO sessions (id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, launch_options) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            "INSERT INTO sessions (id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, launch_options, env_shells) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 session.id,
                 session.workspace_id,
@@ -323,6 +341,11 @@ impl Database {
                     .launch_options
                     .as_ref()
                     .and_then(|o| serde_json::to_string(o).ok()),
+                if session.env_shells.is_empty() {
+                    None
+                } else {
+                    serde_json::to_string(&session.env_shells).ok()
+                },
             ],
         )?;
         Ok(())
@@ -330,7 +353,7 @@ impl Database {
 
     pub fn find_session(&self, id: &str) -> Result<Option<Session>> {
         let result = self.conn.query_row(
-            "SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, pinned_note_paths, launch_options FROM sessions WHERE id = ?1",
+            "SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, pinned_note_paths, launch_options, env_shells FROM sessions WHERE id = ?1",
             [id],
             |row| Ok(Session {
                 id: row.get(0)?,
@@ -347,6 +370,7 @@ impl Database {
                 agent_capabilities: Vec::new(),
                 pinned_note_paths: parse_pinned_note_paths(row.get(11)?),
                 launch_options: parse_launch_options(row.get(12)?),
+                env_shells: parse_env_shells(row.get(13)?),
             }),
         );
         match result {
@@ -396,6 +420,27 @@ impl Database {
         self.conn.execute(
             "UPDATE sessions SET agent_internal_session_id = ?1, updated_at = ?2 WHERE id = ?3",
             params![internal_id, now_secs(), id],
+        )?;
+        Ok(())
+    }
+
+    /// Persist the session's live quake tab set. The column seeds from the
+    /// new-session modal defs, then evolves with use: ad-hoc tabs join,
+    /// closed tabs leave, and each submitted command updates its shell —
+    /// re-open recreates the set pre-filled.
+    pub fn update_session_env_shells(
+        &self,
+        id: &str,
+        defs: &[crate::models::EnvShellDef],
+    ) -> Result<()> {
+        let value = if defs.is_empty() {
+            None
+        } else {
+            serde_json::to_string(defs).ok()
+        };
+        self.conn.execute(
+            "UPDATE sessions SET env_shells = ?1, updated_at = ?2 WHERE id = ?3",
+            params![value, now_secs(), id],
         )?;
         Ok(())
     }
@@ -915,6 +960,43 @@ impl Database {
         )?;
         Ok(())
     }
+
+    // ── Per-workspace environment-shell suggestions ──
+
+    pub fn get_workspace_env_shell_suggestions(
+        &self,
+        workspace_id: &str,
+    ) -> Result<Vec<crate::models::EnvShellDef>> {
+        let raw: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT env_shell_suggestions FROM workspace_config WHERE workspace_id = ?1",
+                [workspace_id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(parse_env_shells(raw))
+    }
+
+    pub fn set_workspace_env_shell_suggestions(
+        &self,
+        workspace_id: &str,
+        suggestions: &[crate::models::EnvShellDef],
+    ) -> Result<()> {
+        let value = if suggestions.is_empty() {
+            None
+        } else {
+            serde_json::to_string(suggestions).ok()
+        };
+        self.conn.execute(
+            "INSERT INTO workspace_config (workspace_id, env_shell_suggestions, updated_at) \
+             VALUES (?1, ?2, ?3) \
+             ON CONFLICT(workspace_id) DO UPDATE SET env_shell_suggestions=?2, updated_at=?3",
+            params![workspace_id, value, now_secs()],
+        )?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -947,8 +1029,50 @@ mod tests {
             agent_capabilities: Vec::new(),
             pinned_note_paths: Vec::new(),
             launch_options: None,
+            env_shells: Vec::new(),
         };
         db.create_session(&s).unwrap();
+    }
+
+    #[test]
+    fn env_shells_round_trip() {
+        let db = in_memory();
+        // Seeds ws1 plus a defs-less session for the NULL-column case below.
+        seed_session(&db, "s-none");
+        let defs = vec![
+            crate::models::EnvShellDef {
+                label: "dev".into(),
+                command: "pnpm dev".into(),
+            },
+            crate::models::EnvShellDef {
+                label: "db".into(),
+                command: "docker compose up".into(),
+            },
+        ];
+        let s = Session {
+            id: "s-env".to_string(),
+            name: "s".into(),
+            workspace_id: "ws1".into(),
+            worktree_path: None,
+            worktree_branch: None,
+            merge_target: None,
+            status: SessionStatus::Idle,
+            created_at: 0,
+            updated_at: 0,
+            agent_id: "claude-code".into(),
+            agent_internal_session_id: None,
+            agent_capabilities: Vec::new(),
+            pinned_note_paths: Vec::new(),
+            launch_options: None,
+            env_shells: defs.clone(),
+        };
+        db.create_session(&s).unwrap();
+        let loaded = db.find_session("s-env").unwrap().unwrap();
+        assert_eq!(loaded.env_shells, defs);
+
+        // No defs → NULL column → empty vec on load.
+        let none = db.find_session("s-none").unwrap().unwrap();
+        assert!(none.env_shells.is_empty());
     }
 
     #[test]
@@ -967,6 +1091,37 @@ mod tests {
         // Empty string clears to default.
         db.set_workspace_openspec_dir("ws1", Some("  ")).unwrap();
         assert!(db.get_workspace_openspec_dir("ws1").unwrap().is_none());
+    }
+
+    #[test]
+    fn env_shell_suggestions_round_trip() {
+        let db = in_memory();
+        db.create_workspace("ws1", "ws", "/tmp/repo").unwrap();
+        assert!(
+            db.get_workspace_env_shell_suggestions("ws1")
+                .unwrap()
+                .is_empty()
+        );
+        let defs = vec![crate::models::EnvShellDef {
+            label: "dev".into(),
+            command: "pnpm dev".into(),
+        }];
+        db.set_workspace_env_shell_suggestions("ws1", &defs)
+            .unwrap();
+        assert_eq!(db.get_workspace_env_shell_suggestions("ws1").unwrap(), defs);
+
+        // Coexists with the openspec_dir override on the same row.
+        db.set_workspace_openspec_dir("ws1", Some("/specs/ws1"))
+            .unwrap();
+        assert_eq!(db.get_workspace_env_shell_suggestions("ws1").unwrap(), defs);
+
+        // Empty list clears the column.
+        db.set_workspace_env_shell_suggestions("ws1", &[]).unwrap();
+        assert!(
+            db.get_workspace_env_shell_suggestions("ws1")
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -993,6 +1148,7 @@ mod tests {
                 allow_skip_in_cycle: false,
                 startup_command: Some("nvm use 20".into()),
             }),
+            env_shells: Vec::new(),
         };
         db.create_session(&s).unwrap();
         let loaded = db.find_session("s-lo").unwrap().unwrap();

@@ -34,15 +34,28 @@ impl Write for SharedWriterAdapter {
 
 struct PtyInstance {
     writer: SharedWriter,
-    pair: portable_pty::PtyPair,
+    /// Master side only — the slave is dropped right after spawning the
+    /// child. While our process holds a slave fd the master never reaches
+    /// EOF, so a shell's `exit` would go undetected forever.
+    master: Box<dyn portable_pty::MasterPty + Send>,
     /// Dropping this handle shuts down the emitter task.
     terminal: TerminalHandle,
 }
 
 pub struct PtyManager {
     instances: Mutex<HashMap<String, PtyInstance>>,
-    /// Maps session_id -> pty_id for idempotency
+    /// Maps session_id -> pty_id for idempotency. Aux shells register here
+    /// too under `{session_id}::{shell_id}`, so every terminal_* command
+    /// addresses both kinds through the same key space.
     session_ptys: Mutex<HashMap<String, String>>,
+    /// session_id -> its aux-shell terminal ids, for session teardown.
+    aux_shells: Mutex<HashMap<String, Vec<String>>>,
+    /// term_id -> tracker for the line being typed in an aux shell, so the
+    /// last *submitted* command can persist with the shell's tab def
+    /// ("remember the set" across restarts). The command text is read from
+    /// the grid at Enter — keystroke mirroring alone misses history recall
+    /// and tab completion; only the line-start column is anchored here.
+    aux_line_trackers: Mutex<HashMap<String, AuxLineTracker>>,
     /// session_id -> prompt to submit at spawn (deep link `session/new`).
     /// Consumed once by `start_claude_session` when it builds the spawn command.
     pending_prompts: Mutex<HashMap<String, String>>,
@@ -56,6 +69,8 @@ impl PtyManager {
         Self {
             instances: Mutex::new(HashMap::new()),
             session_ptys: Mutex::new(HashMap::new()),
+            aux_shells: Mutex::new(HashMap::new()),
+            aux_line_trackers: Mutex::new(HashMap::new()),
             pending_prompts: Mutex::new(HashMap::new()),
             kitty_keyboard,
         }
@@ -69,6 +84,11 @@ pub struct StartClaudeResult {
 
 /// Internal: spawn a PTY, attach a wezterm-term session, spawn the emitter
 /// task, wire up the reader thread, store the instance.
+///
+/// `agent_session` distinguishes the agent terminal from auxiliary (quake)
+/// shells: aux shells skip the `CLUIHUD_SESSION_ID` env (an agent manually
+/// launched inside one must not route hook events into the owning session's
+/// panels) and on EOF emit `shell:exited` instead of the obsidian snapshot.
 #[allow(clippy::too_many_arguments)] // Internal helper — every arg is required state for PTY init.
 fn spawn_pty(
     app: &AppHandle,
@@ -78,6 +98,7 @@ fn spawn_pty(
     rows: u16,
     cwd: Option<&str>,
     session_id: &str,
+    agent_session: bool,
     shell_ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
 ) -> Result<(), String> {
     let pty_system = NativePtySystem::default();
@@ -102,9 +123,12 @@ fn spawn_pty(
 
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
-    cmd.env("CLUIHUD_SESSION_ID", session_id);
+    if agent_session {
+        cmd.env("CLUIHUD_SESSION_ID", session_id);
+    }
 
     let _child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
+    drop(pair.slave);
 
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let raw_writer = pair.master.take_writer().map_err(|e| e.to_string())?;
@@ -150,17 +174,37 @@ fn spawn_pty(
                 Err(_) => break,
             }
         }
-        // PTY closed (shell exited / killed / crashed): a definitive session end
-        // that an abnormal exit may have hidden from the SessionEnd hook. Snapshot
-        // obsidian once — deduped against the hook by claim_finalization.
-        if let Some(db) = eof_app.try_state::<crate::db::SharedDb>() {
-            crate::hooks::server::finalize_session_obsidian(db.inner(), Some(&eof_session));
+        if agent_session {
+            // PTY closed (shell exited / killed / crashed): a definitive session end
+            // that an abnormal exit may have hidden from the SessionEnd hook. Snapshot
+            // obsidian once — deduped against the hook by claim_finalization.
+            if let Some(db) = eof_app.try_state::<crate::db::SharedDb>() {
+                crate::hooks::server::finalize_session_obsidian(db.inner(), Some(&eof_session));
+            }
+        } else {
+            // Emit only for a shell that exited on its own (`exit`, crash):
+            // kill paths de-register from session_ptys BEFORE dropping the
+            // master, and their EOF must not reach the frontend — it would
+            // persist the tab's removal and erase the remembered set.
+            let still_registered = eof_app
+                .try_state::<PtyManager>()
+                .and_then(|m| {
+                    m.session_ptys
+                        .lock()
+                        .ok()
+                        .map(|g| g.contains_key(&eof_session))
+                })
+                .unwrap_or(false);
+            if still_registered {
+                use tauri::Emitter;
+                let _ = eof_app.emit("shell:exited", &eof_session);
+            }
         }
     });
 
     let instance = PtyInstance {
         writer,
-        pair,
+        master: pair.master,
         terminal,
     };
     state
@@ -177,7 +221,6 @@ fn resize_pty(state: &PtyManager, pty_id: &str, cols: u16, rows: u16) -> Result<
     let instances = state.instances.lock().map_err(|e| e.to_string())?;
     let instance = instances.get(pty_id).ok_or("PTY not found")?;
     instance
-        .pair
         .master
         .resize(PtySize {
             rows,
@@ -249,6 +292,7 @@ pub async fn start_claude_session(
         rows,
         cwd.as_deref(),
         session_id.as_str(),
+        true,
         Some(ready_tx),
     )?;
 
@@ -464,6 +508,266 @@ pub async fn start_claude_session(
     Ok(StartClaudeResult { pty_id })
 }
 
+/// Composite terminal id for an auxiliary shell. This is the key the
+/// frontend passes as `sessionId` to every terminal_* command, and the
+/// channel the shell's grid updates are emitted under.
+fn aux_term_id(session_id: &str, shell_id: &str) -> String {
+    format!("{session_id}::{shell_id}")
+}
+
+/// Spawn an auxiliary (quake) shell: the agent-terminal machinery minus the
+/// agent command write. `command` is typed into the fresh prompt — executed
+/// when `autorun` (environment shells at session creation), pre-filled
+/// otherwise so one Enter re-runs it (re-open after restart, where auto-
+/// relaunching heavy processes would be unwanted). Idempotent per
+/// `(session_id, shell_id)`.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command surface — collapsing to a struct breaks the JS call shape.
+pub async fn spawn_aux_shell(
+    app: AppHandle,
+    state: State<'_, PtyManager>,
+    session_id: String,
+    shell_id: String,
+    cwd: Option<String>,
+    cols: u16,
+    rows: u16,
+    command: Option<String>,
+    autorun: bool,
+) -> Result<String, String> {
+    let term_id = aux_term_id(&session_id, &shell_id);
+
+    let pty_id = format!(
+        "pty-{}-{}",
+        term_id,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
+
+    // Check-and-reserve under one lock: concurrent invokes for the same
+    // term_id (creation-flow autorun racing the quake view) must not spawn
+    // two PTYs, where the second insert would orphan the first as an
+    // unkillable zombie.
+    {
+        let mut session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
+        if session_ptys.contains_key(&term_id) {
+            return Ok(term_id);
+        }
+        session_ptys.insert(term_id.clone(), pty_id.clone());
+    }
+
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+
+    if let Err(e) = spawn_pty(
+        &app,
+        &state,
+        pty_id.clone(),
+        cols,
+        rows,
+        cwd.as_deref(),
+        term_id.as_str(),
+        false,
+        Some(ready_tx),
+    ) {
+        if let Ok(mut session_ptys) = state.session_ptys.lock() {
+            session_ptys.remove(&term_id);
+        }
+        return Err(e);
+    }
+
+    state
+        .aux_shells
+        .lock()
+        .map_err(|e| e.to_string())?
+        .entry(session_id)
+        .or_default()
+        .push(term_id.clone());
+
+    let command = command
+        .map(|c| c.trim().to_string())
+        .filter(|c| !c.is_empty());
+    if let Some(cmd) = command {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), ready_rx).await;
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        // Same leading-space guard as the agent launch: sacrifices a space
+        // (not the command's first byte) to PTY init races, and keeps the
+        // command out of zsh history as a bonus.
+        let data = if autorun {
+            format!(" {cmd}\n")
+        } else {
+            format!(" {cmd}")
+        };
+        if !autorun {
+            // Register how many chars we pre-typed ourselves: the tracker
+            // must anchor the line start BEFORE them, or an edited pre-fill
+            // would snapshot only the typed suffix.
+            if let Ok(mut trackers) = state.aux_line_trackers.lock() {
+                trackers.insert(
+                    term_id.clone(),
+                    AuxLineTracker {
+                        start_col: None,
+                        prefill_chars: cmd.chars().count(),
+                    },
+                );
+            }
+        }
+        let instances = state.instances.lock().map_err(|e| e.to_string())?;
+        if let Some(instance) = instances.get(&pty_id) {
+            let mut w = instance.writer.lock().map_err(|e| e.to_string())?;
+            w.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
+            w.flush().map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(term_id)
+}
+
+#[tauri::command]
+pub fn kill_aux_shell(
+    state: State<'_, PtyManager>,
+    session_id: String,
+    shell_id: String,
+) -> Result<(), String> {
+    let term_id = aux_term_id(&session_id, &shell_id);
+    let pty_id = {
+        let mut session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
+        session_ptys.remove(&term_id)
+    };
+    if let Some(id) = pty_id {
+        let mut instances = state.instances.lock().map_err(|e| e.to_string())?;
+        instances.remove(&id);
+    }
+    if let Ok(mut trackers) = state.aux_line_trackers.lock() {
+        trackers.remove(&term_id);
+    }
+    let mut aux = state.aux_shells.lock().map_err(|e| e.to_string())?;
+    if let Some(ids) = aux.get_mut(&session_id) {
+        ids.retain(|t| t != &term_id);
+        if ids.is_empty() {
+            aux.remove(&session_id);
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn list_aux_shells(
+    state: State<'_, PtyManager>,
+    session_id: String,
+) -> Result<Vec<String>, String> {
+    Ok(state
+        .aux_shells
+        .lock()
+        .map_err(|e| e.to_string())?
+        .get(&session_id)
+        .cloned()
+        .unwrap_or_default())
+}
+
+fn kill_session_aux_shells(state: &PtyManager, session_id: &str) -> Result<(), String> {
+    let term_ids = state
+        .aux_shells
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(session_id)
+        .unwrap_or_default();
+    if term_ids.is_empty() {
+        return Ok(());
+    }
+    let mut session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
+    let mut instances = state.instances.lock().map_err(|e| e.to_string())?;
+    let mut trackers = state.aux_line_trackers.lock().map_err(|e| e.to_string())?;
+    for term_id in term_ids {
+        if let Some(pty_id) = session_ptys.remove(&term_id) {
+            instances.remove(&pty_id);
+        }
+        trackers.remove(&term_id);
+    }
+    Ok(())
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ShellCommandPayload {
+    term_id: String,
+    command: String,
+}
+
+/// Per-aux-shell line tracking. `start_col` anchors where the user's input
+/// begins on the prompt line: captured from the cursor at the first key of
+/// the line — before any echo arrives, so the cursor still sits at the
+/// prompt's end. `prefill_chars` discounts text we pre-typed ourselves
+/// (re-open pre-fill), which sits on the line before the first user key.
+#[derive(Default)]
+struct AuxLineTracker {
+    start_col: Option<usize>,
+    prefill_chars: usize,
+}
+
+/// On Enter, read the submitted command off the grid (from the anchored
+/// line-start column) and surface it so the frontend persists it with the
+/// shell's tab def. Grid extraction — unlike keystroke mirroring — includes
+/// history recall and tab completion. Best-effort: wrapped (multi-row)
+/// commands truncate to the cursor's row, and alt-screen (TUI) submissions
+/// are discarded.
+fn track_aux_input(
+    app: &AppHandle,
+    state: &PtyManager,
+    term_id: &str,
+    event: &TerminalKeyEvent,
+    alt_screen: bool,
+    cursor_col: usize,
+    line_text: Option<String>,
+) {
+    let Ok(mut trackers) = state.aux_line_trackers.lock() else {
+        return;
+    };
+    let t = trackers.entry(term_id.to_string()).or_default();
+
+    if event.ctrl || event.alt || event.meta {
+        // Ctrl+C / Ctrl+U abandon the line being typed.
+        if event.ctrl && (event.code == "KeyC" || event.code == "KeyU") {
+            t.start_col = None;
+            t.prefill_chars = 0;
+        }
+        return;
+    }
+    match event.code.as_str() {
+        "Enter" | "NumpadEnter" => {
+            // Enter as the line's first key (pre-fill accepted untouched):
+            // the cursor still sits at the end of the prefill.
+            let col = t
+                .start_col
+                .take()
+                .unwrap_or_else(|| cursor_col.saturating_sub(t.prefill_chars));
+            t.prefill_chars = 0;
+            if alt_screen {
+                return;
+            }
+            let Some(line) = line_text else { return };
+            let cmd: String = line.chars().skip(col).collect();
+            let cmd = cmd.trim();
+            if !cmd.is_empty() {
+                use tauri::Emitter;
+                let _ = app.emit(
+                    "shell:command",
+                    &ShellCommandPayload {
+                        term_id: term_id.to_string(),
+                        command: cmd.to_string(),
+                    },
+                );
+            }
+        }
+        _ => {
+            if t.start_col.is_none() {
+                t.start_col = Some(cursor_col.saturating_sub(t.prefill_chars));
+            }
+        }
+    }
+}
+
 /// Write data to a session's PTY. Used for sending synthesized prompts
 /// from the sidebar ("/commit …", "/rename …", merge-conflict hints).
 fn write_session_data(state: &PtyManager, session_id: &str, data: &str) -> Result<(), String> {
@@ -570,9 +874,11 @@ pub fn queue_session_prompt(
     Ok(())
 }
 
-/// Kill a session's PTY and clean up mappings.
+/// Kill a session's PTY (and its auxiliary shells) and clean up mappings.
 #[tauri::command]
 pub fn kill_session_pty(state: State<'_, PtyManager>, session_id: String) -> Result<(), String> {
+    kill_session_aux_shells(&state, &session_id)?;
+
     let pty_id = {
         let mut session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
         session_ptys.remove(&session_id)
@@ -650,6 +956,24 @@ pub fn terminal_paste(
 
     let instances = state.instances.lock().map_err(|e| e.to_string())?;
     let instance = instances.get(&pty_id).ok_or("PTY instance not found")?;
+
+    if session_id.contains("::") {
+        // A paste can be the line's first input — anchor the start column
+        // like a keystroke would (the pasted echo hasn't landed yet).
+        let cursor_col = instance
+            .terminal
+            .session
+            .lock()
+            .map(|s| s.cursor_col())
+            .unwrap_or(0);
+        if let Ok(mut trackers) = state.aux_line_trackers.lock() {
+            let t = trackers.entry(session_id.clone()).or_default();
+            if t.start_col.is_none() {
+                t.start_col = Some(cursor_col.saturating_sub(t.prefill_chars));
+            }
+        }
+    }
+
     let mut w = instance.writer.lock().map_err(|e| e.to_string())?;
     w.write_all(b"\x1b[200~").map_err(|e| e.to_string())?;
     w.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
@@ -664,6 +988,7 @@ pub fn terminal_paste(
 /// forwards the raw `KeyboardEvent` properties it captured.
 #[tauri::command]
 pub fn terminal_input(
+    app: AppHandle,
     state: State<'_, PtyManager>,
     session_id: String,
     event: TerminalKeyEvent,
@@ -679,6 +1004,28 @@ pub fn terminal_input(
     let instances = state.instances.lock().map_err(|e| e.to_string())?;
     let instance = instances.get(&pty_id).ok_or("PTY instance not found")?;
     let handle = &instance.terminal;
+
+    if session_id.contains("::") {
+        let snapshot = handle.session.lock().ok().map(|s| {
+            let is_enter = matches!(event.code.as_str(), "Enter" | "NumpadEnter");
+            (
+                s.is_alt_screen_active(),
+                s.cursor_col(),
+                is_enter.then(|| s.cursor_line_text()),
+            )
+        });
+        if let Some((alt_screen, cursor_col, line_text)) = snapshot {
+            track_aux_input(
+                &app,
+                &state,
+                &session_id,
+                &event,
+                alt_screen,
+                cursor_col,
+                line_text,
+            );
+        }
+    }
 
     // Shift+Enter → LF. Without this, both Enter and Shift+Enter encode to
     // `\r` (wezterm only diverges when the app opts into Kitty via

@@ -1043,10 +1043,12 @@ mod tests {
             crate::models::EnvShellDef {
                 label: "dev".into(),
                 command: "pnpm dev".into(),
+                cwd: None,
             },
             crate::models::EnvShellDef {
                 label: "db".into(),
                 command: "docker compose up".into(),
+                cwd: Some("../backend".into()),
             },
         ];
         let s = Session {
@@ -1105,6 +1107,7 @@ mod tests {
         let defs = vec![crate::models::EnvShellDef {
             label: "dev".into(),
             command: "pnpm dev".into(),
+            cwd: None,
         }];
         db.set_workspace_env_shell_suggestions("ws1", &defs)
             .unwrap();

@@ -101,6 +101,7 @@ export function QuakeTerminal() {
         sessionId: activeSessionId,
         shellId: shell.shellId,
         cwd,
+        shellCwd: shell.cwd,
         command: shell.command,
         autorun: false,
       })

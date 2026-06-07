@@ -21,6 +21,9 @@ export interface LaunchOptions {
 export interface EnvShellDef {
   label: string;
   command: string;
+  /// Working directory when it differs from the session cwd (front/back
+  /// split repos); relative paths resolve against the session cwd at spawn.
+  cwd?: string | null;
 }
 
 export interface Session {

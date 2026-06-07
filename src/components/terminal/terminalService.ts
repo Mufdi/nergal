@@ -217,6 +217,7 @@ export async function showShell(opts: {
   sessionId: string;
   shellId: string;
   cwd: string;
+  shellCwd?: string | null;
   command?: string | null;
   autorun?: boolean;
 }): Promise<void> {
@@ -234,6 +235,7 @@ export async function showShell(opts: {
         sessionId: opts.sessionId,
         shellId: opts.shellId,
         cwd: opts.cwd,
+        shellCwd: opts.shellCwd ?? null,
         cols,
         rows,
         command: opts.command ?? null,

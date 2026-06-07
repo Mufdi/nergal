@@ -38,8 +38,23 @@ struct PtyInstance {
     /// child. While our process holds a slave fd the master never reaches
     /// EOF, so a shell's `exit` would go undetected forever.
     master: Box<dyn portable_pty::MasterPty + Send>,
+    /// Shell child pid, kept so the aux-shell tracker can read the process's
+    /// real cwd from /proc at command submit.
+    child_pid: Option<u32>,
     /// Dropping this handle shuts down the emitter task.
     terminal: TerminalHandle,
+}
+
+#[cfg(target_os = "linux")]
+fn process_cwd(pid: u32) -> Option<String> {
+    std::fs::read_link(format!("/proc/{pid}/cwd"))
+        .ok()
+        .map(|p| p.display().to_string())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_cwd(_pid: u32) -> Option<String> {
+    None
 }
 
 pub struct PtyManager {
@@ -127,7 +142,9 @@ fn spawn_pty(
         cmd.env("CLUIHUD_SESSION_ID", session_id);
     }
 
-    let _child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
+    let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
+    let child_pid = child.process_id();
+    drop(child);
     drop(pair.slave);
 
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
@@ -205,6 +222,7 @@ fn spawn_pty(
     let instance = PtyInstance {
         writer,
         master: pair.master,
+        child_pid,
         terminal,
     };
     state
@@ -529,12 +547,31 @@ pub async fn spawn_aux_shell(
     session_id: String,
     shell_id: String,
     cwd: Option<String>,
+    shell_cwd: Option<String>,
     cols: u16,
     rows: u16,
     command: Option<String>,
     autorun: bool,
 ) -> Result<String, String> {
     let term_id = aux_term_id(&session_id, &shell_id);
+
+    // Per-shell dir wins when it resolves to a real directory (relative →
+    // against the session cwd); otherwise fall back to the session cwd so a
+    // deleted dir doesn't break the respawn.
+    let cwd: Option<String> = shell_cwd
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .and_then(|sc| {
+            let p = std::path::Path::new(sc);
+            let abs = if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                std::path::Path::new(cwd.as_deref()?).join(p)
+            };
+            abs.is_dir().then(|| abs.display().to_string())
+        })
+        .or(cwd);
 
     let pty_id = format!(
         "pty-{}-{}",
@@ -693,6 +730,8 @@ fn kill_session_aux_shells(state: &PtyManager, session_id: &str) -> Result<(), S
 struct ShellCommandPayload {
     term_id: String,
     command: String,
+    /// The shell process's cwd at submit, from /proc — None off-Linux.
+    cwd: Option<String>,
 }
 
 /// Per-aux-shell line tracking. `start_col` anchors where the user's input
@@ -712,6 +751,7 @@ struct AuxLineTracker {
 /// history recall and tab completion. Best-effort: wrapped (multi-row)
 /// commands truncate to the cursor's row, and alt-screen (TUI) submissions
 /// are discarded.
+#[allow(clippy::too_many_arguments)] // Internal helper — per-event tracker inputs.
 fn track_aux_input(
     app: &AppHandle,
     state: &PtyManager,
@@ -720,6 +760,7 @@ fn track_aux_input(
     alt_screen: bool,
     cursor_col: usize,
     line_text: Option<String>,
+    shell_cwd: Option<String>,
 ) {
     let Ok(mut trackers) = state.aux_line_trackers.lock() else {
         return;
@@ -756,6 +797,7 @@ fn track_aux_input(
                     &ShellCommandPayload {
                         term_id: term_id.to_string(),
                         command: cmd.to_string(),
+                        cwd: shell_cwd,
                     },
                 );
             }
@@ -1006,8 +1048,8 @@ pub fn terminal_input(
     let handle = &instance.terminal;
 
     if session_id.contains("::") {
+        let is_enter = matches!(event.code.as_str(), "Enter" | "NumpadEnter");
         let snapshot = handle.session.lock().ok().map(|s| {
-            let is_enter = matches!(event.code.as_str(), "Enter" | "NumpadEnter");
             (
                 s.is_alt_screen_active(),
                 s.cursor_col(),
@@ -1015,6 +1057,11 @@ pub fn terminal_input(
             )
         });
         if let Some((alt_screen, cursor_col, line_text)) = snapshot {
+            let shell_cwd = if is_enter {
+                instance.child_pid.and_then(process_cwd)
+            } else {
+                None
+            };
             track_aux_input(
                 &app,
                 &state,
@@ -1023,6 +1070,7 @@ pub fn terminal_input(
                 alt_screen,
                 cursor_col,
                 line_text,
+                shell_cwd,
             );
         }
     }

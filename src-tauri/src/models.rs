@@ -86,6 +86,11 @@ pub struct Session {
 pub struct EnvShellDef {
     pub label: String,
     pub command: String,
+    /// Working directory for the shell when it differs from the session cwd
+    /// (front/back split repos). Relative paths resolve against the session
+    /// cwd at spawn.
+    #[serde(default)]
+    pub cwd: Option<String>,
 }
 
 /// Initial permission *mode* for the session — exactly one value, mirroring

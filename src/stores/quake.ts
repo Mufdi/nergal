@@ -1,7 +1,7 @@
 import { atom } from "jotai";
 import { invoke, listen, generateId } from "@/lib/tauri";
 import { appStore } from "./jotaiStore";
-import { activeSessionIdAtom } from "./workspace";
+import { activeSessionIdAtom, workspacesAtom } from "./workspace";
 import * as terminalService from "@/components/terminal/terminalService";
 
 export interface QuakeShell {
@@ -11,6 +11,16 @@ export interface QuakeShell {
   /// then updated to whatever the user last submitted. Null until a command
   /// runs in an ad-hoc shell.
   command: string | null;
+  /// Working directory when it differs from the session cwd.
+  cwd: string | null;
+}
+
+function sessionCwd(sessionId: string): string | null {
+  for (const ws of appStore.get(workspacesAtom)) {
+    const session = ws.sessions.find((s) => s.id === sessionId);
+    if (session) return session.worktree_path ?? ws.repo_path;
+  }
+  return null;
 }
 
 /// Visibility is per-session, like the right panel's collapsed map: switching
@@ -30,7 +40,11 @@ function persistShells(sessionId: string): void {
   const shells = appStore.get(quakeShellsAtom)[sessionId] ?? [];
   invoke("update_session_env_shells", {
     sessionId,
-    envShells: shells.map((sh) => ({ label: sh.label, command: sh.command ?? "" })),
+    envShells: shells.map((sh) => ({
+      label: sh.label,
+      command: sh.command ?? "",
+      cwd: sh.cwd,
+    })),
   }).catch(() => {});
 }
 
@@ -42,7 +56,7 @@ export function addAdHocShell(sessionId: string): void {
     ...prev,
     [sessionId]: [
       ...(prev[sessionId] ?? []),
-      { shellId, label: `shell ${count + 1}`, command: null },
+      { shellId, label: `shell ${count + 1}`, command: null, cwd: null },
     ],
   }));
   s.set(activeQuakeShellAtom, (prev) => ({ ...prev, [sessionId]: shellId }));
@@ -98,7 +112,7 @@ export function closeActiveQuakeShell(): void {
 export function spawnEnvShells(
   sessionId: string,
   cwd: string,
-  defs: Array<{ label: string; command: string }>,
+  defs: Array<{ label: string; command: string; cwd?: string | null }>,
   autorun: boolean,
 ): void {
   if (defs.length === 0) return;
@@ -111,6 +125,7 @@ export function spawnEnvShells(
     shellId: `env-${i}`,
     label: d.label.trim() || `shell ${i + 1}`,
     command: d.command.trim() || null,
+    cwd: d.cwd?.trim() || null,
   }));
   s.set(quakeShellsAtom, (prev) => ({ ...prev, [sessionId]: shells }));
   s.set(activeQuakeShellAtom, (prev) => ({
@@ -126,6 +141,7 @@ export function spawnEnvShells(
       sessionId,
       shellId: sh.shellId,
       cwd,
+      shellCwd: sh.cwd,
       cols: 200,
       rows: 50,
       command: sh.command,
@@ -148,19 +164,24 @@ void listen<string>("shell:exited", (termId) => {
   if (ids) removeShell(ids.sessionId, ids.shellId, true);
 });
 
-/// A command was submitted in an aux shell — remember it on the tab def so
-/// re-open pre-fills it.
-void listen<{ termId: string; command: string }>("shell:command", ({ termId, command }) => {
-  const ids = splitTermId(termId);
-  if (!ids) return;
-  const s = appStore;
-  const shells = s.get(quakeShellsAtom)[ids.sessionId];
-  if (!shells?.some((sh) => sh.shellId === ids.shellId)) return;
-  s.set(quakeShellsAtom, (prev) => ({
-    ...prev,
-    [ids.sessionId]: (prev[ids.sessionId] ?? []).map((sh) =>
-      sh.shellId === ids.shellId ? { ...sh, command } : sh,
-    ),
-  }));
-  persistShells(ids.sessionId);
-});
+/// A command was submitted in an aux shell — remember it (and the shell's
+/// working directory, when it differs from the session cwd) on the tab def
+/// so re-open pre-fills both.
+void listen<{ termId: string; command: string; cwd: string | null }>(
+  "shell:command",
+  ({ termId, command, cwd }) => {
+    const ids = splitTermId(termId);
+    if (!ids) return;
+    const s = appStore;
+    const shells = s.get(quakeShellsAtom)[ids.sessionId];
+    if (!shells?.some((sh) => sh.shellId === ids.shellId)) return;
+    const shellCwd = cwd && cwd !== sessionCwd(ids.sessionId) ? cwd : null;
+    s.set(quakeShellsAtom, (prev) => ({
+      ...prev,
+      [ids.sessionId]: (prev[ids.sessionId] ?? []).map((sh) =>
+        sh.shellId === ids.shellId ? { ...sh, command, cwd: shellCwd } : sh,
+      ),
+    }));
+    persistShells(ids.sessionId);
+  },
+);

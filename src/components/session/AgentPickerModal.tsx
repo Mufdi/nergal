@@ -75,6 +75,7 @@ export function AgentPickerModal({
   const startupInputRef = useRef<HTMLInputElement>(null);
   const envCmdRefs = useRef<Array<HTMLInputElement | null>>([]);
   const envLabelRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const envCwdRefs = useRef<Array<HTMLInputElement | null>>([]);
   const envDelRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const sugRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
@@ -177,7 +178,11 @@ export function AgentPickerModal({
         ? null
         : { permission_preset: preset, allow_skip_in_cycle: allowSkip, startup_command: cmd || null };
     const shells = envShells
-      .map((sh) => ({ label: sh.label.trim(), command: sh.command.trim() }))
+      .map((sh) => ({
+        label: sh.label.trim(),
+        command: sh.command.trim(),
+        cwd: sh.cwd?.trim() || null,
+      }))
       .filter((sh) => sh.command);
     onPick(a.id, launchOptions, shells);
     onOpenChange(false);
@@ -405,7 +410,7 @@ export function AgentPickerModal({
                           sugRefs.current[i] = el;
                         }}
                         disabled={added}
-                        title={sg.command}
+                        title={sg.cwd ? `${sg.cwd} $ ${sg.command}` : sg.command}
                         onFocus={() => setOptIdx(suggRowIdx)}
                         onClick={() =>
                           setEnvShells((prev) => [...prev, { ...sg }])
@@ -461,10 +466,45 @@ export function AgentPickerModal({
                     onChange={(e) => updateEnvShell(i, { label: e.target.value })}
                     onFocus={() => setOptIdx(envRowStart + i)}
                     onKeyDown={(e) => {
-                      // Caret at the end + ArrowRight = hop to the command
-                      // input; inside the text, arrows edit normally.
+                      // Caret at the end + ArrowRight = hop to the next
+                      // field; inside the text, arrows edit normally.
                       const input = e.currentTarget;
                       if (
+                        e.key === "ArrowRight"
+                        && input.selectionStart === input.value.length
+                        && input.selectionEnd === input.value.length
+                      ) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        envCwdRefs.current[i]?.focus();
+                      }
+                    }}
+                    placeholder="label"
+                    className="w-20 shrink-0 rounded border border-border/60 bg-transparent px-1.5 py-0.5 text-[10px] text-foreground outline-none placeholder:text-muted-foreground/40 focus:border-orange-500/60"
+                  />
+                  <input
+                    ref={(el) => {
+                      envCwdRefs.current[i] = el;
+                    }}
+                    type="text"
+                    value={sh.cwd ?? ""}
+                    onChange={(e) => updateEnvShell(i, { cwd: e.target.value })}
+                    onFocus={() => setOptIdx(envRowStart + i)}
+                    onKeyDown={(e) => {
+                      const input = e.currentTarget;
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        commit(selectedIdx);
+                      } else if (
+                        e.key === "ArrowLeft"
+                        && input.selectionStart === 0
+                        && input.selectionEnd === 0
+                      ) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        envLabelRefs.current[i]?.focus();
+                      } else if (
                         e.key === "ArrowRight"
                         && input.selectionStart === input.value.length
                         && input.selectionEnd === input.value.length
@@ -474,8 +514,9 @@ export function AgentPickerModal({
                         envCmdRefs.current[i]?.focus();
                       }
                     }}
-                    placeholder="label"
-                    className="w-20 shrink-0 rounded border border-border/60 bg-transparent px-1.5 py-0.5 text-[10px] text-foreground outline-none placeholder:text-muted-foreground/40 focus:border-orange-500/60"
+                    placeholder="cwd"
+                    title="Working directory — relative paths resolve against the session cwd. Empty = session cwd."
+                    className="w-24 shrink-0 rounded border border-border/60 bg-transparent px-1.5 py-0.5 font-mono text-[10px] text-foreground outline-none placeholder:text-muted-foreground/40 focus:border-orange-500/60"
                   />
                   <span className="shrink-0 font-mono text-[10px] text-muted-foreground/70">$</span>
                   <input
@@ -499,7 +540,7 @@ export function AgentPickerModal({
                       ) {
                         e.preventDefault();
                         e.stopPropagation();
-                        envLabelRefs.current[i]?.focus();
+                        envCwdRefs.current[i]?.focus();
                       } else if (
                         e.key === "ArrowRight"
                         && input.selectionStart === input.value.length

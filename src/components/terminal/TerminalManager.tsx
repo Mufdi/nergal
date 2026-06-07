@@ -9,6 +9,7 @@ import {
   freshSessionsAtom,
 } from "@/stores/workspace";
 import { focusZoneAtom } from "@/stores/shortcuts";
+import { spawnEnvShells } from "@/stores/quake";
 import * as terminalService from "./terminalService";
 import { NergalMark } from "@/components/layout/NergalLogo";
 
@@ -52,6 +53,14 @@ export function TerminalManager() {
 
     const cwd = activeSession.worktree_path ?? activeWorkspace.repo_path;
     void terminalService.show(activeSessionId, cwd, mode);
+
+    // Re-open after restart: seed the quake tabs from the persisted defs,
+    // pre-filled (the quake spawns lazily on view; Enter re-runs). Fresh
+    // sessions were already seeded auto-run by the creation flow, which
+    // makes this a no-op for them.
+    if (activeSession.env_shells?.length) {
+      spawnEnvShells(activeSessionId, cwd, activeSession.env_shells, false);
+    }
   }, [activeSessionId, activeSession, activeWorkspace, launchModes, freshSessions]);
 
   useEffect(() => {

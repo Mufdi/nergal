@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Check } from "lucide-react";
+import { Check, Plus, X } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -7,7 +7,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { AvailableAgent } from "@/lib/types";
-import type { LaunchOptions, PermissionPreset } from "@/stores/workspace";
+import type { EnvShellDef, LaunchOptions, PermissionPreset } from "@/stores/workspace";
+import { invoke } from "@/lib/tauri";
 import claudeLogo from "@/assets/agents/claude.svg";
 import codexLogo from "@/assets/agents/codex.svg";
 import opencodeLogo from "@/assets/agents/opencode.svg";
@@ -18,8 +19,14 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   agents: AvailableAgent[];
   sessionName: string;
+  /// Resolves the workspace's environment-shell suggestion library.
+  workspaceId?: string | null;
   preselectedId?: string | null;
-  onPick: (agentId: string, launchOptions: LaunchOptions | null) => void;
+  onPick: (
+    agentId: string,
+    launchOptions: LaunchOptions | null,
+    envShells: EnvShellDef[],
+  ) => void;
 }
 
 const LOGO_BY_ID: Record<string, string> = {
@@ -50,6 +57,7 @@ export function AgentPickerModal({
   onOpenChange,
   agents,
   sessionName,
+  workspaceId,
   preselectedId,
   onPick,
 }: Props) {
@@ -60,9 +68,15 @@ export function AgentPickerModal({
   const [preset, setPreset] = useState<PermissionPreset>("default");
   const [allowSkip, setAllowSkip] = useState(false);
   const [startupCmd, setStartupCmd] = useState("");
+  const [envShells, setEnvShells] = useState<EnvShellDef[]>([]);
+  const [suggestions, setSuggestions] = useState<EnvShellDef[]>([]);
   const listRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const startupInputRef = useRef<HTMLInputElement>(null);
+  const envCmdRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const envLabelRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const envDelRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const sugRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   const agent = agents[selectedIdx];
   // "default" is the unchecked state, not a row — checking nothing = default.
@@ -72,7 +86,15 @@ export function AgentPickerModal({
       .map((p) => ({ kind: "preset", value: p as PermissionPreset }) as OptRow)),
     ...(agent?.allow_skip_cycle_supported ? [{ kind: "allow" } as OptRow] : []),
   ];
+  // Vertical index space: -1 agent row · 0..rows-1 option rows · startup
+  // input · suggestion chips (when any) · one row per env shell · the
+  // add-shell row. Horizontal movement inside a row uses DOM focus (chips,
+  // label/command/✕) — caret-boundary jumps keep text editing natural.
   const startupRowIdx = rows.length;
+  const hasSuggestions = suggestions.length > 0;
+  const suggRowIdx = hasSuggestions ? startupRowIdx + 1 : -99;
+  const envRowStart = startupRowIdx + 1 + (hasSuggestions ? 1 : 0);
+  const addRowIdx = envRowStart + envShells.length;
 
   useEffect(() => {
     if (!open) return;
@@ -82,8 +104,25 @@ export function AgentPickerModal({
     setPreset("default");
     setAllowSkip(false);
     setStartupCmd("");
+    setEnvShells([]);
     requestAnimationFrame(() => listRef.current?.focus());
   }, [open, preselectedId, agents]);
+
+  useEffect(() => {
+    if (!open || !workspaceId) {
+      setSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    invoke<EnvShellDef[]>("get_workspace_env_shell_suggestions", { workspaceId })
+      .then((defs) => {
+        if (!cancelled) setSuggestions(defs);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [open, workspaceId]);
 
   // Scroll the active card into view on selection change so the rightmost
   // entries don't get clipped when the row overflows.
@@ -93,13 +132,17 @@ export function AgentPickerModal({
     el?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [selectedIdx, open]);
 
-  // The startup row owns real DOM focus (it's a text input); every other row
-  // keeps focus on the container so its keydown handler drives navigation.
+  // Input/chip rows own real DOM focus; every other row keeps focus on the
+  // container so its keydown handler drives navigation.
   useEffect(() => {
     if (!open) return;
     if (optIdx === startupRowIdx) startupInputRef.current?.focus();
+    else if (optIdx === suggRowIdx)
+      sugRefs.current.find((el) => el && !el.disabled)?.focus();
+    else if (optIdx >= envRowStart && optIdx < addRowIdx)
+      envCmdRefs.current[optIdx - envRowStart]?.focus();
     else listRef.current?.focus();
-  }, [optIdx, startupRowIdx, open]);
+  }, [optIdx, startupRowIdx, suggRowIdx, envRowStart, addRowIdx, open]);
 
   function switchAgent(idx: number) {
     setSelectedIdx(idx);
@@ -133,8 +176,15 @@ export function AgentPickerModal({
       preset === "default" && !allowSkip && !cmd
         ? null
         : { permission_preset: preset, allow_skip_in_cycle: allowSkip, startup_command: cmd || null };
-    onPick(a.id, launchOptions);
+    const shells = envShells
+      .map((sh) => ({ label: sh.label.trim(), command: sh.command.trim() }))
+      .filter((sh) => sh.command);
+    onPick(a.id, launchOptions, shells);
     onOpenChange(false);
+  }
+
+  function updateEnvShell(i: number, patch: Partial<EnvShellDef>) {
+    setEnvShells((prev) => prev.map((sh, idx) => (idx === i ? { ...sh, ...patch } : sh)));
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
@@ -148,7 +198,7 @@ export function AgentPickerModal({
     } else if (e.key === "ArrowDown") {
       e.preventDefault();
       e.stopPropagation();
-      setOptIdx((i) => Math.min(i + 1, startupRowIdx));
+      setOptIdx((i) => Math.min(i + 1, addRowIdx));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       e.stopPropagation();
@@ -157,6 +207,12 @@ export function AgentPickerModal({
       e.preventDefault();
       e.stopPropagation();
       toggleRow(optIdx);
+    } else if ((e.key === " " || e.key === "Enter") && optIdx === addRowIdx) {
+      e.preventDefault();
+      e.stopPropagation();
+      // Post-add, the old addRowIdx IS the new row's index — focus lands in
+      // its command input via the focus effect.
+      setEnvShells((prev) => [...prev, { label: "", command: "" }]);
     } else if (e.key === "Enter") {
       // BUG-16: bubbling would click the hovered sidebar row.
       e.preventDefault();
@@ -323,10 +379,177 @@ export function AgentPickerModal({
                       commit(selectedIdx);
                     }
                   }}
-                  placeholder="Startup command (nvm use, source .env…)"
+                  placeholder="Prelude — must exit (nvm use, source .env…)"
+                  title="Runs in the agent terminal before the agent, which inherits its env. A command that never exits blocks the agent — long-running commands go in Environment shells below."
                   className="w-full bg-transparent font-mono text-[10px] text-foreground outline-none placeholder:text-muted-foreground/40"
                 />
               </div>
+            </div>
+          )}
+
+          {agents.length > 0 && (
+            <div className="flex flex-col rounded-md border border-border/60 bg-card/40">
+              <span className="px-2.5 pt-1.5 pb-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                Environment shells
+              </span>
+              {hasSuggestions && (
+                <div className="flex flex-wrap gap-1 px-2.5 pb-1">
+                  {suggestions.map((sg, i) => {
+                    const added = envShells.some(
+                      (sh) => sh.command.trim() === sg.command.trim(),
+                    );
+                    return (
+                      <button
+                        key={i}
+                        ref={(el) => {
+                          sugRefs.current[i] = el;
+                        }}
+                        disabled={added}
+                        title={sg.command}
+                        onFocus={() => setOptIdx(suggRowIdx)}
+                        onClick={() =>
+                          setEnvShells((prev) => [...prev, { ...sg }])
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const dir = e.key === "ArrowRight" ? 1 : -1;
+                            for (let j = i + dir; j >= 0 && j < suggestions.length; j += dir) {
+                              const el = sugRefs.current[j];
+                              if (el && !el.disabled) {
+                                el.focus();
+                                return;
+                              }
+                            }
+                          } else if (e.key === " ") {
+                            // Native button behavior triggers click on Space;
+                            // just keep it from bubbling into the container's
+                            // option-toggle handler.
+                            e.stopPropagation();
+                          } else if (e.key === "Enter") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setEnvShells((prev) => [...prev, { ...sg }]);
+                          }
+                        }}
+                        className={`rounded-full border px-2 py-0.5 text-[10px] transition-colors outline-none focus:ring-1 focus:ring-orange-500/60 ${
+                          added
+                            ? "border-border/40 text-muted-foreground/40 cursor-default"
+                            : "border-border text-muted-foreground hover:bg-secondary hover:text-foreground"
+                        }`}
+                      >
+                        {sg.label.trim() || sg.command}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {envShells.map((sh, i) => (
+                <div
+                  key={i}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 ${
+                    optIdx === envRowStart + i ? "bg-secondary" : ""
+                  }`}
+                >
+                  <input
+                    ref={(el) => {
+                      envLabelRefs.current[i] = el;
+                    }}
+                    type="text"
+                    value={sh.label}
+                    onChange={(e) => updateEnvShell(i, { label: e.target.value })}
+                    onFocus={() => setOptIdx(envRowStart + i)}
+                    onKeyDown={(e) => {
+                      // Caret at the end + ArrowRight = hop to the command
+                      // input; inside the text, arrows edit normally.
+                      const input = e.currentTarget;
+                      if (
+                        e.key === "ArrowRight"
+                        && input.selectionStart === input.value.length
+                        && input.selectionEnd === input.value.length
+                      ) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        envCmdRefs.current[i]?.focus();
+                      }
+                    }}
+                    placeholder="label"
+                    className="w-20 shrink-0 rounded border border-border/60 bg-transparent px-1.5 py-0.5 text-[10px] text-foreground outline-none placeholder:text-muted-foreground/40 focus:border-orange-500/60"
+                  />
+                  <span className="shrink-0 font-mono text-[10px] text-muted-foreground/70">$</span>
+                  <input
+                    ref={(el) => {
+                      envCmdRefs.current[i] = el;
+                    }}
+                    type="text"
+                    value={sh.command}
+                    onChange={(e) => updateEnvShell(i, { command: e.target.value })}
+                    onFocus={() => setOptIdx(envRowStart + i)}
+                    onKeyDown={(e) => {
+                      const input = e.currentTarget;
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        commit(selectedIdx);
+                      } else if (
+                        e.key === "ArrowLeft"
+                        && input.selectionStart === 0
+                        && input.selectionEnd === 0
+                      ) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        envLabelRefs.current[i]?.focus();
+                      } else if (
+                        e.key === "ArrowRight"
+                        && input.selectionStart === input.value.length
+                        && input.selectionEnd === input.value.length
+                      ) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        envDelRefs.current[i]?.focus();
+                      }
+                    }}
+                    placeholder="pnpm dev, docker compose up…"
+                    className="w-full rounded border border-border/60 bg-transparent px-1.5 py-0.5 font-mono text-[10px] text-foreground outline-none placeholder:text-muted-foreground/40 focus:border-orange-500/60"
+                  />
+                  <button
+                    ref={(el) => {
+                      envDelRefs.current[i] = el;
+                    }}
+                    aria-label="Remove environment shell"
+                    onFocus={() => setOptIdx(envRowStart + i)}
+                    onClick={() => {
+                      setEnvShells((prev) => prev.filter((_, idx) => idx !== i));
+                      setOptIdx((prev) => Math.min(prev, addRowIdx - 1));
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "ArrowLeft") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        envCmdRefs.current[i]?.focus();
+                      } else if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setEnvShells((prev) => prev.filter((_, idx) => idx !== i));
+                        setOptIdx((prev) => Math.min(prev, addRowIdx - 1));
+                      }
+                    }}
+                    className="shrink-0 rounded text-muted-foreground/60 transition-colors outline-none hover:text-foreground focus:ring-1 focus:ring-orange-500/60 focus:text-foreground"
+                  >
+                    <X className="size-3" />
+                  </button>
+                </div>
+              ))}
+              <button
+                onClick={() => setEnvShells((prev) => [...prev, { label: "", command: "" }])}
+                className={`flex items-center gap-1.5 px-2.5 py-1 pb-1.5 text-left text-[10px] transition-colors hover:text-foreground ${
+                  optIdx === addRowIdx ? "bg-secondary text-foreground" : "text-muted-foreground/70"
+                }`}
+              >
+                <Plus className="size-3" />
+                Add environment shell — long-running commands run in the quake terminal
+              </button>
             </div>
           )}
         </div>

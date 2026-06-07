@@ -17,7 +17,9 @@ import {
   type Workspace,
   type Session,
   type LaunchOptions,
+  type EnvShellDef,
 } from "@/stores/workspace";
+import { spawnEnvShells } from "@/stores/quake";
 import { openTabAction } from "@/stores/rightPanel";
 import { appStore } from "@/stores/jotaiStore";
 import { toastsAtom } from "@/stores/toast";
@@ -546,6 +548,7 @@ function WorkspacesView() {
     sessionName: string,
     agentId: string | null,
     launchOptions: LaunchOptions | null,
+    envShells: EnvShellDef[] = [],
   ) {
     try {
       const session = await invoke<Session>("create_session", {
@@ -553,7 +556,17 @@ function WorkspacesView() {
         name: sessionName,
         agentId,
         launchOptions,
+        envShells,
       });
+
+      // Auto-run on creation (the re-open path pre-fills instead). Seeding
+      // here, before activation, lets TerminalManager's prefill pass skip
+      // this session.
+      if (session.env_shells?.length) {
+        const ws = workspaces.find((w) => w.id === workspaceId);
+        const cwd = session.worktree_path ?? ws?.repo_path;
+        if (cwd) spawnEnvShells(session.id, cwd, session.env_shells, true);
+      }
 
       setWorkspaces((prev) =>
         prev.map((w) =>
@@ -809,11 +822,12 @@ function WorkspacesView() {
           onOpenChange={(o) => { if (!o) setAgentPicker(null); }}
           agents={agentPicker.agents}
           sessionName={agentPicker.sessionName}
+          workspaceId={agentPicker.workspaceId}
           preselectedId={agentPicker.defaultId}
-          onPick={(agentId, launchOptions) => {
+          onPick={(agentId, launchOptions, envShells) => {
             const { workspaceId, sessionName } = agentPicker;
             setAgentPicker(null);
-            void spawnSession(workspaceId, sessionName, agentId, launchOptions);
+            void spawnSession(workspaceId, sessionName, agentId, launchOptions, envShells);
           }}
         />
       )}

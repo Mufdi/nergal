@@ -37,7 +37,7 @@ import {
   resetObsidianDraftAtom,
   saveObsidianConfigAtom,
 } from "@/stores/obsidian";
-import { activeWorkspaceAtom, workspacesAtom, activeSessionIdAtom, openspecDirDraftAtom, type Workspace } from "@/stores/workspace";
+import { activeWorkspaceAtom, workspacesAtom, activeSessionIdAtom, openspecDirDraftAtom, type Workspace, type EnvShellDef } from "@/stores/workspace";
 import { appStore } from "@/stores/jotaiStore";
 import type { ResolvedObsidianConfig } from "@/lib/types";
 import { ObsidianIcon } from "@/components/icons/ObsidianIcon";
@@ -316,6 +316,110 @@ function OpenSpecPathField() {
         value={draft?.value ?? ""}
         onChange={(v) => setDraft((prev) => (prev ? { ...prev, value: v } : prev))}
       />
+    </div>
+  );
+}
+
+/// Per-workspace library of suggested environment shells, quick-picked in
+/// the new-session modal. Persists on add/remove and on blur of text edits —
+/// list mutations are discrete actions, unlike path typing, so no Apply or
+/// Save round-trip is needed.
+function EnvShellSuggestionsField() {
+  const workspaces = useAtomValue(workspacesAtom);
+  const activeWorkspace = useAtomValue(activeWorkspaceAtom);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const effective =
+    activeWorkspace ?? workspaces.find((w) => w.id === selectedId) ?? workspaces[0] ?? null;
+  const [items, setItems] = useState<EnvShellDef[]>([]);
+
+  useEffect(() => {
+    if (!effective) {
+      setItems([]);
+      return;
+    }
+    let cancelled = false;
+    invoke<EnvShellDef[]>("get_workspace_env_shell_suggestions", { workspaceId: effective.id })
+      .then((defs) => {
+        if (!cancelled) setItems(defs);
+      })
+      .catch((err) => console.error("[settings] get_workspace_env_shell_suggestions failed:", err));
+    return () => {
+      cancelled = true;
+    };
+  }, [effective?.id]);
+
+  function persist(next: EnvShellDef[]) {
+    if (!effective) return;
+    invoke("set_workspace_env_shell_suggestions", {
+      workspaceId: effective.id,
+      suggestions: next.filter((s) => s.command.trim()),
+    }).catch((err) =>
+      console.error("[settings] set_workspace_env_shell_suggestions failed:", err),
+    );
+  }
+
+  function update(i: number, patch: Partial<EnvShellDef>) {
+    setItems((prev) => prev.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
+  }
+
+  if (!effective) return null;
+
+  return (
+    <div className="grid gap-2">
+      <Label>Environment Shell Suggestions</Label>
+      {workspaces.length > 1 && !activeWorkspace && (
+        <Select
+          id="setting-envshell-workspace"
+          value={effective.id}
+          onValueChange={setSelectedId}
+          options={workspaces.map((w) => ({ value: w.id, label: w.name }))}
+        />
+      )}
+      {items.map((s, i) => (
+        <div key={i} className="flex items-center gap-1.5">
+          <Input
+            type="text"
+            value={s.label}
+            onChange={(e) => update(i, { label: e.target.value })}
+            onBlur={() => persist(items)}
+            placeholder="label"
+            className="w-24 shrink-0"
+          />
+          <Input
+            type="text"
+            value={s.command}
+            onChange={(e) => update(i, { command: e.target.value })}
+            onBlur={() => persist(items)}
+            placeholder="pnpm dev, docker compose up…"
+            className="flex-1 font-mono"
+          />
+          <Button
+            variant="ghost"
+            size="xs"
+            aria-label="Remove suggestion"
+            onClick={() => {
+              const next = items.filter((_, idx) => idx !== i);
+              setItems(next);
+              persist(next);
+            }}
+          >
+            ✕
+          </Button>
+        </div>
+      ))}
+      <div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setItems((prev) => [...prev, { label: "", command: "" }])}
+        >
+          Add suggestion
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Per-workspace presets for environment shells (long-running commands like dev servers).
+        Offered as quick-picks when creating a session in {effective.name}.
+      </p>
     </div>
   );
 }
@@ -2292,6 +2396,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
                   </p>
                 </div>
                 <OpenSpecPathField />
+                <EnvShellSuggestionsField />
               </div>
             )}
 

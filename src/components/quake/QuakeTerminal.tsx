@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { Plus, X } from "lucide-react";
 import {
@@ -21,6 +21,7 @@ import { appStore } from "@/stores/jotaiStore";
 import * as terminalService from "@/components/terminal/terminalService";
 
 const MIN_HEIGHT = 150;
+const SLIDE_MS = 200;
 
 /// Full-width drop-down overlay holding the active session's auxiliary
 /// shells. Toggled with Ctrl+}; stays visible when focus leaves so logs
@@ -43,6 +44,35 @@ export function QuakeTerminal() {
   const pulsing = useFocusPulse(isFocused);
   const showAccent = focusPulseEnabled ? pulsing : isFocused;
   const borderClass = showAccent ? "border-primary" : "border-border";
+
+  // Quake slide: animate with transform only — it's GPU-composited and
+  // doesn't fire the host's ResizeObserver, so the canvas never refits
+  // mid-animation. The component stays mounted through the slide-up
+  // (`rendered` outlives `open` by SLIDE_MS); session switches snap instead
+  // of animating, so a stale session's content never plays an exit.
+  const [rendered, setRendered] = useState(open);
+  const [slidIn, setSlidIn] = useState(open);
+  const prevSidRef = useRef(activeSessionId);
+  useEffect(() => {
+    const switched = prevSidRef.current !== activeSessionId;
+    prevSidRef.current = activeSessionId;
+    if (open) {
+      setRendered(true);
+      // Double rAF: let the browser paint the off-screen position first so
+      // the transition has a starting frame.
+      const id = requestAnimationFrame(() =>
+        requestAnimationFrame(() => setSlidIn(true)),
+      );
+      return () => cancelAnimationFrame(id);
+    }
+    setSlidIn(false);
+    if (switched) {
+      setRendered(false);
+      return;
+    }
+    const t = setTimeout(() => setRendered(false), SLIDE_MS);
+    return () => clearTimeout(t);
+  }, [open, activeSessionId]);
 
   const shells = activeSessionId ? (shellsMap[activeSessionId] ?? []) : [];
   const activeShellId = activeSessionId
@@ -96,7 +126,7 @@ export function QuakeTerminal() {
     return () => observer.disconnect();
   }, [open]);
 
-  if (!open || !activeSessionId) return null;
+  if (!rendered || !activeSessionId) return null;
 
   function selectShell(shellId: string) {
     if (!activeSessionId) return;
@@ -127,7 +157,9 @@ export function QuakeTerminal() {
       style={{ height }}
       // z-[45]: above the BrowserHost iframe (portaled to body at z-40),
       // below dialogs/zen (z-50+).
-      className={`absolute inset-x-2 top-0 z-[45] flex flex-col overflow-hidden rounded-b-lg border-2 ${borderClass} bg-terminal-surface shadow-xl cluihud-panel-focus`}
+      className={`absolute inset-x-2 top-0 z-[45] flex flex-col overflow-hidden rounded-b-lg border-2 ${borderClass} bg-terminal-surface shadow-xl cluihud-panel-focus transition-transform duration-200 ease-out will-change-transform ${
+        slidIn ? "translate-y-0" : "translate-y-[calc(-100%_-_8px)]"
+      }`}
       onMouseDown={() => {
         setFocusZone("quake");
         terminalService.focusActive("quake");

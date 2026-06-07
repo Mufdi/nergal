@@ -45,11 +45,10 @@ export function QuakeTerminal() {
   const showAccent = focusPulseEnabled ? pulsing : isFocused;
   const borderClass = showAccent ? "border-primary" : "border-border";
 
-  // Quake slide: animate with transform only — it's GPU-composited and
-  // doesn't fire the host's ResizeObserver, so the canvas never refits
-  // mid-animation. The component stays mounted through the slide-up
-  // (`rendered` outlives `open` by SLIDE_MS); session switches snap instead
-  // of animating, so a stale session's content never plays an exit.
+  // Transform-only slide: GPU-composited and doesn't fire the host's
+  // ResizeObserver, so the canvas never refits mid-animation. `rendered`
+  // outlives `open` by SLIDE_MS so the exit can play; session switches snap
+  // instead, so a stale session's content never plays an exit.
   const [rendered, setRendered] = useState(open);
   const [slidIn, setSlidIn] = useState(open);
   const prevSidRef = useRef(activeSessionId);
@@ -80,17 +79,19 @@ export function QuakeTerminal() {
     : null;
   const cwd = activeSession?.worktree_path ?? activeWorkspace?.repo_path ?? null;
 
-  // activeSessionId is a dep because the component renders null without one:
-  // the host div detaches while the effect (keyed on open alone) would keep
-  // pointing at the dead node after a session restore.
+  // Keyed on `rendered`, not `open`: when `open` flips the component is
+  // still returning null (rendered trails by one render), so hostRef would
+  // be captured as null and every shell spawn would no-op against a missing
+  // host. activeSessionId is a dep because the component also renders null
+  // without one — the host div detaches and must re-register on restore.
   useEffect(() => {
-    if (!open) return;
+    if (!rendered) return;
     terminalService.setHost(hostRef.current, "quake");
     return () => terminalService.setHost(null, "quake");
-  }, [open, activeSessionId]);
+  }, [rendered, activeSessionId]);
 
   useEffect(() => {
-    if (!open || !activeSessionId || !cwd) return;
+    if (!open || !rendered || !activeSessionId || !cwd) return;
     if (!activeShellId) {
       terminalService.hideAll("quake");
       return;
@@ -113,10 +114,10 @@ export function QuakeTerminal() {
           terminalService.focusActive("quake");
         }
       });
-  }, [open, activeSessionId, activeShellId, shells, cwd]);
+  }, [open, rendered, activeSessionId, activeShellId, shells, cwd]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!rendered) return;
     const host = hostRef.current;
     if (!host) return;
     const observer = new ResizeObserver(() => {
@@ -124,7 +125,7 @@ export function QuakeTerminal() {
     });
     observer.observe(host);
     return () => observer.disconnect();
-  }, [open]);
+  }, [rendered]);
 
   if (!rendered || !activeSessionId) return null;
 

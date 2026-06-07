@@ -81,13 +81,18 @@ cluihud is keyboard-first. Two systems collaborate (moved here from
 
 ### 5.1 Focus zones
 
-The Workspace divides the UI into **zones** (sidebar, terminal, panel). Each
-zone is marked with `data-focus-zone="<name>"` on a focusable container.
-Keystroke handlers in zones use
+The Workspace divides the UI into **zones** (sidebar, terminal, panel,
+quake). Each zone is marked with `data-focus-zone="<name>"` on a focusable
+container. Keystroke handlers in zones use
 `e.currentTarget.querySelector("[data-nav-item]")` to locate items.
 
 `zone-flash` (`design.md` §4) plays when the focus zone changes, giving
 visual confirmation.
+
+The `quake` zone (the drop-down shell overlay) is deliberately **excluded
+from the `alt+left/right` cycle** — it's an overlay, reached only via its
+own shortcut (`Ctrl+}`, which cycles hidden→open+focus →focus →hide). It
+keeps the accent-border focus convention of the other zones.
 
 ### 5.2 Nav-item attributes
 

@@ -18,6 +18,16 @@ The system SHALL provide a full-width Quake terminal overlay that drops below th
 - **WHEN** the overlay is open and the user focuses another zone (e.g. `Ctrl+ñ` to the agent terminal)
 - **THEN** the overlay SHALL remain visible (logs readable) and the accent border SHALL follow the focused zone
 
+#### Scenario: Visibility is per-session
+
+- **WHEN** the quake is open in session A and the user switches to session B where it was closed
+- **THEN** the overlay SHALL be hidden, and SHALL reappear when switching back to A (mirrors the right panel's per-session collapsed state)
+
+#### Scenario: Tab shortcuts while the quake holds focus
+
+- **WHEN** focus is in the quake zone
+- **THEN** `Ctrl+W` SHALL close the active shell tab (instead of soft-closing the session), `Ctrl+Shift+T` SHALL open a new shell tab, and `Ctrl+Tab` / `Ctrl+Shift+Tab` SHALL cycle between shell tabs
+
 ### Requirement: Quake is a distinct focus zone
 
 The system SHALL add a `quake` focus zone with a `data-focus-zone='quake'` container and the accent border driven by the existing focus system. It SHALL NOT participate in the `alt+left/right` zone cycle; it is reachable only via `Ctrl+}`.
@@ -41,6 +51,11 @@ Auxiliary shells SHALL be shell PTYs owned by a session (keyed under its id), sp
 - **WHEN** a session is closed
 - **THEN** its auxiliary shell PTYs SHALL be terminated
 
+#### Scenario: Shell exit retires its tab
+
+- **WHEN** the shell process ends on its own (the user types `exit`, or it crashes)
+- **THEN** its tab SHALL be removed from the quake; teardown-driven kills SHALL NOT be confused with self-exits
+
 ### Requirement: Per-region terminal rendering
 
 The canvas renderer SHALL support multiple regions (at least `center` for the agent terminal and `quake` for shells), each with its own host and its own active terminal, so the agent terminal and a shell render simultaneously.
@@ -52,7 +67,7 @@ The canvas renderer SHALL support multiple regions (at least `center` for the ag
 
 ### Requirement: Environment shells
 
-A session SHALL support a list of environment shells defined as `(label, command)`. Each entry spawns a quake shell. The command SHALL auto-run when the session is first created, and SHALL be pre-filled (typed, not executed) when the session is re-opened after an app restart. Environment-shell definitions SHALL persist per session.
+A session SHALL support a list of environment shells defined as `(label, command)`. Each entry spawns a quake shell. The command SHALL auto-run when the session is first created, and SHALL be pre-filled (typed, not executed) when the session is re-opened after an app restart. The persisted set SHALL be the session's **live tab set**: definitions seed from the new-session modal, ad-hoc tabs join it, closed tabs leave it, and a command submitted in any quake shell updates that tab's remembered command.
 
 #### Scenario: Auto-run on creation
 
@@ -63,6 +78,11 @@ A session SHALL support a list of environment shells defined as `(label, command
 
 - **WHEN** that session is re-opened after an app restart
 - **THEN** the `dev` shell SHALL respawn with `pnpm dev` typed at the prompt, not executed, so a single Enter re-runs it
+
+#### Scenario: Ad-hoc shells remember their last command
+
+- **WHEN** the user opens an ad-hoc shell, runs `docker compose up`, closes Nergal, and re-opens the session
+- **THEN** that tab SHALL come back with `docker compose up` pre-filled
 
 ### Requirement: Prelude vs environment shells
 

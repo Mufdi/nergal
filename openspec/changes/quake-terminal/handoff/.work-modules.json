@@ -5,13 +5,13 @@
     "discovery_invoked": false,
     "discovery_note": "design crystallized via a live design conversation 2026-06-06; the conversation WAS the discovery",
     "iprev_rounds": 0,
-    "reviewer_mode": "deferred-to-implementation-session",
+    "reviewer_mode": "single-sequential (code-quality)",
     "reviewer_escalation": null,
-    "gates_phases_run": [],
+    "gates_phases_run": ["compile", "test", "lint", "fmt", "tsc"],
     "per_phase_models": {
       "design": "claude-opus-4-8",
-      "implementation": "claude-sonnet-4-6",
-      "exploration": "claude-haiku-4-5"
+      "implementation": "claude-opus-4-8",
+      "exploration": "claude-opus-4-8"
     }
   },
   "spec_target": "quake-terminal",
@@ -24,7 +24,11 @@
     "shortcut": "Ctrl+}"
   },
   "events": [
-    { "ts": "2026-06-06", "type": "artifacts-created", "reason": "proposal+design+specs+tasks+brief authored; implementation deferred to a fresh session per user" }
+    { "ts": "2026-06-06", "type": "artifacts-created", "reason": "proposal+design+specs+tasks+brief authored; implementation deferred to a fresh session per user" },
+    { "ts": "2026-06-07", "type": "proposal-hash-locked", "reason": "hash was never computed at crystallize; locked at execute start (d447a99c…)" },
+    { "ts": "2026-06-07", "type": "builder-mode-divergence", "reason": "orchestrator-as-builder instead of Task-spawned builders: full design context already in-session, 5 phases tightly coupled; reviewer kept independent" },
+    { "ts": "2026-06-07", "type": "implementation-complete", "reason": "phases 1-5 landed; full check green (clippy -D warnings, 322 tests, fmt, tsc)" },
+    { "ts": "2026-06-07", "type": "reviewer-run", "reason": "code-quality PASS; 5 yellow findings fixed (stale quake host, AltGr guard, quake Tab routing, tab-resurrect tombstone, spawn TOCTOU), re-verified green" }
   ],
   "interview_ts": "2026-06-06"
 }

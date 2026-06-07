@@ -51,10 +51,16 @@ A settings library of `(label, command)` env-shell presets **per workspace** (st
 
 ## Open questions for implementation
 
-- Exact `Ctrl+}` binding representation in `shortcuts.ts` (the registry mixes key-char like `ctrl+ñ` and code-based handling — confirm the matcher path for `BracketRight`+Shift).
-- Per-region host API shape in `terminalService` (region enum vs host registry).
-- Whether ad-hoc shells should optionally be promotable to persisted env shells.
+- Exact `Ctrl+}` binding representation in `shortcuts.ts` (the registry mixes key-char like `ctrl+ñ` and code-based handling — confirm the matcher path for `BracketRight`+Shift). → Resolved: dual `e.key === "}"` / `ctrl+shift+BracketRight` matching in the capture-phase dispatcher (the glyph is layout-dependent).
+- Per-region host API shape in `terminalService` (region enum vs host registry). → Resolved: `Region = "center" | "quake"` union + per-region host/active maps.
+- Whether ad-hoc shells should optionally be promotable to persisted env shells. → Resolved by user testing feedback (2026-06-07): the persisted `env_shells` column holds the session's **live tab set** — ad-hoc tabs join it and a per-shell input-line tracker (backend, alt-screen-filtered) remembers the last submitted command, so re-open pre-fills everything that ran. Modal defs are just the seed.
 - Registro de context-bridge channels could later render as a read-only quake shell (cross-feature synergy) — out of scope here, noted in `Context-bridge re-análisis` (vault).
+
+## Post-testing refinements (2026-06-07)
+
+- **Per-session visibility**: quake open/closed is a per-session map (like the right panel's collapsed state), not global.
+- **Self-exit detection**: `exit` in a shell retires its tab. Root cause for it not working: the slave PTY fd was retained in `PtyInstance`, so the master never reached EOF — the slave is now dropped post-spawn. Kill-driven EOFs are filtered (de-register before drop) so teardown can't masquerade as self-exit and erase the persisted set.
+- **Quake-scoped shortcuts**: `Ctrl+W` closes the active tab (capture-phase override; globally it soft-closes the session), `Ctrl+Shift+T` opens a new one (plain `Ctrl+T` belongs to the shell). Trade-off: `Ctrl+W` no longer reaches the shell as werase while the quake is focused.
 
 ## Non-goals
 

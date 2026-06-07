@@ -15,7 +15,8 @@ import {
   currentSpecArtifactAtom,
   type TabType,
 } from "@/stores/rightPanel";
-import { toggleRightPanelAtom, triggerMergeAtom, focusZoneAtom } from "@/stores/shortcuts";
+import { toggleRightPanelAtom, triggerMergeAtom, focusZoneAtom, toggleQuake } from "@/stores/shortcuts";
+import { quakeOpenMapAtom } from "@/stores/quake";
 import { softCloseSessionAction } from "@/stores/sessionTabs";
 import { triggerShipAtom } from "@/stores/ship";
 import { activeGitInfoAtom, refreshGitInfoAtom, conflictedFilesMapAtom, refreshConflictedFilesAtom, activeConflictedFilesAtom } from "@/stores/git";
@@ -52,11 +53,13 @@ import {
   Loader2,
   AlertTriangle,
   Pin,
+  SquareTerminal,
 } from "lucide-react";
 import { ObsidianIcon } from "@/components/icons/ObsidianIcon";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Tooltip,
+  TooltipProvider,
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
@@ -187,6 +190,8 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   const activeConflictedFiles = useAtomValue(activeConflictedFilesAtom);
   const setSelectedConflictMap = useSetAtom(selectedConflictFileMapAtom);
   const setChipModeMap = useSetAtom(gitChipModeAtom);
+  const quakeOpenMap = useAtomValue(quakeOpenMapAtom);
+  const quakeOpen = sessionId ? (quakeOpenMap[sessionId] ?? false) : false;
   const pendingAsks = useAtomValue(pendingAsksAtom);
   const pendingAttention = useAtomValue(pendingAttentionAtom);
   const addToast = useSetAtom(toastsAtom);
@@ -345,6 +350,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   }, [setSessionTabIds]);
 
   return (
+    <TooltipProvider delay={0}>
     <div className="flex h-8 shrink-0 items-center bg-card px-2">
       {/* Left: settings + workspace */}
       <div className="flex items-center gap-1.5 shrink-0">
@@ -616,6 +622,29 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
           );
         })}
 
+        {/* Quake terminal — overlay toggle, not a right-panel view */}
+        {sessionId && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <div
+                  role="button"
+                  onClick={() => toggleQuake()}
+                  className={`flex size-7 items-center justify-center rounded transition-colors cursor-pointer ${
+                    quakeOpen
+                      ? "text-foreground bg-card"
+                      : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+                  }`}
+                  aria-label="Quake Terminal"
+                />
+              }
+            >
+              <SquareTerminal size={14} />
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Quake Terminal (Ctrl+&#125;)</TooltipContent>
+          </Tooltip>
+        )}
+
         {/* Window controls */}
         <div className="flex items-center ml-1.5 pl-1.5 border-l border-border/30">
           <button
@@ -642,5 +671,6 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
         </div>
       </div>
     </div>
+    </TooltipProvider>
   );
 }

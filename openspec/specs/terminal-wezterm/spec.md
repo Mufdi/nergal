@@ -64,16 +64,25 @@ The terminal SHALL enable the Kitty keyboard protocol by default, with an opt-ou
 - **THEN** new sessions SHALL start with `enable_kitty_keyboard = false`
 
 ### Requirement: Canvas-based frontend renderer
-The frontend SHALL render the grid using HTML `<canvas>` with a pre-generated glyph atlas.
+
+The frontend SHALL render the grid using HTML `<canvas>` with a pre-generated glyph atlas. The renderer SHALL support multiple **regions** (`center` for agent terminals, `quake` for auxiliary shells), each with its own host element and its own active terminal, so terminals in different regions render simultaneously. Region-less calls SHALL default to `center`, keeping the original single-terminal API back-compatible.
 
 #### Scenario: Cells drawn from atlas
+
 - **WHEN** a `terminal:grid-update` arrives
 - **THEN** changed cells SHALL be drawn by blitting glyph rectangles from the OffscreenCanvas atlas to the visible canvas
 - **AND** glyphs not in the atlas SHALL fall back to direct `fillText` rendering
 
 #### Scenario: Atlas regenerates on theme or font change
+
 - **WHEN** the user changes the terminal font, font size, or color theme
 - **THEN** the atlas SHALL be regenerated before the next render frame
+
+#### Scenario: Regions render independently
+
+- **WHEN** an agent terminal is active in the `center` region and an auxiliary shell is active in the `quake` region
+- **THEN** both SHALL render at the same time, each into its own host
+- **AND** showing/hiding a terminal in one region SHALL NOT affect the other region's active terminal
 
 ### Requirement: Preserve input flow and hook system
 The externally observable behavior of input flow (user keystroke → bytes reach the shell/claude) and the hook system SHALL remain unchanged.
@@ -126,7 +135,6 @@ A config flag SHALL gate the new terminal path so both implementations can coexi
 - **THEN** the new wezterm-term-based terminal SHALL be used
 - **AND** no xterm.js code SHALL be loaded for that session
 
-
 ### Requirement: Wheel scrollback follows the terminal-emulator standard
 
 In the primary screen, wheel input SHALL scroll the local scrollback at the terminal-emulator standard rate of 3 lines per wheel notch (one notch = 40 px of WebKitGTK pixel delta, or 1 unit in `DOM_DELTA_LINE` mode). Fractional deltas (hi-res wheels, touchpads) SHALL be accumulated across events rather than rounded per event, so no travel is lost.
@@ -146,3 +154,4 @@ In the primary screen, wheel input SHALL scroll the local scrollback at the term
 
 - **WHEN** the alternate screen is active (agent TUI, vim, less)
 - **THEN** wheel events SHALL be forwarded to the running application via wezterm-term's mouse pipeline instead of scrolling local scrollback
+

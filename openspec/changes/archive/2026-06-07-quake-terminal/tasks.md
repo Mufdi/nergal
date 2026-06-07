@@ -35,6 +35,6 @@ Phased per the design. Each phase is independently verifiable (`cargo clippy -- 
 ## 5. Polish + close
 
 - [x] 5.1 Reframe the launch-options `startup_command` UI as "Prelude" with a hint that it must exit (point long-running commands to environment shells). `docs/patterns.md` §5.1 documents the quake zone's cycle-exclusion.
-- [ ] 5.2 Update specs: reconcile `terminal-wezterm` (per-region) and `session-launch-options` (prelude) on archive via `/openspec-sync`.
+- [x] 5.2 Update specs: reconciled `terminal-wezterm` (per-region) and `session-launch-options` (prelude) at archive (2026-06-07).
 - [x] 5.3 Full check green: `cargo clippy -- -D warnings && cargo test && cargo fmt --check && npx tsc --noEmit` (322 tests).
 - [x] 5.4 Manual UX walk of every scenario in the spec — three user testing rounds 2026-06-07, all findings fixed.

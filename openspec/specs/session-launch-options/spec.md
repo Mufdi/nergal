@@ -3,12 +3,10 @@
 ## Purpose
 
 Let the user choose how a session launches — initial permission mode, bypass availability, and a shell prelude — at creation time, per session, applied again on every resume. Complements the `agent-adapter` spec (which owns the adapter-side flag mapping); this spec owns persistence and UI.
-
 ## Requirements
-
 ### Requirement: Launch options persist on the session row
 
-`LaunchOptions { permission_preset, allow_skip_in_cycle, startup_command }` SHALL persist as a nullable JSON column `launch_options` on `sessions` (migration `011`). All-default options SHALL be stored as NULL. A malformed column SHALL parse as `None` and never break session loading.
+`LaunchOptions { permission_preset, allow_skip_in_cycle, startup_command }` SHALL persist as a nullable JSON column `launch_options` on `sessions` (migration `011`). All-default options SHALL be stored as NULL. A malformed column SHALL parse as `None` and never break session loading. `startup_command` is a **prelude**: a quick command expected to exit (env setup like `nvm use`, `source .env`) that runs in the agent terminal so the agent inherits its environment. Long-running commands SHALL be expressed as environment shells (see the `quake-terminal` spec), never as the prelude — a non-exiting prelude blocks the agent launch.
 
 #### Scenario: Options round-trip and re-apply on resume
 
@@ -21,6 +19,11 @@ Let the user choose how a session launches — initial permission mode, bypass a
 - **WHEN** a session with a `startup_command` spawns (fresh or resume)
 - **THEN** the PTY layer SHALL run the prelude between `cd <cwd>` and the agent binary, chained with `&&`
 - **AND** a failing prelude SHALL abort the agent launch
+
+#### Scenario: Prelude UI signals the must-exit contract
+
+- **WHEN** the user reaches the startup-command input in the new-session modal
+- **THEN** it SHALL be framed as a prelude that must exit, pointing long-running commands to the environment-shells section
 
 ### Requirement: Agent picker is the launch-options surface
 
@@ -40,3 +43,4 @@ The agent picker modal SHALL open on every session creation — even with a sing
 
 - **WHEN** no agent is detected as installed
 - **THEN** session creation SHALL fall back to the backend default agent without showing an empty modal
+

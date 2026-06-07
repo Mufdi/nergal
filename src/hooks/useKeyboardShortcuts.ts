@@ -3,6 +3,7 @@ import { useAtomValue, useSetAtom } from "jotai";
 import {
   shortcutRegistryAtom,
   commandPaletteOpenAtom,
+  toggleQuake,
 } from "@/stores/shortcuts";
 import { zenModeAtom, prZenAtom } from "@/stores/zenMode";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
@@ -15,6 +16,8 @@ import {
   restoreLastClosedScratchTab,
 } from "@/stores/scratchpad";
 import { appStore } from "@/stores/jotaiStore";
+import { activeSessionIdAtom } from "@/stores/workspace";
+import { addAdHocShell, closeActiveQuakeShell } from "@/stores/quake";
 import * as terminalService from "@/components/terminal/terminalService";
 
 const KEY_TO_CODE: Record<string, string> = {
@@ -88,6 +91,16 @@ export function useKeyboardShortcuts() {
           terminalService.focusActive();
           return;
         }
+        // Quake shells need the same capture-phase route — the bubble path
+        // this fix replaced was failing intermittently for center, and the
+        // quake textarea has the identical wiring.
+        if (target?.closest("[data-focus-zone='quake']")) {
+          e.preventDefault();
+          e.stopPropagation();
+          terminalService.sendSpecialKeyToActive("Tab", "Tab", { shift: e.shiftKey }, "quake");
+          terminalService.focusActive("quake");
+          return;
+        }
         const inTextInput = target?.tagName === "INPUT"
           || target?.tagName === "TEXTAREA"
           || !!target?.closest(".cm-editor")
@@ -99,6 +112,29 @@ export function useKeyboardShortcuts() {
         e.stopPropagation();
         return;
       }
+      // Quake-focused overrides: Ctrl+W closes the active shell tab (the
+      // global binding would soft-close the whole session) and Ctrl+Shift+T
+      // opens a new one (terminal-emulator muscle memory; plain Ctrl+T
+      // belongs to the shell itself).
+      {
+        const target = e.target as HTMLElement | null;
+        if (target?.closest("[data-focus-zone='quake']") && e.ctrlKey && !e.altKey) {
+          if (!e.shiftKey && e.code === "KeyW") {
+            e.preventDefault();
+            e.stopPropagation();
+            closeActiveQuakeShell();
+            return;
+          }
+          if (e.shiftKey && e.code === "KeyT") {
+            e.preventDefault();
+            e.stopPropagation();
+            const sid = appStore.get(activeSessionIdAtom);
+            if (sid) addAdHocShell(sid);
+            return;
+          }
+        }
+      }
+
       // Ctrl+K toggle
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === "KeyK") {
         e.preventDefault();
@@ -187,6 +223,22 @@ export function useKeyboardShortcuts() {
         (target?.tagName === "INPUT" || target?.tagName === "TEXTAREA"
           || inEditor || target?.getAttribute("contenteditable") === "true")
         && !target?.closest("[data-focus-zone='terminal']");
+
+      // Ctrl+} — dual matching because the `}` glyph is layout-dependent:
+      // `e.key` covers layouts that type it via AltGr (on Linux AltGr sets
+      // neither ctrlKey nor altKey, so real Ctrl is what matches), `e.code`
+      // covers US-physical Shift+BracketRight per the event.code convention.
+      // `!e.altKey` keeps layouts where AltGr reports as Ctrl+Alt from
+      // toggling on a plain `}` keystroke.
+      if (
+        e.ctrlKey && !e.altKey
+        && (e.key === "}" || (e.shiftKey && e.code === "BracketRight"))
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleQuake();
+        return;
+      }
 
       for (const action of registry) {
         const parsed = parseKeys(action.keys);

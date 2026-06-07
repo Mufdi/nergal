@@ -34,8 +34,21 @@ interface Selection {
 
 // ── Types ──
 
+/// Rendering surface a terminal lives in. `center` hosts agent sessions,
+/// `quake` hosts auxiliary shells; each region has its own host element and
+/// its own active terminal so both render simultaneously.
+export type Region = "center" | "quake";
+
 interface Entry {
+  /// Terminal key used in every backend invoke. The agent terminal's key is
+  /// its session id; an aux shell's key is `${sessionId}::${shellId}` (the
+  /// backend registers both in the same PTY key space).
   sessionId: string;
+  region: Region;
+  /// Owning session — equals `sessionId` for center entries; for quake
+  /// entries it's the session the shell belongs to, so destroy(session) can
+  /// retire them.
+  ownerSessionId: string;
   container: HTMLDivElement;
   canvas: HTMLCanvasElement;
   /// Hidden 1x1 textarea overlay used exclusively as the keyboard focus
@@ -87,8 +100,8 @@ interface Entry {
 
 const entries = new Map<string, Entry>();
 const pending = new Set<string>();
-let hostElement: HTMLDivElement | null = null;
-let activeId: string | null = null;
+const hosts = new Map<Region, HTMLDivElement | null>();
+const activeIds = new Map<Region, string | null>();
 
 // Prime TERM_THEME from CSS tokens before the first session can paint.
 // The atlas keys glyphs by `(ch, fg, …)` so a later color flip lazily
@@ -156,14 +169,14 @@ if (typeof document !== "undefined") {
 
 // ── Public API ──
 
-export function setHost(el: HTMLDivElement | null): void {
-  hostElement = el;
+export function setHost(el: HTMLDivElement | null, region: Region = "center"): void {
+  hosts.set(region, el);
   // React can re-mount the host (e.g. after a layout swap). Existing
   // session containers were attached to the previous host — re-parent them
   // to the new one so the terminal remains visible.
   if (el) {
     for (const entry of entries.values()) {
-      if (entry.container.parentElement !== el) {
+      if (entry.region === region && entry.container.parentElement !== el) {
         el.appendChild(entry.container);
       }
     }
@@ -172,10 +185,10 @@ export function setHost(el: HTMLDivElement | null): void {
 
 /// Containers stay alive so a soft-close undo re-shows them instantly; only
 /// finalize destroys them.
-export function hideAll(): void {
-  activeId = null;
+export function hideAll(region: Region = "center"): void {
+  activeIds.set(region, null);
   for (const [, entry] of entries) {
-    entry.container.style.display = "none";
+    if (entry.region === region) entry.container.style.display = "none";
   }
 }
 
@@ -184,26 +197,81 @@ export async function show(
   cwd: string,
   mode: "new" | "continue" = "new",
 ): Promise<void> {
-  activeId = sessionId;
+  await showTerminal({
+    key: sessionId,
+    region: "center",
+    ownerSessionId: sessionId,
+    spawn: (cols, rows) =>
+      invoke("start_claude_session", {
+        sessionId,
+        cwd,
+        cols,
+        rows,
+        resume: mode === "new" ? null : mode,
+      }),
+  });
+}
+
+/// Show (spawning on first call) an auxiliary shell in the quake region.
+export async function showShell(opts: {
+  sessionId: string;
+  shellId: string;
+  cwd: string;
+  command?: string | null;
+  autorun?: boolean;
+}): Promise<void> {
+  const key = `${opts.sessionId}::${opts.shellId}`;
+  await showTerminal({
+    key,
+    region: "quake",
+    ownerSessionId: opts.sessionId,
+    // Session switches with the quake open must not steal focus from the
+    // zone the user is typing in — the caller asserts focus explicitly when
+    // the quake zone owns it.
+    focus: false,
+    spawn: (cols, rows) =>
+      invoke("spawn_aux_shell", {
+        sessionId: opts.sessionId,
+        shellId: opts.shellId,
+        cwd: opts.cwd,
+        cols,
+        rows,
+        command: opts.command ?? null,
+        autorun: opts.autorun ?? false,
+      }),
+  });
+}
+
+async function showTerminal(opts: {
+  key: string;
+  region: Region;
+  ownerSessionId: string;
+  focus?: boolean;
+  spawn: (cols: number, rows: number) => Promise<unknown>;
+}): Promise<void> {
+  const { key, region, ownerSessionId, spawn, focus = true } = opts;
+  activeIds.set(region, key);
 
   for (const [id, entry] of entries) {
-    entry.container.style.display = id === sessionId ? "flex" : "none";
+    if (entry.region !== region) continue;
+    entry.container.style.display = id === key ? "flex" : "none";
   }
 
-  if (entries.has(sessionId)) {
-    const entry = entries.get(sessionId)!;
+  if (entries.has(key)) {
+    const entry = entries.get(key)!;
     requestAnimationFrame(() => {
       fit(entry);
       paintAll(entry);
-      focusCanvas(entry);
+      if (focus) focusCanvas(entry);
     });
     return;
   }
 
-  if (pending.has(sessionId)) return;
+  if (pending.has(key)) return;
+  const hostElement = hosts.get(region) ?? null;
   if (!hostElement) return;
 
-  pending.add(sessionId);
+  pending.add(key);
 
   try {
     const container = document.createElement("div");
@@ -276,7 +344,9 @@ export async function show(
     if (!ctx) throw new Error("terminal canvas 2d context unavailable");
 
     const entry: Entry = {
-      sessionId,
+      sessionId: key,
+      region,
+      ownerSessionId,
       container,
       canvas,
       textarea,
@@ -306,53 +376,73 @@ export async function show(
 
     wireInput(entry);
 
-    const { pty_id } = await invoke<{ pty_id: string }>("start_claude_session", {
-      sessionId,
-      cwd,
-      cols,
-      rows,
-      resume: mode === "new" ? null : mode,
-    });
-    void pty_id; // not used here — the session_id is what subsequent commands key off.
+    await spawn(cols, rows);
+
+    // Env shells auto-run headless at a placeholder grid (spawn_aux_shell is
+    // idempotent, so the spawn above didn't resize them); align the PTY to
+    // the freshly measured host before seeding. Center is left untouched —
+    // its PTY was just created at exactly these dims.
+    if (region === "quake") {
+      await invoke("resize_session_terminal", { sessionId: key, cols, rows }).catch(() => {});
+    }
 
     entry.unlisten = await listen<GridUpdate>("terminal:grid-update", (payload) => {
-      if (payload.sessionId !== sessionId) return;
+      if (payload.sessionId !== key) return;
       applyUpdate(entry, payload);
     });
 
     // Seed the shadow grid with whatever state the backend already holds
     // (for resumed sessions or reopened windows).
     try {
-      const initial = await invoke<GridUpdate>("terminal_get_full_grid", { sessionId });
+      const initial = await invoke<GridUpdate>("terminal_get_full_grid", { sessionId: key });
       applyUpdate(entry, initial);
     } catch {
       // No backend state yet — the first grid-update will paint the screen.
     }
 
     paintAll(entry);
-    entries.set(sessionId, entry);
-    focusCanvas(entry);
+    entries.set(key, entry);
+    if (focus) focusCanvas(entry);
 
-    if (activeId !== sessionId) {
+    if (activeIds.get(region) !== key) {
       container.style.display = "none";
     }
   } catch (err) {
-    console.error("wezterm: failed to create terminal for session", sessionId, err);
+    console.error("wezterm: failed to create terminal", key, err);
   } finally {
-    pending.delete(sessionId);
+    pending.delete(key);
   }
 }
 
+/// Destroy a session's terminals: the agent terminal AND its aux shells.
+/// kill_session_pty tears down both backend-side.
 export function destroy(sessionId: string): void {
-  const entry = entries.get(sessionId);
-  if (!entry) return;
-  entry.unlisten();
-  entry.container.remove();
-  entries.delete(sessionId);
+  for (const [id, entry] of [...entries]) {
+    if (entry.ownerSessionId !== sessionId) continue;
+    entry.unlisten();
+    entry.container.remove();
+    entries.delete(id);
+  }
   invoke("kill_session_pty", { sessionId }).catch(() => {});
 }
 
-export function fitActive(): void {
+/// Retire a single aux shell's frontend entry. Callers always pair it with
+/// kill_aux_shell — even on shell:exited, where the PTY is gone but the
+/// backend deliberately leaves its map entries for the frontend to clean
+/// (otherwise a respawn with the same shell_id idempotent-returns against
+/// the dead PTY).
+export function dropShellEntry(sessionId: string, shellId: string): void {
+  const key = `${sessionId}::${shellId}`;
+  const entry = entries.get(key);
+  if (!entry) return;
+  entry.unlisten();
+  entry.container.remove();
+  entries.delete(key);
+  if (activeIds.get("quake") === key) activeIds.set("quake", null);
+}
+
+export function fitActive(region: Region = "center"): void {
+  const activeId = activeIds.get(region);
   if (!activeId) return;
   const entry = entries.get(activeId);
   if (!entry) return;
@@ -360,7 +450,8 @@ export function fitActive(): void {
   paintAll(entry);
 }
 
-export function focusActive(): void {
+export function focusActive(region: Region = "center"): void {
+  const activeId = activeIds.get(region);
   if (!activeId) return;
   const entry = entries.get(activeId);
   if (entry) focusCanvas(entry);
@@ -378,7 +469,8 @@ export function hasTerminal(sessionId: string): boolean {
 /// PTY without requiring the textarea to own DOM focus. Used by the global
 /// shortcut dispatcher when a terminal-reserved key fires while focus lives
 /// in a different zone.
-export function sendSpecialKeyToActive(code: string, key: string, modifiers: { ctrl?: boolean; shift?: boolean; alt?: boolean } = {}): void {
+export function sendSpecialKeyToActive(code: string, key: string, modifiers: { ctrl?: boolean; shift?: boolean; alt?: boolean } = {}, region: Region = "center"): void {
+  const activeId = activeIds.get(region);
   if (!activeId) return;
   const entry = entries.get(activeId);
   if (!entry) return;

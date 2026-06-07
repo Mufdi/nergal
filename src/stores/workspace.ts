@@ -16,6 +16,13 @@ export interface LaunchOptions {
   startup_command: string | null;
 }
 
+/// Mirrors `EnvShellDef` in src-tauri/src/models.rs: a long-running command
+/// that gets its own quake shell instead of blocking the agent terminal.
+export interface EnvShellDef {
+  label: string;
+  command: string;
+}
+
 export interface Session {
   id: string;
   name: string;
@@ -39,6 +46,8 @@ export interface Session {
   pinned_note_paths?: string[];
   /// Launch options chosen at creation; re-applied on resume by the backend.
   launch_options?: LaunchOptions | null;
+  /// Environment shells (quake): auto-run at creation, pre-filled on re-open.
+  env_shells?: EnvShellDef[];
 }
 
 export interface Workspace {

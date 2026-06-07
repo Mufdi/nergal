@@ -8,6 +8,7 @@ import { RightPanel } from "./RightPanel";
 import { StatusBar } from "./StatusBar";
 import { Toaster } from "sileo";
 import { TerminalManager } from "@/components/terminal/TerminalManager";
+import { QuakeTerminal } from "@/components/quake/QuakeTerminal";
 import * as terminalService from "@/components/terminal/terminalService";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { ActivityDrawer } from "@/components/activity/ActivityDrawer";
@@ -340,7 +341,8 @@ export function Workspace() {
     <div className="flex h-full flex-col bg-background">
       <TopBar onOpenSettings={() => setSettingsOpen(true)} rightPanelVisible={!rightCollapsed} />
 
-      <div className="flex flex-1 overflow-hidden p-2">
+      <div className="relative flex flex-1 overflow-hidden p-2">
+        <QuakeTerminal />
         <ResizablePanelGroup
           orientation="horizontal"
           className="flex-1"

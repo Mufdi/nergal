@@ -32,9 +32,12 @@ import { obsidianEnabledAtom } from "./obsidian";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { quickCaptureOpenAtom } from "./quickCapture";
 import { searchModalOpenAtom, searchScopeAtom } from "./search";
+import { quakeOpenMapAtom, quakeShellsAtom, addAdHocShell, cycleQuakeShell } from "./quake";
 import { openInObsidian } from "@/lib/obsidian";
 
-export type FocusZone = "sidebar" | "terminal" | "panel";
+/// `quake` is deliberately NOT in the alt+left/right cycle (getVisibleZones)
+/// — it's an overlay, reached only via Ctrl+}.
+export type FocusZone = "sidebar" | "terminal" | "panel" | "quake";
 
 export interface ShortcutAction {
   id: string;
@@ -201,6 +204,7 @@ function getVisibleZones(): FocusZone[] {
 
 function detectCurrentZone(): FocusZone {
   const active = document.activeElement;
+  if (active?.closest("[data-focus-zone='quake']")) return "quake";
   if (active?.closest("[data-focus-zone='panel']")) return "panel";
   if (active?.closest("[data-focus-zone='sidebar']")) return "sidebar";
   if (active?.closest("[data-focus-zone='terminal']")) return "terminal";
@@ -216,6 +220,8 @@ function focusZone(zone: FocusZone) {
 
   if (zone === "terminal") {
     terminalService.focusActive();
+  } else if (zone === "quake") {
+    terminalService.focusActive("quake");
   } else {
     // Blur the terminal's input textarea first so it doesn't immediately
     // recapture focus after we move it to the target zone.
@@ -235,6 +241,36 @@ function focusZone(zone: FocusZone) {
       for (const item of items) item.removeAttribute("data-nav-selected");
       if (items[0]) items[0].setAttribute("data-nav-selected", "true");
     }
+  }
+}
+
+/// Ctrl+} cycle: hidden→open+focus; visible+unfocused→focus;
+/// visible+focused→hide (focus returns to the agent terminal). Visibility
+/// is per-session, like the right panel's collapsed state.
+export function toggleQuake() {
+  const s = store();
+  const sid = s.get(activeSessionIdAtom);
+  if (!sid) {
+    s.set(toastsAtom, {
+      message: "Quake terminal",
+      description: "No active session — shells belong to a session.",
+      type: "info",
+    });
+    return;
+  }
+  const open = s.get(quakeOpenMapAtom)[sid] ?? false;
+  if (!open) {
+    if ((s.get(quakeShellsAtom)[sid] ?? []).length === 0) {
+      addAdHocShell(sid);
+    }
+    s.set(quakeOpenMapAtom, (prev) => ({ ...prev, [sid]: true }));
+    // Mount happens on the atom flip; focus after the host exists.
+    requestAnimationFrame(() => focusZone("quake"));
+  } else if (s.get(focusZoneAtom) !== "quake") {
+    focusZone("quake");
+  } else {
+    s.set(quakeOpenMapAtom, (prev) => ({ ...prev, [sid]: false }));
+    focusZone("terminal");
   }
 }
 
@@ -266,7 +302,9 @@ function navigateItems(direction: "up" | "down") {
 
 function nextTab() {
   const zone = store().get(focusZoneAtom);
-  if (zone === "panel") {
+  if (zone === "quake") {
+    cycleQuakeShell(1);
+  } else if (zone === "panel") {
     nextPanelTab();
   } else {
     nextSessionTab();
@@ -275,7 +313,9 @@ function nextTab() {
 
 function prevTab() {
   const zone = store().get(focusZoneAtom);
-  if (zone === "panel") {
+  if (zone === "quake") {
+    cycleQuakeShell(-1);
+  } else if (zone === "panel") {
     prevPanelTab();
   } else {
     prevSessionTab();
@@ -373,6 +413,10 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     focusZone(zones[next]);
   }},
   { id: "focus-terminal", label: "Focus Terminal", keys: "ctrl+ñ", category: "navigation", keywords: ["terminal", "pty", "cli"], handler: () => focusZone("terminal") },
+  // Matched by a dedicated handler in useKeyboardShortcuts (the `}` glyph is
+  // layout-dependent, so it needs key+code dual matching that parseKeys
+  // can't express). Listed here for the command palette.
+  { id: "toggle-quake", label: "Toggle Quake Terminal", keys: "ctrl+}", category: "navigation", keywords: ["quake", "shell", "shells", "environment", "terminal"], handler: toggleQuake },
   { id: "nav-up", label: "Navigate Up", keys: "alt+arrowup", category: "navigation", keywords: ["navigate", "up", "item"], handler: () => navigateItems("up") },
   { id: "nav-down", label: "Navigate Down", keys: "alt+arrowdown", category: "navigation", keywords: ["navigate", "down", "item"], handler: () => navigateItems("down") },
 

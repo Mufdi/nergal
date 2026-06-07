@@ -45,26 +45,21 @@ export function QuakeTerminal() {
   const showAccent = focusPulseEnabled ? pulsing : isFocused;
   const borderClass = showAccent ? "border-primary" : "border-border";
 
-  // Transform-only slide: GPU-composited and doesn't fire the host's
-  // ResizeObserver, so the canvas never refits mid-animation. `rendered`
-  // outlives `open` by SLIDE_MS so the exit can play; session switches snap
-  // instead, so a stale session's content never plays an exit.
+  // Slide via CSS keyframes (globals.css): the enter animation runs on
+  // mount with no state choreography. `rendered` outlives `open` by
+  // SLIDE_MS so the exit can play (`closing` swaps the animation class);
+  // session switches snap instead, so a stale session's content never
+  // plays an exit over the new one.
   const [rendered, setRendered] = useState(open);
-  const [slidIn, setSlidIn] = useState(open);
+  const closing = rendered && !open;
   const prevSidRef = useRef(activeSessionId);
   useEffect(() => {
     const switched = prevSidRef.current !== activeSessionId;
     prevSidRef.current = activeSessionId;
     if (open) {
       setRendered(true);
-      // Double rAF: let the browser paint the off-screen position first so
-      // the transition has a starting frame.
-      const id = requestAnimationFrame(() =>
-        requestAnimationFrame(() => setSlidIn(true)),
-      );
-      return () => cancelAnimationFrame(id);
+      return;
     }
-    setSlidIn(false);
     if (switched) {
       setRendered(false);
       return;
@@ -158,8 +153,8 @@ export function QuakeTerminal() {
       style={{ height }}
       // z-[45]: above the BrowserHost iframe (portaled to body at z-40),
       // below dialogs/zen (z-50+).
-      className={`absolute inset-x-2 top-0 z-[45] flex flex-col overflow-hidden rounded-b-lg border-2 ${borderClass} bg-terminal-surface shadow-xl cluihud-panel-focus transition-transform duration-200 ease-out will-change-transform ${
-        slidIn ? "translate-y-0" : "translate-y-[calc(-100%_-_8px)]"
+      className={`absolute inset-x-2 top-0 z-[45] flex flex-col overflow-hidden rounded-b-lg border-2 ${borderClass} bg-terminal-surface shadow-xl cluihud-panel-focus ${
+        closing ? "quake-exit" : "quake-enter"
       }`}
       onMouseDown={() => {
         setFocusZone("quake");

@@ -1118,3 +1118,22 @@ mark[data-ws-hidden] {
   display: none;
 }
 
+
+/* Quake terminal slide. Keyframes instead of class-toggled transitions:
+   the enter animation runs on mount without rAF choreography, which
+   WebKitGTK's paint coalescing made unreliable. The -8px clears the
+   content area's padding gap so the shadow fully exits too. */
+@keyframes quake-slide-down {
+  from { transform: translateY(calc(-100% - 8px)); }
+  to { transform: translateY(0); }
+}
+@keyframes quake-slide-up {
+  from { transform: translateY(0); }
+  to { transform: translateY(calc(-100% - 8px)); }
+}
+.quake-enter {
+  animation: quake-slide-down 200ms ease-out;
+}
+.quake-exit {
+  animation: quake-slide-up 200ms ease-in forwards;
+}

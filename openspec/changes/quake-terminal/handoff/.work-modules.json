@@ -1,0 +1,30 @@
+{
+  "tier": "L",
+  "tier_source": "heuristic",
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "discovery_note": "design crystallized via a live design conversation 2026-06-06; the conversation WAS the discovery",
+    "iprev_rounds": 0,
+    "reviewer_mode": "deferred-to-implementation-session",
+    "reviewer_escalation": null,
+    "gates_phases_run": [],
+    "per_phase_models": {
+      "design": "claude-opus-4-8",
+      "implementation": "claude-sonnet-4-6",
+      "exploration": "claude-haiku-4-5"
+    }
+  },
+  "spec_target": "quake-terminal",
+  "interview_answers": {
+    "placement": "quake overlay",
+    "scope": "per-session",
+    "count": "N shells",
+    "run_behavior": "auto-run on creation, pre-fill on re-open",
+    "suggestions": "per-workspace library in settings",
+    "shortcut": "Ctrl+}"
+  },
+  "events": [
+    { "ts": "2026-06-06", "type": "artifacts-created", "reason": "proposal+design+specs+tasks+brief authored; implementation deferred to a fresh session per user" }
+  ],
+  "interview_ts": "2026-06-06"
+}

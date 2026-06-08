@@ -102,6 +102,7 @@ export function QuakeTerminal() {
         shellId: shell.shellId,
         cwd,
         shellCwd: shell.cwd,
+        baseDir: activeWorkspace?.repo_path ?? null,
         command: shell.command,
         autorun: false,
       })

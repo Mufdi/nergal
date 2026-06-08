@@ -218,6 +218,8 @@ export async function showShell(opts: {
   shellId: string;
   cwd: string;
   shellCwd?: string | null;
+  /// Workspace root — base for relative shellCwd paths.
+  baseDir?: string | null;
   command?: string | null;
   autorun?: boolean;
 }): Promise<void> {
@@ -236,6 +238,7 @@ export async function showShell(opts: {
         shellId: opts.shellId,
         cwd: opts.cwd,
         shellCwd: opts.shellCwd ?? null,
+        baseDir: opts.baseDir ?? null,
         cols,
         rows,
         command: opts.command ?? null,

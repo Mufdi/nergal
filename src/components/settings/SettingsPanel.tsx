@@ -391,7 +391,7 @@ function EnvShellSuggestionsField() {
             onChange={(e) => update(i, { cwd: e.target.value || null })}
             onBlur={() => persist(items)}
             placeholder="cwd"
-            title="Working directory — relative paths resolve against the session cwd. Empty = session cwd."
+            title="Working directory — ~ expands, relative paths resolve against the workspace root. Empty = session cwd."
             className="w-28 shrink-0 font-mono"
           />
           <Input

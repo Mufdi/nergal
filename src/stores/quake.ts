@@ -112,6 +112,7 @@ export function closeActiveQuakeShell(): void {
 export function spawnEnvShells(
   sessionId: string,
   cwd: string,
+  baseDir: string,
   defs: Array<{ label: string; command: string; cwd?: string | null }>,
   autorun: boolean,
 ): void {
@@ -142,6 +143,7 @@ export function spawnEnvShells(
       shellId: sh.shellId,
       cwd,
       shellCwd: sh.cwd,
+      baseDir,
       cols: 200,
       rows: 50,
       command: sh.command,

@@ -565,7 +565,9 @@ function WorkspacesView() {
       if (session.env_shells?.length) {
         const ws = workspaces.find((w) => w.id === workspaceId);
         const cwd = session.worktree_path ?? ws?.repo_path;
-        if (cwd) spawnEnvShells(session.id, cwd, session.env_shells, true);
+        if (cwd && ws) {
+          spawnEnvShells(session.id, cwd, ws.repo_path, session.env_shells, true);
+        }
       }
 
       setWorkspaces((prev) =>
@@ -823,6 +825,7 @@ function WorkspacesView() {
           agents={agentPicker.agents}
           sessionName={agentPicker.sessionName}
           workspaceId={agentPicker.workspaceId}
+          repoPath={workspaces.find((w) => w.id === agentPicker.workspaceId)?.repo_path ?? null}
           preselectedId={agentPicker.defaultId}
           onPick={(agentId, launchOptions, envShells) => {
             const { workspaceId, sessionName } = agentPicker;

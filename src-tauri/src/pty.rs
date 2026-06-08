@@ -548,6 +548,7 @@ pub async fn spawn_aux_shell(
     shell_id: String,
     cwd: Option<String>,
     shell_cwd: Option<String>,
+    base_dir: Option<String>,
     cols: u16,
     rows: u16,
     command: Option<String>,
@@ -555,20 +556,27 @@ pub async fn spawn_aux_shell(
 ) -> Result<String, String> {
     let term_id = aux_term_id(&session_id, &shell_id);
 
-    // Per-shell dir wins when it resolves to a real directory (relative →
-    // against the session cwd); otherwise fall back to the session cwd so a
-    // deleted dir doesn't break the respawn.
+    // Per-shell dir wins when it resolves to a real directory; otherwise
+    // fall back to the session cwd so a deleted dir doesn't break the
+    // respawn. `~` expands; relative paths resolve against the workspace
+    // root (`base_dir`), NOT the session cwd — worktrees live inside
+    // `<repo>/.worktrees/`, so "../backend" relative to a worktree would
+    // point inside the repo instead of at the sibling the user means.
     let cwd: Option<String> = shell_cwd
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .and_then(|sc| {
-            let p = std::path::Path::new(sc);
+            let expanded = crate::obsidian::config::expand_home(sc);
+            let p = std::path::Path::new(&expanded);
             let abs = if p.is_absolute() {
                 p.to_path_buf()
             } else {
-                std::path::Path::new(cwd.as_deref()?).join(p)
+                std::path::Path::new(base_dir.as_deref().or(cwd.as_deref())?).join(p)
             };
+            let abs = std::path::PathBuf::from(crate::obsidian::config::resolve_case_insensitive(
+                &abs.to_string_lossy(),
+            ));
             abs.is_dir().then(|| abs.display().to_string())
         })
         .or(cwd);

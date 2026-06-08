@@ -59,7 +59,7 @@ export function TerminalManager() {
     // sessions were already seeded auto-run by the creation flow, which
     // makes this a no-op for them.
     if (activeSession.env_shells?.length) {
-      spawnEnvShells(activeSessionId, cwd, activeSession.env_shells, false);
+      spawnEnvShells(activeSessionId, cwd, activeWorkspace.repo_path, activeSession.env_shells, false);
     }
   }, [activeSessionId, activeSession, activeWorkspace, launchModes, freshSessions]);
 

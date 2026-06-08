@@ -87,8 +87,8 @@ pub struct EnvShellDef {
     pub label: String,
     pub command: String,
     /// Working directory for the shell when it differs from the session cwd
-    /// (front/back split repos). Relative paths resolve against the session
-    /// cwd at spawn.
+    /// (front/back split repos). `~` expands; relative paths resolve against
+    /// the workspace root at spawn.
     #[serde(default)]
     pub cwd: Option<String>,
 }

@@ -2,7 +2,7 @@
 
 ### Requirement: Environment shells
 
-A session SHALL support a list of environment shells defined as `(label, command, cwd?)`. Each entry spawns a quake shell, in `cwd` when set (relative paths resolve against the session cwd; a missing directory falls back to the session cwd). The command SHALL auto-run when the session is first created, and SHALL be pre-filled (typed, not executed) when the session is re-opened after an app restart. The persisted set SHALL be the session's **live tab set**: definitions seed from the new-session modal, ad-hoc tabs join it, closed tabs leave it, and a command submitted in any quake shell updates that tab's remembered command — along with the shell's working directory at submit time, when it differs from the session cwd.
+A session SHALL support a list of environment shells defined as `(label, command, cwd?)`. Each entry spawns a quake shell, in `cwd` when set (`~` expands; relative paths resolve against the workspace root — worktrees live inside the repo, so session-cwd-relative would point somewhere the user doesn't mean; a missing directory falls back to the session cwd). The command SHALL auto-run when the session is first created, and SHALL be pre-filled (typed, not executed) when the session is re-opened after an app restart. The persisted set SHALL be the session's **live tab set**: definitions seed from the new-session modal, ad-hoc tabs join it, closed tabs leave it, and a command submitted in any quake shell updates that tab's remembered command — along with the shell's working directory at submit time, when it differs from the session cwd.
 
 #### Scenario: Auto-run on creation
 
@@ -28,5 +28,6 @@ A session SHALL support a list of environment shells defined as `(label, command
 #### Scenario: Cwd in definitions and suggestions
 
 - **WHEN** the user sets a cwd on an environment-shell row in the new-session modal or on a per-workspace suggestion
-- **THEN** the spawned shell SHALL start in that directory, resolving relative paths against the session cwd
+- **THEN** the spawned shell SHALL start in that directory, resolving `~` and relative paths against the workspace root
+- **AND** the modal SHALL live-validate the directory and SHALL NOT create the session while a non-empty cwd doesn't resolve to a real directory
 - **AND** quick-picking the suggestion SHALL carry its cwd into the session's definition

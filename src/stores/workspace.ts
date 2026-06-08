@@ -22,7 +22,8 @@ export interface EnvShellDef {
   label: string;
   command: string;
   /// Working directory when it differs from the session cwd (front/back
-  /// split repos); relative paths resolve against the session cwd at spawn.
+  /// split repos). `~` expands; relative paths resolve against the
+  /// workspace root at spawn.
   cwd?: string | null;
 }
 

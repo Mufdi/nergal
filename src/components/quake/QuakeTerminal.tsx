@@ -45,11 +45,13 @@ export function QuakeTerminal() {
   const showAccent = focusPulseEnabled ? pulsing : isFocused;
   const borderClass = showAccent ? "border-primary" : "border-border";
 
-  // Slide via CSS keyframes (globals.css): the enter animation runs on
-  // mount with no state choreography. `rendered` outlives `open` by
-  // SLIDE_MS so the exit can play (`closing` swaps the animation class);
-  // session switches snap instead, so a stale session's content never
-  // plays an exit over the new one.
+  // Slide via CSS keyframes (globals.css): enter runs on mount, `closing`
+  // swaps to the exit keyframe and `rendered` outlives `open` by SLIDE_MS
+  // so it can play. Session switches snap (no exit over the new session).
+  // Known limit: WebKitGTK's compositor skips the exit when the overlay
+  // sits over a repainting subtree (an open spec panel with a live-refresh
+  // watcher); the enter always plays. Accepted — every transform/layout
+  // path hits the same compositor quirk.
   const [rendered, setRendered] = useState(open);
   const closing = rendered && !open;
   const prevSidRef = useRef(activeSessionId);
@@ -155,9 +157,7 @@ export function QuakeTerminal() {
       style={{ height }}
       // z-[45]: above the BrowserHost iframe (portaled to body at z-40),
       // below dialogs/zen (z-50+).
-      className={`absolute inset-x-2 top-0 z-[45] flex flex-col overflow-hidden rounded-b-lg border-2 ${borderClass} bg-terminal-surface shadow-xl cluihud-panel-focus ${
-        closing ? "quake-exit" : "quake-enter"
-      }`}
+      className={`${closing ? "quake-exit" : "quake-enter"} absolute inset-x-2 top-0 z-[45] flex flex-col overflow-hidden rounded-b-lg border-2 ${borderClass} bg-terminal-surface shadow-xl cluihud-panel-focus`}
       onMouseDown={() => {
         setFocusZone("quake");
         terminalService.focusActive("quake");

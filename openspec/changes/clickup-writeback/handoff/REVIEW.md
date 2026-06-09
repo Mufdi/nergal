@@ -1,0 +1,11 @@
+# REVIEW — clickup-writeback
+
+## Pre-build: iterative-plan-review (Claude evaluator, adversarial, codebase-verified)
+2 rounds → **APPROVED**. R1: 12 findings [2 critical, 3 high] → R2: APPROVED with low/accepted residuals (documented in design Risks).
+
+Round-1 criticals (resolved): (1) split-brain — optimistic value persisted to the durable mirror before API ack → moved optimism to a **frontend overlay**; the durable mirror is written only on ack (a crash loses at most an un-acked edit, never corrupts the mirror); (2) comments don't fit the field-keyed echo/rollback model and lack idempotency → a **separate post-once model**: insert-after-id, no auto-retry on ambiguous failure, re-fetch-before-retry, never optimistically rolled back. Round-1 highs (resolved): (3) UI-only security boundary on a full-access token → a **backend confirmation-token gate** as the sole entry for closure + comment writes + command-boundary validation (mirrors the agent-spawned-worktrees structural gate); (4) assumed per-field reconcile → echo/conflict read field values from the **fetched whole-task payload** (only "poller hands writeback the payloads" is required); (5) `date_updated` too coarse → demoted to a "task changed" trigger, echo/order by **value comparison**. Mediums: field-class conflict resolution (scalar LWW+warn / additive merge-no-false-warning), edge-triggered idempotent closure, TTL ≥ 2× poll, partial-closure irreversibility surfaced, type-correct custom-field writes, cross-change echo-before-assignment ordering regression test, prefill sanitization.
+
+Round-2 residuals (documented, non-blocking): benign `recent_writes` crash-loss (one spurious self-notification, no corruption); value-equality echo can mask a coincidental same-value remote write; routine reversible writes token-gated only by server-side validation (accepted tradeoff, flagged for the security reviewer); comment echo-match could collapse two identical comments cosmetically. All in design § Risks.
+
+## Post-build reviewers
+_Placeholder — populated during Mode B execute (security escalation for the write paths + the token-gated closure; verify the gate is un-bypassable and echo-before-assignment ordering holds)._

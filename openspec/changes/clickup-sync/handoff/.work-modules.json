@@ -1,0 +1,29 @@
+{
+  "tier": "XL",
+  "tier_source": "user-stated (deep change per openspec/config.yaml ceremony classification)",
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "discovery_note": "Discovery crystallized in-conversation with the user; interview questions skipped per user instruction. Codebase validated (no assumptions): reqwest present, migrations at db.rs:132 max 014, config dir, no keyring crate, injected_context contract, worktree.rs:261, rightPanel.ts, TopBar.",
+    "iprev_rounds": 2,
+    "iprev_evaluator": "claude",
+    "iprev_verdict": "APPROVED",
+    "reviewer_mode": "iterative-plan-review (pre-build) planned; security + deps escalation planned for build",
+    "gates_phases_planned": ["compile", "test", "lint", "security", "deps", "scope"],
+    "per_phase_models": {
+      "design": "claude-opus (this session)",
+      "implementation": "TBD at build",
+      "exploration": "claude (codebase verification this session)"
+    }
+  },
+  "spec_target": "clickup-mirror, clickup-task-panel",
+  "ceremony": "deep (implementation.md mandatory per openspec/config.yaml)",
+  "status": "plan-approved (iprev 2 rounds, Claude); implementation NOT started",
+  "implementation_order": 1,
+  "depends_on": [],
+  "parallel_track": "independent of context-bridge MCP-first changes",
+  "notes": [
+    "keyring = new dep (deps-review).",
+    "Migration number assigned at build time = next free (>=015); 014/015 in context-bridge specs are stale, avoid collision.",
+    "Synergy: cluihud-mcp-server should later expose the bound task via MCP (folded into that change, see memory project_clickup_integration)."
+  ]
+}

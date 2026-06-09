@@ -1,0 +1,29 @@
+{
+  "tier": "L",
+  "tier_source": "user-stated (deep change per openspec/config.yaml ceremony classification)",
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "discovery_note": "Discovery crystallized in-conversation. Codebase validated: pty.rs:396 assembler, agents/mod.rs:296+310 contract, pty.rs:388 pending_prompts, pty.rs:880 reinject live-PTY write, worktree.rs:261, sessions JSON-column precedent.",
+    "iprev_rounds": 2,
+    "iprev_evaluator": "claude",
+    "iprev_verdict": "APPROVED",
+    "reviewer_mode": "iterative-plan-review (pre-build) planned; reviewer escalation planned for the pty.rs hot-path edit",
+    "gates_phases_planned": ["compile", "test", "lint", "scope"],
+    "per_phase_models": {
+      "design": "claude-opus (this session)",
+      "implementation": "TBD at build",
+      "exploration": "claude (codebase verification this session)"
+    }
+  },
+  "spec_target": "clickup-agent-integration",
+  "ceremony": "deep (implementation.md mandatory per openspec/config.yaml)",
+  "status": "plan-approved (iprev 2 rounds, Claude); implementation NOT started",
+  "implementation_order": 2,
+  "depends_on": ["clickup-sync"],
+  "parallel_track": "independent of context-bridge MCP-first changes",
+  "notes": [
+    "No new ContextInjection variant — rides the existing single injected_context channel.",
+    "Worktree verb = user-initiated create_worktree, NOT the agent-spawned-worktrees change.",
+    "Edits the spawn hot path pty.rs:396 — preserve byte-identical-when-empty + lock discipline."
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "tier": "L",
+  "tier_source": "user-stated (deep change per openspec/config.yaml ceremony classification)",
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "discovery_note": "Discovery crystallized in-conversation. Codebase validated: client.rs/poller.rs from clickup-sync, SessionStatus models.rs:8 + lib.rs:702 Completed branch, date_updated on task payloads, active_clickup_task_id binding from clickup-task-integration.",
+    "iprev_rounds": 2,
+    "iprev_evaluator": "claude",
+    "iprev_verdict": "APPROVED",
+    "reviewer_mode": "iterative-plan-review (pre-build) planned; security escalation planned for the write paths + closure",
+    "gates_phases_planned": ["compile", "test", "lint", "security", "scope"],
+    "per_phase_models": {
+      "design": "claude-opus (this session)",
+      "implementation": "TBD at build",
+      "exploration": "claude (codebase verification this session)"
+    }
+  },
+  "spec_target": "clickup-writeback",
+  "ceremony": "deep (implementation.md mandatory per openspec/config.yaml)",
+  "status": "plan-approved (iprev 2 rounds, Claude); implementation NOT started",
+  "implementation_order": 3,
+  "depends_on": ["clickup-sync", "clickup-task-integration"],
+  "parallel_track": "independent of context-bridge MCP-first changes",
+  "notes": [
+    "No migration (pending_writes is in-memory).",
+    "Echo-dedup MUST run before new-assignment detection so an own write never self-notifies.",
+    "Every write is outward-facing; closure is human-confirmed by design — no auto-write path."
+  ]
+}

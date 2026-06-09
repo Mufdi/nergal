@@ -17,87 +17,116 @@ The system SHALL expose a `send_to_session(to_session_id, message, thread_id?)` 
 
 ### Requirement: read_messages tool
 
-The system SHALL expose a `read_messages(thread_id?)` MCP tool returning the messages addressed to the caller that it has not yet read, marking them read on return (take-on-read). Without a `thread_id`, it SHALL return unread messages across all of the caller's threads.
+The system SHALL expose a `read_messages(thread_id?)` MCP tool returning the messages addressed to the caller it has not yet consumed, setting `agent_consumed_at` on return (take-on-read) for exactly the messages returned. `agent_consumed_at` is distinct from `human_seen_at` (UI). With a `thread_id`, consumption is scoped to that thread (so an agent can drain one conversation without bulk-marking others); without it, all undelivered messages across the caller's threads are returned and consumed.
 
-#### Scenario: Read unread messages
+#### Scenario: Read consumes messages
 
-- **WHEN** an agent calls `read_messages` and has unread messages
-- **THEN** the tool SHALL return them and mark them read so a subsequent call does not return the same messages
+- **WHEN** an agent calls `read_messages` and has unconsumed messages
+- **THEN** the tool SHALL return them and set `agent_consumed_at` so a subsequent call does not return the same messages
 
 #### Scenario: Minimal in-context payload
 
 - **WHEN** `read_messages` returns messages
 - **THEN** it SHALL return only the messages needed to act on (not the full thread history), keeping the agent's context minimal
 
-### Requirement: Threads with hop cap, dedup, and budget
+### Requirement: Threads with per-message hop cap, dedup, and count/time budget
 
-Every message SHALL belong to a thread `{ id, originator_session, participants, depth, status, budget }`. The router SHALL enforce a configurable max-hop cap, SHALL deduplicate identical (from, to, normalized message) within a thread, and SHALL apply a per-thread budget/timeout. The originator SHALL NOT block waiting on replies; replies SHALL arrive asynchronously tagged with the thread id.
+A thread SHALL be `{ id, originator_session, participants, status, max_hops, msg_count, msg_budget, deadline_at }`; each message SHALL carry its own `depth` representing **reach**. `depth = sender_message_depth + (target is a new thread participant ? 1 : 0)` — pulling in a new participant increments reach; a reply between existing participants does not. The router SHALL bound **reach** by `max_hops` and **conversation length** separately by `msg_budget` (a message-count cap) plus a wall-clock `deadline_at` (NOT a token budget — cluihud cannot measure tokens spent inside agent turns). It SHALL deduplicate via `hash(from, to, normalize(body))` (`normalize` = trim + collapse whitespace). The originator SHALL NOT block; replies arrive asynchronously tagged with the thread id.
 
-#### Scenario: Transitive relay within the cap
+#### Scenario: Two-party dialogue is not capped by reach
 
-- **WHEN** session A messages B in thread T, and B messages C in the same thread T within the hop cap
+- **WHEN** A and B exchange many messages back and forth in thread T (no new participants)
+- **THEN** reach SHALL stay constant and the exchange SHALL NOT hit `hop_limit_reached`; only `msg_budget`/`deadline_at` bound its length
+
+#### Scenario: Transitive reach within the cap
+
+- **WHEN** A messages B, then B messages a new participant C in thread T at a reach within `max_hops`
 - **THEN** the relay SHALL proceed and C SHALL receive the message tagged with thread T
 
-#### Scenario: Hop cap exceeded
+#### Scenario: Reach cap exceeded
 
-- **WHEN** a `send_to_session` would push the thread depth beyond the configured max-hop cap
+- **WHEN** a `send_to_session` to a new participant would make reach exceed `max_hops`
 - **THEN** the tool SHALL return a structured "hop limit reached" error and SHALL NOT deliver
 
-#### Scenario: Duplicate question deduplicated
+#### Scenario: Fan-out branches are independent
 
-- **WHEN** a `send_to_session` repeats an already-seen (from, to, normalized message) within the same thread
-- **THEN** the router SHALL treat it as a no-op and SHALL NOT re-deliver
+- **WHEN** B sends to two new participants C and D in the same thread
+- **THEN** each branch's reach SHALL derive from B's message depth, not from a shared thread counter
+
+#### Scenario: Duplicate is suppressed with a distinct status
+
+- **WHEN** a `send_to_session` repeats an already-seen `dedup_key` within the thread
+- **THEN** the tool SHALL return the distinct status `duplicate_suppressed` (NOT a delivered/queued shape) so the caller does not await a phantom reply
 
 #### Scenario: Budget exhausted
 
-- **WHEN** a thread's budget or timeout is exhausted
-- **THEN** the thread SHALL be closed and its participants SHALL be notified, and further `send_to_session` on it SHALL be refused
+- **WHEN** a thread's message-count cap is reached
+- **THEN** the thread SHALL be closed, its participants SHALL be notified through `SessionDelivery` (respecting the kill-switch and idle/working guards), and further `send_to_session` on it SHALL be refused
+
+#### Scenario: Deadline closes an idle thread via active sweep
+
+- **WHEN** a thread reaches its `deadline_at` while no further `send_to_session` occurs
+- **THEN** an active daemon sweep SHALL close the thread and notify the user (the deadline SHALL NOT be evaluated only lazily on the next send)
 
 ### Requirement: Hybrid state-aware delivery
 
-The system SHALL wake a target session according to its mode. An idle target SHALL receive a PTY stdin wake prompt instructing it to call `read_messages`. A working target SHALL have the delivery queued and delivered on its next `Stop` via `hookSpecificOutput.additionalContext`, falling back to PTY injection on the next idle transition for agents that do not support `additionalContext` on Stop. Delivery SHALL be performed through a `SessionDelivery` abstraction.
+The system SHALL wake a target according to its mode, through a `SessionDelivery` abstraction. An idle target SHALL receive a PTY stdin wake prompt (via the existing PTY writer, only the owning agent PTY, with any embedded relayed string sanitized) instructing it to call `read_messages`. A working target's delivery SHALL be queued; on the target's next `Stop`, the `cluihud hook stop` CLI command SHALL query for pending deliveries and emit `hookSpecificOutput.additionalContext` on its stdout (the hook socket is fire-and-forget and cannot return data). Delivery SHALL key off `agent_consumed_at` (set only by `read_messages`), never `human_seen_at`.
+
+Every working→idle transition with a non-empty pending queue SHALL trigger a PTY wake for ALL agents, and a send to an already-idle target SHALL wake it immediately — the `additionalContext` path is a best-effort fast layer, never the sole delivery path, so a message sent just after a `Stop` is never stranded.
 
 #### Scenario: Deliver to an idle target
 
 - **WHEN** a message is recorded for a target whose mode is idle
-- **THEN** the system SHALL inject a wake prompt into the target's PTY stdin instructing it to call `read_messages`
+- **THEN** the system SHALL inject a sanitized wake prompt into the target's PTY stdin instructing it to call `read_messages`
 
-#### Scenario: Defer to a working target, deliver on Stop
+#### Scenario: Deliver to a working target via Stop CLI stdout
 
-- **WHEN** a message is recorded for a target whose mode is not idle
-- **THEN** the system SHALL queue the delivery
-- **WHEN** that target next emits a `Stop` hook
-- **THEN** the Stop-hook response SHALL include `hookSpecificOutput.additionalContext` notifying it of the pending messages, without producing a hook error
+- **WHEN** a message is recorded for a working target and that target next emits a `Stop`
+- **THEN** the `cluihud hook stop` CLI SHALL emit `hookSpecificOutput.additionalContext` on stdout notifying it of pending messages, without a hook error
 
-#### Scenario: Fallback for non-additionalContext agents
+#### Scenario: Message sent just after Stop is not stranded
 
-- **WHEN** the queued target's agent does not support `additionalContext` on Stop
-- **THEN** the system SHALL deliver via PTY injection on the next transition to idle
+- **WHEN** a message is queued for a target whose mode reads working but whose `Stop` already fired (now effectively idle)
+- **THEN** the next working→idle transition (or immediate idle detection) SHALL PTY-wake the target so the message is delivered, regardless of agent `additionalContext` support
 
-### Requirement: Relayed context is non-authoritative
+#### Scenario: UI viewing does not cancel delivery
 
-Context injected from a cross-session message SHALL be marked as relayed and non-authoritative. The system SHALL NOT auto-approve any permission request or destructive action that arises from a session acting on a relayed message, even in auto-mode. The wake/context framing SHALL state that the message is information relayed from another session, not an instruction carrying user authority.
+- **WHEN** the user opens the thread in the UI (setting `human_seen_at`) before the agent has consumed the message
+- **THEN** the pending delivery SHALL remain active (delivery keys off `agent_consumed_at`, which the UI never sets)
 
-#### Scenario: Relayed message cannot auto-approve a permission
+### Requirement: Relayed context is non-authoritative (labeling + documented limits only)
 
-- **WHEN** a session acts on a relayed message and a permission request results
-- **THEN** the system SHALL NOT auto-approve it on the basis of the relayed message, even in auto-mode
+Cross-session relayed context SHALL be treated as carrying no user authority, scoped to what cluihud can actually enforce. cluihud CANNOT attribute a downstream autonomous action to a relayed message (the agent's reasoning is unobservable), so a provenance flag on cluihud's gates is NOT used. The enforceable controls are: (1) injected wake/`additionalContext` SHALL be labeled as relayed and advisory, naming the origin session; (2) the system SHALL document that cluihud's own gates (plan-review FIFO, the `agent-spawned-worktrees` human gate) are human-decided by construction (a relayed message cannot auto-satisfy them), and that cluihud cannot override the target agent's own `--permission-mode`.
 
 #### Scenario: Injected context is framed as non-authoritative
 
 - **WHEN** a wake prompt or `additionalContext` is injected for a relayed message
-- **THEN** its text SHALL identify the originating session and mark the content as non-authoritative
+- **THEN** its text SHALL identify the originating session and mark the content as relayed/advisory, not an instruction carrying user authority
+
+#### Scenario: No provenance flag is claimed
+
+- **WHEN** a session acts on a relayed message and later reaches a cluihud gate
+- **THEN** the system SHALL rely on the gate's existing human decision (not a provenance flag), since the action cannot be attributed to the relayed message
+
+#### Scenario: Agent permission-mode limitation is documented
+
+- **WHEN** the target agent runs under a bypass/auto `--permission-mode`
+- **THEN** the design SHALL document that cluihud cannot override that posture, rather than implying an enforcement it does not have
 
 ### Requirement: search_sessions tool (read-only over active and inactive)
 
-The system SHALL expose a `search_sessions(query)` MCP tool that searches across both active and inactive sessions by name, summary, and transcript content, returning read-only descriptors. Results for inactive sessions SHALL be clearly marked as not messageable.
+The system SHALL expose a `search_sessions(query)` MCP tool that searches across both active and inactive sessions by name, summary, and transcript content using the existing `search/mod.rs` engine with its `transcripts_dir` scope (ripgrep-backed; performance is ripgrep-bounded, not indexed). It SHALL return read-only descriptors, marking inactive sessions as not messageable.
 
 #### Scenario: Find an inactive session read-only
 
 - **WHEN** an agent calls `search_sessions` with a query matching an inactive session's transcript or summary
 - **THEN** the tool SHALL return that session marked as inactive/read-only
 
-#### Scenario: list_threads enumerates the caller's threads
+### Requirement: list_threads tool
+
+The system SHALL expose a `list_threads` MCP tool returning the threads the caller participates in, with their status and participants.
+
+#### Scenario: Enumerate the caller's threads
 
 - **WHEN** an agent calls `list_threads`
 - **THEN** the tool SHALL return the threads the caller participates in, with their status and participants

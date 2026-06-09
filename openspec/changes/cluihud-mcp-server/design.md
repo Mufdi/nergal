@@ -1,83 +1,116 @@
 ## Context
 
-cluihud is a long-lived Tauri process that already holds, in memory and SQLite, the state of every session it spawns: PTY handles, `CLUIHUD_SESSION_ID` per session, mode map (idle/active/tool), git metadata, activity stream, and transcript paths. It communicates with hook CLI subprocesses over a Unix socket (`/tmp/cluihud.sock`) and FIFOs. The agent adapters (`src-tauri/src/agents/<agent>/adapter.rs`) inject `CLUIHUD_SESSION_ID` at spawn for every agent.
+cluihud is a long-lived Tauri process that already holds, in memory and SQLite, the state of every session it spawns: PTY handles, `CLUIHUD_SESSION_ID` per session, mode map (idle/active/tool), git metadata, activity stream, and transcript paths. The agent adapters (`agents/claude_code/adapter.rs:228`, `pi:168`, `opencode:209`, `codex:175`) inject `CLUIHUD_SESSION_ID` at spawn for every agent.
 
-Modern agent CLIs support MCP servers as stdio subprocesses. CC injects `CLAUDE_CODE_SESSION_ID` + `CLAUDECODE=1` into stdio MCP server env (v2.1.154, also on `--resume` per v2.1.163). Codex, Pi, and OpenCode all support MCP server configuration.
+**Verified codebase facts that shape this design (checked 2026-06-08):**
+- The existing hook Unix socket (`hooks/server.rs:202`) is **fire-and-forget**: the accept loop (`server.rs:205-261`) reads newline-delimited lines via `BufReader::lines()` and dispatches `process_event`; it has **no response/write path**. It cannot carry MCP request/response. → MCP needs a **new bidirectional transport**, not a message tag on this socket.
+- There is **no LLM-invocation path anywhere in the backend**. `obsidian/post_session.rs` is marker/lock/detached-drain plumbing; `moc.rs` builds summaries by string concatenation. There is no model selection, auth-for-inference, token accounting, or transcript-read-for-prompt. → `session-summary` is **net-new LLM machinery**, not a reuse of existing code.
+- `AgentRuntimeState` (`agents/state.rs:25`) is guarded by a blocking `std::sync::Mutex` and maps `cluihud_session_id -> AgentId` (`register_session`/`resolve`/`forget_session`).
 
-This change exposes cluihud's session state to those agents through MCP, without inventing a new protocol the agent must learn.
+CC injects `CLAUDE_CODE_SESSION_ID` + `CLAUDECODE=1` into stdio MCP server env (v2.1.154, also on `--resume` per v2.1.163). Codex, Pi, OpenCode support MCP server configuration.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- A single source of truth (one daemon) for the live session directory across all workspaces.
-- Agent-agnostic access via a thin stdio shim, reusing the existing socket IPC.
-- Zero-config identity correlation between the MCP connection and the cluihud session.
-- Cheap, always-fresh directory metadata that needs no AI.
-- Opt-in AI summaries as a separable enrichment, never a hard dependency.
-- Fold background tasks/crons (CC v2.1.150) into the session descriptor additively.
+- A single daemon owning the live session directory across all workspaces.
+- Agent-agnostic access via a thin stdio shim over a dedicated, authenticated transport.
+- Cooperative env-hint identity within a uid wall — honest about being self-asserted, not adversarially authenticated.
+- Cheap, always-fresh directory metadata with bounded lock scope (no reactor stalls).
+- Opt-in AI summaries built honestly as net-new LLM machinery, off by default.
+- Background tasks/crons (CC v2.1.150) folded into the descriptor additively.
 
 **Non-Goals:**
-- Cross-session *messaging* (send/read between sessions) — that is `cross-session-messaging`.
-- Agent-initiated *creation* of sessions — that is `agent-spawned-worktrees`.
-- Exposing transcripts wholesale over MCP (a summary + recent activity is enough here; full search lands in `cross-session-messaging`).
-- HTTP/SSE MCP transport (stdio shim is sufficient for v1; the daemon boundary leaves HTTP as a later option).
+- Cross-session *messaging* — `cross-session-messaging`.
+- Agent-initiated *creation* of sessions — `agent-spawned-worktrees`.
+- Per-caller authorization on directory reads (Decision 2b: the directory is global-read within the uid; identity is not an access gate here). The uid wall is the only enforced boundary.
+- HTTP/SSE MCP transport (the dedicated socket is sufficient for v1; the daemon boundary leaves HTTP as a later option).
 
 ## Decisions
 
-### 1. Single daemon + stdio shim, not a server per session
+### 1. New bidirectional transport, NOT reuse of the hook socket
 
-**Decision**: The MCP "server" is the cluihud app process (the daemon). Each agent spawns a thin stdio shim (`cluihud mcp`) that speaks MCP JSON-RPC on its stdin/stdout and forwards requests to the daemon over `/tmp/cluihud.sock`. The daemon answers from its global state.
+**Decision**: The MCP daemon exposes a **dedicated Unix socket** (`/tmp/cluihud-mcp.sock`, mode `0600`, in a per-user dir) speaking length-framed JSON-RPC with per-request response correlation. The existing hook socket is left untouched (it is fire-and-forget and cannot answer requests).
 
-**Why**: The directory and (later) routing need a global view of all sessions. A per-session in-process server would each see only its own session. A single daemon already exists (the app) and already owns the state. The shim is stateless and cheap.
+**Why**: MCP (`initialize`, `tools/list`, `tools/call`) requires request→response over a persistent bidirectional connection. `server.rs` has no write-back path and frames by newline, which can't carry multi-line JSON-RPC. Bolting responses onto it would be a larger, riskier change than a clean dedicated transport.
 
-**Alternatives considered**:
-- *In-process MCP server per agent*: no global view; would need inter-process gossip. Rejected.
-- *HTTP/SSE endpoint from the daemon, agents configured with HTTP transport*: viable and avoids a subprocess, but stdio reuses the existing socket + the `cluihud` binary that is already installed and registered, and gets the `CLAUDE_CODE_SESSION_ID` env injection for free. HTTP is kept as a future option behind the same daemon boundary. Rejected for v1.
+**Framing**: length-prefixed JSON (4-byte LE length + payload) to avoid newline-in-JSON ambiguity. The shim and daemon share one transport module.
 
-### 2. Identity correlation via env, reported by the shim on connect
+**Transport trait** (multiplatform): `trait McpTransport { fn accept(); fn recv_framed(); fn send_framed(); }` with a `UnixSocketTransport` impl; a future `NamedPipeTransport` (Windows) drops in without touching dispatch.
 
-**Decision**: On startup the shim reads `CLUIHUD_SESSION_ID` (always present — our adapters inject it) and `CLAUDE_CODE_SESSION_ID` (present for CC). It announces both to the daemon on the socket handshake. The daemon records the mapping; `CLUIHUD_SESSION_ID` is authoritative, `CLAUDE_CODE_SESSION_ID` is a confirming cross-check for CC sessions.
+### 2. Cooperative identity from the env hint; the uid is the only real boundary
 
-**Why**: This makes `whoami` and all per-caller routing zero-config. It works for non-CC agents because `CLUIHUD_SESSION_ID` is agent-agnostic.
+**Decision**: Identity is the `CLUIHUD_SESSION_ID` (and `CLAUDE_CODE_SESSION_ID`) the shim reports, **validated against the daemon's live session registry** (the daemon knows which session ids are real, live sessions — it spawned them). It is treated as a **cooperative** identifier, not an adversarial authentication. The only enforced boundary is the **uid**: the socket is mode `0600` in a per-user directory, and the daemon additionally checks `peer_cred().uid()` and rejects other uids.
 
-**Edge**: If neither env var is present (agent launched outside cluihud, or MCP started before adapter injection), the daemon returns a clearly-marked "unidentified caller" and `whoami` reports null. The shim does not guess.
+**Why the elaborate pid-walk was dropped** (round-2 finding): a `/proc` PPID-walk from the peer pid up to a session `child_pid` is **TOCTOU-unsound** (the peer pid is fixed at `connect(2)`, but `/proc/<pid>/stat` and the parent chain are read later and can change; pid recycling could even walk into a *different* session's `child_pid`) and it defends a threat that does not exist here: against a **same-uid** adversary there is no boundary to defend — that process can already `ptrace` the shim or read `/proc/<agent-pid>/environ` to lift `CLUIHUD_SESSION_ID` directly. So peer-cred-pid resolution buys **no confidentiality** over the env hint against the only adversary in scope, while adding racy code. The honest baseline is: cooperative env identity + a uid wall.
 
-### 3. Directory metadata is cheap and always fresh; AI summary is separate
+**What identity is for here**: `whoami`'s self-answer, and laying the groundwork for `cross-session-messaging` sender attribution (knowing which session a message claims to be from). It is **not** an access gate in this change — see Decision 2b.
 
-**Decision**: `list_sessions` / `get_session` return only data cluihud already has in memory or can read instantly: name, workspace, branch, agent, mode + `waitingFor`, last-activity timestamp, recently-touched files, and background tasks/crons. No AI, no transcript parse on the hot path.
+**Race handling**: a shim that connects before its session is registered is `unidentified`; identity is re-validated lazily on each tool call, so it becomes identified as soon as the registry knows the id. Teardown on disconnect drops the connection→session binding and the `claude_code_session_id -> cluihud_session_id` side map (alongside `forget_session`, `state.rs:81`).
 
-**Why**: The common case (an agent choosing whom to talk to) needs current, free metadata. Coupling the directory to AI summarization would make every `list_sessions` slow and costly.
+**Multiplatform**: the uid check + socket perms are unix; behind the identity abstraction so a Windows port supplies its own per-user restriction.
 
-**CC enrichment (optional)**: For CC sessions the daemon MAY cross-check `waitingFor`/`state` against `claude agents --json` (v2.1.162/168), but the daemon's own state is primary so the directory stays agent-agnostic.
+### 2b. The directory is intentionally global-read within the uid
 
-### 4. Background tasks / crons folded in additively
+**Decision**: `list_sessions` / `get_session` do **not** gate on caller identity. Any same-uid caller that reaches the socket reads every live session's descriptor (cross-workspace paths, branches, recently-touched files, and — when enabled — summaries). This is stated plainly rather than implied away.
 
-**Decision**: Extend `HookEvent::Stop` (and `SubagentStop`) with `background_tasks: Option<Vec<BackgroundTask>>` and `session_crons: Option<Vec<SessionCron>>`, both `#[serde(default)]`. Capture into session state; surface in `get_session`.
+**Why**: This is a single-user desktop app; the sessions all belong to one person. A same-uid access wall (Decision 2) is the real boundary; per-caller authorization inside it would be theater (the same user owns all sessions and the env that identifies them). The descriptor schema documents this cross-workspace exposure (`session-directory` spec). If a future multi-user or sandboxed scenario appears, read-gating on identity tier is the extension point — out of scope now.
 
-**Why**: CC v2.1.150 already sends these. Additive deserialization keeps older payloads valid. This closes the "Surface background tasks y crons" backlog item by exposing them through the directory rather than (only) a panel.
+**Lazy re-resolution**: identity is resolved **per tool call**, not once on connect, so a shim that connected before its session registered (race) becomes identified as soon as the daemon learns the mapping — no permanently-null connection.
 
-### 5. Opt-in AI summary via a shared detached summarizer
+**Lifecycle**: on socket disconnect (peer close) the daemon drops the connection→session binding. The `claude_code_session_id -> cluihud_session_id` side map is torn down alongside `forget_session` (`state.rs:81`). "Live session" = a session with an active PTY child known to the daemon; that set is the directory's liveness source.
 
-**Decision**: A `session-summary` capability. When enabled (global setting, per-project override), a detached runner invokes a cheap model (haiku) to read the transcript and produce a short rolling summary (a few sentences). Stored in the session store; refreshed on `Stop` (debounced) and on demand. The same summarizer entrypoint serves M4's post-session MOC summary (different consumer, same machinery).
+### 3. Cheap directory with bounded lock scope; enrichment off the hot path
 
-**Why**: Summaries cost tokens and touch transcript content (privacy). Off by default. Sharing the summarizer with M4 avoids two divergent summarization paths.
+**Decision**: `list_sessions`/`get_session` assemble from data cluihud already holds, using a **snapshot-then-release** discipline: acquire the `AgentRuntimeState` mutex only to copy the cheap fields out, release it, then do any git/IO **outside** the lock. No blocking call (git, subprocess) runs while the mutex is held.
 
-**Refresh policy**: debounce on `Stop` (avoid summarizing mid-turn); cap frequency; never block a directory read — if no summary exists yet, the descriptor's `summary` is null.
+`claude agents --json` enrichment (CC `waitingFor`/`state`, v2.1.162/168) is **out-of-band**: refreshed on a timer / on hook events into a cache, never spawned synchronously on a directory read. The daemon's own state stays primary and is what a read returns; the cache is a non-blocking overlay.
 
-### 6. Delivery/IPC behind an adapter boundary (multiplatform constraint)
+**Why**: `AgentRuntimeState` is a blocking `std::sync::Mutex` inside async handlers; holding it across git/subprocess I/O would serialize all sessions and stall the tokio reactor. The spec's "always fresh" and "cheap hot path" only hold if the lock is released before slow work and subprocess spawns never sit on the read path.
 
-**Decision**: The socket transport between shim and daemon is accessed through a small transport trait, and any future wake/delivery mechanism (used by `cross-session-messaging`) sits behind a `SessionDelivery` abstraction. v1 implements the unix path (`/tmp/cluihud.sock`); the trait leaves room for Windows named pipes without touching call sites.
+### 4. Background tasks/crons — additive
 
-**Why**: The "App multiplataforma" backlog item is a known future direction. Pinning unix socket assumptions into the MCP/messaging core would inflate that future port. The abstraction is cheap to add now.
+**Decision**: Extend `HookEvent::Stop` / `SubagentStop` (`hooks/events.rs:27`) with `background_tasks: Vec<BackgroundTask>` and `session_crons: Vec<SessionCron>` (`#[serde(default)]`). Capture into session state; surface in `get_session`.
+
+**Why**: CC v2.1.150 already sends these. Additive deserialization keeps older payloads valid (existing `hooks/` tests cover this).
+
+### 5. Opt-in AI summary — net-new LLM machinery, honestly scoped
+
+**Decision**: `session-summary` is **new** inference machinery, not an extraction from `post_session.rs`. It requires: a model-invocation path (cheap model, e.g. haiku), credential resolution via a **dedicated configured API key** (`config.rs` setting), token accounting, transcript read, a detached runner, and **SQLite persistence** (a migration in `src-tauri/migrations/`, not ad-hoc state). Off by default; global setting + per-project override. When disabled, nothing is read, invoked, stored, or sent.
+
+**Credential decision** (round-2 finding): do **not** attempt to reuse the session's own agent auth. CC/Codex/Pi credentials live in their own config/keychains, are scoped to that agent's own usage, and lifting them to issue independent inference calls is fragile, conflates billing, and repeats the "reuse what doesn't cleanly exist" mistake. A separate configured key is the only clean path; if no key is configured, summaries stay off with a clear settings hint.
+
+**Why**: The review verified no summarizer exists to reuse. Pretending otherwise hid real cost. M4's eventual MOC summary can later share this new entrypoint, but this change builds it from zero.
+
+**Storage**: a `session_summaries(session_id PK, summary TEXT, model TEXT, token_cost INT, updated_at INT)` table via migration. Precedence: per-project-enabled gates whether a row is written at all. "Never on disk when disabled" = no row, no transcript read.
+
+**Refresh**: debounce on `Stop` (avoid mid-turn), frequency cap, timestamped; a directory read never blocks on it (returns last row or null).
+
+### 6. MCP protocol surface ownership
+
+**Decision**: The **daemon owns the tool registry and JSON schemas**. The shim is a pure relay: `initialize` and `tools/list` are forwarded to the daemon. In daemon-unreachable (degraded) mode the shim answers `initialize` locally and returns a **static, vendored tool list** for `tools/list`, and a structured error for `tools/call`. **Both** the vendored tool list **and** the `initialize` capabilities/`protocolVersion` reported in degraded mode are generated from the same daemon-registry source at build time, so a degraded `initialize` cannot drift from what the daemon advertises.
+
+**Why**: `tools/list` must return input/output schemas and `initialize` must report capabilities; without a single build-time source, the shim would either duplicate (drift) or be unable to answer when degraded.
+
+### 7. Registration is idempotent and reversible
+
+**Decision**: Registering `cluihud mcp` into agent configs (CC `mcpServers` in `~/.claude.json`; Codex/Pi/OpenCode equivalents) is idempotent (no duplicate entries on re-run). The registered command **pins the installed absolute path `/usr/bin/cluihud`** (the `.deb`/`.rpm` install location), explicitly **not** a `$PATH` resolution at registration time — `$PATH` would bake in the `~/.cargo/bin/cluihud` shadow that CLAUDE.md documents. Cleanup is **best-effort at disable time** (the app is running and can edit the configs). Uninstall-time deregistration is **not** attempted from maintainer scripts (those run as root, but the configs live in each user's `$HOME` — fragile and unspecified); an orphaned entry after uninstall degrades to a structured error when the agent tries to spawn the missing binary, not a hard agent failure.
+
+**Why**: The project already hit binary-path fragility (cargo-install shadowing `/usr/bin/cluihud`, per CLAUDE.md). Pinning the install path avoids re-introducing the shadow; honest best-effort cleanup avoids promising an uninstall hook that can't be reliably implemented across multi-user `$HOME` layouts.
+
+### 8. Default-off until the trust baseline is proven
+
+**Decision**: `mcp_server_enabled` defaults to **off** for the initial release. It is opt-in until the directory's global-read posture (Decision 2b) is something the user knowingly turns on and the dependent changes exist.
+
+**Why**: A partial-failure daemon still gets registered into agent configs; default-off is the safe rollback posture, and the directory exposes cross-workspace data to any same-uid caller (Decision 2b) so it should be an explicit opt-in.
 
 ## Risks / Trade-offs
 
-**[Risk] Shim cannot reach the daemon (app not running / socket missing)** → The shim still satisfies the MCP handshake and returns a structured error on tool calls ("cluihud daemon not reachable"), so the agent gets a clean failure rather than a hang. Mirror CC v2.1.162's fix for deep `$TMPDIR` socket paths: validate the socket path early.
+**[Risk] New transport is more code than "reuse the socket"** → Accepted and re-estimated (see proposal `files_estimate`). It is the honest cost; the fire-and-forget hook socket genuinely cannot answer requests.
 
-**[Risk] Unidentified caller pollutes the directory** → Unidentified shims are not added to the directory and cannot resolve `whoami`; they receive a read-only view at most. No silent guessing.
+**[Risk] Transport framing bugs (partial reads, short writes, length corruption)** → The length-prefixed read-exact loop is the highest-risk new code. Enforced by explicit unit tests for fragmented frames, oversized length, and zero-length payloads (tasks §8.1). Unix socket perms (0600) + uid check behind the identity abstraction for a Windows port.
 
-**[Risk] AI summary leaks transcript content / costs tokens** → Strictly opt-in, off by default, per-project override; nothing is written or sent when disabled. Cheap model only.
+**[Risk] Mutex held across slow I/O stalls the reactor** → Snapshot-then-release (Decision 3) has two enforcement layers because no single check covers both hazard shapes: (a) holding the guard across an `.await` is caught automatically by **`clippy::await_holding_lock`** (in `cargo clippy -- -D warnings`); (b) holding the `std::sync::Mutex` across a **synchronous** blocking call (git via `std::process::Command` in `worktree.rs`, blocking `std::fs`) has **no `.await`**, so the lint cannot see it — this case is prevented structurally (the assembly function takes a snapshot of owned data and the guard is dropped before any git/fs/subprocess call) and verified in **code review**. The structural rule, not the lint, is the primary guarantee; the lint is a backstop for the async sub-case.
 
-**[Risk] Stale directory data** → Metadata is read from live state on each call, not cached, so mode/branch/activity are current. The only potentially-stale field is the AI summary, which is explicitly best-effort and timestamped.
+**[Risk] AI summary cost/privacy** → Off by default, per-project override, cheap model, dedicated configured key (no agent-auth reuse), SQLite row only when enabled, nothing read/invoked when disabled.
 
-**[Trade-off] stdio shim adds a subprocess per session** → Accepted. It is thin and short-lived per request batch, reuses the existing binary, and buys agent-agnostic identity correlation for free.
+**[Trace] Tests** → JSON-RPC dispatch, transport framing (fragmented/oversized/zero-length), the identity-validation table (valid env id matching a live session / invalid id → unidentified / connect-before-register → lazy resolve), the disabled-daemon error path, and descriptor assembly are pure or near-pure and MUST have unit tests (not manual-only). See tasks §8.

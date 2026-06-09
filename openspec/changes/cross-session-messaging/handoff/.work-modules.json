@@ -1,0 +1,29 @@
+{
+  "tier": "XL",
+  "tier_source": "user-stated (deep change per openspec/config.yaml ceremony classification)",
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "discovery_note": "Discovery done in-conversation; tier interview skipped per user instruction.",
+    "iprev_rounds": 4,
+    "iprev_evaluator": "claude",
+    "iprev_verdict": "APPROVED",
+    "reviewer_mode": "iterative-plan-review (pre-build); security escalation planned for build",
+    "gates_phases_planned": ["compile", "test", "lint", "security", "scope"],
+    "per_phase_models": {
+      "design": "claude-opus (this session)",
+      "implementation": "TBD at build",
+      "exploration": "claude (codebase verification this session)"
+    }
+  },
+  "spec_target": "cross-session-messaging, cross-session-history-ui",
+  "ceremony": "deep (implementation.md mandatory per openspec/config.yaml)",
+  "events": [
+    { "type": "iprev-round", "n": 1, "result": "REVISE", "note": "CRITICAL relayed_origin gate unimplementable (provenance unobservable); read-state collapse; liveness hole; token budget unmeasurable; +12 more" },
+    { "type": "iprev-round", "n": 2, "result": "REVISE", "note": "design Risks resurrected killed gate; impl §1 old schema; per-message depth amputated 2-party dialogue (reach vs turns); TOCTOU drain; deadline no sweeper" },
+    { "type": "iprev-round", "n": 3, "result": "REVISE", "note": "1 residual: tasks §1.1 stale depth +1 formula vs §3.1 reach" },
+    { "type": "iprev-round", "n": 4, "result": "APPROVED", "note": "schema byte-aligned + reach semantics agree across all docs" }
+  ],
+  "status": "plan-approved; implementation NOT started",
+  "implementation_order": 2,
+  "depends_on": ["cluihud-mcp-server"]
+}

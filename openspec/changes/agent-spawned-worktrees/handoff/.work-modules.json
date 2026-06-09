@@ -1,0 +1,30 @@
+{
+  "tier": "L",
+  "tier_source": "user-stated (deep change per openspec/config.yaml ceremony classification)",
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "discovery_note": "Discovery done in-conversation; tier interview skipped per user instruction.",
+    "iprev_rounds": 5,
+    "iprev_evaluator": "claude",
+    "iprev_verdict": "APPROVED",
+    "reviewer_mode": "iterative-plan-review (pre-build); security escalation planned for build",
+    "gates_phases_planned": ["compile", "test", "lint", "security", "scope"],
+    "per_phase_models": {
+      "design": "claude-opus (this session)",
+      "implementation": "TBD at build",
+      "exploration": "claude (codebase verification this session)"
+    }
+  },
+  "spec_target": "agent-spawned-worktrees",
+  "ceremony": "deep (implementation.md mandatory per openspec/config.yaml)",
+  "events": [
+    { "type": "iprev-round", "n": 1, "result": "REVISE", "note": "2 blockers: async tool-result contradiction; timeout→orphan. + false launch-options-presets reuse; branch collision data-loss" },
+    { "type": "iprev-round", "n": 2, "result": "REVISE", "note": "6 NEW: atomic-purge vs pollable-status (need ledger); restart push-notify impossible; agent/preset escalation surface; spawn-fail orphan; timeout default; structural test" },
+    { "type": "iprev-round", "n": 3, "result": "REVISE", "note": "1 residual: proposal + tasks 5.2 restart→timed_out vs spec not_found" },
+    { "type": "iprev-round", "n": 4, "result": "REVISE", "note": "third occurrence: proposal Build-contract restart→timed_out" },
+    { "type": "iprev-round", "n": 5, "result": "APPROVED", "note": "restart→not_found uniform across all 5 docs" }
+  ],
+  "status": "plan-approved; implementation NOT started",
+  "implementation_order": 3,
+  "depends_on": ["cluihud-mcp-server", "cross-session-messaging"]
+}

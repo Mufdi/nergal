@@ -19,16 +19,16 @@ The system SHALL provide a dedicated right-panel view ("Cross-session") that ren
 - **WHEN** a session that participated in a thread is later closed
 - **THEN** that thread SHALL remain fully viewable in the panel
 
-### Requirement: SessionRow unread badge
+### Requirement: SessionRow unread badge (human-seen, independent of agent delivery)
 
-The system SHALL show a lightweight unread indicator on a `SessionRow` when that session has unread cross-session messages, reusing the existing pending-indicator pattern. The badge SHALL clear when the messages are read.
+The system SHALL show a lightweight unread indicator on a `SessionRow` when that session has cross-session messages the **user** has not yet seen, reusing the existing pending-indicator pattern. The badge SHALL track `human_seen_at` only and SHALL clear when the user opens the thread. It SHALL NOT key off `agent_consumed_at`, and opening the thread SHALL NOT set `agent_consumed_at` — the UI must never cancel a pending agent delivery.
 
 #### Scenario: Badge appears on new message
 
-- **WHEN** a session receives a new cross-session message it has not read
+- **WHEN** a session receives a new cross-session message the user has not seen
 - **THEN** its `SessionRow` SHALL show the unread badge
 
-#### Scenario: Badge clears on read
+#### Scenario: Badge clears on human view without cancelling delivery
 
-- **WHEN** the session's unread messages are read (the agent calls `read_messages` or the user opens the thread)
-- **THEN** the unread badge SHALL clear
+- **WHEN** the user opens the thread
+- **THEN** the badge SHALL clear (setting `human_seen_at`), and any pending agent delivery SHALL remain active (its `agent_consumed_at` is untouched)

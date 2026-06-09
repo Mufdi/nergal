@@ -9,53 +9,60 @@ This change replaces the foundation half of the archived `context-bridge` change
 ## What Changes
 
 - New **single MCP daemon** owned by the cluihud app process, holding the global view of all live sessions across all workspaces.
-- New **stdio MCP shim** subcommand (`cluihud mcp`) that each agent spawns; it bridges MCP JSON-RPC to the daemon over the existing Unix socket. Agent-agnostic (works for any agent with stdio MCP support: CC, Codex, Pi, OpenCode).
-- **Identity correlation**: the shim reports `CLAUDE_CODE_SESSION_ID` (when present, CC v2.1.154+/163) and `CLUIHUD_SESSION_ID` (always, injected by our adapters) so the daemon maps each MCP connection to its cluihud session without user config.
-- **Session directory** exposed via MCP tools (`list_sessions`, `get_session`, `whoami`) returning cheap, always-fresh metadata: name, workspace, branch, agent, mode/`waitingFor`, last-activity, recently-touched files, and (additively) `background_tasks` / `session_crons` captured from Stop hooks (CC v2.1.150).
-- **Opt-in AI session summary** as an enrichment layer: when enabled, a detached cheap-model (haiku) runner produces a short rolling summary per session, surfaced in the directory. Shares the summarizer with M4's post-session MOC summary.
-- New settings: enable/disable the MCP server, enable/disable AI summaries (global + per-project), summary refresh policy.
+- New **dedicated bidirectional transport** for MCP: a hardened Unix socket (`/tmp/cluihud-mcp.sock`, mode `0600`, length-framed JSON-RPC). The existing hook socket (`hooks/server.rs:202`) is **fire-and-forget** (read-only, no response path) and is **not** reused for MCP — verified against `server.rs:205-261`.
+- New **stdio MCP shim** subcommand (`cluihud mcp`) that each agent spawns; it relays MCP JSON-RPC to the daemon over the dedicated socket. Agent-agnostic (CC, Codex, Pi, OpenCode).
+- **uid-restricted socket + cooperative identity**: the socket (mode `0600`, per-user dir, `peer_cred().uid()` check) is the only access boundary. Identity is the `CLUIHUD_SESSION_ID` / `CLAUDE_CODE_SESSION_ID` the shim reports, validated against the live session registry — cooperative within the uid, not adversarially authenticated (a same-uid process can read the agent's env directly, so a `/proc` pid-walk would be TOCTOU-racy theater). Validation is lazy (per tool call) to survive the connect-before-register race. The directory is **intentionally global-read within the uid** (stated, not implied).
+- **Session directory** via MCP tools (`whoami`, `list_sessions`, `get_session`) returning cheap, always-fresh metadata assembled with **snapshot-then-release** lock discipline (no git/subprocess I/O under the `AgentRuntimeState` mutex). `claude agents --json` enrichment is cached out-of-band, never on the hot path.
+- **Background tasks/crons** captured additively from Stop hooks (CC v2.1.150) into `get_session`.
+- **Opt-in AI session summary** built as **net-new LLM machinery** (no inference path exists in the backend today — verified): model invocation, credential resolution, token accounting, transcript read, detached runner, and SQLite persistence via a migration. Off by default; global + per-project. M4's MOC summary can later share this new entrypoint.
+- **Idempotent registration** of `cluihud mcp` into agent MCP configs (pinned `/usr/bin/cluihud`), deregistered best-effort on disable; an orphaned entry after uninstall degrades to a structured error.
+- New settings; `mcp_server_enabled` defaults **off** until the trust baseline is validated.
 
 ## Capabilities
 
 ### New Capabilities
-- `cluihud-mcp-server`: The MCP daemon, the stdio shim transport, agent registration/config, identity correlation, and the `whoami` self-identification tool.
-- `session-directory`: The `list_sessions` / `get_session` MCP tools, the session descriptor schema (incl. background tasks/crons), and the rule that directory data is cheap and always fresh (no AI required).
-- `session-summary`: Opt-in AI summary enrichment — the shared summarizer, refresh policy, storage, and surfacing in the directory.
+- `cluihud-mcp-server`: The MCP daemon, the dedicated bidirectional transport + stdio shim, uid-restricted socket + cooperative env-hint identity (validated against the live registry, lazy re-validation, connection teardown), the explicit global-read-within-uid directory posture, idempotent agent registration (pinned install path, best-effort disable-time deregistration), protocol-surface ownership (daemon owns tool schemas + degraded-mode capabilities; shim degrades to a build-time vendored list), and the `whoami` tool.
+- `session-directory`: The `list_sessions` / `get_session` tools, the descriptor schema (incl. background tasks/crons), snapshot-then-release freshness without reactor stalls, and the data-classification note for cross-workspace fields.
+- `session-summary`: Opt-in net-new AI summary machinery — model invocation, SQLite-backed storage (migration), refresh policy, and surfacing in the directory; nothing read/invoked/stored when disabled.
 
 ### Modified Capabilities
-<!-- None. The hook pipeline extension that captures background_tasks/session_crons into session state is additive plumbing, not a spec-level behavior change to an existing capability. -->
+<!-- None. The Stop-hook extension that captures background_tasks/session_crons is additive (`#[serde(default)]`), not a spec-level behavior change to an existing capability. -->
 
 ## Impact
 
-- **Backend**: new `mcp/` module (daemon + tool dispatch + descriptor assembly), new `cluihud mcp` CLI subcommand (`hooks/cli.rs` or a new `mcp/shim.rs`), session store gains summary + background-tasks/crons fields, `hooks/events.rs` Stop schema extended (`#[serde(default)]`), new Tauri commands + settings.
-- **Frontend**: settings UI for MCP server + AI summaries; directory data is consumed by agents (no new user-facing panel in this change — panels arrive in `cross-session-messaging`).
-- **File system**: registration snippet in agent MCP config (e.g. `~/.claude.json` / `mcpServers`) pointing at `cluihud mcp`. No new project files.
-- **Existing flows**: the adapter spawn path already injects `CLUIHUD_SESSION_ID`; this change adds reading it back in the shim. The Stop hook handler gains additive fields.
+- **Backend**: new `mcp/` module (daemon + dedicated transport + JSON-RPC dispatch + tool registry + descriptor assembly + identity resolver), new `cluihud mcp` CLI subcommand (`mcp/shim.rs`), net-new LLM summarizer path (`mcp/summary.rs` or `summary/`), new SQLite migration(s) under `src-tauri/migrations/` (session summaries; bg-tasks/crons if persisted), `hooks/events.rs` Stop schema extended (`#[serde(default)]`), new Tauri commands + settings.
+- **Frontend**: settings UI for MCP server (default off) + AI summaries (global + per-project).
+- **File system**: dedicated MCP socket `/tmp/cluihud-mcp.sock` (0600); idempotent registration snippet (pinned `/usr/bin/cluihud`) in agent MCP config (`~/.claude.json` `mcpServers`, Codex/Pi/OpenCode equivalents) with best-effort disable-time deregistration.
+- **Existing flows**: adapters already inject `CLUIHUD_SESSION_ID`; the daemon now resolves identity from pid + hint. The Stop hook handler gains additive fields. The hook socket is untouched.
 
 ## Build contract
 
 ### Qué construyo
-- MCP daemon inside the cluihud process + `cluihud mcp` stdio shim bridging to the daemon socket.
-- Identity correlation map (`CLAUDE_CODE_SESSION_ID` ↔ `CLUIHUD_SESSION_ID`).
-- MCP tools: `whoami`, `list_sessions`, `get_session`.
-- Session descriptor assembly from existing session store + mode map + git metadata + recent activity + (additive) background tasks/crons.
-- Opt-in AI summary runner (haiku) + storage + directory surfacing.
-- Settings (MCP enable, summaries enable global/per-project) + agent MCP-config registration.
+- MCP daemon + dedicated length-framed JSON-RPC transport over a uid-restricted Unix socket (0600 + `peer_cred().uid()` check) + `cluihud mcp` stdio shim.
+- Cooperative env-hint identity validated against the live registry; lazy re-validation; teardown on disconnect. No `/proc` pid-walk (TOCTOU theater).
+- MCP tools: `whoami`, `list_sessions`, `get_session` (global-read within the uid); descriptor assembly with snapshot-then-release lock discipline (enforced by `clippy::await_holding_lock`) + out-of-band `claude agents --json` cache.
+- Stop-hook additive `background_tasks` + `session_crons`.
+- Net-new opt-in AI summarizer: model invocation via a dedicated configured key (no agent-auth reuse) + token accounting + transcript read + detached runner + SQLite migration (`session_summaries`).
+- Idempotent agent MCP-config registration (pinned `/usr/bin/cluihud`, best-effort disable-time deregistration); protocol-surface ownership (daemon registry, shim build-time vendored `tools/list` + `initialize` capabilities for degraded mode).
+- Settings (MCP enable default off, AI summaries global/per-project + key).
+- Unit tests: transport framing (fragmented/oversized/zero-length), JSON-RPC dispatch, identity-validation table, disabled-daemon path, descriptor assembly, legacy Stop deserialization.
 
 ### Cómo verifico
 - `cd src-tauri && cargo clippy -- -D warnings && cargo test && cargo fmt --check`
 - `npx tsc --noEmit`
-- Manual: register `cluihud mcp` in CC, run two sessions, call `list_sessions` from one and confirm it sees the other with correct workspace/branch/mode; call `whoami` and confirm the returned id matches the routing map; toggle AI summaries and confirm a summary appears.
+- Unit: transport framing + dispatch + identity-validation table (valid id matching live session / unknown id → unidentified / lazy resolve / disconnect teardown) + disabled-path + descriptor assembly.
+- Manual: two sessions, `list_sessions` cross-workspace visibility; `whoami` correctness (CC + one non-CC); a different-uid connection is rejected; bg-tasks surfacing; AI summary on/off (no SQLite row + no transcript read when off).
 
 ### Criterio de done
-- An agent in session A can enumerate session B (different workspace) with fresh metadata via `list_sessions`.
-- `whoami` resolves the caller to the correct cluihud session id for CC and at least one non-CC agent.
-- Background tasks/crons from a Stop hook appear in `get_session` when present.
-- AI summaries are off by default; when enabled, a non-empty summary appears within one refresh cycle and never on disk when disabled.
+- An agent in session A enumerates session B (different workspace) with fresh metadata; no reactor stall under repeated `list_sessions` (`clippy::await_holding_lock` clean).
+- `whoami` resolves CC + one non-CC correctly; a different-uid process cannot connect; identity within the uid is cooperative and the directory is global-read by design.
+- Background tasks/crons from a Stop hook appear in `get_session`; legacy Stop payloads still deserialize.
+- AI summaries off by default; when enabled a non-empty summary appears within one refresh cycle, persisted in SQLite; when disabled there is no row and no transcript read.
+- Registration is idempotent; disabling the server deregisters it from agent configs.
 
 ### Estimated scope
-- files_estimate: 14
-- risk_tier: medium
-- tags: [feature]
+- files_estimate: 20
+- risk_tier: critical
+- tags: [feature, security]
 - visibility: public
 - spec_target: cluihud-mcp-server, session-directory, session-summary

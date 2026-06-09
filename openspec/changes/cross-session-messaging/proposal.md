@@ -8,16 +8,17 @@ cluihud owns every PTY, the hook pipeline, and now the MCP directory — it is t
 
 - New MCP tools on the cluihud server: `send_to_session`, `read_messages`, `list_threads`, and a read-only `search_sessions` (over active **and** inactive sessions).
 - **cluihud-owned message store** (SQLite), separate from any agent transcript — the durable, auditable record of every cross-session exchange.
-- **Hybrid delivery** that wakes a target session without the user: target idle → PTY stdin injection of a short "you have messages, call `read_messages`" wake prompt; target working → queue, then deliver on its next `Stop` via `hookSpecificOutput.additionalContext` (CC v2.1.163), falling back to PTY injection for agents without that capability.
-- **Non-authoritative injection**: relayed cross-session context carries no user authority — cluihud SHALL NOT auto-approve permission requests or destructive actions triggered by acting on a relayed message (mirrors CC v2.1.166).
-- **Thread model** for the transitive case: every exchange belongs to a thread with an id, originator, participant set, hop depth, and a budget; the router enforces a max-hop cap, deduplicates identical questions, and applies a per-thread timeout/budget to prevent infinite or runaway relays. Responses are delivered asynchronously so a caller is never blocked waiting on a long chain.
-- **Active vs inactive asymmetry**: messaging targets a session with a live agent; an inactive (closed) session can only be *read* (transcript/summary via `search_sessions`), not messaged — to involve it the agent uses `agent-spawned-worktrees` to revive/create.
-- New UI: a dedicated, navigable **right panel** ("Cross-session") holding the persistent thread history, plus a lightweight unread badge on `SessionRow`.
+- **Hybrid delivery** that wakes a target without the user: idle → PTY stdin wake prompt; working → queue, deliver via the `cluihud hook stop` CLI emitting `hookSpecificOutput.additionalContext` on stdout (CC v2.1.163; the hook socket is fire-and-forget, so the CLI's stdout is where it's emitted). **Liveness guarantee**: every working→idle transition drains the pending queue via PTY wake for ALL agents, so a message sent just after a `Stop` is never stranded. Delivery keys off `agent_consumed_at`, a column separate from the UI's `human_seen_at` (the UI never cancels delivery).
+- **Non-authoritative posture (labeling + documented limits only)**: relayed context is labeled advisory. cluihud cannot attribute a downstream autonomous action to a relayed message (unobservable reasoning), so no provenance gate is claimed; its own gates are human-decided by construction, and it cannot override the agent's `--permission-mode` (`models.rs:104`) — both documented, not implied.
+- **Thread model** for the transitive case: a thread with id/originator/participants/status; each message carries its own `depth` (per-branch hop cap, not a thread scalar); dedup returns a distinct `duplicate_suppressed` status; budget is a **message-count cap + wall-clock deadline** (NOT tokens — cluihud can't measure agent-side tokens). Async replies; caller never blocks.
+- **Kill-switch**: a `cross_session_messaging_enabled` config flag (default off) gates ALL delivery — the halt switch for a critical-tier autonomous PTY-injecting router.
+- **Active vs inactive asymmetry**: messaging targets a live agent; an inactive session is *read-only* via `search_sessions` (the existing `search/mod.rs` `transcripts_dir` scope), not messaged — to involve it the agent uses `agent-spawned-worktrees`.
+- New UI: a dedicated, navigable **right panel** ("Cross-session") holding the persistent thread history, plus a `human_seen`-based unread badge on `SessionRow`.
 
 ## Capabilities
 
 ### New Capabilities
-- `cross-session-messaging`: The `send_to_session` / `read_messages` / `list_threads` / `search_sessions` tools, the message store, hybrid state-aware delivery, the non-authoritative rule, and the thread model with hop cap / dedup / budget.
+- `cross-session-messaging`: The `send_to_session` / `read_messages` / `list_threads` / `search_sessions` tools, the migration-backed message store (consumed-vs-seen separated), hybrid state-aware delivery with the idle-transition liveness drain, the non-authoritative labeling posture, the per-message thread model (hop cap / dedup-status / count-time budget), and the kill-switch.
 - `cross-session-history-ui`: The right-panel thread viewer (persistent, navigable, auditable) and the `SessionRow` unread badge.
 
 ### Modified Capabilities
@@ -25,7 +26,7 @@ cluihud owns every PTY, the hook pipeline, and now the MCP directory — it is t
 
 ## Impact
 
-- **Backend**: extend `src-tauri/src/mcp/` with messaging tools; new message/thread store (SQLite tables); a `SessionDelivery` abstraction wrapping PTY injection + Stop-hook `additionalContext`; Stop-hook handler returns `additionalContext` when deliveries are queued; thread router (hop cap, dedup, budget).
+- **Backend**: extend `src-tauri/src/mcp/` with messaging tools; migration `015_cross_session.sql` (thread + message tables, registered in `db.rs:132`); a `SessionDelivery` abstraction wrapping PTY injection + the `cluihud hook stop` CLI stdout emit (the socket is fire-and-forget); thread router (per-message hop cap, dedup-status, count/time budget); kill-switch config.
 - **Frontend**: new `stores/crossSession.ts`; right-panel view + thread list/detail components; `SessionRow` unread badge; TopBar icon + keyboard shortcut (verify `shortcuts.ts`).
 - **File system**: messages live in the cluihud SQLite DB, not in project files.
 - **Existing flows**: the Stop-hook handler gains a delivery-injection branch; the PTY writer gains a wake-prompt path. Both behind the delivery abstraction.
@@ -34,27 +35,29 @@ cluihud owns every PTY, the hook pipeline, and now the MCP directory — it is t
 
 ### Qué construyo
 - MCP tools: `send_to_session`, `read_messages`, `list_threads`, `search_sessions`.
-- SQLite message + thread store (cluihud-owned).
-- `SessionDelivery` hybrid: idle → PTY wake; working → Stop-hook `additionalContext` (fallback PTY).
-- Non-authoritative enforcement on relayed-message-triggered permission/destructive actions.
-- Thread model: id, originator, participants, hop depth, max-hop cap, dedup, per-thread budget/timeout, async responses.
-- Active/inactive asymmetry (send → active only; search → read-only over both).
-- Right-panel "Cross-session" thread viewer + `SessionRow` unread badge + shortcut.
+- Migration `015_cross_session.sql` (thread + message tables; `agent_consumed_at` vs `human_seen_at`; per-message `depth`; `dedup_key`).
+- `SessionDelivery` hybrid: idle → sanitized PTY wake; working → `cluihud hook stop` CLI stdout `additionalContext`; **idle-transition drain for ALL agents** (no stranding).
+- Non-authoritative posture: labeling + documented limits (no provenance gate — unattributable).
+- Thread router: per-message hop cap, dedup → `duplicate_suppressed`, msg-count + wall-clock budget, async replies.
+- Kill-switch config `cross_session_messaging_enabled` (default off).
+- Active/inactive asymmetry (send → active only; search → read-only over both via `search/mod.rs` transcripts scope).
+- Right-panel "Cross-session" thread viewer + `human_seen` `SessionRow` badge + shortcut.
 
 ### Cómo verifico
 - `cd src-tauri && cargo clippy -- -D warnings && cargo test && cargo fmt --check`
 - `npx tsc --noEmit`
-- Manual: A `send_to_session(B)` while B idle → B wakes and reads; repeat while B working → B receives on next Stop without an error turn; drive A→B→C and confirm the hop cap rejects beyond the limit; confirm a relayed message cannot auto-approve a permission prompt; confirm the right panel shows the full thread and the badge clears on read.
+- Automated `cargo test`: hop-cap rejection, dedup → `duplicate_suppressed`, budget exhaustion, `agent_consumed_at`/`human_seen_at` separation, idle-transition drain.
+- Manual: A `send_to_session(B)` while B idle → B wakes and reads; while B working → B receives on next Stop without an error turn; send just after B's Stop → delivered on next idle (not stranded); A→B→C per-message hop cap rejects beyond the limit; opening the panel does not cancel a pending delivery.
 
 ### Criterio de done
-- A and B exchange a full turn autonomously with no user copy-paste, in both idle and working target states.
-- The transitive A→B→C relay works and is bounded by the hop cap with dedup and budget enforced.
-- A relayed message never carries user authority (no auto-approve, no destructive trigger).
+- A and B exchange a full turn autonomously, in both idle and working states, including the send-just-after-Stop case (no stranding).
+- The transitive A→B→C relay is bounded by the per-message hop cap; dedup returns `duplicate_suppressed`; msg-count/deadline budget closes the thread.
+- Relayed context is labeled advisory; the kill-switch halts all delivery; documented limits are accurate (no over-claimed enforcement).
 - `search_sessions` finds an inactive session read-only and refuses to message it.
-- The thread history is fully reviewable later in the right panel; the unread badge reflects state.
+- UI badge tracks `human_seen` and never cancels an agent delivery.
 
 ### Estimated scope
-- files_estimate: 16
+- files_estimate: 18
 - risk_tier: critical
 - tags: [feature, security]
 - visibility: public

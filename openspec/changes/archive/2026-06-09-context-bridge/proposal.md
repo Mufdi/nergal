@@ -1,3 +1,5 @@
+> **SUPERSEDED 2026-06-08 — never implemented.** This file-bus + PTY-injection + CAMBIO/CONSENSO approach was discarded in favour of an MCP-first architecture. Replaced by three chained changes: `cluihud-mcp-server` (session directory foundation), `cross-session-messaging` (agent-to-agent comms over MCP), and `agent-spawned-worktrees` (autonomous worktree creation with human gate). Spec deltas here were never applied to main specs (`openspec archive --skip-specs`). Kept for historical context. See `~/Documents/Obsidian23/Projects/nergal/Context-bridge re-análisis.md`.
+
 ## Why
 
 Multiple Claude Code sessions running in parallel (e.g., backend + frontend, main + worktree) frequently produce context relevant to each other. Today the user manually routes context between sessions using a shared markdown file and the word "CAMBIO" — a protocol that works but requires constant human intervention. cluihud already owns every PTY and receives all hook events, making it the natural automatic router.

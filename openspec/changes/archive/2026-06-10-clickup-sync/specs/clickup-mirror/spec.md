@@ -25,6 +25,12 @@ The system SHALL store the user's ClickUp Personal API token in the OS keyring (
 - **WHEN** a request fails or an error is logged
 - **THEN** the error string and log output SHALL NOT contain the token
 
+#### Scenario: Transient keyring failure is not a missing token
+
+- **WHEN** reading the token fails with a transient keyring error (e.g. a D-Bus failure), as opposed to a definitive no-entry
+- **THEN** the system SHALL surface a transient error state, NOT a "no token configured" state
+- **AND** the poll loop SHALL retry on subsequent cycles instead of terminating
+
 ### Requirement: Structure-agnostic local mirror of the ClickUp hierarchy
 
 The system SHALL maintain a local SQLite mirror modeling the generic `Space → Folder → List → Task → Subtask` tree with real foreign keys, such that adding a Folder, List, status, or custom field in ClickUp is absorbed as data without a code change or migration. Statuses SHALL be stored per-List (not an enum). Custom fields SHALL be stored as definitions plus per-task values keyed by field id, rendered by type; definitions SHALL be derived from task payloads with `scope_*` as nullable best-effort. Folderless Lists SHALL be represented under a folder row flagged `hidden`. Subtasks SHALL be tasks with a non-null `parent_id`, and the subtask tree SHALL be built solely from `parent_id` (populated from the flat `parent` field of the all-tasks fetch), not from the nested detail array. The panel SHALL read its view-model exclusively from the mirror.
@@ -85,6 +91,12 @@ The system SHALL poll **all** tasks per Space (no assignee filter), so that un-a
 - **THEN** the system SHALL let the user choose which to sync
 - **AND** SHALL NOT silently sync only the first team
 
+#### Scenario: Token or team change reflects immediately
+
+- **WHEN** the user sets a token or selects a team
+- **THEN** the system SHALL emit a `syncing` status immediately, without waiting for the first network cycle (the persisted snapshot is stale until then)
+- **AND** selecting a different team SHALL tombstone the previous team's mirror contents
+
 ### Requirement: Atomic reconcile with absent-task tombstoning
 
 The system SHALL refresh the mirror on a configurable interval by fetching everything a cycle needs first, then committing in a single SQLite transaction with upsert order `spaces → folders → lists → statuses → tasks → subdata`, so the panel never reads a torn mid-reconcile state and a mid-cycle network failure commits nothing. A task whose `list_id` is unknown to the fetched hierarchy SHALL synthesize a placeholder list row and log it, never abort the poll on a foreign-key violation. A complete per-Space all-tasks fetch SHALL be authoritative: mirror tasks for that Space absent from the fetch SHALL be tombstoned (`stale = 1`); hierarchy rows absent from a fetch SHALL be tombstoned, not hard-deleted mid-iteration; any row reappearing in a later fetch SHALL be un-tombstoned (`stale = 0`). After each committed reconcile the system SHALL emit `clickup:changed`. The system SHALL NOT use webhooks.
@@ -98,8 +110,14 @@ The system SHALL refresh the mirror on a configurable interval by fetching every
 #### Scenario: Closed or deleted task is tombstoned
 
 - **WHEN** a task present in the mirror is absent from a complete Space fetch (closed, deleted, or moved away)
-- **THEN** the system SHALL mark it `stale = 1`
+- **THEN** the system SHALL mark it `stale = 1` and record when it went stale
 - **AND** SHALL un-tombstone it if it reappears in a later fetch
+
+#### Scenario: Garbage collection only removes childless tombstones
+
+- **WHEN** tombstoned rows are garbage-collected after their retention window
+- **THEN** only rows with no live child rows SHALL be deleted (a cascade would take live children with them)
+- **AND** a tombstoned row with live descendants SHALL be retained until its subtree is also stale
 
 #### Scenario: Unknown list id does not crash the poll
 

@@ -1,7 +1,8 @@
-# clickup-task-panel
+# clickup-task-panel Specification
 
-## ADDED Requirements
-
+## Purpose
+TBD - created by archiving change clickup-sync. Update Purpose after archive.
+## Requirements
 ### Requirement: Read-only ClickUp right panel
 
 The system SHALL provide a right-panel view registered as a singleton `clickup` view (category `tool`), openable from a TopBar icon and a keyboard shortcut, whose entry point is shown only when a ClickUp token is configured. The panel SHALL render its task list exclusively from the mirror and SHALL refresh on the `clickup:changed` event. The panel SHALL be read-only in this capability; write affordances are introduced by `clickup-writeback`.
@@ -16,6 +17,12 @@ The system SHALL provide a right-panel view registered as a singleton `clickup` 
 - **WHEN** the user opens the panel with a configured token
 - **THEN** the panel SHALL list tasks read from the mirror
 - **AND** SHALL update when a `clickup:changed` event fires
+
+#### Scenario: Panel works without an active session
+
+- **WHEN** the user opens the panel while no session is active
+- **THEN** the panel SHALL render the task list normally under a session-independent panel key
+- **AND** SHALL NOT render an empty surface or depend on per-session panel state
 
 ### Requirement: Space scoping and organization
 
@@ -37,6 +44,22 @@ The panel SHALL present a persistent Space selector in its header offering "Todo
 
 - **WHEN** the user enables the assigned-to-me filter
 - **THEN** the panel SHALL show only tasks whose assignees include the token's user
+- **AND** the filter SHALL resolve the user from an id cached at token validation, not from a possibly-stale status event
+
+### Requirement: Closed tasks shown via ephemeral fetch
+
+The panel SHALL offer a show-closed toggle that fetches closed tasks on demand. The fetched closed tasks SHALL be ephemeral: never written to the mirror (an upsert would un-tombstone them and fight the next reconcile), merged client-side with the mirror's open tasks, and subject to the same local filters (Space scope, assigned-to-me, group-by).
+
+#### Scenario: Closed tasks never touch the mirror
+
+- **WHEN** the user enables show-closed and the panel fetches closed tasks
+- **THEN** the fetched tasks SHALL be merged into the view client-side
+- **AND** SHALL NOT be upserted into the mirror
+
+#### Scenario: Closed tasks respect assigned-to-me
+
+- **WHEN** show-closed and assigned-to-me are both active
+- **THEN** the panel SHALL show only the user's own closed tasks
 
 ### Requirement: Keyboard-first navigation
 
@@ -84,3 +107,4 @@ ClickUp task descriptions and comments are multi-writer untrusted input rendered
 - **WHEN** the task list renders
 - **THEN** no attachment thumbnail SHALL auto-load in a list row
 - **AND** thumbnails SHALL load only on detail open, gated against non-image URLs
+

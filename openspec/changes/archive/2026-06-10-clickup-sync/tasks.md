@@ -58,4 +58,4 @@
 
 - [x] 6.1 `cd src-tauri && cargo clippy -- -D warnings && cargo test && cargo fmt --check`
 - [x] 6.2 `npx tsc --noEmit`
-- [ ] 6.3 Manual walk per proposal § Cómo verifico.
+- [x] 6.3 Manual walk per proposal § Cómo verifico. (Round 1 2026-06-10 → 8 fixes; round 2 re-test passed all 7 checks.)

@@ -1,4 +1,4 @@
-schema: spec-driven
+schema: spec-driven-impl
 
 context: |
   Desktop app wrapper para Claude Code CLI (Plan Pro) en Linux.
@@ -28,11 +28,16 @@ rules:
     - Tareas atómicas y accionables — cada una debe poder implementarse sin depender de contexto externo
     - Cambios de schema SQLite como migraciones en src-tauri/migrations/
     - Incluir descripción de schema (campos, tipos, FKs) en cada tarea de creación de tabla
-    - Al finalizar la generación de todos los artifacts, si no se realizó evaluación de complejidad previamente (vía /discovery), evaluar complejidad del change (low/medium/high). Para changes medium o high, entrar en plan mode con objetivo de escribir implementation.md en el directorio del change. Este archivo documenta el plan detallado de implementación mapeado contra el codebase actual (archivos a tocar, funciones existentes a reutilizar, orden de ejecución, edge cases). No se implementa código — solo se documenta. Para changes low, implementation.md es opcional.
-    - Antes de implementar tareas, verificar si existe implementation.md en el directorio del change. Si existe, leerlo primero — contiene el plan detallado de implementación con archivos, patrones y orden de ejecución que debe guiar la implementación.
+    - Antes de implementar las tareas, leer implementation.md primero (cuando exista) — es el plan con archivos, patrones y orden de ejecución que guía la implementación.
     - "Auto-detección de tareas completadas (inspirado en Kiro): al reescribir tasks.md durante una revision, verificar contra el codebase actual qué tareas ya están implementadas (archivos creados, funciones existentes, migraciones aplicadas). Marcar esas tareas como [x] automáticamente en vez de requerir que el usuario las re-checkee manualmente."
-
-  apply:
+    # NOTE: las 3 reglas siguientes vivían bajo `apply:` — openspec las descartaba
+    # silenciosamente (`apply` es una fase, no un artifact). Movidas a `tasks` para
+    # que se inyecten vía `openspec instructions tasks`.
     - "Mid-implementation revision: cuando la implementación revela que el design es incorrecto o subóptimo, actualizar los artifacts del change existente (no crear uno nuevo) si el intent original se mantiene. Agregar sección '## Revision N: <título>' en design.md documentando qué cambió y por qué. Reescribir tasks.md preservando tareas completadas que siguen siendo válidas y reemplazando las que cambian. Reescribir implementation.md con el nuevo approach."
     - "Post-implementation spec update: después de completar todas las tareas, verificar si la implementación reveló comportamientos o decisiones no capturadas en las specs. Si es así, actualizar las delta specs del change antes de archivar. Las specs deben reflejar la realidad implementada, no solo la intención original."
     - "Revert de tareas invalidadas: si una revision invalida tareas ya completadas, revertir el código de esas tareas antes de reimplementar. Marcar como '- [ ] (revised)' en tasks.md para distinguirlas de tareas nuevas."
+
+  implementation:
+    - "Anclar contra el código real: verificar símbolos contra archivos en disco y citar line refs (path:line). NO asumir APIs. Sección 'Verified codebase facts (do not re-assume)' obligatoria."
+    - "Documentar el plan detallado mapeado al codebase actual: archivos a tocar, funciones existentes a reutilizar, orden de ejecución, edge cases, per-phase risk con mitigación. No se implementa código — solo se documenta."
+    - "Para changes SQLite, mapear los cambios de schema a migraciones concretas en src-tauri/migrations/NNN_*.sql con el siguiente número disponible."

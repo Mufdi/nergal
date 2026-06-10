@@ -29,6 +29,7 @@ import {
   type ContextInjectionTier,
 } from "@/stores/pinnedNotes";
 import { obsidianEnabledAtom } from "@/stores/obsidian";
+import { clickupConfiguredAtom } from "@/stores/clickup";
 import { toastsAtom } from "@/stores/toast";
 import { configAtom } from "@/stores/config";
 import { activePlanCapabilityAtom, fetchPlanCapabilityAction } from "@/stores/plan";
@@ -56,6 +57,7 @@ import {
   SquareTerminal,
 } from "lucide-react";
 import { ObsidianIcon } from "@/components/icons/ObsidianIcon";
+import { ClickUpIcon } from "@/components/icons/ClickUpIcon";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Tooltip,
@@ -144,6 +146,7 @@ const PANEL_BUTTONS: {
   { type: "git", label: "Git", shortcut: "Ctrl+Shift+G", icon: GitBranch },
   { type: "browser", label: "Browser", shortcut: "Ctrl+Alt+B", icon: Globe },
   { type: "obsidiannote", label: "Obsidian", shortcut: "Ctrl+Shift+Q", icon: ObsidianIcon },
+  { type: "clickup", label: "ClickUp", shortcut: "Ctrl+Shift+M", icon: ClickUpIcon },
 ];
 
 
@@ -165,9 +168,11 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
 
   const planAvailable = planCapability?.kind !== "NotApplicable";
   const obsidianEnabled = useAtomValue(obsidianEnabledAtom);
+  const clickupConfigured = useAtomValue(clickupConfiguredAtom);
   const visiblePanelButtons = PANEL_BUTTONS.filter((b) => {
     if (b.type === "plan" && !planAvailable) return false;
     if (b.type === "obsidiannote" && !obsidianEnabled) return false;
+    if (b.type === "clickup" && !clickupConfigured) return false;
     return true;
   });
 

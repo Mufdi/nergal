@@ -23,6 +23,7 @@ import {
   X,
 } from "lucide-react";
 import { ObsidianIcon } from "@/components/icons/ObsidianIcon";
+import { ClickUpIcon } from "@/components/icons/ClickUpIcon";
 import { activeSessionPinnedNotesAtom } from "@/stores/pinnedNotes";
 import type { ComponentType } from "react";
 
@@ -36,6 +37,7 @@ const TAB_ICONS: Record<TabType, ComponentType<{ size?: number | string; classNa
   transcript: ScrollText,
   browser: Globe,
   obsidiannote: ObsidianIcon,
+  clickup: ClickUpIcon,
 };
 
 export function TabBar() {

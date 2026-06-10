@@ -1,0 +1,13 @@
+{
+  "user": {
+    "id": 81234567,
+    "username": "Felipe",
+    "email": "felipe@example.com",
+    "color": "#7b68ee",
+    "profilePicture": null,
+    "initials": "F",
+    "week_start_day": 1,
+    "global_font_support": true,
+    "timezone": "America/Santiago"
+  }
+}

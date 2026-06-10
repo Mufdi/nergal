@@ -1,5 +1,6 @@
 pub mod agents;
 mod browser;
+pub mod clickup;
 mod commands;
 pub mod config;
 mod db;
@@ -279,6 +280,7 @@ pub fn run() {
         .manage(ScratchpadState::new(scratchpad_root.clone()))
         .manage(crate::obsidian::templates_watcher::TemplatesWatcherState::new())
         .manage(crate::obsidian::pinned_notes_watcher::PinnedNotesWatcherState::new())
+        .manage(clickup::poller::ClickUpSyncState::default())
         .manage(PendingDeepLinks::default())
         .invoke_handler(tauri::generate_handler![
             // PTY commands
@@ -435,6 +437,16 @@ pub fn run() {
             scratchpad::commands::scratchpad_get_geometry,
             scratchpad::commands::scratchpad_set_geometry,
             scratchpad::commands::scratchpad_reveal_in_file_manager,
+            // ClickUp (clickup-sync): token, sync lifecycle, mirror reads
+            clickup::clickup_set_token,
+            clickup::clickup_clear_token,
+            clickup::clickup_validate_token,
+            clickup::clickup_sync_status,
+            clickup::clickup_select_team,
+            clickup::clickup_read_tasks,
+            clickup::clickup_read_spaces,
+            clickup::clickup_task_detail,
+            clickup::clickup_fetch_closed_tasks,
             // Live preview browser
             browser::browser_validate_url,
             browser::browser_get_listening_ports,
@@ -528,6 +540,10 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 feeds::run_status_feed(feed_app).await;
             });
+
+            // ClickUp mirror poller. The loop parks itself when no token is
+            // configured; token set/clear and team selection restart it.
+            clickup::poller::restart(&app_handle);
 
             // Plan watcher is dynamic: one notify::Watcher whose watch set
             // grows as sessions land in cwds the boot-time scan did not see

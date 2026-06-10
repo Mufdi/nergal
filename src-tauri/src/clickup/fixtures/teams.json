@@ -1,0 +1,23 @@
+{
+  "teams": [
+    {
+      "id": "9013000000",
+      "name": "Mufdi Workspace",
+      "color": "#40bc86",
+      "avatar": null,
+      "members": [
+        {
+          "user": {
+            "id": 81234567,
+            "username": "Felipe",
+            "email": "felipe@example.com",
+            "color": "#7b68ee",
+            "profilePicture": null,
+            "initials": "F",
+            "role": 1
+          }
+        }
+      ]
+    }
+  ]
+}

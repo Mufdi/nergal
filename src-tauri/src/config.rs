@@ -70,6 +70,10 @@ pub struct Config {
     /// (background, card, border, etc.) via `data-theme=<base_id>`.
     #[serde(default)]
     pub custom_themes: Vec<CustomTheme>,
+    /// ClickUp mirror poll cadence in seconds. `None` → 45s default; the
+    /// poller floors it at 10s to protect the API rate budget.
+    #[serde(default)]
+    pub clickup_poll_interval_secs: Option<u64>,
 }
 
 /// Custom theme — forked from a builtin via Settings → Appearance →
@@ -112,6 +116,7 @@ impl Default for Config {
             default_agent: None,
             agent_overrides: HashMap::new(),
             custom_themes: Vec::new(),
+            clickup_poll_interval_secs: None,
         }
     }
 }

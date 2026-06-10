@@ -5,6 +5,7 @@ import { AskUserModal } from "./components/session/AskUserModal";
 import { setupAgentListeners } from "./stores/agent";
 import { setupHookListeners } from "./stores/hooks";
 import { setupObsidianListeners } from "./stores/obsidian";
+import { setupClickUpListeners } from "./stores/clickup";
 import { configAtom } from "./stores/config";
 import { invoke, listen } from "./lib/tauri";
 import { dispatchDeepLink } from "./lib/deepLinkRouter";
@@ -91,6 +92,7 @@ export function App() {
     const unlisteners = setupHookListeners(store);
     const unlistenAgents = setupAgentListeners();
     const unlistenObsidian = setupObsidianListeners(store);
+    const unlistenClickUp = setupClickUpListeners(store);
     const unlistenDeepLink = listen<string>("deeplink:received", (url) => {
       dispatchDeepLink(url);
     });
@@ -103,6 +105,9 @@ export function App() {
       });
       unlistenAgents.then((fn) => fn());
       unlistenObsidian.then((fns) => {
+        for (const fn of fns) fn();
+      });
+      unlistenClickUp.then((fns) => {
         for (const fn of fns) fn();
       });
       unlistenDeepLink.then((fn) => fn());

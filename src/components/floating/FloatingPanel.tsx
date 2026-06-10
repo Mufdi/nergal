@@ -40,6 +40,10 @@ interface FloatingPanelProps {
   /// (e.g. scratchpad on top of the browser host iframe).
   zIndex?: number;
   accent?: boolean;
+  /// Focus the card when it opens. Without it, Escape-to-close only works
+  /// after the user clicks inside (the Esc handler requires containment),
+  /// and the opener keeps a stale focus ring.
+  autoFocus?: boolean;
 }
 
 const DEFAULT_MIN_WIDTH = 320;
@@ -68,6 +72,7 @@ export function FloatingPanel({
   minHeight = DEFAULT_MIN_HEIGHT,
   zIndex = 40,
   accent = false,
+  autoFocus = false,
 }: FloatingPanelProps) {
   const cardRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragSession | null>(null);
@@ -81,13 +86,16 @@ export function FloatingPanel({
   useLayoutEffect(() => {
     if (open) {
       setMounted(true);
-      const id = requestAnimationFrame(() => setVisible(true));
+      const id = requestAnimationFrame(() => {
+        setVisible(true);
+        if (autoFocus) cardRef.current?.focus({ preventScroll: true });
+      });
       return () => cancelAnimationFrame(id);
     }
     setVisible(false);
     const t = setTimeout(() => setMounted(false), ANIMATION_MS);
     return () => clearTimeout(t);
-  }, [open]);
+  }, [open, autoFocus]);
 
   const effective = draftGeo ?? geometry;
 

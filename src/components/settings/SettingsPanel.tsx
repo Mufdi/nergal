@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select } from "@/components/ui/select";
 import { CheckCircle2, AlertTriangle, XCircle, Info, FolderTree, Bot, Pencil, Palette, Terminal, NotebookText, RefreshCw, Check, ArrowLeft, Trash2, Sliders, Download, ExternalLink, FolderOpen } from "lucide-react";
+import { ClickUpIcon } from "@/components/icons/ClickUpIcon";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { open as openShell } from "@tauri-apps/plugin-shell";
@@ -38,6 +39,11 @@ import {
   saveObsidianConfigAtom,
 } from "@/stores/obsidian";
 import { activeWorkspaceAtom, workspacesAtom, activeSessionIdAtom, openspecDirDraftAtom, type Workspace, type EnvShellDef } from "@/stores/workspace";
+import {
+  clickupSyncStatusAtom,
+  clickupTokenOnDiskAtom,
+  type ClickUpSyncStatus,
+} from "@/stores/clickup";
 import { appStore } from "@/stores/jotaiStore";
 import type { ResolvedObsidianConfig } from "@/lib/types";
 import { ObsidianIcon } from "@/components/icons/ObsidianIcon";
@@ -709,6 +715,196 @@ function ObsidianApplyButton() {
     <Button onClick={handleApply} disabled={!dirty || busy}>
       {busy ? "Applying…" : "Apply"}
     </Button>
+  );
+}
+
+function syncStateLabel(status: ClickUpSyncStatus): string {
+  switch (status.state) {
+    case "no_token":
+      return "No token configured";
+    case "needs_team":
+      return "Waiting for workspace selection";
+    case "syncing":
+      return "Syncing…";
+    case "ok":
+      return status.last_sync != null
+        ? `Synced ${new Date(status.last_sync * 1000).toLocaleTimeString()}`
+        : "Synced";
+    case "error":
+      return "Sync error";
+    default:
+      return "Idle";
+  }
+}
+
+function ClickUpSection() {
+  const [syncStatus, setSyncStatus] = useAtom(clickupSyncStatusAtom);
+  const [tokenOnDisk, setTokenOnDisk] = useAtom(clickupTokenOnDiskAtom);
+  const pushToast = useSetAtom(toastsAtom);
+  const [tokenInput, setTokenInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [resolvedUser, setResolvedUser] = useState<{ username: string; email: string } | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
+
+  const configured = syncStatus !== null && syncStatus.state !== "no_token";
+
+  async function refreshStatus() {
+    try {
+      setSyncStatus(await invoke<ClickUpSyncStatus>("clickup_sync_status"));
+    } catch {
+      // The poller also pushes clickup:sync-status; a missed pull is fine.
+    }
+  }
+
+  async function handleSetToken() {
+    if (tokenInput.trim().length === 0 || busy) return;
+    setBusy(true);
+    setValidationError(null);
+    try {
+      const status = await invoke<{ token_on_disk: boolean }>("clickup_set_token", {
+        token: tokenInput.trim(),
+      });
+      setTokenOnDisk(status.token_on_disk);
+      setTokenInput("");
+      await handleValidate();
+      await refreshStatus();
+    } catch (err) {
+      setValidationError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleValidate() {
+    setValidationError(null);
+    try {
+      const user = await invoke<{ id: number; username: string; email: string }>(
+        "clickup_validate_token",
+      );
+      setResolvedUser({ username: user.username, email: user.email });
+    } catch (err) {
+      setResolvedUser(null);
+      setValidationError(String(err));
+    }
+  }
+
+  async function handleClearToken() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await invoke("clickup_clear_token");
+      setResolvedUser(null);
+      setValidationError(null);
+      setTokenOnDisk(false);
+      await refreshStatus();
+      pushToast({ message: "ClickUp", description: "Token cleared", type: "info" });
+    } catch (err) {
+      pushToast({ message: "ClickUp", description: String(err), type: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSelectTeam(teamId: string) {
+    if (!teamId) return;
+    try {
+      await invoke("clickup_select_team", { teamId });
+      await refreshStatus();
+    } catch (err) {
+      pushToast({ message: "ClickUp", description: String(err), type: "error" });
+    }
+  }
+
+  const teams = syncStatus?.teams ?? [];
+
+  return (
+    <div className="grid gap-4">
+      <p className="text-xs text-muted-foreground">
+        Read-only mirror of your ClickUp workspace. Paste a Personal API token
+        (ClickUp → Settings → Apps) to enable the panel.
+      </p>
+
+      <div className="grid gap-1.5">
+        <Label htmlFor="clickup-token">Personal API token</Label>
+        <div className="flex items-center gap-2">
+          <Input
+            id="clickup-token"
+            type="password"
+            value={tokenInput}
+            onChange={(e) => setTokenInput(e.target.value)}
+            placeholder={configured ? "Token configured — paste to replace" : "pk_…"}
+            autoComplete="off"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void handleSetToken()}
+            disabled={busy || tokenInput.trim().length === 0}
+          >
+            {busy ? "Saving…" : "Set token"}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Stored in the OS keyring when available. The token never leaves this machine.
+        </p>
+      </div>
+
+      {configured && (
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => void handleValidate()} disabled={busy}>
+            Validate token
+          </Button>
+          <Button variant="destructive" size="sm" onClick={() => void handleClearToken()} disabled={busy}>
+            Clear token
+          </Button>
+        </div>
+      )}
+
+      {resolvedUser && (
+        <p className="flex items-center gap-1.5 text-xs text-green-500">
+          <CheckCircle2 size={13} />
+          Token valid — {resolvedUser.username} ({resolvedUser.email})
+        </p>
+      )}
+      {validationError && (
+        <p className="flex items-center gap-1.5 text-xs text-red-400">
+          <XCircle size={13} className="shrink-0" />
+          <span className="min-w-0 truncate" title={validationError}>{validationError}</span>
+        </p>
+      )}
+
+      {tokenOnDisk && (
+        <p className="flex items-start gap-1.5 rounded-md border border-yellow-500/30 bg-yellow-500/10 px-2 py-1.5 text-xs text-yellow-400">
+          <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+          No OS keyring available — the token was written to
+          ~/.config/cluihud/clickup.toml (mode 0600). Any process running as
+          your user can read it.
+        </p>
+      )}
+
+      {teams.length > 1 && (
+        <div className="grid gap-1.5">
+          <Label htmlFor="clickup-team">Workspace to sync</Label>
+          <Select
+            id="clickup-team"
+            value={syncStatus?.team_id ?? ""}
+            onValueChange={(v) => void handleSelectTeam(v)}
+            options={teams.map((t) => ({ value: t.id, label: t.name }))}
+            placeholder="Pick a workspace…"
+          />
+          <p className="text-xs text-muted-foreground">
+            Multiple ClickUp workspaces detected — nothing syncs until one is picked.
+          </p>
+        </div>
+      )}
+
+      {syncStatus && (
+        <p className="text-xs text-muted-foreground">
+          Status: {syncStateLabel(syncStatus)}
+          {syncStatus.state === "error" && syncStatus.error ? ` — ${syncStatus.error}` : ""}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -1455,7 +1651,7 @@ function AppearanceSection({
   );
 }
 
-type SectionId = "paths" | "agents" | "editor" | "appearance" | "terminal" | "scratchpad" | "obsidian" | "about";
+type SectionId = "paths" | "agents" | "editor" | "appearance" | "terminal" | "scratchpad" | "obsidian" | "clickup" | "about";
 
 const SECTIONS: { id: SectionId; label: string; icon: typeof FolderTree }[] = [
   { id: "paths", label: "Paths", icon: FolderTree },
@@ -1465,6 +1661,7 @@ const SECTIONS: { id: SectionId; label: string; icon: typeof FolderTree }[] = [
   { id: "terminal", label: "Terminal", icon: Terminal },
   { id: "scratchpad", label: "Scratchpad", icon: NotebookText },
   { id: "obsidian", label: "Obsidian", icon: ObsidianIcon },
+  { id: "clickup", label: "ClickUp", icon: ClickUpIcon },
   { id: "about", label: "About", icon: Info },
 ];
 
@@ -2482,6 +2679,8 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
             {activeSection === "scratchpad" && <ScratchpadPathField />}
 
             {activeSection === "obsidian" && <ObsidianSection />}
+
+            {activeSection === "clickup" && <ClickUpSection />}
 
             {activeSection === "about" && <AboutSection appVersion={appVersion} />}
           </div>

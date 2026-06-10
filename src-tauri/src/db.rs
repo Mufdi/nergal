@@ -94,6 +94,13 @@ fn parse_pinned_note_paths(raw: Option<String>) -> Vec<String> {
 }
 
 impl Database {
+    /// Raw connection access for the ClickUp reconcile: the `clickup::mirror`
+    /// helpers take `&Connection` so a whole poll cycle can commit in one
+    /// `unchecked_transaction` (atomicity is the spec's core promise there).
+    pub(crate) fn conn(&self) -> &Connection {
+        &self.conn
+    }
+
     /// Open (or create) the database at the standard config path.
     pub fn open() -> Result<Self> {
         let config_dir = dirs::config_dir()
@@ -144,6 +151,9 @@ impl Database {
             include_str!("../migrations/012_workspace_openspec_dir.sql"),
             include_str!("../migrations/013_env_shells.sql"),
             include_str!("../migrations/014_env_shell_suggestions.sql"),
+            include_str!("../migrations/015_clickup_mirror.sql"),
+            include_str!("../migrations/016_clickup_stale_since.sql"),
+            include_str!("../migrations/017_clickup_user_id.sql"),
         ];
 
         for (i, sql) in migrations.iter().enumerate() {
@@ -1032,6 +1042,36 @@ mod tests {
             env_shells: Vec::new(),
         };
         db.create_session(&s).unwrap();
+    }
+
+    #[test]
+    fn clickup_mirror_migration_applies_on_fresh_db() {
+        let db = in_memory();
+        let expected = [
+            "clickup_spaces",
+            "clickup_folders",
+            "clickup_lists",
+            "clickup_statuses",
+            "clickup_tasks",
+            "clickup_custom_field_defs",
+            "clickup_task_custom_values",
+            "clickup_checklists",
+            "clickup_checklist_items",
+            "clickup_comments",
+            "clickup_attachments",
+            "clickup_sync_state",
+        ];
+        for table in expected {
+            let count: i64 = db
+                .conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    [table],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1, "missing table {table}");
+        }
     }
 
     #[test]

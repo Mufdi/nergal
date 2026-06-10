@@ -1,0 +1,53 @@
+{
+  "spaces": [
+    {
+      "id": "901312445262",
+      "name": "Producto",
+      "color": "#7b68ee",
+      "private": false,
+      "avatar": null,
+      "admin_can_manage": null,
+      "statuses": [
+        {
+          "id": "p901312445262_todo",
+          "status": "to do",
+          "type": "open",
+          "orderindex": 0,
+          "color": "#d3d3d3"
+        },
+        {
+          "status": "complete",
+          "type": "closed",
+          "orderindex": 1,
+          "color": "#6bc950"
+        }
+      ],
+      "multiple_assignees": true,
+      "features": {
+        "due_dates": {
+          "enabled": true,
+          "start_date": true,
+          "remap_due_dates": false,
+          "remap_closed_due_date": false
+        },
+        "sprints": {
+          "enabled": false
+        },
+        "points": {
+          "enabled": false
+        }
+      },
+      "archived": false
+    },
+    {
+      "id": "901312990001",
+      "name": "Ops",
+      "color": null,
+      "private": true,
+      "statuses": [],
+      "multiple_assignees": false,
+      "features": {},
+      "archived": false
+    }
+  ]
+}

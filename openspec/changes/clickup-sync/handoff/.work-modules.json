@@ -7,17 +7,32 @@
     "iprev_rounds": 2,
     "iprev_evaluator": "claude",
     "iprev_verdict": "APPROVED",
-    "reviewer_mode": "iterative-plan-review (pre-build) planned; security + deps escalation planned for build",
-    "gates_phases_planned": ["compile", "test", "lint", "security", "deps", "scope"],
+    "reviewer_mode": "mid-build security+deps (both PASS, findings applied); final 4-parallel skipped by user, replaced with orchestrator inline spot-check",
+    "gates_phases_planned": [
+      "compile",
+      "test",
+      "lint",
+      "security",
+      "deps",
+      "scope"
+    ],
     "per_phase_models": {
       "design": "claude-opus (this session)",
-      "implementation": "TBD at build",
-      "exploration": "claude (codebase verification this session)"
-    }
+      "implementation": "inherited main-loop model (fable-5); skill's static sonnet table superseded per harness-entropy",
+      "exploration": "haiku (canary checks)"
+    },
+    "gates_phases_run": [
+      "compile",
+      "test",
+      "lint",
+      "security",
+      "deps",
+      "scope"
+    ]
   },
   "spec_target": "clickup-mirror, clickup-task-panel",
   "ceremony": "deep (implementation.md mandatory per openspec/config.yaml)",
-  "status": "plan-approved (iprev 2 rounds, Claude); implementation NOT started",
+  "status": "implemented 2026-06-09 (groups 1-5 + verify 6.1/6.2); manual walk 6.3 pending",
   "implementation_order": 1,
   "depends_on": [],
   "parallel_track": "independent of context-bridge MCP-first changes",
@@ -25,5 +40,33 @@
     "keyring = new dep (deps-review).",
     "Migration number assigned at build time = next free (>=015); 014/015 in context-bridge specs are stale, avoid collision.",
     "Synergy: cluihud-mcp-server should later expose the bound task via MCP (folded into that change, see memory project_clickup_integration)."
+  ],
+  "events": [
+    {
+      "ts": "2026-06-09",
+      "type": "canary-isolation-check",
+      "result": "pass 3/3",
+      "cache_key": "cc-2.x-fable5-test-v1"
+    },
+    {
+      "ts": "2026-06-09",
+      "type": "reviewer-escalation",
+      "reason": "risk_tier critical → security+deps reviewers after backend foundation"
+    },
+    {
+      "ts": "2026-06-09",
+      "type": "review-findings-applied",
+      "detail": "redacted Debug impls, field_id FK, Cargo.toml rationale fix, openExternalUrl scheme guard, thumbnail scheme gate"
+    },
+    {
+      "ts": "2026-06-09",
+      "type": "final-review-skipped",
+      "reason": "user rejected 4-parallel spawn; inline spot-check instead"
+    },
+    {
+      "ts": "2026-06-09",
+      "type": "scope-gate",
+      "detail": "~28 files vs estimate 22 (1.27 < 1.5)"
+    }
   ]
 }

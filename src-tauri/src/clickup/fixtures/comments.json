@@ -1,0 +1,44 @@
+{
+  "comments": [
+    {
+      "id": "90130000001",
+      "comment": [
+        {
+          "text": "LGTM, mergeable tras el fix de FKs"
+        }
+      ],
+      "comment_text": "LGTM, mergeable tras el fix de FKs",
+      "user": {
+        "id": 81234567,
+        "username": "Felipe",
+        "email": "felipe@example.com",
+        "color": "#7b68ee",
+        "initials": "F",
+        "profilePicture": null
+      },
+      "resolved": false,
+      "assignee": null,
+      "assigned_by": null,
+      "reactions": [],
+      "date": "1717050000000",
+      "reply_count": "2"
+    },
+    {
+      "id": "90130000002",
+      "comment": [
+        {
+          "text": "done"
+        }
+      ],
+      "comment_text": "done",
+      "user": {
+        "id": 99887766,
+        "username": "CI Bot"
+      },
+      "resolved": true,
+      "reactions": [],
+      "date": 1717060000000,
+      "reply_count": 0
+    }
+  ]
+}

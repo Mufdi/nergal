@@ -33,6 +33,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { quickCaptureOpenAtom } from "./quickCapture";
 import { searchModalOpenAtom, searchScopeAtom } from "./search";
 import { quakeOpenMapAtom, quakeShellsAtom, addAdHocShell, cycleQuakeShell } from "./quake";
+import { clickupConfiguredAtom } from "./clickup";
 import { openInObsidian } from "@/lib/obsidian";
 
 /// `quake` is deliberately NOT in the alt+left/right cycle (getVisibleZones)
@@ -485,6 +486,19 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
       return;
     }
     togglePanel("obsidiannote", "Obsidian");
+  }},
+  // ctrl+shift+u is reserved by IBus (Linux unicode input) — never bind it.
+  { id: "open-clickup", label: "Open ClickUp Panel", keys: "ctrl+shift+m", category: "panel", keywords: ["clickup", "tasks", "issues", "tracker", "panel"], handler: () => {
+    const s = store();
+    if (!s.get(clickupConfiguredAtom)) {
+      s.set(toastsAtom, {
+        message: "ClickUp panel",
+        description: "No token configured — set it in Settings → ClickUp.",
+        type: "info",
+      });
+      return;
+    }
+    togglePanel("clickup", "ClickUp");
   }},
   { id: "browser-focus-url", label: "Focus Browser URL Bar", keys: "ctrl+l", category: "panel", keywords: ["browser", "url", "focus", "address"], handler: () => {
     document.dispatchEvent(new CustomEvent("cluihud:browser-focus-url"));

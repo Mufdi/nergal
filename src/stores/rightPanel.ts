@@ -5,7 +5,7 @@ import { closedTabsStackAtom } from "./shortcuts";
 import { pinnedNotesMapAtom } from "./pinnedNotes";
 import { toastsAtom } from "./toast";
 
-export type TabType = "plan" | "diff" | "spec" | "tasks" | "git" | "transcript" | "file" | "browser" | "obsidiannote";
+export type TabType = "plan" | "diff" | "spec" | "tasks" | "git" | "transcript" | "file" | "browser" | "obsidiannote" | "clickup";
 
 export type PanelCategory = "document" | "tool";
 
@@ -19,6 +19,7 @@ export const PANEL_CATEGORY_MAP: Record<TabType, PanelCategory> = {
   tasks: "document",
   browser: "tool",
   obsidiannote: "document",
+  clickup: "tool",
 };
 
 export interface Tab {
@@ -37,7 +38,7 @@ export interface TabState {
   previewTabId: string | null;
 }
 
-const SINGLETON_TYPES: TabType[] = ["tasks", "git", "browser"];
+const SINGLETON_TYPES: TabType[] = ["tasks", "git", "browser", "clickup"];
 const defaultTabState: TabState = { tabs: [], activeTabId: null, previewTabId: null };
 
 export const expandRightPanelAtom = atom(0);
@@ -62,19 +63,22 @@ export const activePanelViewMapAtom = atom<Record<string, TabType | null>>({});
 /// preset on first encounter while still respecting a saved gesture.
 export const rightPanelCollapsedMapAtom = atom<Record<string, boolean>>({});
 
+/// Sentinel map key for panel state when no session is active. Session-less
+/// views (ClickUp reads a global mirror) must still open — without this the
+/// facade write no-ops and the user gets an expanded-but-empty right panel.
+export const NO_SESSION_PANEL_KEY = "__no-session__";
+
 /// Reader/writer facade keyed by the active session. All call sites use
 /// `useAtomValue` / `useSetAtom`, so flipping this from primitive to derived
 /// is transparent — they keep working without touching their code.
 export const activePanelViewAtom = atom<TabType | null, [TabType | null], void>(
   (get) => {
-    const sessionId = get(activeSessionIdAtom);
-    if (!sessionId) return null;
-    return get(activePanelViewMapAtom)[sessionId] ?? null;
+    const key = get(activeSessionIdAtom) ?? NO_SESSION_PANEL_KEY;
+    return get(activePanelViewMapAtom)[key] ?? null;
   },
   (get, set, view: TabType | null) => {
-    const sessionId = get(activeSessionIdAtom);
-    if (!sessionId) return;
-    set(activePanelViewMapAtom, (prev) => ({ ...prev, [sessionId]: view }));
+    const key = get(activeSessionIdAtom) ?? NO_SESSION_PANEL_KEY;
+    set(activePanelViewMapAtom, (prev) => ({ ...prev, [key]: view }));
   },
 );
 

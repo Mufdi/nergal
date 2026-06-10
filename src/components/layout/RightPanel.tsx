@@ -29,6 +29,7 @@ import { SpecPanel } from "@/components/spec/SpecPanel";
 import { GitPanel } from "@/components/git/GitPanel";
 import { FileBrowser } from "@/components/files/FileBrowser";
 import { ObsidianNoteView } from "@/components/obsidian/ObsidianNoteView";
+import { ClickUpPanel } from "@/components/clickup/ClickUpPanel";
 import { VaultNoteFinder } from "@/components/obsidian/VaultNoteFinder";
 import * as terminalService from "@/components/terminal/terminalService";
 import { CodeEditor } from "@/components/editor/CodeEditor";
@@ -416,6 +417,7 @@ function viewPanelLabel(view: TabType): string {
     transcript: "Transcript",
     browser: "Browser",
     obsidiannote: "Obsidian",
+    clickup: "ClickUp",
   };
   return labels[view];
 }
@@ -439,6 +441,8 @@ function ViewPanelContent({ view }: { view: TabType }) {
       return <DagGraph />;
     case "browser":
       return <BrowserDockSlot />;
+    case "clickup":
+      return <ClickUpPanel />;
     default:
       return null;
   }
@@ -480,6 +484,8 @@ function DocumentContent({ tab }: { tab: Tab }) {
     }
     case "browser":
       return <BrowserDockSlot />;
+    case "clickup":
+      return <ClickUpPanel />;
     case "obsidiannote": {
       const notePath = tab.data?.path as string | undefined;
       return notePath

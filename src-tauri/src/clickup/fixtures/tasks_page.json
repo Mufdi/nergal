@@ -1,0 +1,247 @@
+{
+  "tasks": [
+    {
+      "id": "86ahwtc67",
+      "custom_id": null,
+      "custom_item_id": 0,
+      "name": "Implement mirror schema",
+      "text_content": "Schema with FKs, statuses as rows",
+      "description": "Schema with FKs, statuses as rows",
+      "status": {
+        "id": "sc901317020124_review",
+        "status": "en revisión - dev (pr)",
+        "color": "#f9d900",
+        "type": "custom",
+        "orderindex": 1
+      },
+      "orderindex": "108.00000000000000000000000000000000",
+      "date_created": "1717000000000",
+      "date_updated": "1717090000000",
+      "date_closed": null,
+      "date_done": null,
+      "archived": false,
+      "creator": {
+        "id": 81234567,
+        "username": "Felipe",
+        "color": "#7b68ee",
+        "email": "felipe@example.com",
+        "profilePicture": null
+      },
+      "assignees": [
+        {
+          "id": 81234567,
+          "username": "Felipe",
+          "color": "#7b68ee",
+          "initials": "F",
+          "email": "felipe@example.com",
+          "profilePicture": null
+        }
+      ],
+      "group_assignees": [],
+      "watchers": [],
+      "checklists": [
+        {
+          "id": "b955c4dc-5b71-4f31-a90b-9011aa1a3cde",
+          "task_id": "86ahwtc67",
+          "name": "Pre-flight",
+          "date_created": "1717001111000",
+          "orderindex": 0,
+          "creator": 81234567,
+          "resolved": 1,
+          "unresolved": 1,
+          "items": [
+            {
+              "id": "21e08dc8-1a2b-4a3b-bb1c-0d1e2f3a4b5c",
+              "name": "Write DDL",
+              "orderindex": 0,
+              "assignee": null,
+              "group_assignee": null,
+              "resolved": true,
+              "parent": null,
+              "date_created": "1717001112000",
+              "children": []
+            },
+            {
+              "id": "21e08dc8-9f8e-4a3b-bb1c-6c7d8e9f0a1b",
+              "name": "Register migration",
+              "orderindex": "1",
+              "assignee": null,
+              "resolved": false,
+              "parent": null,
+              "date_created": "1717001113000",
+              "children": []
+            }
+          ]
+        }
+      ],
+      "tags": [
+        {
+          "name": "backend",
+          "tag_fg": "#ffffff",
+          "tag_bg": "#e50000",
+          "creator": 81234567
+        }
+      ],
+      "parent": null,
+      "top_level_parent": null,
+      "priority": {
+        "id": "2",
+        "priority": "high",
+        "color": "#ffcc00",
+        "orderindex": "2"
+      },
+      "due_date": "1717500000000",
+      "start_date": null,
+      "points": null,
+      "time_estimate": null,
+      "custom_fields": [
+        {
+          "id": "0a1b2c3d-1234-5678-9abc-def012345678",
+          "name": "Severity",
+          "type": "drop_down",
+          "type_config": {
+            "default": 0,
+            "placeholder": null,
+            "options": [
+              {
+                "id": "opt-low",
+                "name": "Low",
+                "color": null,
+                "orderindex": 0
+              },
+              {
+                "id": "opt-high",
+                "name": "High",
+                "color": "#e50000",
+                "orderindex": 1
+              }
+            ]
+          },
+          "date_created": "1716000000000",
+          "hide_from_guests": false,
+          "value": 1,
+          "required": false
+        },
+        {
+          "id": "9f8e7d6c-4321-8765-cba9-876543210fed",
+          "name": "Estimate notes",
+          "type": "short_text",
+          "type_config": {},
+          "date_created": "1716000001000",
+          "hide_from_guests": false,
+          "value": "needs spike",
+          "required": false
+        }
+      ],
+      "dependencies": [],
+      "linked_tasks": [],
+      "locations": [],
+      "team_id": "9013000000",
+      "url": "https://app.clickup.com/t/86ahwtc67",
+      "sharing": {
+        "public": false,
+        "public_share_expires_on": null,
+        "public_fields": [],
+        "token": null,
+        "seo_optimized": false
+      },
+      "permission_level": "create",
+      "attachments": [
+        {
+          "id": "a1b2c3d4-e5f6-7a8b-9c0d-e1f2a3b4c5d6.png",
+          "date": "1717010000000",
+          "title": "screenshot.png",
+          "type": 1,
+          "source": 1,
+          "version": 0,
+          "extension": "png",
+          "thumbnail_small": "https://t30259243.p.clickup-attachments.com/t30259243/small.png",
+          "thumbnail_medium": "https://t30259243.p.clickup-attachments.com/t30259243/medium.png",
+          "thumbnail_large": "https://t30259243.p.clickup-attachments.com/t30259243/large.png",
+          "thumbnail_url": "https://t30259243.p.clickup-attachments.com/t30259243/medium.png",
+          "url": "https://attachments.clickup.com/a1b2c3d4/screenshot.png",
+          "url_w_query": "https://attachments.clickup.com/a1b2c3d4/screenshot.png?view=open",
+          "url_w_host": "https://attachments.clickup.com/a1b2c3d4/screenshot.png",
+          "size": 48213,
+          "mimetype": "image/png"
+        }
+      ],
+      "list": {
+        "id": "901317020124",
+        "name": "Sprint 23",
+        "access": true
+      },
+      "project": {
+        "id": "90131801001",
+        "name": "Backend",
+        "hidden": false,
+        "access": true
+      },
+      "folder": {
+        "id": "90131801001",
+        "name": "Backend",
+        "hidden": false,
+        "access": true
+      },
+      "space": {
+        "id": "901312445262"
+      }
+    },
+    {
+      "id": "86ahwtd99",
+      "custom_id": null,
+      "name": "Write fixtures for the mirror tests",
+      "text_content": "",
+      "description": "",
+      "status": {
+        "status": "backlog",
+        "color": "#d3d3d3",
+        "type": "open",
+        "orderindex": 0
+      },
+      "orderindex": "109.00000000000000000000000000000000",
+      "date_created": "1717000200000",
+      "date_updated": "1717000300000",
+      "date_closed": null,
+      "archived": false,
+      "creator": {
+        "id": 81234567,
+        "username": "Felipe",
+        "color": "#7b68ee"
+      },
+      "assignees": [],
+      "watchers": [],
+      "checklists": [],
+      "tags": [],
+      "parent": "86ahwtc67",
+      "top_level_parent": "86ahwtc67",
+      "priority": null,
+      "due_date": null,
+      "start_date": null,
+      "points": null,
+      "time_estimate": null,
+      "custom_fields": [],
+      "dependencies": [],
+      "linked_tasks": [],
+      "team_id": "9013000000",
+      "url": "https://app.clickup.com/t/86ahwtd99",
+      "permission_level": "create",
+      "attachments": [],
+      "list": {
+        "id": "901317020124",
+        "name": "Sprint 23",
+        "access": true
+      },
+      "folder": {
+        "id": "90131801001",
+        "name": "Backend",
+        "hidden": false,
+        "access": true
+      },
+      "space": {
+        "id": "901312445262"
+      }
+    }
+  ],
+  "last_page": false
+}

@@ -96,6 +96,13 @@ tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 fs2 = "0.4"
 
+# clickup-sync: Personal API token storage in the OS keyring (secret-service
+# on Linux). async-secret-service + crypto-rust = pure-Rust D-Bus, avoiding
+# the libdbus C binding the sync backend needs — at the cost of a duplicate
+# zbus 4.x stack next to the tree's zbus 5 (keyring 3 pins secret-service ^4).
+# Dedupe path: keyring v4 (keyring-core + zbus-secret-service-keyring-store).
+keyring = { version = "3", features = ["async-secret-service", "tokio", "crypto-rust"] }
+
 # Used by `redirect_journald_stdio_to_logfile` in lib.rs to `dup2` an open log
 # file over stdout/stderr when launched under systemd (gnome-shell), where
 # stderr is a journald pipe whose backpressure stalls WebKitGTK rendering.

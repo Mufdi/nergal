@@ -13,7 +13,7 @@ import * as terminalService from "@/components/terminal/terminalService";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { ActivityDrawer } from "@/components/activity/ActivityDrawer";
 import { ZenMode } from "@/components/zen/ZenMode";
-import { expandRightPanelAtom, activePanelViewAtom, openTabAction, rightPanelCollapsedMapAtom } from "@/stores/rightPanel";
+import { expandRightPanelAtom, activePanelViewAtom, openTabAction, rightPanelCollapsedMapAtom, NO_SESSION_PANEL_KEY } from "@/stores/rightPanel";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { planReviewStatusMapAtom, planStateMapAtom } from "@/stores/plan";
 import { toggleSidebarAtom, toggleRightPanelAtom, focusZoneAtom } from "@/stores/shortcuts";
@@ -76,13 +76,13 @@ export function Workspace() {
   const setSelectedConflictMap = useSetAtom(selectedConflictFileMapAtom);
   const setChipModeMap = useSetAtom(gitChipModeAtom);
 
-  const rightCollapsed = activeSessionId
-    ? rightCollapsedMap[activeSessionId] ?? true
-    : true;
+  // Session-less panel state (global views like ClickUp) keys under the
+  // sentinel so the right panel can expand before any session exists.
+  const collapseKey = activeSessionId ?? NO_SESSION_PANEL_KEY;
+  const rightCollapsed = rightCollapsedMap[collapseKey] ?? true;
   function setRightCollapsed(next: boolean) {
-    if (!activeSessionId) return;
     setRightCollapsedMap((prev) =>
-      prev[activeSessionId] === next ? prev : { ...prev, [activeSessionId]: next },
+      prev[collapseKey] === next ? prev : { ...prev, [collapseKey]: next },
     );
   }
 

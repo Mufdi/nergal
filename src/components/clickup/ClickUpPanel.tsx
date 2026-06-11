@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   ChevronDown,
@@ -6,7 +6,6 @@ import {
   CircleCheck,
   Flag,
   GitBranchPlus,
-  Hourglass,
   Link2,
   Loader2,
   Pin,
@@ -17,23 +16,22 @@ import {
 } from "lucide-react";
 import { invoke } from "@/lib/tauri";
 import { Select } from "@/components/ui/select";
-import { workspacesAtom } from "@/stores/workspace";
+import { zenModeAtom } from "@/stores/zenMode";
 import {
   GROUP_BY_ORDER,
   activeSessionClickUpPinsAtom,
   activeSessionClickUpTaskAtom,
-  cancelQueuedSendAction,
   clickupAssignedToMeAtom,
   clickupClosedTasksAtom,
   clickupDetailTaskIdAtom,
   clickupGroupByAtom,
-  clickupQueuedSendMapAtom,
+  clickupRebindConfirmAtom,
+  clickupSendConfirmAtom,
   clickupShowClosedAtom,
   clickupSpaceFilterAtom,
   clickupSpacesAtom,
   clickupSyncStatusAtom,
   clickupTasksAtom,
-  forceDeliverQueuedSendAction,
   requestBindTaskAction,
   requestSendTaskAction,
   spawnWorktreeWithTaskAction,
@@ -44,7 +42,13 @@ import {
   type ClickUpTaskActions,
 } from "@/stores/clickup";
 
-const GROUP_BY_LABEL: Record<ClickUpGroupBy, string> = {
+/// Chip-strip views: "mine" is a preset (assigned-to-me filter + grouped by
+/// status); the rest are plain group-by modes over the current filter state.
+type ClickUpView = "mine" | ClickUpGroupBy;
+const VIEW_ORDER: ClickUpView[] = ["mine", ...GROUP_BY_ORDER];
+
+const VIEW_LABEL: Record<ClickUpView, string> = {
+  mine: "My tasks",
   status: "Status",
   list: "List",
   assignee: "Assignee",
@@ -105,13 +109,16 @@ export function ClickUpPanel() {
   const [assignedToMe, setAssignedToMe] = useAtom(clickupAssignedToMeAtom);
   const [showClosed, setShowClosed] = useAtom(clickupShowClosedAtom);
   const [closedTasks, setClosedTasks] = useAtom(clickupClosedTasksAtom);
-  const setDetailTaskId = useSetAtom(clickupDetailTaskIdAtom);
+  const [detailTaskId, setDetailTaskId] = useAtom(clickupDetailTaskIdAtom);
+  const sendConfirm = useAtomValue(clickupSendConfirmAtom);
+  const rebindConfirm = useAtomValue(clickupRebindConfirmAtom);
+  const zenOpen = useAtomValue(zenModeAtom).open;
+  const rootRef = useRef<HTMLDivElement>(null);
   const [closedLoading, setClosedLoading] = useState(false);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
 
   const boundTaskId = useAtomValue(activeSessionClickUpTaskAtom);
   const pinnedTaskIds = useAtomValue(activeSessionClickUpPinsAtom);
-  const queuedSendMap = useAtomValue(clickupQueuedSendMapAtom);
   const requestSend = useSetAtom(requestSendTaskAction);
   const spawnWorktree = useSetAtom(spawnWorktreeWithTaskAction);
   const togglePin = useSetAtom(togglePinTaskAction);
@@ -127,8 +134,22 @@ export function ClickUpPanel() {
     [requestSend, spawnWorktree, togglePin, requestBind],
   );
 
-  // Shift+←/→ cycles group-by — component-local handler per the chip-strip
-  // contract (docs/patterns.md §2), with the same editable-field guard.
+  // Derived chip state: the "mine" preset IS assigned-to-me + status, so a
+  // manually-toggled UserCheck filter over status grouping lights it too.
+  const activeView: ClickUpView = assignedToMe && groupBy === "status" ? "mine" : groupBy;
+
+  function selectView(view: ClickUpView) {
+    if (view === "mine") {
+      setAssignedToMe(true);
+      setGroupBy("status");
+    } else {
+      setAssignedToMe(false);
+      setGroupBy(view);
+    }
+  }
+
+  // Shift+←/→ cycles the view chips — component-local handler per the
+  // chip-strip contract (docs/patterns.md §2), with the editable-field guard.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const target = e.target as HTMLElement | null;
@@ -140,15 +161,21 @@ export function ClickUpPanel() {
       if (!e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
       if (e.code !== "ArrowLeft" && e.code !== "ArrowRight") return;
       e.preventDefault();
-      const idx = GROUP_BY_ORDER.indexOf(groupBy);
+      const idx = VIEW_ORDER.indexOf(activeView);
       const next = e.code === "ArrowRight"
-        ? GROUP_BY_ORDER[(idx + 1) % GROUP_BY_ORDER.length]
-        : GROUP_BY_ORDER[(idx - 1 + GROUP_BY_ORDER.length) % GROUP_BY_ORDER.length];
-      setGroupBy(next);
+        ? VIEW_ORDER[(idx + 1) % VIEW_ORDER.length]
+        : VIEW_ORDER[(idx - 1 + VIEW_ORDER.length) % VIEW_ORDER.length];
+      if (next === "mine") {
+        setAssignedToMe(true);
+        setGroupBy("status");
+      } else {
+        setAssignedToMe(false);
+        setGroupBy(next);
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [groupBy, setGroupBy]);
+  }, [activeView, setAssignedToMe, setGroupBy]);
 
   // Show-closed is the one on-demand fetch the panel performs (closed tasks
   // aren't in the default poll). Result is ephemeral — merged for display.
@@ -205,43 +232,54 @@ export function ClickUpPanel() {
     });
   }
 
-  // Plain ↑/↓ moves between nav items while focus is inside the clickup
-  // zone (within-zone complement of the global Alt+↑/↓, patterns.md §5.2);
+  // Plain ↑/↓ moves between nav items, window-level like the git PRs picker
+  // (PrsChip): a handler on the panel div never fires because focus normally
+  // sits on RightPanel's outer zone container, not inside it. The terminal
+  // swallows its own keys at the canvas layer, so this only sees strays.
   // Arrow-left/right on a focused group header collapses/expands it
   // (data-nav-expanded contract, docs/patterns.md §5.2).
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
-    if (e.code === "ArrowUp" || e.code === "ArrowDown") {
+  const listenerActive = !zenOpen && detailTaskId === null && sendConfirm === null && rebindConfirm === null;
+  useEffect(() => {
+    if (!listenerActive) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
       const target = e.target as HTMLElement | null;
       const inField = target?.tagName === "INPUT"
         || target?.tagName === "TEXTAREA"
         || !!target?.closest(".cm-editor")
         || target?.getAttribute("contenteditable") === "true";
       if (inField) return;
-      const items = Array.from(
-        e.currentTarget.querySelectorAll<HTMLElement>("[data-nav-item]"),
-      );
-      if (items.length === 0) return;
+      // The sidebar and open dialogs own their arrow keys.
+      if (target?.closest("[data-focus-zone='sidebar']") || target?.closest("[role='dialog']")) return;
+      const root = rootRef.current;
+      if (!root) return;
+      if (e.code === "ArrowUp" || e.code === "ArrowDown") {
+        const items = Array.from(root.querySelectorAll<HTMLElement>("[data-nav-item]"));
+        if (items.length === 0) return;
+        e.preventDefault();
+        const current = (document.activeElement as HTMLElement | null)
+          ?.closest<HTMLElement>("[data-nav-item]");
+        const idx = current ? items.indexOf(current) : -1;
+        const next = e.code === "ArrowDown"
+          ? (idx === -1 ? 0 : (idx + 1) % items.length)
+          : (idx === -1 ? items.length - 1 : (idx - 1 + items.length) % items.length);
+        items[next].focus();
+        items[next].scrollIntoView({ block: "nearest" });
+        return;
+      }
+      if (e.code !== "ArrowLeft" && e.code !== "ArrowRight") return;
+      const header = (document.activeElement as HTMLElement | null)
+        ?.closest<HTMLElement>("[data-nav-expanded]");
+      const key = header?.dataset.groupKey;
+      if (!header || !key || !root.contains(header)) return;
       e.preventDefault();
-      const current = (document.activeElement as HTMLElement | null)
-        ?.closest<HTMLElement>("[data-nav-item]");
-      const idx = current ? items.indexOf(current) : -1;
-      const next = e.code === "ArrowDown"
-        ? (idx === -1 ? 0 : (idx + 1) % items.length)
-        : (idx === -1 ? items.length - 1 : (idx - 1 + items.length) % items.length);
-      items[next].focus();
-      items[next].scrollIntoView({ block: "nearest" });
-      return;
+      const expanded = header.dataset.navExpanded === "true";
+      if (e.code === "ArrowLeft" && expanded) toggleGroup(key);
+      if (e.code === "ArrowRight" && !expanded) toggleGroup(key);
     }
-    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-    const header = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-nav-expanded]");
-    const key = header?.dataset.groupKey;
-    if (!header || !key) return;
-    e.preventDefault();
-    const expanded = header.dataset.navExpanded === "true";
-    if (e.key === "ArrowLeft" && expanded) toggleGroup(key);
-    if (e.key === "ArrowRight" && !expanded) toggleGroup(key);
-  }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [listenerActive]);
 
   if (syncStatus?.state === "needs_team") {
     return (
@@ -252,7 +290,7 @@ export function ClickUpPanel() {
   }
 
   return (
-    <div className="flex h-full flex-col" data-focus-zone="clickup" onKeyDown={handleKeyDown}>
+    <div ref={rootRef} className="flex h-full flex-col" data-focus-zone="clickup">
       {/* Header: persistent Space selector + local filters */}
       <div className="flex shrink-0 items-center gap-1.5 border-b border-border/50 px-2 py-1.5">
         <Select
@@ -291,23 +329,22 @@ export function ClickUpPanel() {
         </button>
       </div>
 
-      {/* Group-by chip strip */}
+      {/* View chip strip: "My tasks" preset first, then plain group-by modes */}
       <div className="flex shrink-0 items-center gap-1 border-b border-border/50 px-2 py-1.5">
-        <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Group</span>
-        {GROUP_BY_ORDER.map((mode) => (
+        {VIEW_ORDER.map((view) => (
           <button
-            key={mode}
+            key={view}
             type="button"
-            onClick={() => setGroupBy(mode)}
-            aria-pressed={groupBy === mode}
-            title={`${GROUP_BY_LABEL[mode]} (Shift+←/→)`}
+            onClick={() => selectView(view)}
+            aria-pressed={activeView === view}
+            title={`${VIEW_LABEL[view]} (Shift+←/→)`}
             className={`flex shrink-0 items-center rounded-full px-2.5 py-0.5 text-[11px] whitespace-nowrap transition-colors ${
-              groupBy === mode
+              activeView === view
                 ? "bg-secondary text-foreground"
                 : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground/80"
             }`}
           >
-            {GROUP_BY_LABEL[mode]}
+            {VIEW_LABEL[view]}
           </button>
         ))}
       </div>
@@ -315,16 +352,6 @@ export function ClickUpPanel() {
       {syncStatus?.state === "error" && syncStatus.error && (
         <div className="shrink-0 truncate bg-destructive/10 px-3 py-1 text-[10px] text-red-400" title={syncStatus.error}>
           Sync error: {syncStatus.error}
-        </div>
-      )}
-
-      {/* Pending sends: a queued send must stay user-actionable until the
-          backend reports delivered/dropped (cancel / deliver-now, 5.1b). */}
-      {Object.keys(queuedSendMap).length > 0 && (
-        <div className="flex shrink-0 flex-col border-b border-border/50">
-          {Object.entries(queuedSendMap).map(([sid, q]) => (
-            <QueuedSendRow key={sid} sessionId={sid} taskId={q.taskId} />
-          ))}
         </div>
       )}
 
@@ -352,51 +379,6 @@ export function ClickUpPanel() {
           ))
         )}
       </div>
-    </div>
-  );
-}
-
-function QueuedSendRow({ sessionId, taskId }: { sessionId: string; taskId: string }) {
-  const workspaces = useAtomValue(workspacesAtom);
-  const tasks = useAtomValue(clickupTasksAtom);
-  const cancel = useSetAtom(cancelQueuedSendAction);
-  const deliver = useSetAtom(forceDeliverQueuedSendAction);
-
-  let sessionName = sessionId;
-  for (const ws of workspaces) {
-    const match = ws.sessions.find((s) => s.id === sessionId);
-    if (match) {
-      sessionName = match.name;
-      break;
-    }
-  }
-  const taskName = tasks.find((t) => t.id === taskId)?.name ?? taskId;
-
-  return (
-    <div className="flex items-center gap-1.5 bg-yellow-500/5 px-3 py-1">
-      <Hourglass size={10} className="shrink-0 text-yellow-500" />
-      <span
-        className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground"
-        title={`Queued for ${sessionName}: ${taskName} — delivers when the agent finishes the current turn`}
-      >
-        Queued for <span className="text-foreground/80">{sessionName}</span>: {taskName}
-      </span>
-      <button
-        type="button"
-        onClick={() => void deliver(sessionId)}
-        title="Paste into the session now (without auto-submit)"
-        className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
-      >
-        Deliver now
-      </button>
-      <button
-        type="button"
-        onClick={() => void cancel(sessionId)}
-        title="Drop the queued send"
-        className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-red-400"
-      >
-        Cancel
-      </button>
     </div>
   );
 }

@@ -79,21 +79,7 @@ const HOOKS: &[HookDef] = &[
         timeout: None,
         if_condition: None,
     },
-    // Send-gate Running edge (clickup-task-integration): async sibling of the
-    // sync inject-edits entry — merge_hook locates by command, so both coexist
-    // under the same event.
-    HookDef {
-        event: "UserPromptSubmit",
-        matcher: None,
-        command: SEND_USER_PROMPT_COMMAND,
-        is_async: true,
-        timeout: None,
-        if_condition: None,
-    },
 ];
-
-/// The send-gate's `UserPromptSubmit` hook entry (Running-edge signal).
-pub const SEND_USER_PROMPT_COMMAND: &str = "cluihud hook send user-prompt";
 
 struct HookDef {
     event: &'static str,
@@ -141,6 +127,14 @@ const OBSOLETE_HOOKS: &[ObsoleteHook] = &[
     ObsoleteHook {
         event: "TaskCreated",
         command: "cluihud hook send task-created",
+        only_without_matcher: false,
+    },
+    // Send-gate Running edge, removed with the guard (2026-06-11): CC queues
+    // mid-turn prompts natively, and the hook invaded the user's global
+    // settings while only working for Claude Code.
+    ObsoleteHook {
+        event: "UserPromptSubmit",
+        command: "cluihud hook send user-prompt",
         only_without_matcher: false,
     },
 ];
@@ -271,38 +265,6 @@ fn synthesize_command(def_command: &str, wrapper_prefix: Option<&str>) -> String
         (Some(prefix), Some(args)) => format!("{prefix}{args}"),
         _ => def_command.to_string(),
     }
-}
-
-/// Static hint for the send-confirm dialog: is the send-gate's
-/// `UserPromptSubmit` entry present in the GLOBAL `~/.claude/settings.json`
-/// (wrapper or bare form)? CC merges other settings layers and snapshots
-/// hooks at session start, so this is only a hint to pick the notice text —
-/// never the guard itself (that is the runtime-observed `guard_verified`).
-pub fn user_prompt_send_hook_installed() -> bool {
-    let Ok(path) = settings_path() else {
-        return false;
-    };
-    let Ok(settings) = load_settings(&path) else {
-        return false;
-    };
-    let Some(Value::Object(hooks_map)) = settings.get("hooks") else {
-        return false;
-    };
-    let Some(entries) = hooks_map.get("UserPromptSubmit").and_then(|v| v.as_array()) else {
-        return false;
-    };
-    entries.iter().any(|entry| {
-        entry
-            .get("hooks")
-            .and_then(|h| h.as_array())
-            .is_some_and(|hooks| {
-                hooks.iter().any(|h| {
-                    h.get("command")
-                        .and_then(|c| c.as_str())
-                        .is_some_and(|c| matches_hook_command(c, SEND_USER_PROMPT_COMMAND))
-                })
-            })
-    })
 }
 
 /// Remove an obsolete hook entry. Returns true if removed.
@@ -594,11 +556,15 @@ mod tests {
         );
     }
 
+    // Generic async fixture for merge/wrapper-synthesis tests; the command is
+    // hypothetical on purpose — the logic under test is command-agnostic.
+    const ASYNC_TEST_COMMAND: &str = "cluihud hook send user-prompt";
+
     fn send_user_prompt_def() -> HookDef {
         HookDef {
             event: "UserPromptSubmit",
             matcher: None,
-            command: SEND_USER_PROMPT_COMMAND,
+            command: ASYNC_TEST_COMMAND,
             is_async: true,
             timeout: None,
             if_condition: None,
@@ -685,7 +651,7 @@ mod tests {
             hooks_map["UserPromptSubmit"][0]["hooks"][0]["command"]
                 .as_str()
                 .unwrap(),
-            SEND_USER_PROMPT_COMMAND,
+            ASYNC_TEST_COMMAND,
         );
     }
 

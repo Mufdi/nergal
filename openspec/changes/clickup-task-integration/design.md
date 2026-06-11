@@ -60,7 +60,7 @@
 - **Active session**: the composed block is **multi-line** (heading, description, subtasks, checklists, comments). It MUST be delivered via `terminal_paste` (`pty.rs:994`), which wraps the body in bracketed-paste markers (`\x1b[200~`…`\x1b[201~`) so the TUI treats it as one paste, followed by an explicit `\r` submit (send-as-prompt is imperative). **Not** the `reinject_pinned_note` path (`pty.rs:880` → `write_session_data`, `pty.rs:823`): that writes raw text without bracketed paste and does not submit, so each embedded `\n` would fragment the task into partial turns (round-1 #1).
 - **New worktree session**: set `pending_prompts[new_session_id] = composed` before spawn; the adapter folds it as the initial prompt (`pty.rs:388`).
 
-**Mid-stream defer** (round-1 #2): the readiness signal is `SessionStatus` (`models.rs:8`, the same status the writeback closure observes — already tracked, no dependency on the unimplemented cross-session-messaging mode-map). If the target session is `Running`, the send is **queued**, not written, and delivered when the session transitions to `Idle`; a write never interrupts a generating agent. Send-as-prompt is therefore: compose → if Running, queue → on Idle, `terminal_paste` + `\r`.
+**Mid-stream defer** (round-1 #2): the readiness signal is `SessionStatus` (`models.rs:8`, the same status the writeback closure observes — already tracked, no dependency on the unimplemented cross-session-messaging mode-map). If the target session is `Running`, the send is **queued**, not written, and delivered when the session transitions to `Idle`; a write never interrupts a generating agent. Send-as-prompt is therefore: compose → if Running, queue → on Idle, `terminal_paste` + `\r`. **[Superseded by Revision 3: the defer/gate was removed entirely — send always delivers immediately.]**
 
 ## Decision 6 — Composed ClickUp context is UNTRUSTED external data
 
@@ -76,7 +76,7 @@ Because **send-as-prompt auto-submits** untrusted content as a turn, it carries 
 
 **Decision** (resolves round-1 #5): injection happens at spawn/resume; once context is in a running agent's window it cannot be retracted. `clickup_unbind_task` / `clickup_unpin_task` therefore affect only **future** spawns/resumes — they do not scrub the live agent's context. This matches vault unpin (which the Obsidian spec also scopes to future spawns). `clickup_reinject_task` is the only live-session context operation, and it adds (explicit refresh), never removes. The UI states this so unbinding mid-session is not mistaken for an immediate retraction.
 
-## Revision 1: The defer's readiness signal does not exist — the send-gate (iprev'd separately, 3 rounds)
+## Revision 1: The defer's readiness signal does not exist — the send-gate (iprev'd separately, 3 rounds) — [REMOVED by Revision 3]
 
 **What build-time verification falsified (two layers)**:
 1. Decision 5 grounded the defer on `SessionStatus` (`models.rs:8`) being "already tracked". Nothing writes runtime transitions: `db.update_session_status` (`db.rs:402`) has zero callers; the only writes are static `Idle` at creation (`commands.rs:815`) and reset on worktree removal (`db.rs:495`). Reading it = guard permanently open.
@@ -134,6 +134,18 @@ What the gate DOES guarantee: a queued send is never silently lost (every outcom
 ## Revision 2: untrusted framing softened to "task brief" (user decision, walk round 1)
 
 The Decision-6 stance treated ClickUp content as a multi-writer prompt-injection surface ("untrusted data, not instructions" fence + alarm-toned confirm). The user's walk verdict (2026-06-11): their workspace is a private, team-authored space; tasks are approved work items and some legitimately ARE direct instructions — the alarm framing was wrong for the product. Changed: fence relabeled "# ClickUp task brief" (team-authored work item), confirm dialog reworded as a review step with neutral styling. **Retained unchanged**: `sanitize_for_pty` on every PTY delivery path, fence-sentinel neutralization, confirm-before-submit, the send-gate. The technical protections were never about distrusting the team — they protect terminal integrity and submission control.
+
+## Revision 3: the send-gate removed entirely (user decision, walk round 2, 2026-06-11)
+
+Revision 1 solved "never interrupt a generating agent" with a hook-observed gate — but never re-questioned whether the problem was real. The walk-round-2 review did:
+
+1. **The protection is redundant**: Claude Code queues mid-turn prompts natively (TUI message queueing) — a send while the agent generates is queued by the agent itself and processed at turn end. The gate duplicated that, at the cost of new machinery.
+2. **The cost was disproportionate**: a hook entry in the user's **global** `~/.claude/settings.json` (invasive — the user explicitly rejected cluihud writing their agent config for this), a session restart to activate, and a CC-only mechanism (Codex Running-edge was already descoped; Pi/OpenCode never had a signal) that broke the agent-agnostic stance.
+3. **The deferred path was functionally a pin**: paste-without-submit on Idle delivers the same composed block as `clickup_reinject_task` — duplicated behavior.
+
+**Removed**: `send_gate.rs` (state + queue + cancel/force-deliver commands + `clickup:send-*` events), the `UserPromptSubmit` send hook (moved to `OBSOLETE_HOOKS` so `cluihud hook setup` purges installed entries), `guard_active`/`guard_hint` from the compose payload, the dialog's guard notice + "Enable guard" button, and the queued-send UI. The dispatcher keeps a tolerated no-op `UserPromptSubmit` arm for stale installed hooks.
+
+**Retained**: confirm-before-submit (the review step), bracketed-paste + `\r` delivery, `sanitize_for_pty`, fence-sentinel neutralization. Send-as-prompt is now: compose → confirm → paste + submit, unconditionally; mid-turn sends ride the agent's own queueing.
 
 ## Risks
 

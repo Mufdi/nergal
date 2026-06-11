@@ -281,7 +281,6 @@ pub fn run() {
         .manage(crate::obsidian::templates_watcher::TemplatesWatcherState::new())
         .manage(crate::obsidian::pinned_notes_watcher::PinnedNotesWatcherState::new())
         .manage(clickup::poller::ClickUpSyncState::default())
-        .manage(clickup::send_gate::SendGateState::default())
         .manage(PendingDeepLinks::default())
         .invoke_handler(tauri::generate_handler![
             // PTY commands
@@ -455,8 +454,6 @@ pub fn run() {
             clickup::clickup_unpin_task,
             clickup::clickup_compose_task_prompt,
             clickup::clickup_send_task_as_prompt,
-            clickup::clickup_cancel_queued_send,
-            clickup::clickup_force_deliver_queued_send,
             clickup::clickup_reinject_task,
             clickup::clickup_spawn_worktree_with_task,
             // Live preview browser

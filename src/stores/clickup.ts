@@ -161,39 +161,6 @@ export const clickupTokenOnDiskAtom = atom(false);
 
 // ── Session binding + task-to-agent verbs (clickup-task-integration) ──
 
-export interface ClickUpComposeConfirm {
-  markdown: string;
-  /// True only when the session's Running edge was observed at runtime —
-  /// never derived from static hook config alone.
-  guard_active: boolean;
-  guard_hint: "active" | "restart_session" | "run_setup";
-}
-
-export interface ClickUpSendOutcome {
-  status: "delivered" | "queued";
-  replaced: boolean;
-}
-
-interface SendQueuedPayload {
-  session_id: string;
-  task_id: string;
-  replaced: boolean;
-}
-
-interface SendDeliveredPayload {
-  session_id: string;
-  task_id: string;
-  /// immediate = pasted + submitted; deferred/forced = pasted WITHOUT submit
-  /// (the user reviews and presses Enter).
-  mode: "immediate" | "deferred" | "forced";
-}
-
-interface SendDroppedPayload {
-  session_id: string;
-  task_id: string | null;
-  reason: string;
-}
-
 /// session_id → active task id. `null` = explicitly unbound this run; an
 /// absent key falls back to the Session row (same seeding pattern as
 /// `pinnedNotesMapAtom`).
@@ -203,13 +170,8 @@ export const clickupBindingMapAtom = atom<Record<string, string | null>>({});
 /// key falls back to the Session row).
 export const clickupPinsMapAtom = atom<Record<string, string[]>>({});
 
-/// session_id → queued send. Set on `clickup:send-queued`, cleared on
-/// delivered/dropped — the backend guarantees every queued send resolves
-/// through one of those events, so the UI never shows a stale "queued".
-export const clickupQueuedSendMapAtom = atom<Record<string, { taskId: string }>>({});
-
-/// Pending send-as-prompt confirmation (Decision 6: untrusted content is
-/// never auto-submitted without the user seeing it). null = dialog closed.
+/// Pending send-as-prompt confirmation (Decision 6: the send auto-submits a
+/// turn, so the user reviews the composed block first). null = dialog closed.
 export const clickupSendConfirmAtom = atom<{ sessionId: string; taskId: string } | null>(null);
 
 /// Pending rebind confirmation: binding over an existing active task.
@@ -253,11 +215,6 @@ export const activeSessionClickUpPinsAtom = atom<string[]>((get) => {
   if (runtime !== undefined) return runtime;
   return findSession(get(workspacesAtom), id)?.pinned_clickup_task_ids ?? [];
 });
-
-function taskLabel(store: Store, taskId: string | null): string {
-  if (!taskId) return "task";
-  return store.get(clickupTasksAtom).find((t) => t.id === taskId)?.name ?? taskId;
-}
 
 /// Decision 7: unbind/unpin affect future spawns/resumes only — context
 /// already in a running agent's window is not retracted.
@@ -345,10 +302,13 @@ export const performBindTaskAction = atom(
     try {
       await invoke("clickup_bind_task", args);
       set(clickupBindingMapAtom, (prev) => ({ ...prev, [args.sessionId]: args.taskId }));
+      // Deliver the task brief to the live agent now (same rule as pin); the
+      // binding still seeds future spawns/resumes. No-op without a live PTY.
+      void invoke("clickup_reinject_task", args).catch(() => {});
       set(toastsAtom, {
         message: "Bound as active task",
         description:
-          "Write-back target for this session (shown in the tab chip); injected at the next spawn/resume.",
+          "Write-back target for this session (shown in the tab chip) — injected into the live session and at future spawns/resumes.",
         type: "success",
       });
     } catch (err) {
@@ -434,23 +394,6 @@ export const spawnWorktreeWithTaskAction = atom(null, async (get, set, taskId: s
   }
 });
 
-export const cancelQueuedSendAction = atom(null, async (_get, set, sessionId: string) => {
-  try {
-    const existed = await invoke<boolean>("clickup_cancel_queued_send", { sessionId });
-    // Outcome toast + map cleanup ride the clickup:send-dropped event; only
-    // an already-empty queue (raced drain) needs the defensive clear.
-    if (!existed) {
-      set(clickupQueuedSendMapAtom, (prev) => {
-        const next = { ...prev };
-        delete next[sessionId];
-        return next;
-      });
-    }
-  } catch (err) {
-    set(toastsAtom, { message: "Cancel failed", description: String(err), type: "error" });
-  }
-});
-
 /// Explicit refresh of a live session's task context (design "Stale injected
 /// context" risk, mirroring the Obsidian hot-reload rule): recompose +
 /// bracketed paste into the live PTY, never automatic, never submits.
@@ -473,21 +416,6 @@ export const reinjectTaskAction = atom(null, async (get, set, taskId: string) =>
     });
   } catch (err) {
     set(toastsAtom, { message: "Reinject failed", description: String(err), type: "error" });
-  }
-});
-
-export const forceDeliverQueuedSendAction = atom(null, async (_get, set, sessionId: string) => {
-  try {
-    const existed = await invoke<boolean>("clickup_force_deliver_queued_send", { sessionId });
-    if (!existed) {
-      set(clickupQueuedSendMapAtom, (prev) => {
-        const next = { ...prev };
-        delete next[sessionId];
-        return next;
-      });
-    }
-  } catch (err) {
-    set(toastsAtom, { message: "Deliver now failed", description: String(err), type: "error" });
   }
 });
 
@@ -519,70 +447,6 @@ export async function setupClickUpListeners(store: Store): Promise<UnlistenFn[]>
   unlisteners.push(
     await listen<null>("clickup:changed", () => {
       void refreshClickUpMirror(store);
-    }),
-  );
-
-  unlisteners.push(
-    await listen<SendQueuedPayload>("clickup:send-queued", (p) => {
-      store.set(clickupQueuedSendMapAtom, (prev) => ({
-        ...prev,
-        [p.session_id]: { taskId: p.task_id },
-      }));
-      store.set(toastsAtom, {
-        message: "Send queued",
-        description: `${taskLabel(store, p.task_id)} — delivers when the agent finishes the current turn.${
-          p.replaced ? " Replaced the previously queued send." : ""
-        }`,
-        type: "info",
-      });
-    }),
-  );
-
-  unlisteners.push(
-    await listen<SendDeliveredPayload>("clickup:send-delivered", (p) => {
-      store.set(clickupQueuedSendMapAtom, (prev) => {
-        const next = { ...prev };
-        delete next[p.session_id];
-        return next;
-      });
-      store.set(
-        toastsAtom,
-        p.mode === "immediate"
-          ? {
-              message: "Task sent as prompt",
-              description: taskLabel(store, p.task_id),
-              type: "success",
-            }
-          : {
-              message: "Task pasted into the session",
-              description: `${taskLabel(store, p.task_id)} — review and press Enter to submit.`,
-              type: "success",
-            },
-      );
-    }),
-  );
-
-  unlisteners.push(
-    await listen<SendDroppedPayload>("clickup:send-dropped", (p) => {
-      store.set(clickupQueuedSendMapAtom, (prev) => {
-        const next = { ...prev };
-        delete next[p.session_id];
-        return next;
-      });
-      store.set(
-        toastsAtom,
-        p.reason === "cancelled"
-          ? {
-              message: "Queued send cancelled",
-              description: taskLabel(store, p.task_id),
-              type: "info",
-            }
-          : {
-              message: "Send dropped",
-              description: `${taskLabel(store, p.task_id)} — ${p.reason}`,
-              type: "error",
-            },
-      );
     }),
   );
 

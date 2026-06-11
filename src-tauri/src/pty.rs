@@ -166,7 +166,6 @@ fn spawn_pty(
     let ready_tx = Mutex::new(shell_ready_tx);
     let eof_app = app.clone();
     let eof_session = session_id.to_owned();
-    let eof_pty_id = pty_id.clone();
 
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
@@ -198,27 +197,6 @@ fn spawn_pty(
             // obsidian once — deduped against the hook by claim_finalization.
             if let Some(db) = eof_app.try_state::<crate::db::SharedDb>() {
                 crate::hooks::server::finalize_session_obsidian(db.inner(), Some(&eof_session));
-            }
-            // Send-gate purge, instance-identity gated: crash/natural exit do
-            // NOT de-register from session_ptys (only kill_session_pty does),
-            // so purge iff the session maps to THIS reader's pty (crash) or to
-            // nothing (kill, no respawn — idempotent no-op). A kill→respawn
-            // maps to a NEW pty_id: a late EOF from the old reader must not
-            // clear the respawned session's fresh gate state.
-            let owns_session = eof_app
-                .try_state::<PtyManager>()
-                .and_then(|m| {
-                    m.session_ptys
-                        .lock()
-                        .ok()
-                        .map(|g| match g.get(&eof_session) {
-                            None => true,
-                            Some(current) => current == &eof_pty_id,
-                        })
-                })
-                .unwrap_or(false);
-            if owns_session {
-                crate::clickup::send_gate::purge_session(&eof_app, &eof_session);
             }
         } else {
             // Emit only for a shell that exited on its own (`exit`, crash):
@@ -976,11 +954,7 @@ pub fn queue_session_prompt(
 
 /// Kill a session's PTY (and its auxiliary shells) and clean up mappings.
 #[tauri::command]
-pub fn kill_session_pty(
-    app: AppHandle,
-    state: State<'_, PtyManager>,
-    session_id: String,
-) -> Result<(), String> {
+pub fn kill_session_pty(state: State<'_, PtyManager>, session_id: String) -> Result<(), String> {
     kill_session_aux_shells(&state, &session_id)?;
 
     let pty_id = {
@@ -996,10 +970,6 @@ pub fn kill_session_pty(
     // Drop the ephemeral system-prompt file written for AppendSystemPromptFile
     // adapters; absent (non-CC, or no pins) → harmless no-op.
     let _ = std::fs::remove_file(crate::agents::spawn_context_file(&session_id));
-
-    // A respawn with the same session_id starts with a clean send-gate: a
-    // stale composed block must never drain into a fresh conversation.
-    crate::clickup::send_gate::purge_session(&app, &session_id);
 
     Ok(())
 }

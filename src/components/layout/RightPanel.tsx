@@ -146,6 +146,8 @@ export function RightPanel({ collapsed }: RightPanelProps) {
   function handlePanelKeyDown(e: React.KeyboardEvent) {
     if (e.ctrlKey || e.altKey || pickerOpen) return;
     if (!activeTab) return;
+    // ClickUp owns ↑/↓ for row navigation (window-level listener in the panel).
+    if (activeTab.type === "clickup") return;
 
     const SCROLL_KEYS = ["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End"];
     if (!SCROLL_KEYS.includes(e.key)) return;

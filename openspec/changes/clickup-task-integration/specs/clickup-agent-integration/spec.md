@@ -22,7 +22,7 @@ The system SHALL compose a ClickUp task into a single labeled markdown block rea
 
 ### Requirement: Three task-to-agent verbs
 
-The system SHALL provide three distinct actions on a selected task: (1) send-as-prompt — after explicit user confirmation, submit the composed block as a turn to the active session via a bracketed-paste write plus a submit (so a multi-line body lands as one turn, not fragmented), or as the initial prompt to a new session; (2) spawn-worktree-with-task — create a new worktree session via the existing user-initiated worktree machinery with the composed block as the initial prompt, binding the new session to the task; (3) attach-as-context — fold the composed block into the session's injected context. Send-as-prompt SHALL NOT establish a persistent binding on the active session. Send-as-prompt SHALL be deferred (queued) while the target session is `Running`, never interrupting a generating agent.
+The system SHALL provide three distinct actions on a selected task: (1) send-as-prompt — after explicit user confirmation, submit the composed block as a turn to the active session via a bracketed-paste write plus a submit (so a multi-line body lands as one turn, not fragmented), or as the initial prompt to a new session; (2) spawn-worktree-with-task — create a new worktree session via the existing user-initiated worktree machinery with the composed block as the initial prompt, binding the new session to the task; (3) attach-as-context — fold the composed block into the session's injected context. Send-as-prompt SHALL NOT establish a persistent binding on the active session. Send-as-prompt SHALL deliver immediately regardless of the agent's run state — a send into a mid-turn agent rides the agent's own prompt queueing (Claude Code queues natively). (Design Revision 3, user decision 2026-06-11: the hook-based send-gate of Revision 1 was removed — it duplicated the agent's native queueing, required a hook in the user's global settings plus a session restart, and only worked for Claude Code.)
 
 #### Scenario: Send as prompt to the active session
 
@@ -30,19 +30,7 @@ The system SHALL provide three distinct actions on a selected task: (1) send-as-
 - **THEN** the system SHALL show a confirmation with the composed block before submitting
 - **AND** on confirm SHALL deliver it via a bracketed-paste write so the multi-line body is one paste, followed by a submit
 - **AND** no persistent binding SHALL be created by this action
-
-#### Scenario: Send is deferred while the agent is running
-
-- **WHEN** the target session is observed as running by the send-gate
-- **THEN** the send SHALL be queued, not written
-- **AND** SHALL be delivered when the session transitions to idle — pasted WITHOUT auto-submit (the user may be mid-draft; a deferred paste is reviewed and submitted by the user) and with a notification
-- **AND** the deferral SHALL be best-effort (signal latency and event ordering can race); a queued send SHALL never be silently lost, never double-delivered, and SHALL remain user-actionable (cancel or deliver-now)
-
-#### Scenario: Guard state is surfaced honestly
-
-- **WHEN** the user opens the send-as-prompt confirmation
-- **THEN** the dialog SHALL state whether the mid-stream guard is active for the target session, derived from runtime-observed signal (not from static hook configuration alone)
-- **AND** a session whose agent emits no run-state signal SHALL read guard-inactive
+- **AND** delivery SHALL NOT be gated on the agent's run state
 
 #### Scenario: Spawn a worktree session with the task
 
@@ -76,13 +64,14 @@ The system SHALL fold attached-task context into the session's `injected_context
 
 ### Requirement: One active task per session plus pinned context tasks
 
-The system SHALL persist at most one active ClickUp task per session (`active_clickup_task_id`) and zero or more pinned context tasks (`pinned_clickup_task_ids`, an ordered idempotent JSON array). Both active and pinned tasks SHALL be injected (deduped by id); only the active task SHALL be the write-back subject and the session-tab indicator. Binding a task while one is already active SHALL replace it, with UI confirmation; the replaced task SHALL remain in the mirror.
+The system SHALL persist at most one active ClickUp task per session (`active_clickup_task_id`) and zero or more pinned context tasks (`pinned_clickup_task_ids`, an ordered idempotent JSON array). Both active and pinned tasks SHALL be injected (deduped by id); only the active task SHALL be the write-back subject. The session tab SHALL show the active task by name and the pinned tasks as a count indicator. Binding or pinning a live session SHALL also deliver the composed block to the running agent immediately (best-effort, no-op without a live PTY), in addition to seeding future spawns/resumes. Binding a task while one is already active SHALL replace it, with UI confirmation; the replaced task SHALL remain in the mirror.
 
 #### Scenario: Active task is unique and surfaced
 
 - **WHEN** the user binds a task to a session that has no active task
 - **THEN** `active_clickup_task_id` SHALL be set
 - **AND** the session tab SHALL indicate the bound task
+- **AND** the composed block SHALL be delivered to the live agent immediately
 
 #### Scenario: Rebinding replaces with confirmation
 

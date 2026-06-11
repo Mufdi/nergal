@@ -9,7 +9,6 @@ pub mod integration;
 pub mod mirror;
 pub mod model;
 pub mod poller;
-pub mod send_gate;
 
 #[derive(Debug, serde::Serialize)]
 pub struct TokenStatus {
@@ -397,152 +396,33 @@ fn compose_for_delivery(
     Ok(crate::pty::sanitize_for_pty(&composed))
 }
 
-/// Payload for the send-as-prompt confirm dialog: the exact (untrusted)
-/// block that would be submitted, plus honest guard visibility.
-#[derive(Clone, serde::Serialize)]
-pub struct ComposeForConfirm {
-    pub markdown: String,
-    /// True only when this session's Running edge was OBSERVED at runtime
-    /// (`guard_verified`) — never derived from static hook config alone.
-    pub guard_active: bool,
-    /// Notice selector when the guard is inactive: "active" | "restart_session"
-    /// (entry installed in the global settings, CC snapshots hooks at session
-    /// start → relaunch the session) | "run_setup" (entry missing → run
-    /// `cluihud hook setup`).
-    pub guard_hint: String,
-}
-
-/// Compose-for-confirm step of send-as-prompt: the frontend shows this block
-/// and the guard notice before any submit (design Decision 6 — the content is
-/// untrusted and auto-submitted, so the user must see it first).
+/// Compose-for-confirm step of send-as-prompt: the frontend shows this exact
+/// block before any submit (design Decision 6 — the send auto-submits a turn,
+/// so the user must see WHAT will be submitted first).
 #[tauri::command]
 pub fn clickup_compose_task_prompt(
-    session_id: String,
     task_id: String,
     db: tauri::State<'_, crate::db::SharedDb>,
-    gate: tauri::State<'_, send_gate::SendGateState>,
-) -> Result<ComposeForConfirm, String> {
-    let markdown = compose_for_delivery(&db, &task_id)?;
-    let guard_active = gate.guard_active(&session_id);
-    let guard_hint = if guard_active {
-        "active"
-    } else if crate::setup::user_prompt_send_hook_installed() {
-        "restart_session"
-    } else {
-        "run_setup"
-    };
-    Ok(ComposeForConfirm {
-        markdown,
-        guard_active,
-        guard_hint: guard_hint.to_string(),
-    })
-}
-
-#[derive(Clone, serde::Serialize)]
-pub struct SendOutcome {
-    /// "delivered" (gate Idle: pasted + submitted) | "queued" (gate Running:
-    /// the Stop drain delivers later WITHOUT auto-submit).
-    pub status: String,
-    pub replaced: bool,
+) -> Result<String, String> {
+    compose_for_delivery(&db, &task_id)
 }
 
 /// Send a task as a prompt to a live session, after the frontend confirmed
-/// the composed block. Re-composes (fresh mirror read), then check-and-
-/// enqueues atomically under the gate lock; delivery happens outside it via
+/// the composed block. Re-composes (fresh mirror read), then delivers via
 /// bracketed paste + `\r` (never the raw reinject path — embedded `\n`
-/// would fragment the block into partial turns). One-shot: no binding.
+/// would fragment the block into partial turns). A send while the agent is
+/// mid-turn relies on the agent's own prompt queueing (CC queues natively).
+/// One-shot: no binding.
 #[tauri::command]
 pub fn clickup_send_task_as_prompt(
     session_id: String,
     task_id: String,
-    app: tauri::AppHandle,
     db: tauri::State<'_, crate::db::SharedDb>,
-    gate: tauri::State<'_, send_gate::SendGateState>,
     pty: tauri::State<'_, crate::pty::PtyManager>,
-) -> Result<SendOutcome, String> {
+) -> Result<(), String> {
     let text = compose_for_delivery(&db, &task_id)?;
-    match gate.check_and_enqueue(
-        &session_id,
-        send_gate::QueuedSend {
-            task_id: task_id.clone(),
-            text: text.clone(),
-        },
-    ) {
-        send_gate::EnqueueOutcome::Queued { replaced } => {
-            send_gate::emit_send_queued(&app, &session_id, &task_id, replaced);
-            Ok(SendOutcome {
-                status: "queued".into(),
-                replaced,
-            })
-        }
-        send_gate::EnqueueOutcome::DeliverNow => {
-            match crate::pty::paste_to_session(&pty, &session_id, &text, true) {
-                Ok(()) => {
-                    send_gate::emit_send_delivered(&app, &session_id, &task_id, "immediate");
-                    Ok(SendOutcome {
-                        status: "delivered".into(),
-                        replaced: false,
-                    })
-                }
-                Err(e) => {
-                    send_gate::emit_send_dropped(
-                        &app,
-                        &session_id,
-                        Some(&task_id),
-                        &format!("pty write failed: {e}"),
-                    );
-                    Err(format!("pty write failed: {e}"))
-                }
-            }
-        }
-    }
-}
-
-/// Cancel the session's queued send. Destructive pop under the gate lock —
-/// a concurrent Stop drain and this cancel cannot both consume it. Returns
-/// whether a queued send existed.
-#[tauri::command]
-pub fn clickup_cancel_queued_send(
-    session_id: String,
-    app: tauri::AppHandle,
-    gate: tauri::State<'_, send_gate::SendGateState>,
-) -> Result<bool, String> {
-    let Some(send) = gate.pop_queued(&session_id) else {
-        return Ok(false);
-    };
-    send_gate::emit_send_dropped(&app, &session_id, Some(&send.task_id), "cancelled");
-    Ok(true)
-}
-
-/// Deliver the queued send now, overriding the gate. Pasted WITHOUT
-/// auto-submit — same stance as the Stop drain: a paste into a possibly
-/// mid-turn terminal must stay visible and user-submitted. Returns whether
-/// a queued send existed.
-#[tauri::command]
-pub fn clickup_force_deliver_queued_send(
-    session_id: String,
-    app: tauri::AppHandle,
-    gate: tauri::State<'_, send_gate::SendGateState>,
-    pty: tauri::State<'_, crate::pty::PtyManager>,
-) -> Result<bool, String> {
-    let Some(send) = gate.pop_queued(&session_id) else {
-        return Ok(false);
-    };
-    match crate::pty::paste_to_session(&pty, &session_id, &send.text, false) {
-        Ok(()) => {
-            send_gate::emit_send_delivered(&app, &session_id, &send.task_id, "forced");
-            Ok(true)
-        }
-        Err(e) => {
-            send_gate::emit_send_dropped(
-                &app,
-                &session_id,
-                Some(&send.task_id),
-                &format!("pty write failed: {e}"),
-            );
-            Err(format!("pty write failed: {e}"))
-        }
-    }
+    crate::pty::paste_to_session(&pty, &session_id, &text, true)
+        .map_err(|e| format!("pty write failed: {e}"))
 }
 
 /// Explicit context refresh of a live session (mirrors the vault-note

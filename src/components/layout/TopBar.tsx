@@ -33,6 +33,7 @@ import {
   clickupBindingMapAtom,
   clickupConfiguredAtom,
   clickupDetailTaskIdAtom,
+  clickupPinsMapAtom,
   clickupTasksAtom,
   resolveActiveClickUpTask,
 } from "@/stores/clickup";
@@ -153,6 +154,19 @@ function clickupChipTooltip(
   return `Active ClickUp task: ${taskName}${unsupported} — click to open it in the panel`;
 }
 
+/// Pinned ClickUp tasks ride the same injection channel as pinned notes —
+/// same tier honesty as pinnedChipTooltip.
+function clickupPinsChipTooltip(
+  count: number,
+  tier: ContextInjectionTier | undefined,
+  agentId: string | undefined,
+): string {
+  const noun = count === 1 ? "ClickUp task pinned as context" : "ClickUp tasks pinned as context";
+  const unsupported =
+    tier === "unsupported" ? ` · injection unsupported for ${agentId ?? "this agent"}` : "";
+  return `${count} ${noun}${unsupported}`;
+}
+
 const PANEL_BUTTONS: {
   type: TabType;
   label: string;
@@ -190,6 +204,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   const obsidianEnabled = useAtomValue(obsidianEnabledAtom);
   const clickupConfigured = useAtomValue(clickupConfiguredAtom);
   const clickupBindingMap = useAtomValue(clickupBindingMapAtom);
+  const clickupPinsMap = useAtomValue(clickupPinsMapAtom);
   const clickupTasks = useAtomValue(clickupTasksAtom);
   const visiblePanelButtons = PANEL_BUTTONS.filter((b) => {
     if (b.type === "plan" && !planAvailable) return false;
@@ -435,8 +450,9 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
               {/* Status indicator */}
               <SessionIndicator sessionId={tabId} sessionStatus={entry.session.status} size="xs" />
 
-              {/* Session name */}
-              <span className="truncate">{entry.session.name}</span>
+              {/* Session name: min width guarantees it never gets crushed to
+                  zero by the shrink-0 chips that follow. */}
+              <span className="min-w-10 truncate">{entry.session.name}</span>
 
               {/* Conflict dot */}
               {(conflictedFilesMap[tabId]?.length ?? 0) > 0 && (
@@ -458,7 +474,24 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
                 );
               })()}
 
-              {/* Active ClickUp task chip — click focuses it in the panel */}
+              {/* Pinned ClickUp tasks chip — count only, like the notes chip */}
+              {(() => {
+                const count = (clickupPinsMap[tabId] ?? entry.session.pinned_clickup_task_ids ?? []).length;
+                if (count === 0) return null;
+                return (
+                  <span
+                    title={clickupPinsChipTooltip(count, injectionTierMap[tabId], entry.session.agent_id)}
+                    className="flex shrink-0 items-center gap-0.5 text-[10px] text-muted-foreground/70"
+                  >
+                    <ClickUpIcon size={9} className="shrink-0" />
+                    {count}
+                  </span>
+                );
+              })()}
+
+              {/* Active ClickUp task chip — click focuses it in the panel.
+                  min-w-0 (not shrink-0): the chip yields space before the
+                  session name does; the full task name lives in the tooltip. */}
               {(() => {
                 const boundId = resolveActiveClickUpTask(clickupBindingMap, entry.session);
                 if (!boundId) return null;
@@ -472,7 +505,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
                       handleFocusClickUpTask(boundId);
                     }}
                     title={clickupChipTooltip(taskName, injectionTierMap[tabId], entry.session.agent_id)}
-                    className="flex max-w-24 shrink-0 items-center gap-1 text-[10px] text-muted-foreground/70 hover:text-foreground transition-colors"
+                    className="flex min-w-0 max-w-24 items-center gap-1 text-[10px] text-muted-foreground/70 hover:text-foreground transition-colors"
                   >
                     <ClickUpIcon size={9} className="shrink-0" />
                     <span className="truncate">{taskName}</span>

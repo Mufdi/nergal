@@ -214,11 +214,13 @@ export function ClickUpTaskDetail() {
   const [geometry, setGeometry] = useState<FloatingGeometry>(DEFAULT_GEOMETRY);
   const wasOpenRef = useRef(false);
 
-  // Contextual task verbs: bare letters scoped to the clickup focus zone
-  // (same convention as ConflictsPanel O/T, PrViewer A). The focused row
-  // wins; the floating detail is the fallback. The handler lives here — the
-  // detail is the always-mounted ClickUp surface, so the keys keep working
-  // when the chip opens the detail without the right panel.
+  // Contextual task verbs: bare letters scoped to ClickUp surfaces (same
+  // convention as ConflictsPanel O/T, PrViewer A). Inside the floating
+  // detail the open task wins; inside the right panel the data-nav-selected
+  // cursor row wins (panel rows are never DOM-focused — patterns.md §5.2).
+  // The handler lives here — the detail is the always-mounted ClickUp
+  // surface, so the keys keep working when the chip opens the detail
+  // without the right panel.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
@@ -229,10 +231,13 @@ export function ClickUpTaskDetail() {
         || !!target?.closest(".cm-editor")
         || target?.getAttribute("contenteditable") === "true";
       if (inField) return;
-      if (!target?.closest("[data-focus-zone='clickup']")) return;
-      const focusedRow = (document.activeElement as HTMLElement | null)
-        ?.closest<HTMLElement>("[data-task-id]");
-      const id = focusedRow?.dataset.taskId ?? taskId;
+      const inClickupZone = !!target?.closest("[data-focus-zone='clickup']");
+      const inPanelZone = !!target?.closest("[data-focus-zone='panel']");
+      if (!inClickupZone && !inPanelZone) return;
+      const selectedRow = document.querySelector<HTMLElement>(
+        "[data-focus-zone='clickup'] [data-nav-selected='true'][data-task-id]",
+      );
+      const id = inClickupZone && taskId ? taskId : selectedRow?.dataset.taskId ?? taskId;
       if (!id) return;
       e.preventDefault();
       if (e.code === "KeyS") requestSend(id);
@@ -336,7 +341,9 @@ export function ClickUpTaskDetail() {
             className="size-1.5 shrink-0 rounded-full"
             style={{ background: task?.status_color ?? "var(--color-muted-foreground)" }}
           />
-          <span className="truncate">{task?.name ?? "ClickUp task"}</span>
+          <span className="truncate text-xs font-medium text-foreground">
+            {task?.name ?? "ClickUp task"}
+          </span>
         </>
       }
       toolbar={

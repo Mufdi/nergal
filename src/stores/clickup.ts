@@ -1,6 +1,7 @@
 import { atom, type getDefaultStore } from "jotai";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { invoke, listen } from "@/lib/tauri";
+import { confirm as swalConfirm } from "@/lib/swal";
 import { toastsAtom } from "./toast";
 import {
   activeSessionIdAtom,
@@ -145,7 +146,9 @@ export const GROUP_BY_ORDER: ClickUpGroupBy[] = ["status", "list", "assignee"];
 /// null = "Todos" (all Spaces).
 export const clickupSpaceFilterAtom = atom<string | null>(null);
 export const clickupGroupByAtom = atom<ClickUpGroupBy>("status");
-export const clickupAssignedToMeAtom = atom(false);
+/// Default true: assigned-to-me + status grouping IS the "My tasks" chip,
+/// the panel's default view.
+export const clickupAssignedToMeAtom = atom(true);
 export const clickupShowClosedAtom = atom(false);
 
 /// Ephemeral result of the on-demand show-closed fetch — merged client-side
@@ -173,13 +176,6 @@ export const clickupPinsMapAtom = atom<Record<string, string[]>>({});
 /// Pending send-as-prompt confirmation (Decision 6: the send auto-submits a
 /// turn, so the user reviews the composed block first). null = dialog closed.
 export const clickupSendConfirmAtom = atom<{ sessionId: string; taskId: string } | null>(null);
-
-/// Pending rebind confirmation: binding over an existing active task.
-export const clickupRebindConfirmAtom = atom<{
-  sessionId: string;
-  taskId: string;
-  currentTaskId: string;
-} | null>(null);
 
 /// Shared binding resolution for surfaces that render per-session rows
 /// (session tabs): runtime map wins, Session row seeds.
@@ -302,13 +298,15 @@ export const performBindTaskAction = atom(
     try {
       await invoke("clickup_bind_task", args);
       set(clickupBindingMapAtom, (prev) => ({ ...prev, [args.sessionId]: args.taskId }));
-      // Deliver the task brief to the live agent now (same rule as pin); the
-      // binding still seeds future spawns/resumes. No-op without a live PTY.
-      void invoke("clickup_reinject_task", args).catch(() => {});
+      // Deliver the brief to the live agent now, SUBMITTED as a turn (binding
+      // is the deliberate "work on this" act — the agent must ingest it
+      // immediately, not wait in the input box). Still seeds future
+      // spawns/resumes. No-op without a live PTY.
+      void invoke("clickup_reinject_task", { ...args, submit: true }).catch(() => {});
       set(toastsAtom, {
         message: "Bound as active task",
         description:
-          "Write-back target for this session (shown in the tab chip) — injected into the live session and at future spawns/resumes.",
+          "Write-back target for this session (shown in the tab chip) — brief submitted to the live session; also persists for future spawns/resumes.",
         type: "success",
       });
     } catch (err) {
@@ -331,6 +329,8 @@ export const unbindTaskAction = atom(null, async (get, set) => {
 
 /// Bind toggle: same task → unbind; different active task → confirm the
 /// replacement (Decision 2 rebind rule); no active task → bind directly.
+/// The replacement confirm uses the project's swal pattern (same as the
+/// Sidebar's Delete/Remove confirms), not a bespoke Dialog.
 export const requestBindTaskAction = atom(null, async (get, set, taskId: string) => {
   const sessionId = get(activeSessionIdAtom);
   if (!sessionId) {
@@ -347,11 +347,28 @@ export const requestBindTaskAction = atom(null, async (get, set, taskId: string)
     return;
   }
   if (current) {
-    set(clickupRebindConfirmAtom, { sessionId, taskId, currentTaskId: current });
-    return;
+    const name = (id: string) =>
+      escapeHtml(get(clickupTasksAtom).find((t) => t.id === id)?.name ?? id);
+    const confirmed = await swalConfirm({
+      title: "Replace active task?",
+      body: `This session is bound to "${name(current)}". Binding "${name(taskId)}" replaces it as the write-back target. The replaced task stays in ClickUp.`,
+      confirmLabel: "Replace",
+      kind: "question",
+    });
+    if (!confirmed) return;
   }
   await set(performBindTaskAction, { sessionId, taskId });
 });
+
+/// ClickUp task names are multi-writer input and swal bodies render as HTML.
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 export const spawnWorktreeWithTaskAction = atom(null, async (get, set, taskId: string) => {
   const workspace = get(activeWorkspaceAtom);

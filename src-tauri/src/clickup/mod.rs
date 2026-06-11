@@ -425,18 +425,22 @@ pub fn clickup_send_task_as_prompt(
         .map_err(|e| format!("pty write failed: {e}"))
 }
 
-/// Explicit context refresh of a live session (mirrors the vault-note
-/// reinject rule: labeled block, never auto, no submit). Bracketed paste —
-/// not the raw write path — so the multi-line block stays one paste.
+/// Deliver a task's composed block to a live session via bracketed paste —
+/// not the raw write path — so the multi-line block stays one paste. Two
+/// callers, two stances on `submit`: pin / explicit refresh paste WITHOUT
+/// submit (context the user folds into their next turn, mirroring the
+/// vault-note reinject rule); bind submits as a turn (the deliberate "work
+/// on this" act — the agent ingests the brief immediately).
 #[tauri::command]
 pub fn clickup_reinject_task(
     session_id: String,
     task_id: String,
+    submit: Option<bool>,
     db: tauri::State<'_, crate::db::SharedDb>,
     pty: tauri::State<'_, crate::pty::PtyManager>,
 ) -> Result<(), String> {
     let text = compose_for_delivery(&db, &task_id)?;
-    crate::pty::paste_to_session(&pty, &session_id, &text, false)
+    crate::pty::paste_to_session(&pty, &session_id, &text, submit.unwrap_or(false))
 }
 
 /// Spawn a new worktree session seeded with the task: derive the slug from

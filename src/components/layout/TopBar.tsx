@@ -474,18 +474,26 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
                 );
               })()}
 
-              {/* Pinned ClickUp tasks chip — count only, like the notes chip */}
+              {/* Pinned ClickUp tasks chip — count only, like the notes chip.
+                  Tooltip component (not native title) for the TopBar's
+                  instant delay-0 hover. */}
               {(() => {
                 const count = (clickupPinsMap[tabId] ?? entry.session.pinned_clickup_task_ids ?? []).length;
                 if (count === 0) return null;
                 return (
-                  <span
-                    title={clickupPinsChipTooltip(count, injectionTierMap[tabId], entry.session.agent_id)}
-                    className="flex shrink-0 items-center gap-0.5 text-[10px] text-muted-foreground/70"
-                  >
-                    <ClickUpIcon size={9} className="shrink-0" />
-                    {count}
-                  </span>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span className="flex shrink-0 items-center gap-0.5 text-[10px] text-muted-foreground/70" />
+                      }
+                    >
+                      <ClickUpIcon size={9} className="shrink-0" />
+                      {count}
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      {clickupPinsChipTooltip(count, injectionTierMap[tabId], entry.session.agent_id)}
+                    </TooltipContent>
+                  </Tooltip>
                 );
               })()}
 
@@ -497,19 +505,27 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
                 if (!boundId) return null;
                 const taskName = clickupTasks.find((t) => t.id === boundId)?.name ?? boundId;
                 return (
-                  <span
-                    role="button"
-                    tabIndex={-1}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleFocusClickUpTask(boundId);
-                    }}
-                    title={clickupChipTooltip(taskName, injectionTierMap[tabId], entry.session.agent_id)}
-                    className="flex min-w-0 max-w-24 items-center gap-1 text-[10px] text-muted-foreground/70 hover:text-foreground transition-colors"
-                  >
-                    <ClickUpIcon size={9} className="shrink-0" />
-                    <span className="truncate">{taskName}</span>
-                  </span>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span
+                          role="button"
+                          tabIndex={-1}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleFocusClickUpTask(boundId);
+                          }}
+                          className="flex min-w-0 max-w-24 items-center gap-1 text-[10px] text-muted-foreground/70 hover:text-foreground transition-colors"
+                        />
+                      }
+                    >
+                      <ClickUpIcon size={9} className="shrink-0" />
+                      <span className="truncate">{taskName}</span>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      {clickupChipTooltip(taskName, injectionTierMap[tabId], entry.session.agent_id)}
+                    </TooltipContent>
+                  </Tooltip>
                 );
               })()}
 

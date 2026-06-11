@@ -64,14 +64,14 @@ The system SHALL fold attached-task context into the session's `injected_context
 
 ### Requirement: One active task per session plus pinned context tasks
 
-The system SHALL persist at most one active ClickUp task per session (`active_clickup_task_id`) and zero or more pinned context tasks (`pinned_clickup_task_ids`, an ordered idempotent JSON array). Both active and pinned tasks SHALL be injected (deduped by id); only the active task SHALL be the write-back subject. The session tab SHALL show the active task by name and the pinned tasks as a count indicator. Binding or pinning a live session SHALL also deliver the composed block to the running agent immediately (best-effort, no-op without a live PTY), in addition to seeding future spawns/resumes. Binding a task while one is already active SHALL replace it, with UI confirmation; the replaced task SHALL remain in the mirror.
+The system SHALL persist at most one active ClickUp task per session (`active_clickup_task_id`) and zero or more pinned context tasks (`pinned_clickup_task_ids`, an ordered idempotent JSON array). Both active and pinned tasks SHALL be injected (deduped by id); only the active task SHALL be the write-back subject. The session tab SHALL show the active task by name and the pinned tasks as a count indicator. Live delivery on top of the spawn/resume seeding (best-effort, no-op without a live PTY): binding SHALL deliver the composed block to the running agent SUBMITTED as a turn (the deliberate "work on this" act); pinning SHALL paste it WITHOUT submitting (passive context). Binding a task while one is already active SHALL replace it, with UI confirmation; the replaced task SHALL remain in the mirror.
 
 #### Scenario: Active task is unique and surfaced
 
 - **WHEN** the user binds a task to a session that has no active task
 - **THEN** `active_clickup_task_id` SHALL be set
 - **AND** the session tab SHALL indicate the bound task
-- **AND** the composed block SHALL be delivered to the live agent immediately
+- **AND** the composed block SHALL be delivered to the live agent immediately, submitted as a turn
 
 #### Scenario: Rebinding replaces with confirmation
 

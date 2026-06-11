@@ -235,15 +235,30 @@ export async function saveScratchpadGeometry(geometry: FloatingGeometry, opacity
 /// path-restore. If the persisted coords would push the panel partially or
 /// fully off-screen (multi-monitor disconnect, scaling change), reset to
 /// centered defaults.
+///
+/// WebKitGTK reports innerWidth/innerHeight as 0 during startup; the old
+/// `vw - margin*2` math then produced NEGATIVE width/height that a later
+/// move-drag persisted — CSS ignores negative dimensions, so the panel
+/// silently fell back to content-sizing (a different size per task). Both
+/// the viewport read and the persisted values are floored/validated here.
 export function clampGeometryToViewport(g: FloatingGeometry): FloatingGeometry {
-  const vw = typeof window === "undefined" ? 1280 : window.innerWidth;
-  const vh = typeof window === "undefined" ? 800 : window.innerHeight;
+  const winW = typeof window === "undefined" ? 0 : window.innerWidth;
+  const winH = typeof window === "undefined" ? 0 : window.innerHeight;
+  const vw = winW >= 320 ? winW : 1280;
+  const vh = winH >= 240 ? winH : 800;
   const minMargin = 24;
+  const invalid =
+    !Number.isFinite(g.x) ||
+    !Number.isFinite(g.y) ||
+    !Number.isFinite(g.width) ||
+    !Number.isFinite(g.height) ||
+    g.width < 120 ||
+    g.height < 80;
   const tooWide = g.width > vw - minMargin * 2;
   const tooTall = g.height > vh - minMargin * 2;
-  if (tooWide || tooTall || g.x < 0 || g.y < 0 || g.x + 64 > vw || g.y + 32 > vh) {
-    const w = Math.min(DEFAULT_GEOMETRY.width, vw - minMargin * 2);
-    const h = Math.min(DEFAULT_GEOMETRY.height, vh - minMargin * 2);
+  if (invalid || tooWide || tooTall || g.x < 0 || g.y < 0 || g.x + 64 > vw || g.y + 32 > vh) {
+    const w = Math.max(320, Math.min(DEFAULT_GEOMETRY.width, vw - minMargin * 2));
+    const h = Math.max(240, Math.min(DEFAULT_GEOMETRY.height, vh - minMargin * 2));
     return {
       x: Math.max(minMargin, Math.floor((vw - w) / 2)),
       y: Math.max(minMargin, Math.floor((vh - h) / 3)),

@@ -25,7 +25,6 @@ import {
   clickupClosedTasksAtom,
   clickupDetailTaskIdAtom,
   clickupGroupByAtom,
-  clickupRebindConfirmAtom,
   clickupSendConfirmAtom,
   clickupShowClosedAtom,
   clickupSpaceFilterAtom,
@@ -111,7 +110,6 @@ export function ClickUpPanel() {
   const [closedTasks, setClosedTasks] = useAtom(clickupClosedTasksAtom);
   const [detailTaskId, setDetailTaskId] = useAtom(clickupDetailTaskIdAtom);
   const sendConfirm = useAtomValue(clickupSendConfirmAtom);
-  const rebindConfirm = useAtomValue(clickupRebindConfirmAtom);
   const zenOpen = useAtomValue(zenModeAtom).open;
   const rootRef = useRef<HTMLDivElement>(null);
   const [closedLoading, setClosedLoading] = useState(false);
@@ -232,13 +230,15 @@ export function ClickUpPanel() {
     });
   }
 
-  // Plain ↑/↓ moves between nav items, window-level like the git PRs picker
-  // (PrsChip): a handler on the panel div never fires because focus normally
-  // sits on RightPanel's outer zone container, not inside it. The terminal
-  // swallows its own keys at the canvas layer, so this only sees strays.
-  // Arrow-left/right on a focused group header collapses/expands it
-  // (data-nav-expanded contract, docs/patterns.md §5.2).
-  const listenerActive = !zenOpen && detailTaskId === null && sendConfirm === null && rebindConfirm === null;
+  // Plain ↑/↓ moves a data-nav-selected cursor over the rows — window-level
+  // like the git PRs picker (PrsChip): a handler on the panel div never fires
+  // because focus normally sits on RightPanel's outer zone container, not
+  // inside it. Cursor = selection attribute (patterns.md §5.2, styled by the
+  // globals.css rule), never DOM focus — no focus ring on rows. Enter opens
+  // the selected item; ←/→ collapse/expand a selected group header. The
+  // terminal swallows its own keys at the canvas layer, so this only sees
+  // strays.
+  const listenerActive = !zenOpen && detailTaskId === null && sendConfirm === null;
   useEffect(() => {
     if (!listenerActive) return;
     function onKey(e: KeyboardEvent) {
@@ -249,31 +249,36 @@ export function ClickUpPanel() {
         || !!target?.closest(".cm-editor")
         || target?.getAttribute("contenteditable") === "true";
       if (inField) return;
-      // The sidebar and open dialogs own their arrow keys.
+      // The sidebar and open dialogs (incl. swal confirms) own their keys.
       if (target?.closest("[data-focus-zone='sidebar']") || target?.closest("[role='dialog']")) return;
       const root = rootRef.current;
       if (!root) return;
+      const items = Array.from(root.querySelectorAll<HTMLElement>("[data-nav-item]"));
+      if (items.length === 0) return;
+      const selected = root.querySelector<HTMLElement>("[data-nav-selected='true']");
+      const idx = selected ? items.indexOf(selected) : -1;
       if (e.code === "ArrowUp" || e.code === "ArrowDown") {
-        const items = Array.from(root.querySelectorAll<HTMLElement>("[data-nav-item]"));
-        if (items.length === 0) return;
         e.preventDefault();
-        const current = (document.activeElement as HTMLElement | null)
-          ?.closest<HTMLElement>("[data-nav-item]");
-        const idx = current ? items.indexOf(current) : -1;
         const next = e.code === "ArrowDown"
           ? (idx === -1 ? 0 : (idx + 1) % items.length)
           : (idx === -1 ? items.length - 1 : (idx - 1 + items.length) % items.length);
-        items[next].focus();
+        for (const item of items) item.removeAttribute("data-nav-selected");
+        items[next].setAttribute("data-nav-selected", "true");
         items[next].scrollIntoView({ block: "nearest" });
         return;
       }
+      if (e.code === "Enter") {
+        if (idx === -1) return;
+        e.preventDefault();
+        items[idx].click();
+        return;
+      }
       if (e.code !== "ArrowLeft" && e.code !== "ArrowRight") return;
-      const header = (document.activeElement as HTMLElement | null)
-        ?.closest<HTMLElement>("[data-nav-expanded]");
-      const key = header?.dataset.groupKey;
-      if (!header || !key || !root.contains(header)) return;
+      if (!selected || selected.dataset.navExpanded === undefined) return;
+      const key = selected.dataset.groupKey;
+      if (!key) return;
       e.preventDefault();
-      const expanded = header.dataset.navExpanded === "true";
+      const expanded = selected.dataset.navExpanded === "true";
       if (e.code === "ArrowLeft" && expanded) toggleGroup(key);
       if (e.code === "ArrowRight" && !expanded) toggleGroup(key);
     }

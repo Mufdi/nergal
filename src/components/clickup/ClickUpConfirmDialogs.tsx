@@ -12,12 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { toastsAtom } from "@/stores/toast";
-import {
-  clickupRebindConfirmAtom,
-  clickupSendConfirmAtom,
-  clickupTasksAtom,
-  performBindTaskAction,
-} from "@/stores/clickup";
+import { clickupSendConfirmAtom, clickupTasksAtom } from "@/stores/clickup";
 
 /// Send-as-prompt confirmation (Decision 6, reframed 2026-06-11): the send
 /// auto-submits the composed brief as a turn, so the user reviews exactly
@@ -108,41 +103,3 @@ export function ClickUpSendConfirmDialog() {
   );
 }
 
-/// Rebind confirmation (Decision 2): a session has one active task; binding
-/// over an existing one replaces the write-back target, so it is confirmed.
-export function ClickUpRebindConfirmDialog() {
-  const [request, setRequest] = useAtom(clickupRebindConfirmAtom);
-  const tasks = useAtomValue(clickupTasksAtom);
-  const performBind = useSetAtom(performBindTaskAction);
-
-  const name = (id: string) => tasks.find((t) => t.id === id)?.name ?? id;
-
-  async function handleReplace() {
-    if (!request) return;
-    setRequest(null);
-    await performBind({ sessionId: request.sessionId, taskId: request.taskId });
-  }
-
-  return (
-    <Dialog open={request !== null} onOpenChange={(open) => !open && setRequest(null)}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Replace active task?</DialogTitle>
-          <DialogDescription>
-            This session is bound to "{request ? name(request.currentTaskId) : ""}". Binding "
-            {request ? name(request.taskId) : ""}" replaces it as the write-back target. The
-            replaced task stays in ClickUp.
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={() => setRequest(null)}>
-            Cancel
-          </Button>
-          <Button size="sm" onClick={() => void handleReplace()}>
-            Replace
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}

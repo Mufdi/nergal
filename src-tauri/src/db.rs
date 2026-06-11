@@ -93,12 +93,39 @@ fn parse_pinned_note_paths(raw: Option<String>) -> Vec<String> {
     }
 }
 
+/// Parse the nullable `pinned_clickup_task_ids` JSON-array column into a
+/// `Vec`. NULL, empty, or malformed → empty vec (a corrupt column must not
+/// break session loading).
+fn parse_pinned_clickup_task_ids(raw: Option<String>) -> Vec<String> {
+    let Some(s) = raw.filter(|s| !s.trim().is_empty()) else {
+        return Vec::new();
+    };
+    match serde_json::from_str(&s) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "malformed pinned_clickup_task_ids JSON; treating as empty");
+            Vec::new()
+        }
+    }
+}
+
 impl Database {
     /// Raw connection access for the ClickUp reconcile: the `clickup::mirror`
     /// helpers take `&Connection` so a whole poll cycle can commit in one
     /// `unchecked_transaction` (atomicity is the spec's core promise there).
     pub(crate) fn conn(&self) -> &Connection {
         &self.conn
+    }
+
+    /// In-memory database with all migrations applied, for tests outside this
+    /// module (the assembler tests in `pty.rs` need a real `Database`).
+    #[cfg(test)]
+    pub(crate) fn open_in_memory() -> Result<Self> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+        let db = Self { conn };
+        db.migrate()?;
+        Ok(db)
     }
 
     /// Open (or create) the database at the standard config path.
@@ -154,6 +181,7 @@ impl Database {
             include_str!("../migrations/015_clickup_mirror.sql"),
             include_str!("../migrations/016_clickup_stale_since.sql"),
             include_str!("../migrations/017_clickup_user_id.sql"),
+            include_str!("../migrations/018_clickup_session_binding.sql"),
         ];
 
         for (i, sql) in migrations.iter().enumerate() {
@@ -257,7 +285,7 @@ impl Database {
         )?;
         let mut sess_stmt = self
             .conn
-            .prepare("SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, pinned_note_paths, launch_options, env_shells FROM sessions WHERE workspace_id = ?1 ORDER BY created_at")?;
+            .prepare("SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, pinned_note_paths, launch_options, env_shells, active_clickup_task_id, pinned_clickup_task_ids FROM sessions WHERE workspace_id = ?1 ORDER BY created_at")?;
 
         let workspaces = ws_stmt.query_map([], |row| {
             Ok((
@@ -292,6 +320,8 @@ impl Database {
                         pinned_note_paths: parse_pinned_note_paths(row.get(11)?),
                         launch_options: parse_launch_options(row.get(12)?),
                         env_shells: parse_env_shells(row.get(13)?),
+                        active_clickup_task_id: row.get(14)?,
+                        pinned_clickup_task_ids: parse_pinned_clickup_task_ids(row.get(15)?),
                     })
                 })?
                 .filter_map(|r| r.ok())
@@ -334,7 +364,7 @@ impl Database {
 
     pub fn create_session(&self, session: &Session) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO sessions (id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, launch_options, env_shells) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT INTO sessions (id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, launch_options, env_shells, active_clickup_task_id, pinned_clickup_task_ids) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 session.id,
                 session.workspace_id,
@@ -356,6 +386,12 @@ impl Database {
                 } else {
                     serde_json::to_string(&session.env_shells).ok()
                 },
+                session.active_clickup_task_id.as_deref(),
+                if session.pinned_clickup_task_ids.is_empty() {
+                    None
+                } else {
+                    serde_json::to_string(&session.pinned_clickup_task_ids).ok()
+                },
             ],
         )?;
         Ok(())
@@ -363,7 +399,7 @@ impl Database {
 
     pub fn find_session(&self, id: &str) -> Result<Option<Session>> {
         let result = self.conn.query_row(
-            "SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, pinned_note_paths, launch_options, env_shells FROM sessions WHERE id = ?1",
+            "SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, pinned_note_paths, launch_options, env_shells, active_clickup_task_id, pinned_clickup_task_ids FROM sessions WHERE id = ?1",
             [id],
             |row| Ok(Session {
                 id: row.get(0)?,
@@ -381,6 +417,8 @@ impl Database {
                 pinned_note_paths: parse_pinned_note_paths(row.get(11)?),
                 launch_options: parse_launch_options(row.get(12)?),
                 env_shells: parse_env_shells(row.get(13)?),
+                active_clickup_task_id: row.get(14)?,
+                pinned_clickup_task_ids: parse_pinned_clickup_task_ids(row.get(15)?),
             }),
         );
         match result {
@@ -554,6 +592,59 @@ impl Database {
         let json = serde_json::to_string(paths).unwrap_or_else(|_| "[]".to_string());
         self.conn.execute(
             "UPDATE sessions SET pinned_note_paths = ?1, updated_at = ?2 WHERE id = ?3",
+            params![json, now_secs(), session_id],
+        )?;
+        Ok(())
+    }
+
+    // ── ClickUp session binding (clickup-task-integration) ──
+
+    /// Set (or clear with `None`) the session's single active ClickUp task —
+    /// the write-back target. Binding over an existing task replaces it; the
+    /// UI confirms the replacement upstream.
+    pub fn set_active_clickup_task(&self, session_id: &str, task_id: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE sessions SET active_clickup_task_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![task_id, now_secs(), session_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_pinned_clickup_tasks(&self, session_id: &str) -> Result<Vec<String>> {
+        let raw: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT pinned_clickup_task_ids FROM sessions WHERE id = ?1",
+                [session_id],
+                |r| r.get(0),
+            )
+            .ok()
+            .flatten();
+        Ok(parse_pinned_clickup_task_ids(raw))
+    }
+
+    /// Append `task_id` to a session's pinned ClickUp tasks. Idempotent: an
+    /// already-pinned id is a no-op so order stays stable (mirrors
+    /// `add_pinned_note`).
+    pub fn add_pinned_clickup_task(&self, session_id: &str, task_id: &str) -> Result<()> {
+        let mut ids = self.get_pinned_clickup_tasks(session_id)?;
+        if ids.iter().any(|t| t == task_id) {
+            return Ok(());
+        }
+        ids.push(task_id.to_string());
+        self.write_pinned_clickup_tasks(session_id, &ids)
+    }
+
+    pub fn remove_pinned_clickup_task(&self, session_id: &str, task_id: &str) -> Result<()> {
+        let mut ids = self.get_pinned_clickup_tasks(session_id)?;
+        ids.retain(|t| t != task_id);
+        self.write_pinned_clickup_tasks(session_id, &ids)
+    }
+
+    fn write_pinned_clickup_tasks(&self, session_id: &str, ids: &[String]) -> Result<()> {
+        let json = serde_json::to_string(ids).unwrap_or_else(|_| "[]".to_string());
+        self.conn.execute(
+            "UPDATE sessions SET pinned_clickup_task_ids = ?1, updated_at = ?2 WHERE id = ?3",
             params![json, now_secs(), session_id],
         )?;
         Ok(())
@@ -1040,6 +1131,8 @@ mod tests {
             pinned_note_paths: Vec::new(),
             launch_options: None,
             env_shells: Vec::new(),
+            active_clickup_task_id: None,
+            pinned_clickup_task_ids: Vec::new(),
         };
         db.create_session(&s).unwrap();
     }
@@ -1107,6 +1200,8 @@ mod tests {
             pinned_note_paths: Vec::new(),
             launch_options: None,
             env_shells: defs.clone(),
+            active_clickup_task_id: None,
+            pinned_clickup_task_ids: Vec::new(),
         };
         db.create_session(&s).unwrap();
         let loaded = db.find_session("s-env").unwrap().unwrap();
@@ -1192,6 +1287,8 @@ mod tests {
                 startup_command: Some("nvm use 20".into()),
             }),
             env_shells: Vec::new(),
+            active_clickup_task_id: None,
+            pinned_clickup_task_ids: Vec::new(),
         };
         db.create_session(&s).unwrap();
         let loaded = db.find_session("s-lo").unwrap().unwrap();
@@ -1246,5 +1343,83 @@ mod tests {
         db.add_pinned_note("sess", "/vault/x.md").unwrap();
         let loaded = db.find_session("sess").unwrap().unwrap();
         assert_eq!(loaded.pinned_note_paths, vec!["/vault/x.md".to_string()]);
+    }
+
+    #[test]
+    fn parse_pinned_clickup_task_ids_handles_null_and_garbage() {
+        assert!(parse_pinned_clickup_task_ids(None).is_empty());
+        assert!(parse_pinned_clickup_task_ids(Some("".into())).is_empty());
+        assert!(parse_pinned_clickup_task_ids(Some("not json".into())).is_empty());
+        assert_eq!(
+            parse_pinned_clickup_task_ids(Some(r#"["t1","t2"]"#.into())),
+            vec!["t1".to_string(), "t2".to_string()]
+        );
+    }
+
+    #[test]
+    fn clickup_binding_survives_find_session() {
+        let db = in_memory();
+        seed_session(&db, "sess");
+
+        // Fresh session: unbound, no pins.
+        let fresh = db.find_session("sess").unwrap().unwrap();
+        assert!(fresh.active_clickup_task_id.is_none());
+        assert!(fresh.pinned_clickup_task_ids.is_empty());
+
+        db.conn
+            .execute(
+                "UPDATE sessions SET active_clickup_task_id = 'tA', \
+                 pinned_clickup_task_ids = '[\"tA\",\"tB\"]' WHERE id = 'sess'",
+                [],
+            )
+            .unwrap();
+        let loaded = db.find_session("sess").unwrap().unwrap();
+        assert_eq!(loaded.active_clickup_task_id.as_deref(), Some("tA"));
+        assert_eq!(
+            loaded.pinned_clickup_task_ids,
+            vec!["tA".to_string(), "tB".to_string()]
+        );
+
+        // The pre-joined workspace load carries the binding too.
+        let workspaces = db.get_workspaces().unwrap();
+        let session = &workspaces[0].sessions[0];
+        assert_eq!(session.active_clickup_task_id.as_deref(), Some("tA"));
+        assert_eq!(session.pinned_clickup_task_ids.len(), 2);
+    }
+
+    /// create_session's INSERT must carry the clickup columns so callers that
+    /// pass pre-populated bindings (e.g. future restore or import flows) don't
+    /// silently lose them. The clickup_spawn_worktree_with_task path used to
+    /// require a separate UPDATE call precisely because the INSERT dropped them.
+    #[test]
+    fn create_session_persists_clickup_fields() {
+        let db = in_memory();
+        db.create_workspace("ws1", "ws", "/tmp").unwrap();
+        let session = Session {
+            id: "s-cu".into(),
+            name: "cu".into(),
+            workspace_id: "ws1".into(),
+            worktree_path: None,
+            worktree_branch: None,
+            merge_target: None,
+            status: SessionStatus::Idle,
+            created_at: 0,
+            updated_at: 0,
+            agent_id: "claude-code".into(),
+            agent_internal_session_id: None,
+            agent_capabilities: Vec::new(),
+            pinned_note_paths: Vec::new(),
+            launch_options: None,
+            env_shells: Vec::new(),
+            active_clickup_task_id: Some("task-42".into()),
+            pinned_clickup_task_ids: vec!["task-7".into(), "task-99".into()],
+        };
+        db.create_session(&session).unwrap();
+        let loaded = db.find_session("s-cu").unwrap().unwrap();
+        assert_eq!(loaded.active_clickup_task_id.as_deref(), Some("task-42"));
+        assert_eq!(
+            loaded.pinned_clickup_task_ids,
+            vec!["task-7".to_string(), "task-99".to_string()]
+        );
     }
 }

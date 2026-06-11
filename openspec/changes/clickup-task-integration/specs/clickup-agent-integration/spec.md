@@ -33,10 +33,16 @@ The system SHALL provide three distinct actions on a selected task: (1) send-as-
 
 #### Scenario: Send is deferred while the agent is running
 
-- **WHEN** the target session's status is `Running`
+- **WHEN** the target session is observed as running by the send-gate
 - **THEN** the send SHALL be queued, not written
-- **AND** SHALL be delivered when the session transitions to `Idle`
-- **AND** a write SHALL never interrupt a generating agent
+- **AND** SHALL be delivered when the session transitions to idle — pasted WITHOUT auto-submit (the user may be mid-draft; a deferred paste is reviewed and submitted by the user) and with a notification
+- **AND** the deferral SHALL be best-effort (signal latency and event ordering can race); a queued send SHALL never be silently lost, never double-delivered, and SHALL remain user-actionable (cancel or deliver-now)
+
+#### Scenario: Guard state is surfaced honestly
+
+- **WHEN** the user opens the send-as-prompt confirmation
+- **THEN** the dialog SHALL state whether the mid-stream guard is active for the target session, derived from runtime-observed signal (not from static hook configuration alone)
+- **AND** a session whose agent emits no run-state signal SHALL read guard-inactive
 
 #### Scenario: Spawn a worktree session with the task
 
@@ -102,17 +108,18 @@ The system SHALL persist at most one active ClickUp task per session (`active_cl
 - **THEN** the change SHALL apply to future spawns and resumes
 - **AND** SHALL NOT retract context already present in the running agent's window
 
-### Requirement: Composed ClickUp context is treated as untrusted external data
+### Requirement: Composed ClickUp context is labeled and reviewed before submission
 
-Because a task's description and comments may be authored by any member of the ClickUp workspace, the system SHALL frame the composed block as untrusted external data (a labeled fence stating the enclosed content is data, not instructions) for both attach and send-as-prompt. Because send-as-prompt auto-submits the content as a turn, the system SHALL require explicit user confirmation before submitting it; attach (passive context) SHALL NOT require a per-injection confirmation but SHALL carry the same untrusted-data framing.
+The system SHALL wrap the composed block in a labeled fence identifying it as the session's team-authored ClickUp task brief, for both attach and send-as-prompt. (Per the user decision of 2026-06-11, the workspace is a trusted team and tasks may carry direct instructions — the original "untrusted data, not instructions" framing was dropped; terminal-level sanitization of control sequences and fence-sentinel neutralization are retained as technical protections.) Because send-as-prompt auto-submits the content as a turn, the system SHALL require explicit user confirmation showing the composed block before submitting it — a review step, not a distrust warning; attach (passive context) SHALL NOT require a per-injection confirmation.
 
-#### Scenario: Composed block is framed as untrusted
+#### Scenario: Composed block is labeled as the task brief
 
 - **WHEN** a task is composed for injection or sending
-- **THEN** the block SHALL be wrapped in a label stating the ClickUp content is untrusted data, not instructions
+- **THEN** the block SHALL be wrapped in a labeled fence identifying it as the team-authored ClickUp task brief
+- **AND** terminal control sequences and fence-sentinel collisions in the content SHALL still be neutralized
 
 #### Scenario: Send-as-prompt requires confirmation
 
 - **WHEN** the user triggers send-as-prompt
 - **THEN** the system SHALL require explicit confirmation showing the composed block before submitting
-- **AND** SHALL NOT auto-submit untrusted content without that confirmation
+- **AND** SHALL NOT auto-submit content the user has not seen

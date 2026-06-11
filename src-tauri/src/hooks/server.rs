@@ -200,6 +200,12 @@ pub async fn start_hook_server(
     }
 
     let listener = UnixListener::bind(socket_path)?;
+    // 0600: the socket now drives send-gate run-state (UserPromptSubmit arm);
+    // a permissive umask would let other local users spoof gate transitions.
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))?;
+    }
     tracing::info!("hook server listening on {}", socket_path.display());
 
     loop {
@@ -586,6 +592,9 @@ fn process_event(
         HookEvent::SessionEnd { session_id } => {
             let _ = app.emit("session:end", session_id);
             finalize_session_obsidian(db, cluihud_session_id);
+            if let Some(csid) = cluihud_session_id {
+                crate::clickup::send_gate::purge_session(app, csid);
+            }
         }
 
         HookEvent::PreToolUse {
@@ -683,6 +692,10 @@ fn process_event(
             transcript_path: Some(path),
             ..
         } => {
+            // Send-gate Idle edge: pop the queued send under the lock,
+            // deliver outside it (clickup-task-integration).
+            crate::clickup::send_gate::drain_on_stop(app, cluihud_session_id);
+
             let cost = crate::agents::claude_code::cost::parse_cost_from_transcript(
                 &std::path::PathBuf::from(path),
             );
@@ -716,7 +729,9 @@ fn process_event(
         HookEvent::Stop {
             transcript_path: None,
             ..
-        } => {}
+        } => {
+            crate::clickup::send_gate::drain_on_stop(app, cluihud_session_id);
+        }
 
         HookEvent::TaskCompleted { .. } => {}
 
@@ -729,7 +744,11 @@ fn process_event(
             process_task_event(app, "TaskCreate", tool_input, csid, db);
         }
 
-        HookEvent::UserPromptSubmit { .. } => {}
+        HookEvent::UserPromptSubmit { .. } => {
+            // Send-gate Running edge + guard_verified, keyed strictly by
+            // cluihud_session_id (clickup-task-integration).
+            crate::clickup::send_gate::note_user_prompt(app, cluihud_session_id);
+        }
 
         HookEvent::PlanReview {
             tool_input,

@@ -1,17 +1,41 @@
-import { useEffect, useState } from "react";
-import { useAtom, useAtomValue } from "jotai";
+import { useEffect, useRef, useState } from "react";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { open as openShell } from "@tauri-apps/plugin-shell";
-import { CheckSquare, ExternalLink, Loader2, Paperclip, Square } from "lucide-react";
+import {
+  CheckSquare,
+  ExternalLink,
+  GitBranchPlus,
+  Link2,
+  Loader2,
+  Paperclip,
+  Pin,
+  PinOff,
+  RefreshCw,
+  Send,
+  Square,
+  Unlink,
+} from "lucide-react";
 import { invoke } from "@/lib/tauri";
 import { FloatingPanel } from "@/components/floating/FloatingPanel";
 import { MarkdownView } from "@/components/plan/MarkdownView";
+import * as terminalService from "@/components/terminal/terminalService";
+import { focusZoneAtom } from "@/stores/shortcuts";
+import { activeSessionIdAtom } from "@/stores/workspace";
 import {
   clampGeometryToViewport,
   type FloatingGeometry,
 } from "@/stores/scratchpad";
 import {
+  activeSessionClickUpPinsAtom,
+  activeSessionClickUpTaskAtom,
   clickupDetailTaskIdAtom,
   clickupTasksAtom,
+  reinjectTaskAction,
+  requestBindTaskAction,
+  requestSendTaskAction,
+  spawnWorktreeWithTaskAction,
+  togglePinTaskAction,
+  CLICKUP_ACTION_LABELS as ACTION_LABELS,
   type ClickUpAttachment,
   type ClickUpCustomValue,
   type ClickUpTaskDetailData,
@@ -144,13 +168,98 @@ function renderValue(value: unknown): string | null {
   return null;
 }
 
+function ToolbarAction({
+  label,
+  onClick,
+  active = false,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  active?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className={`flex size-5 items-center justify-center rounded transition-colors ${
+        active
+          ? "text-primary hover:bg-secondary/60"
+          : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
 export function ClickUpTaskDetail() {
   const [taskId, setTaskId] = useAtom(clickupDetailTaskIdAtom);
   const tasks = useAtomValue(clickupTasksAtom);
+  const boundTaskId = useAtomValue(activeSessionClickUpTaskAtom);
+  const pinnedTaskIds = useAtomValue(activeSessionClickUpPinsAtom);
+  const requestSend = useSetAtom(requestSendTaskAction);
+  const spawnWorktree = useSetAtom(spawnWorktreeWithTaskAction);
+  const togglePin = useSetAtom(togglePinTaskAction);
+  const requestBind = useSetAtom(requestBindTaskAction);
+  const reinject = useSetAtom(reinjectTaskAction);
+  const activeSessionId = useAtomValue(activeSessionIdAtom);
+  const setFocusZone = useSetAtom(focusZoneAtom);
   const [detail, setDetail] = useState<ClickUpTaskDetailData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [geometry, setGeometry] = useState<FloatingGeometry>(DEFAULT_GEOMETRY);
+  const wasOpenRef = useRef(false);
+
+  // Contextual task verbs: bare letters scoped to the clickup focus zone
+  // (same convention as ConflictsPanel O/T, PrViewer A). The focused row
+  // wins; the floating detail is the fallback. The handler lives here — the
+  // detail is the always-mounted ClickUp surface, so the keys keep working
+  // when the chip opens the detail without the right panel.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      if (e.code !== "KeyS" && e.code !== "KeyW" && e.code !== "KeyP" && e.code !== "KeyB") return;
+      const target = e.target as HTMLElement | null;
+      const inField = target?.tagName === "INPUT"
+        || target?.tagName === "TEXTAREA"
+        || !!target?.closest(".cm-editor")
+        || target?.getAttribute("contenteditable") === "true";
+      if (inField) return;
+      if (!target?.closest("[data-focus-zone='clickup']")) return;
+      const focusedRow = (document.activeElement as HTMLElement | null)
+        ?.closest<HTMLElement>("[data-task-id]");
+      const id = focusedRow?.dataset.taskId ?? taskId;
+      if (!id) return;
+      e.preventDefault();
+      if (e.code === "KeyS") requestSend(id);
+      else if (e.code === "KeyW") void spawnWorktree(id);
+      else if (e.code === "KeyP") void togglePin(id);
+      else void requestBind(id);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [taskId, requestSend, spawnWorktree, togglePin, requestBind]);
+
+  // Close path (Esc + the X button) hands focus back to the PTY — same
+  // pattern as the scratchpad / vault search close. Only when a session is
+  // active; rAF lets React finish unmounting first.
+  useEffect(() => {
+    if (taskId !== null) {
+      wasOpenRef.current = true;
+      return;
+    }
+    if (wasOpenRef.current && activeSessionId) {
+      requestAnimationFrame(() => {
+        setFocusZone("terminal");
+        terminalService.focusActive();
+      });
+    }
+    wasOpenRef.current = false;
+  }, [taskId, activeSessionId, setFocusZone]);
 
   // Geometry persists in the same SQLite panel-geometry row family as the
   // scratchpad — FloatingPanel was built for exactly this reuse.
@@ -206,6 +315,9 @@ export function ClickUpTaskDetail() {
   const subtasks = taskId ? tasks.filter((t) => t.parent_id === taskId) : [];
 
   return (
+    // display:contents wrapper only marks the zone for the contextual keys —
+    // the detail mounts at Workspace level, outside the panel's zone subtree.
+    <div data-focus-zone="clickup" className="contents">
     <FloatingPanel
       panelId={DETAIL_PANEL_ID}
       open={taskId !== null}
@@ -228,17 +340,54 @@ export function ClickUpTaskDetail() {
         </>
       }
       toolbar={
-        task?.url ? (
-          <button
-            type="button"
-            aria-label="Open in ClickUp"
-            title="Open in ClickUp"
-            onClick={() => openExternalUrl(task.url)}
-            className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground transition-colors"
-          >
-            <ExternalLink size={12} />
-          </button>
-        ) : undefined
+        <>
+          {taskId && (
+            <>
+              <ToolbarAction label={ACTION_LABELS.send} onClick={() => requestSend(taskId)}>
+                <Send size={12} />
+              </ToolbarAction>
+              <ToolbarAction label={ACTION_LABELS.spawn} onClick={() => void spawnWorktree(taskId)}>
+                <GitBranchPlus size={12} />
+              </ToolbarAction>
+              <ToolbarAction
+                label={pinnedTaskIds.includes(taskId) ? ACTION_LABELS.unpin : ACTION_LABELS.pin}
+                onClick={() => void togglePin(taskId)}
+                active={pinnedTaskIds.includes(taskId)}
+              >
+                {pinnedTaskIds.includes(taskId) ? <PinOff size={12} /> : <Pin size={12} />}
+              </ToolbarAction>
+              <ToolbarAction
+                label={taskId === boundTaskId ? ACTION_LABELS.unbind : ACTION_LABELS.bind}
+                onClick={() => void requestBind(taskId)}
+                active={taskId === boundTaskId}
+              >
+                {taskId === boundTaskId ? <Unlink size={12} /> : <Link2 size={12} />}
+              </ToolbarAction>
+              {/* Only meaningful for tasks already injected into the active
+                  session (bound or pinned) — the explicit-refresh path for
+                  stale live context (design Decision 7 + risk table). */}
+              {(taskId === boundTaskId || pinnedTaskIds.includes(taskId)) && (
+                <ToolbarAction
+                  label="Re-inject current task content into the live session (explicit refresh — never automatic)"
+                  onClick={() => void reinject(taskId)}
+                >
+                  <RefreshCw size={12} />
+                </ToolbarAction>
+              )}
+            </>
+          )}
+          {task?.url && (
+            <button
+              type="button"
+              aria-label="Open in ClickUp"
+              title="Open in ClickUp"
+              onClick={() => openExternalUrl(task.url)}
+              className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground transition-colors"
+            >
+              <ExternalLink size={12} />
+            </button>
+          )}
+        </>
       }
     >
       <div className="h-full overflow-y-auto">
@@ -412,6 +561,7 @@ export function ClickUpTaskDetail() {
         ) : null}
       </div>
     </FloatingPanel>
+    </div>
   );
 }
 

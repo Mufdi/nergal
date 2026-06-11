@@ -5,26 +5,44 @@ import {
   ChevronRight,
   CircleCheck,
   Flag,
+  GitBranchPlus,
+  Hourglass,
+  Link2,
   Loader2,
+  Pin,
+  PinOff,
+  Send,
+  Unlink,
   UserCheck,
 } from "lucide-react";
 import { invoke } from "@/lib/tauri";
 import { Select } from "@/components/ui/select";
+import { workspacesAtom } from "@/stores/workspace";
 import {
   GROUP_BY_ORDER,
+  activeSessionClickUpPinsAtom,
+  activeSessionClickUpTaskAtom,
+  cancelQueuedSendAction,
   clickupAssignedToMeAtom,
   clickupClosedTasksAtom,
   clickupDetailTaskIdAtom,
   clickupGroupByAtom,
+  clickupQueuedSendMapAtom,
   clickupShowClosedAtom,
   clickupSpaceFilterAtom,
   clickupSpacesAtom,
   clickupSyncStatusAtom,
   clickupTasksAtom,
+  forceDeliverQueuedSendAction,
+  requestBindTaskAction,
+  requestSendTaskAction,
+  spawnWorktreeWithTaskAction,
+  togglePinTaskAction,
+  CLICKUP_ACTION_LABELS as ACTION_LABELS,
   type ClickUpGroupBy,
   type ClickUpTask,
+  type ClickUpTaskActions,
 } from "@/stores/clickup";
-import { ClickUpTaskDetail } from "./ClickUpTaskDetail";
 
 const GROUP_BY_LABEL: Record<ClickUpGroupBy, string> = {
   status: "Status",
@@ -90,6 +108,24 @@ export function ClickUpPanel() {
   const setDetailTaskId = useSetAtom(clickupDetailTaskIdAtom);
   const [closedLoading, setClosedLoading] = useState(false);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+
+  const boundTaskId = useAtomValue(activeSessionClickUpTaskAtom);
+  const pinnedTaskIds = useAtomValue(activeSessionClickUpPinsAtom);
+  const queuedSendMap = useAtomValue(clickupQueuedSendMapAtom);
+  const requestSend = useSetAtom(requestSendTaskAction);
+  const spawnWorktree = useSetAtom(spawnWorktreeWithTaskAction);
+  const togglePin = useSetAtom(togglePinTaskAction);
+  const requestBind = useSetAtom(requestBindTaskAction);
+
+  const actions: ClickUpTaskActions = useMemo(
+    () => ({
+      send: (id) => requestSend(id),
+      spawn: (id) => void spawnWorktree(id),
+      togglePin: (id) => void togglePin(id),
+      toggleBind: (id) => void requestBind(id),
+    }),
+    [requestSend, spawnWorktree, togglePin, requestBind],
+  );
 
   // Shift+←/→ cycles group-by — component-local handler per the chip-strip
   // contract (docs/patterns.md §2), with the same editable-field guard.
@@ -169,11 +205,35 @@ export function ClickUpPanel() {
     });
   }
 
+  // Plain ↑/↓ moves between nav items while focus is inside the clickup
+  // zone (within-zone complement of the global Alt+↑/↓, patterns.md §5.2);
   // Arrow-left/right on a focused group header collapses/expands it
   // (data-nav-expanded contract, docs/patterns.md §5.2).
   function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     if (e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
+    if (e.code === "ArrowUp" || e.code === "ArrowDown") {
+      const target = e.target as HTMLElement | null;
+      const inField = target?.tagName === "INPUT"
+        || target?.tagName === "TEXTAREA"
+        || !!target?.closest(".cm-editor")
+        || target?.getAttribute("contenteditable") === "true";
+      if (inField) return;
+      const items = Array.from(
+        e.currentTarget.querySelectorAll<HTMLElement>("[data-nav-item]"),
+      );
+      if (items.length === 0) return;
+      e.preventDefault();
+      const current = (document.activeElement as HTMLElement | null)
+        ?.closest<HTMLElement>("[data-nav-item]");
+      const idx = current ? items.indexOf(current) : -1;
+      const next = e.code === "ArrowDown"
+        ? (idx === -1 ? 0 : (idx + 1) % items.length)
+        : (idx === -1 ? items.length - 1 : (idx - 1 + items.length) % items.length);
+      items[next].focus();
+      items[next].scrollIntoView({ block: "nearest" });
+      return;
+    }
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     const header = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-nav-expanded]");
     const key = header?.dataset.groupKey;
     if (!header || !key) return;
@@ -258,6 +318,16 @@ export function ClickUpPanel() {
         </div>
       )}
 
+      {/* Pending sends: a queued send must stay user-actionable until the
+          backend reports delivered/dropped (cancel / deliver-now, 5.1b). */}
+      {Object.keys(queuedSendMap).length > 0 && (
+        <div className="flex shrink-0 flex-col border-b border-border/50">
+          {Object.entries(queuedSendMap).map(([sid, q]) => (
+            <QueuedSendRow key={sid} sessionId={sid} taskId={q.taskId} />
+          ))}
+        </div>
+      )}
+
       <div className="min-h-0 flex-1 overflow-y-auto" data-scrollable>
         {visibleCount === 0 ? (
           <div className="flex h-full items-center justify-center">
@@ -275,12 +345,58 @@ export function ClickUpPanel() {
               closedIds={closedIds}
               showListName={groupBy !== "list"}
               onOpen={(id) => setDetailTaskId(id)}
+              boundTaskId={boundTaskId}
+              pinnedTaskIds={pinnedTaskIds}
+              actions={actions}
             />
           ))
         )}
       </div>
+    </div>
+  );
+}
 
-      <ClickUpTaskDetail />
+function QueuedSendRow({ sessionId, taskId }: { sessionId: string; taskId: string }) {
+  const workspaces = useAtomValue(workspacesAtom);
+  const tasks = useAtomValue(clickupTasksAtom);
+  const cancel = useSetAtom(cancelQueuedSendAction);
+  const deliver = useSetAtom(forceDeliverQueuedSendAction);
+
+  let sessionName = sessionId;
+  for (const ws of workspaces) {
+    const match = ws.sessions.find((s) => s.id === sessionId);
+    if (match) {
+      sessionName = match.name;
+      break;
+    }
+  }
+  const taskName = tasks.find((t) => t.id === taskId)?.name ?? taskId;
+
+  return (
+    <div className="flex items-center gap-1.5 bg-yellow-500/5 px-3 py-1">
+      <Hourglass size={10} className="shrink-0 text-yellow-500" />
+      <span
+        className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground"
+        title={`Queued for ${sessionName}: ${taskName} — delivers when the agent finishes the current turn`}
+      >
+        Queued for <span className="text-foreground/80">{sessionName}</span>: {taskName}
+      </span>
+      <button
+        type="button"
+        onClick={() => void deliver(sessionId)}
+        title="Paste into the session now (without auto-submit)"
+        className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
+      >
+        Deliver now
+      </button>
+      <button
+        type="button"
+        onClick={() => void cancel(sessionId)}
+        title="Drop the queued send"
+        className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-red-400"
+      >
+        Cancel
+      </button>
     </div>
   );
 }
@@ -331,6 +447,9 @@ function GroupSection({
   closedIds,
   showListName,
   onOpen,
+  boundTaskId,
+  pinnedTaskIds,
+  actions,
 }: {
   group: TaskGroup;
   expanded: boolean;
@@ -338,6 +457,9 @@ function GroupSection({
   closedIds: ReadonlySet<string>;
   showListName: boolean;
   onOpen: (taskId: string) => void;
+  boundTaskId: string | null;
+  pinnedTaskIds: string[];
+  actions: ClickUpTaskActions;
 }) {
   // Subtasks nest under their parent only when the parent landed in the same
   // group; otherwise they render flat in their own group.
@@ -365,7 +487,15 @@ function GroupSection({
       {expanded &&
         roots.map((task) => (
           <div key={task.id}>
-            <TaskRow task={task} closed={closedIds.has(task.id)} showListName={showListName} onOpen={onOpen} />
+            <TaskRow
+              task={task}
+              closed={closedIds.has(task.id)}
+              showListName={showListName}
+              onOpen={onOpen}
+              bound={task.id === boundTaskId}
+              pinned={pinnedTaskIds.includes(task.id)}
+              actions={actions}
+            />
             {childrenOf(task.id).map((sub) => (
               <TaskRow
                 key={sub.id}
@@ -373,6 +503,9 @@ function GroupSection({
                 closed={closedIds.has(sub.id)}
                 showListName={showListName}
                 onOpen={onOpen}
+                bound={sub.id === boundTaskId}
+                pinned={pinnedTaskIds.includes(sub.id)}
+                actions={actions}
                 indented
               />
             ))}
@@ -382,17 +515,57 @@ function GroupSection({
   );
 }
 
+function RowAction({
+  label,
+  onClick,
+  active = false,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  active?: boolean;
+  children: React.ReactNode;
+}) {
+  // span[role=button]: the row itself is a <button>, nesting real buttons is
+  // invalid HTML (same pattern as the TopBar tab close affordance).
+  return (
+    <span
+      role="button"
+      tabIndex={-1}
+      title={label}
+      aria-label={label}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className={`flex size-4 shrink-0 items-center justify-center rounded transition-colors ${
+        active
+          ? "text-primary hover:bg-secondary/60"
+          : "text-muted-foreground/70 hover:bg-secondary/60 hover:text-foreground"
+      }`}
+    >
+      {children}
+    </span>
+  );
+}
+
 function TaskRow({
   task,
   closed,
   showListName,
   onOpen,
+  bound,
+  pinned,
+  actions,
   indented = false,
 }: {
   task: ClickUpTask;
   closed: boolean;
   showListName: boolean;
   onOpen: (taskId: string) => void;
+  bound: boolean;
+  pinned: boolean;
+  actions: ClickUpTaskActions;
   indented?: boolean;
 }) {
   const overdue = task.due_date !== null && task.due_date < Date.now() && !closed;
@@ -402,6 +575,7 @@ function TaskRow({
     <button
       type="button"
       data-nav-item
+      data-task-id={task.id}
       onClick={() => onOpen(task.id)}
       className={`group flex w-full items-center gap-1.5 py-1 pr-3 text-left transition-colors hover:bg-secondary/40 ${
         indented ? "pl-7" : "pl-3"
@@ -419,41 +593,76 @@ function TaskRow({
       >
         {task.name}
       </span>
-      {priorityColor && (
-        <Flag size={10} className="shrink-0" style={{ color: priorityColor }} aria-label={`Priority: ${task.priority}`} />
-      )}
-      {task.tags.slice(0, 2).map((tag) => (
-        <span
-          key={tag.name}
-          className="max-w-16 shrink-0 truncate rounded-full px-1.5 text-[9px] leading-4"
-          style={{
-            background: tag.tag_bg ? `${tag.tag_bg}33` : "var(--color-secondary)",
-            color: tag.tag_fg ?? tag.tag_bg ?? "var(--color-secondary-foreground)",
-          }}
-        >
-          {tag.name}
-        </span>
-      ))}
-      {task.due_date !== null && (
-        <span className={`shrink-0 text-[10px] tabular-nums ${overdue ? "text-red-400" : "text-muted-foreground"}`}>
-          {formatDueDate(task.due_date)}
-        </span>
-      )}
-      {task.assignees.slice(0, 2).map((a) => (
-        <span
-          key={a.id ?? a.username ?? "?"}
-          title={a.username ?? undefined}
-          className="flex size-4 shrink-0 items-center justify-center rounded-full text-[8px] font-medium text-white"
-          style={{ background: a.color ?? "var(--color-secondary)" }}
-        >
-          {a.initials ?? (a.username?.slice(0, 2).toUpperCase() ?? "?")}
-        </span>
-      ))}
+
+      {/* Only the list name yields to the hover actions — priority, tags and
+          the rest of the meta stay visible and shift next to the buttons. */}
+      <span className="flex shrink-0 items-center gap-1.5">
+        {bound && (
+          <Link2 size={10} className="shrink-0 text-primary" aria-label="Active task of the current session" />
+        )}
+        {pinned && !bound && (
+          <Pin size={10} className="shrink-0 text-primary/70" aria-label="Pinned as context for the current session" />
+        )}
+        {priorityColor && (
+          <Flag size={10} className="shrink-0" style={{ color: priorityColor }} aria-label={`Priority: ${task.priority}`} />
+        )}
+        {task.tags.slice(0, 2).map((tag) => (
+          <span
+            key={tag.name}
+            className="max-w-16 shrink-0 truncate rounded-full px-1.5 text-[9px] leading-4"
+            style={{
+              background: tag.tag_bg ? `${tag.tag_bg}33` : "var(--color-secondary)",
+              color: tag.tag_fg ?? tag.tag_bg ?? "var(--color-secondary-foreground)",
+            }}
+          >
+            {tag.name}
+          </span>
+        ))}
+        {task.due_date !== null && (
+          <span className={`shrink-0 text-[10px] tabular-nums ${overdue ? "text-red-400" : "text-muted-foreground"}`}>
+            {formatDueDate(task.due_date)}
+          </span>
+        )}
+        {task.assignees.slice(0, 2).map((a) => (
+          <span
+            key={a.id ?? a.username ?? "?"}
+            title={a.username ?? undefined}
+            className="flex size-4 shrink-0 items-center justify-center rounded-full text-[8px] font-medium text-white"
+            style={{ background: a.color ?? "var(--color-secondary)" }}
+          >
+            {a.initials ?? (a.username?.slice(0, 2).toUpperCase() ?? "?")}
+          </span>
+        ))}
+      </span>
+
       {showListName && (
-        <span className="max-w-20 shrink-0 truncate text-[10px] text-muted-foreground/70">
+        <span className="max-w-20 shrink-0 truncate text-[10px] text-muted-foreground/70 group-hover:hidden">
           {task.list_name}
         </span>
       )}
+
+      <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
+        <RowAction label={ACTION_LABELS.send} onClick={() => actions.send(task.id)}>
+          <Send size={10} />
+        </RowAction>
+        <RowAction label={ACTION_LABELS.spawn} onClick={() => actions.spawn(task.id)}>
+          <GitBranchPlus size={10} />
+        </RowAction>
+        <RowAction
+          label={pinned ? ACTION_LABELS.unpin : ACTION_LABELS.pin}
+          onClick={() => actions.togglePin(task.id)}
+          active={pinned}
+        >
+          {pinned ? <PinOff size={10} /> : <Pin size={10} />}
+        </RowAction>
+        <RowAction
+          label={bound ? ACTION_LABELS.unbind : ACTION_LABELS.bind}
+          onClick={() => actions.toggleBind(task.id)}
+          active={bound}
+        >
+          {bound ? <Unlink size={10} /> : <Link2 size={10} />}
+        </RowAction>
+      </span>
     </button>
   );
 }

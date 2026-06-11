@@ -29,7 +29,13 @@ import {
   type ContextInjectionTier,
 } from "@/stores/pinnedNotes";
 import { obsidianEnabledAtom } from "@/stores/obsidian";
-import { clickupConfiguredAtom } from "@/stores/clickup";
+import {
+  clickupBindingMapAtom,
+  clickupConfiguredAtom,
+  clickupDetailTaskIdAtom,
+  clickupTasksAtom,
+  resolveActiveClickUpTask,
+} from "@/stores/clickup";
 import { toastsAtom } from "@/stores/toast";
 import { configAtom } from "@/stores/config";
 import { activePlanCapabilityAtom, fetchPlanCapabilityAction } from "@/stores/plan";
@@ -133,6 +139,20 @@ function pinnedChipTooltip(
   }
 }
 
+/// Same honesty rule for the active ClickUp task chip: the binding rides the
+/// identical injection channel as pinned notes, so an Unsupported-tier agent
+/// must not imply the task context reaches it (spec: "the session UI SHALL
+/// indicate injection is unsupported"). Wording mirrors pinnedChipTooltip.
+function clickupChipTooltip(
+  taskName: string,
+  tier: ContextInjectionTier | undefined,
+  agentId: string | undefined,
+): string {
+  const unsupported =
+    tier === "unsupported" ? ` · injection unsupported for ${agentId ?? "this agent"}` : "";
+  return `Active ClickUp task: ${taskName}${unsupported} — click to open it in the panel`;
+}
+
 const PANEL_BUTTONS: {
   type: TabType;
   label: string;
@@ -169,6 +189,8 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   const planAvailable = planCapability?.kind !== "NotApplicable";
   const obsidianEnabled = useAtomValue(obsidianEnabledAtom);
   const clickupConfigured = useAtomValue(clickupConfiguredAtom);
+  const clickupBindingMap = useAtomValue(clickupBindingMapAtom);
+  const clickupTasks = useAtomValue(clickupTasksAtom);
   const visiblePanelButtons = PANEL_BUTTONS.filter((b) => {
     if (b.type === "plan" && !planAvailable) return false;
     if (b.type === "obsidiannote" && !obsidianEnabled) return false;
@@ -302,6 +324,12 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
     setActiveSessionId(id);
   }
 
+  /// Active-task chip click: open only the floating detail (mounted at the
+  /// Workspace layer) — never drag the right panel along with it.
+  function handleFocusClickUpTask(taskId: string) {
+    appStore.set(clickupDetailTaskIdAtom, taskId);
+  }
+
   function handleCloseTab(id: string, e: React.MouseEvent) {
     e.stopPropagation();
     // Soft-close: tab disappears immediately but the PTY keeps running for
@@ -426,6 +454,28 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
                   >
                     <Pin className="size-2.5" />
                     {count}
+                  </span>
+                );
+              })()}
+
+              {/* Active ClickUp task chip — click focuses it in the panel */}
+              {(() => {
+                const boundId = resolveActiveClickUpTask(clickupBindingMap, entry.session);
+                if (!boundId) return null;
+                const taskName = clickupTasks.find((t) => t.id === boundId)?.name ?? boundId;
+                return (
+                  <span
+                    role="button"
+                    tabIndex={-1}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleFocusClickUpTask(boundId);
+                    }}
+                    title={clickupChipTooltip(taskName, injectionTierMap[tabId], entry.session.agent_id)}
+                    className="flex max-w-24 shrink-0 items-center gap-1 text-[10px] text-muted-foreground/70 hover:text-foreground transition-colors"
+                  >
+                    <ClickUpIcon size={9} className="shrink-0" />
+                    <span className="truncate">{taskName}</span>
                   </span>
                 );
               })()}

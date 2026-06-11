@@ -34,6 +34,59 @@ fn strip_diacritics(s: &str) -> String {
         .collect()
 }
 
+/// Worktree-slug convention shared by session creation and the ClickUp
+/// spawn-worktree verb: diacritics stripped, non-alphanumerics collapsed to
+/// `-`, timestamp suffix.
+pub(crate) fn derive_worktree_slug(name: &str, ts: u64) -> String {
+    let normalized = strip_diacritics(name);
+    let slug: String = normalized
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    format!("{slug}-{ts}")
+}
+
+/// Subscribe the dynamic plan watcher to a freshly created CC session's
+/// plans dir (shared by `create_session` and the ClickUp spawn-worktree
+/// verb). Logged, never fatal.
+pub(crate) fn extend_plan_watcher_for_session(
+    agents: &AgentRuntimeState,
+    plan_watcher: &crate::agents::claude_code::plan::SharedPlanWatcher,
+    session: &Session,
+    repo_path: &std::path::Path,
+) {
+    let agent_id = match AgentId::new(&session.agent_id) {
+        Ok(id) => id,
+        Err(_) => return,
+    };
+    if agent_id != AgentId::claude_code() {
+        return;
+    }
+    let Some(adapter) = agents.registry.get(&agent_id) else {
+        return;
+    };
+    let cwd = session
+        .worktree_path
+        .clone()
+        .unwrap_or_else(|| repo_path.to_path_buf());
+    let cap = adapter.plan_capability(session, &cwd);
+    if let crate::agents::PlanCapability::FileBased { dir, .. } = cap
+        && let Ok(mut w) = plan_watcher.lock()
+        && let Err(e) = w.ensure_dir_and_watch(&dir)
+    {
+        tracing::warn!(
+            dir = %dir.display(),
+            error = %e,
+            "plan watcher extend failed"
+        );
+    }
+}
+
 // -- Config commands --
 
 #[tauri::command]
@@ -778,17 +831,7 @@ pub fn create_session(
     {
         (None, None)
     } else {
-        let normalized = strip_diacritics(&name);
-        let slug: String = normalized
-            .to_lowercase()
-            .chars()
-            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-            .collect::<String>()
-            .split('-')
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join("-");
-        let slug = format!("{slug}-{ts}");
+        let slug = derive_worktree_slug(&name, ts);
         let wt_path =
             crate::worktree::create_worktree(&repo_path, &slug).map_err(|e| e.to_string())?;
         let branch = format!("cluihud/{slug}");
@@ -827,6 +870,8 @@ pub fn create_session(
             .into_iter()
             .filter(|d| !d.command.trim().is_empty())
             .collect(),
+        active_clickup_task_id: None,
+        pinned_clickup_task_ids: Vec::new(),
     };
 
     db.create_session(&session).map_err(|e| e.to_string())?;
@@ -835,25 +880,7 @@ pub fn create_session(
     // picker (commit 11), every new session is a CC session by default.
     agents.register_session(&session.id, agent_id.clone());
 
-    if agent_id == AgentId::claude_code()
-        && let Some(adapter) = agents.registry.get(&agent_id)
-    {
-        let cwd = session
-            .worktree_path
-            .clone()
-            .unwrap_or_else(|| repo_path.clone());
-        let cap = adapter.plan_capability(&session, &cwd);
-        if let crate::agents::PlanCapability::FileBased { dir, .. } = cap
-            && let Ok(mut w) = plan_watcher.lock()
-            && let Err(e) = w.ensure_dir_and_watch(&dir)
-        {
-            tracing::warn!(
-                dir = %dir.display(),
-                error = %e,
-                "plan watcher extend failed"
-            );
-        }
-    }
+    extend_plan_watcher_for_session(&agents, &plan_watcher, &session, &repo_path);
     Ok(session)
 }
 

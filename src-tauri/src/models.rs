@@ -77,6 +77,15 @@ pub struct Session {
     /// column (migration `013`).
     #[serde(default)]
     pub env_shells: Vec<EnvShellDef>,
+    /// The single bound ClickUp task: the write-back target and session-tab
+    /// indicator. Persisted as a nullable column (migration `018`).
+    #[serde(default)]
+    pub active_clickup_task_id: Option<String>,
+    /// ClickUp tasks pinned as context-only (injected alongside the active
+    /// task, never the write-back subject). Persisted as a JSON array column
+    /// (migration `018`), same pattern as `pinned_note_paths`.
+    #[serde(default)]
+    pub pinned_clickup_task_ids: Vec<String>,
 }
 
 /// One environment shell: a long-running command (`pnpm dev`, `docker

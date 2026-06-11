@@ -5,9 +5,11 @@
 
 pub mod auth;
 pub mod client;
+pub mod integration;
 pub mod mirror;
 pub mod model;
 pub mod poller;
+pub mod send_gate;
 
 #[derive(Debug, serde::Serialize)]
 pub struct TokenStatus {
@@ -317,6 +319,350 @@ pub async fn clickup_task_detail(
         attachments: mirror::read_attachments(conn, &task_id).map_err(|e| format!("{e:#}"))?,
         custom_values: mirror::read_custom_values(conn, &task_id).map_err(|e| format!("{e:#}"))?,
     })
+}
+
+// ── Session binding + task-to-agent verbs (clickup-task-integration) ──
+
+/// Bind `task_id` as the session's single active task (the write-back target
+/// and session-tab indicator). Replaces an existing active task — the UI
+/// confirms the replacement upstream. Affects future spawns/resumes only.
+#[tauri::command]
+pub fn clickup_bind_task(
+    session_id: String,
+    task_id: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<(), String> {
+    let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+    guard
+        .set_active_clickup_task(&session_id, Some(&task_id))
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Clear the active task. Future spawns/resumes only — context already in a
+/// running agent's window is not retracted (design Decision 7).
+#[tauri::command]
+pub fn clickup_unbind_task(
+    session_id: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<(), String> {
+    let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+    guard
+        .set_active_clickup_task(&session_id, None)
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Pin a task as context-only. Ordered, idempotent JSON-array edit (mirrors
+/// `pin_vault_note`); returns the updated pin list.
+#[tauri::command]
+pub fn clickup_pin_task(
+    session_id: String,
+    task_id: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<Vec<String>, String> {
+    let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+    guard
+        .add_pinned_clickup_task(&session_id, &task_id)
+        .map_err(|e| format!("{e:#}"))?;
+    guard
+        .get_pinned_clickup_tasks(&session_id)
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn clickup_unpin_task(
+    session_id: String,
+    task_id: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<Vec<String>, String> {
+    let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+    guard
+        .remove_pinned_clickup_task(&session_id, &task_id)
+        .map_err(|e| format!("{e:#}"))?;
+    guard
+        .get_pinned_clickup_tasks(&session_id)
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Compose a task from the mirror, sanitized for PTY delivery (a crafted
+/// comment must not smuggle escape sequences that could close the bracketed
+/// paste early or drive the terminal).
+fn compose_for_delivery(
+    db: &tauri::State<'_, crate::db::SharedDb>,
+    task_id: &str,
+) -> Result<String, String> {
+    let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+    let composed = integration::compose_task_markdown(guard.conn(), task_id)
+        .map_err(|e| format!("{e:#}"))?
+        .ok_or_else(|| "task not found in the local mirror".to_string())?;
+    Ok(crate::pty::sanitize_for_pty(&composed))
+}
+
+/// Payload for the send-as-prompt confirm dialog: the exact (untrusted)
+/// block that would be submitted, plus honest guard visibility.
+#[derive(Clone, serde::Serialize)]
+pub struct ComposeForConfirm {
+    pub markdown: String,
+    /// True only when this session's Running edge was OBSERVED at runtime
+    /// (`guard_verified`) — never derived from static hook config alone.
+    pub guard_active: bool,
+    /// Notice selector when the guard is inactive: "active" | "restart_session"
+    /// (entry installed in the global settings, CC snapshots hooks at session
+    /// start → relaunch the session) | "run_setup" (entry missing → run
+    /// `cluihud hook setup`).
+    pub guard_hint: String,
+}
+
+/// Compose-for-confirm step of send-as-prompt: the frontend shows this block
+/// and the guard notice before any submit (design Decision 6 — the content is
+/// untrusted and auto-submitted, so the user must see it first).
+#[tauri::command]
+pub fn clickup_compose_task_prompt(
+    session_id: String,
+    task_id: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+    gate: tauri::State<'_, send_gate::SendGateState>,
+) -> Result<ComposeForConfirm, String> {
+    let markdown = compose_for_delivery(&db, &task_id)?;
+    let guard_active = gate.guard_active(&session_id);
+    let guard_hint = if guard_active {
+        "active"
+    } else if crate::setup::user_prompt_send_hook_installed() {
+        "restart_session"
+    } else {
+        "run_setup"
+    };
+    Ok(ComposeForConfirm {
+        markdown,
+        guard_active,
+        guard_hint: guard_hint.to_string(),
+    })
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct SendOutcome {
+    /// "delivered" (gate Idle: pasted + submitted) | "queued" (gate Running:
+    /// the Stop drain delivers later WITHOUT auto-submit).
+    pub status: String,
+    pub replaced: bool,
+}
+
+/// Send a task as a prompt to a live session, after the frontend confirmed
+/// the composed block. Re-composes (fresh mirror read), then check-and-
+/// enqueues atomically under the gate lock; delivery happens outside it via
+/// bracketed paste + `\r` (never the raw reinject path — embedded `\n`
+/// would fragment the block into partial turns). One-shot: no binding.
+#[tauri::command]
+pub fn clickup_send_task_as_prompt(
+    session_id: String,
+    task_id: String,
+    app: tauri::AppHandle,
+    db: tauri::State<'_, crate::db::SharedDb>,
+    gate: tauri::State<'_, send_gate::SendGateState>,
+    pty: tauri::State<'_, crate::pty::PtyManager>,
+) -> Result<SendOutcome, String> {
+    let text = compose_for_delivery(&db, &task_id)?;
+    match gate.check_and_enqueue(
+        &session_id,
+        send_gate::QueuedSend {
+            task_id: task_id.clone(),
+            text: text.clone(),
+        },
+    ) {
+        send_gate::EnqueueOutcome::Queued { replaced } => {
+            send_gate::emit_send_queued(&app, &session_id, &task_id, replaced);
+            Ok(SendOutcome {
+                status: "queued".into(),
+                replaced,
+            })
+        }
+        send_gate::EnqueueOutcome::DeliverNow => {
+            match crate::pty::paste_to_session(&pty, &session_id, &text, true) {
+                Ok(()) => {
+                    send_gate::emit_send_delivered(&app, &session_id, &task_id, "immediate");
+                    Ok(SendOutcome {
+                        status: "delivered".into(),
+                        replaced: false,
+                    })
+                }
+                Err(e) => {
+                    send_gate::emit_send_dropped(
+                        &app,
+                        &session_id,
+                        Some(&task_id),
+                        &format!("pty write failed: {e}"),
+                    );
+                    Err(format!("pty write failed: {e}"))
+                }
+            }
+        }
+    }
+}
+
+/// Cancel the session's queued send. Destructive pop under the gate lock —
+/// a concurrent Stop drain and this cancel cannot both consume it. Returns
+/// whether a queued send existed.
+#[tauri::command]
+pub fn clickup_cancel_queued_send(
+    session_id: String,
+    app: tauri::AppHandle,
+    gate: tauri::State<'_, send_gate::SendGateState>,
+) -> Result<bool, String> {
+    let Some(send) = gate.pop_queued(&session_id) else {
+        return Ok(false);
+    };
+    send_gate::emit_send_dropped(&app, &session_id, Some(&send.task_id), "cancelled");
+    Ok(true)
+}
+
+/// Deliver the queued send now, overriding the gate. Pasted WITHOUT
+/// auto-submit — same stance as the Stop drain: a paste into a possibly
+/// mid-turn terminal must stay visible and user-submitted. Returns whether
+/// a queued send existed.
+#[tauri::command]
+pub fn clickup_force_deliver_queued_send(
+    session_id: String,
+    app: tauri::AppHandle,
+    gate: tauri::State<'_, send_gate::SendGateState>,
+    pty: tauri::State<'_, crate::pty::PtyManager>,
+) -> Result<bool, String> {
+    let Some(send) = gate.pop_queued(&session_id) else {
+        return Ok(false);
+    };
+    match crate::pty::paste_to_session(&pty, &session_id, &send.text, false) {
+        Ok(()) => {
+            send_gate::emit_send_delivered(&app, &session_id, &send.task_id, "forced");
+            Ok(true)
+        }
+        Err(e) => {
+            send_gate::emit_send_dropped(
+                &app,
+                &session_id,
+                Some(&send.task_id),
+                &format!("pty write failed: {e}"),
+            );
+            Err(format!("pty write failed: {e}"))
+        }
+    }
+}
+
+/// Explicit context refresh of a live session (mirrors the vault-note
+/// reinject rule: labeled block, never auto, no submit). Bracketed paste —
+/// not the raw write path — so the multi-line block stays one paste.
+#[tauri::command]
+pub fn clickup_reinject_task(
+    session_id: String,
+    task_id: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+    pty: tauri::State<'_, crate::pty::PtyManager>,
+) -> Result<(), String> {
+    let text = compose_for_delivery(&db, &task_id)?;
+    crate::pty::paste_to_session(&pty, &session_id, &text, false)
+}
+
+/// Spawn a new worktree session seeded with the task: derive the slug from
+/// the task name (existing convention: diacritics stripped + timestamp),
+/// create the worktree, stash the composed block as the initial prompt
+/// (`pending_prompts`, consumed at PTY spawn), and bind the task as the new
+/// session's active task — the loop-closure this verb exists for. The
+/// returned session is activated by the frontend through the normal
+/// session-start flow (same as deep-link `session/new`).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command surface — collapsing to a struct breaks the JS call shape.
+pub fn clickup_spawn_worktree_with_task(
+    workspace_id: String,
+    task_id: String,
+    slug: Option<String>,
+    db: tauri::State<'_, crate::db::SharedDb>,
+    agents: tauri::State<'_, crate::agents::state::AgentRuntimeState>,
+    plan_watcher: tauri::State<'_, crate::agents::claude_code::plan::SharedPlanWatcher>,
+    pty: tauri::State<'_, crate::pty::PtyManager>,
+) -> Result<crate::models::Session, String> {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let (session, text) = {
+        let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+        let repo_path = guard
+            .workspace_repo_path(&workspace_id)
+            .map_err(|e| format!("{e:#}"))?
+            .ok_or("workspace not found")?;
+        if !crate::worktree::is_git_repo(&repo_path) {
+            return Err("workspace is not a git repository".into());
+        }
+
+        let composed = integration::compose_task_markdown(guard.conn(), &task_id)
+            .map_err(|e| format!("{e:#}"))?
+            .ok_or_else(|| "task not found in the local mirror".to_string())?;
+        let text = crate::pty::sanitize_for_pty(&composed);
+
+        use rusqlite::OptionalExtension;
+        let task_name: String = guard
+            .conn()
+            .query_row(
+                "SELECT name FROM clickup_tasks WHERE id = ?1",
+                [&task_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| format!("{e:#}"))?
+            .ok_or_else(|| "task not found in the local mirror".to_string())?;
+
+        let base = slug.as_deref().unwrap_or(&task_name);
+        let slug = crate::commands::derive_worktree_slug(base, ts);
+        let worktree_dir = repo_path.join(".worktrees").join("cluihud").join(&slug);
+        if worktree_dir.exists() {
+            return Err(format!("a worktree already exists for slug '{slug}'"));
+        }
+        let wt_path =
+            crate::worktree::create_worktree(&repo_path, &slug).map_err(|e| e.to_string())?;
+
+        // Mirror the agent resolution from create_session: config override >
+        // default_agent > CC fallback. Worktrees are always in this workspace's
+        // repo, so repo_path is the right key for agent_overrides.
+        let agent_id = {
+            let cfg = crate::config::Config::load();
+            cfg.resolve_agent_for_project(&repo_path)
+                .as_deref()
+                .and_then(|s| crate::agents::AgentId::new(s).ok())
+                .unwrap_or_else(crate::agents::AgentId::claude_code)
+        };
+        let session = crate::models::Session {
+            // char-safe truncation: a byte slice panics mid-codepoint.
+            id: format!("{}-{ts}", workspace_id.chars().take(6).collect::<String>()),
+            name: task_name,
+            workspace_id: workspace_id.clone(),
+            worktree_path: Some(wt_path),
+            worktree_branch: Some(format!("cluihud/{slug}")),
+            merge_target: None,
+            status: crate::models::SessionStatus::Idle,
+            created_at: ts,
+            updated_at: ts,
+            agent_id: agent_id.as_str().to_string(),
+            agent_internal_session_id: None,
+            agent_capabilities: Vec::new(),
+            pinned_note_paths: Vec::new(),
+            launch_options: None,
+            env_shells: Vec::new(),
+            active_clickup_task_id: Some(task_id.clone()),
+            pinned_clickup_task_ids: Vec::new(),
+        };
+        guard
+            .create_session(&session)
+            .map_err(|e| format!("{e:#}"))?;
+        agents.register_session(&session.id, agent_id);
+        crate::commands::extend_plan_watcher_for_session(
+            &agents,
+            &plan_watcher,
+            &session,
+            &repo_path,
+        );
+        (session, text)
+    };
+
+    crate::pty::queue_session_prompt(pty, session.id.clone(), text)?;
+    Ok(session)
 }
 
 #[cfg(test)]

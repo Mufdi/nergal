@@ -4,11 +4,16 @@
   "rigor_applied": {
     "discovery_invoked": false,
     "discovery_note": "Discovery crystallized in-conversation. Codebase validated: pty.rs:396 assembler, agents/mod.rs:296+310 contract, pty.rs:388 pending_prompts, pty.rs:880 reinject live-PTY write, worktree.rs:261, sessions JSON-column precedent.",
-    "iprev_rounds": 2,
+    "iprev_rounds": 8,
     "iprev_evaluator": "claude",
-    "iprev_verdict": "APPROVED",
+    "iprev_verdict": "APPROVED (pre-build 2 rounds) + Revision 1 re-review (5 adversarial rounds + 1 confirmation round, APPROVED 2026-06-10)",
     "reviewer_mode": "iterative-plan-review (pre-build) planned; reviewer escalation planned for the pty.rs hot-path edit",
-    "gates_phases_planned": ["compile", "test", "lint", "scope"],
+    "gates_phases_planned": [
+      "compile",
+      "test",
+      "lint",
+      "scope"
+    ],
     "per_phase_models": {
       "design": "claude-opus (this session)",
       "implementation": "TBD at build",
@@ -19,11 +24,25 @@
   "ceremony": "deep (implementation.md mandatory per openspec/config.yaml)",
   "status": "plan-approved (iprev 2 rounds, Claude); implementation NOT started",
   "implementation_order": 2,
-  "depends_on": ["clickup-sync"],
+  "depends_on": [
+    "clickup-sync"
+  ],
   "parallel_track": "independent of context-bridge MCP-first changes",
   "notes": [
-    "No new ContextInjection variant — rides the existing single injected_context channel.",
+    "No new ContextInjection variant \u2014 rides the existing single injected_context channel.",
     "Worktree verb = user-initiated create_worktree, NOT the agent-spawned-worktrees change.",
-    "Edits the spawn hot path pty.rs:396 — preserve byte-identical-when-empty + lock discipline."
+    "Edits the spawn hot path pty.rs:396 \u2014 preserve byte-identical-when-empty + lock discipline."
+  ],
+  "events": [
+    {
+      "ts": "2026-06-10",
+      "type": "mid-implementation-revision",
+      "detail": "Revision 1: SessionStatus premise falsified at build verification (no runtime writer); send-gate mechanism designed + iprev 5 rounds (skeptic, codebase-verified); Codex Running edge descoped to vault Backlog"
+    },
+    {
+      "ts": "2026-06-10",
+      "type": "iprev-revision1-approved",
+      "detail": "round-6 confirmation (claude) verified the EOF instance-identity gate on disk; transcript in handoff/iprev-revision1-log.md"
+    }
   ]
 }

@@ -52,6 +52,12 @@ export interface Session {
   launch_options?: LaunchOptions | null;
   /// Environment shells (quake): auto-run at creation, pre-filled on re-open.
   env_shells?: EnvShellDef[];
+  /// The single bound ClickUp task (write-back target + session-tab chip).
+  /// Seeds the initial value; runtime mutations live in `clickupBindingMapAtom`.
+  active_clickup_task_id?: string | null;
+  /// ClickUp tasks pinned as context-only. Seeds the initial value; runtime
+  /// mutations live in `clickupPinsMapAtom`.
+  pinned_clickup_task_ids?: string[];
 }
 
 export interface Workspace {

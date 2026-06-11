@@ -166,6 +166,7 @@ fn spawn_pty(
     let ready_tx = Mutex::new(shell_ready_tx);
     let eof_app = app.clone();
     let eof_session = session_id.to_owned();
+    let eof_pty_id = pty_id.clone();
 
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
@@ -197,6 +198,27 @@ fn spawn_pty(
             // obsidian once — deduped against the hook by claim_finalization.
             if let Some(db) = eof_app.try_state::<crate::db::SharedDb>() {
                 crate::hooks::server::finalize_session_obsidian(db.inner(), Some(&eof_session));
+            }
+            // Send-gate purge, instance-identity gated: crash/natural exit do
+            // NOT de-register from session_ptys (only kill_session_pty does),
+            // so purge iff the session maps to THIS reader's pty (crash) or to
+            // nothing (kill, no respawn — idempotent no-op). A kill→respawn
+            // maps to a NEW pty_id: a late EOF from the old reader must not
+            // clear the respawned session's fresh gate state.
+            let owns_session = eof_app
+                .try_state::<PtyManager>()
+                .and_then(|m| {
+                    m.session_ptys
+                        .lock()
+                        .ok()
+                        .map(|g| match g.get(&eof_session) {
+                            None => true,
+                            Some(current) => current == &eof_pty_id,
+                        })
+                })
+                .unwrap_or(false);
+            if owns_session {
+                crate::clickup::send_gate::purge_session(&eof_app, &eof_session);
             }
         } else {
             // Emit only for a shell that exited on its own (`exit`, crash):
@@ -390,24 +412,14 @@ pub async fn start_claude_session(
             .lock()
             .ok()
             .and_then(|mut m| m.remove(&session_id));
-        // Pinned vault notes seed the agent's context. Running here covers both
-        // fresh and resume spawns through the same path, so resume re-injection
-        // is automatic. The adapter's context_injection() tier decides folding.
-        let injected_context: Option<String> = db.lock().ok().and_then(|g| {
-            let session = g.find_session(&session_id).ok().flatten()?;
-            if session.pinned_note_paths.is_empty() {
-                return None;
-            }
-            let vault_root = crate::obsidian::config::resolve(&session.workspace_id, |w| {
-                g.get_obsidian_config(w)
-            })
+        // Pinned vault notes + bound ClickUp tasks seed the agent's context.
+        // Running here covers both fresh and resume spawns through the same
+        // path, so resume re-injection (re-reading current mirror content) is
+        // automatic. The adapter's context_injection() tier decides folding.
+        let injected_context: Option<String> = db
+            .lock()
             .ok()
-            .and_then(|cfg| cfg.vault_root);
-            crate::obsidian::pinned_notes::assemble_context(
-                &session.pinned_note_paths,
-                vault_root.as_deref(),
-            )
-        });
+            .and_then(|g| assemble_injected_context(&g, &session_id));
         // Launch options persist on the session row, so resume re-applies
         // them through this same path (preset flags + startup prelude).
         let launch_options: Option<crate::models::LaunchOptions> = db
@@ -524,6 +536,42 @@ pub async fn start_claude_session(
     }
 
     Ok(StartClaudeResult { pty_id })
+}
+
+/// Assemble the spawn-time injected context: pinned vault notes + bound
+/// ClickUp tasks (active ∪ pinned), one labeled block per source. `None`
+/// when neither source has content, so the spawn command stays byte-identical
+/// to a session with no pins and no bindings.
+pub(crate) fn assemble_injected_context(
+    g: &crate::db::Database,
+    session_id: &str,
+) -> Option<String> {
+    let session = g.find_session(session_id).ok().flatten()?;
+    let vault_block = if session.pinned_note_paths.is_empty() {
+        None
+    } else {
+        let vault_root =
+            crate::obsidian::config::resolve(&session.workspace_id, |w| g.get_obsidian_config(w))
+                .ok()
+                .and_then(|cfg| cfg.vault_root);
+        crate::obsidian::pinned_notes::assemble_context(
+            &session.pinned_note_paths,
+            vault_root.as_deref(),
+        )
+    };
+    let clickup_block = crate::clickup::integration::assemble_clickup_context(g.conn(), &session);
+    concat_context_blocks(vault_block, clickup_block)
+}
+
+/// ClickUp rides AFTER the vault block in the same `injected_context` string
+/// (design Decision 4: one assembled string, every adapter unchanged).
+fn concat_context_blocks(vault: Option<String>, clickup: Option<String>) -> Option<String> {
+    match (vault, clickup) {
+        (None, None) => None,
+        (Some(v), None) => Some(v),
+        (None, Some(c)) => Some(c),
+        (Some(v), Some(c)) => Some(format!("{v}\n{c}")),
+    }
 }
 
 /// Composite terminal id for an auxiliary shell. This is the key the
@@ -850,7 +898,7 @@ pub fn write_to_session_pty(
 /// Drop terminal control bytes (ESC-introduced sequences + raw C0/C1 controls,
 /// keeping `\n`/`\t`) before injecting a file body into the PTY, so a crafted
 /// note can't drive the agent's terminal via escape codes.
-fn sanitize_for_pty(s: &str) -> String {
+pub(crate) fn sanitize_for_pty(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars();
     while let Some(c) = chars.next() {
@@ -865,7 +913,9 @@ fn sanitize_for_pty(s: &str) -> String {
                 }
             }
             '\n' | '\t' => out.push(c),
-            '\x00'..='\x1f' | '\x7f' => {}
+            // C1 controls included: U+009B is 8-bit CSI, so a raw "\u{9b}201~"
+            // would close the bracketed paste on terminals honoring 8-bit C1.
+            '\x00'..='\x1f' | '\x7f' | '\u{0080}'..='\u{009f}' => {}
             _ => out.push(c),
         }
     }
@@ -926,7 +976,11 @@ pub fn queue_session_prompt(
 
 /// Kill a session's PTY (and its auxiliary shells) and clean up mappings.
 #[tauri::command]
-pub fn kill_session_pty(state: State<'_, PtyManager>, session_id: String) -> Result<(), String> {
+pub fn kill_session_pty(
+    app: AppHandle,
+    state: State<'_, PtyManager>,
+    session_id: String,
+) -> Result<(), String> {
     kill_session_aux_shells(&state, &session_id)?;
 
     let pty_id = {
@@ -942,6 +996,10 @@ pub fn kill_session_pty(state: State<'_, PtyManager>, session_id: String) -> Res
     // Drop the ephemeral system-prompt file written for AppendSystemPromptFile
     // adapters; absent (non-CC, or no pins) → harmless no-op.
     let _ = std::fs::remove_file(crate::agents::spawn_context_file(&session_id));
+
+    // A respawn with the same session_id starts with a clean send-gate: a
+    // stale composed block must never drain into a fresh conversation.
+    crate::clickup::send_gate::purge_session(&app, &session_id);
 
     Ok(())
 }
@@ -1025,11 +1083,50 @@ pub fn terminal_paste(
     }
 
     let mut w = instance.writer.lock().map_err(|e| e.to_string())?;
-    w.write_all(b"\x1b[200~").map_err(|e| e.to_string())?;
-    w.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
-    w.write_all(b"\x1b[201~").map_err(|e| e.to_string())?;
-    w.flush().map_err(|e| e.to_string())?;
+    write_bracketed(&mut *w, &text, false).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Bracketed-paste encoder shared by `terminal_paste` and
+/// [`paste_to_session`]. When `submit`, the `\r` is written as a separate
+/// byte AFTER the closing marker — inside the brackets it would be text,
+/// not a submit.
+fn write_bracketed(w: &mut dyn Write, text: &str, submit: bool) -> std::io::Result<()> {
+    w.write_all(b"\x1b[200~")?;
+    w.write_all(text.as_bytes())?;
+    w.write_all(b"\x1b[201~")?;
+    if submit {
+        w.write_all(b"\r")?;
+    }
+    w.flush()
+}
+
+/// Paste `text` into an AGENT session's PTY wrapped in bracketed-paste
+/// markers, optionally followed by a `\r` submit. The send-as-prompt
+/// delivery primitive (design Decision 5): a multi-line body lands as one
+/// paste instead of fragmenting into partial turns. Aux shells
+/// (`session_id` containing `::`) are out of contract — their line-tracker
+/// anchoring stays in `terminal_paste`.
+pub(crate) fn paste_to_session(
+    state: &PtyManager,
+    session_id: &str,
+    text: &str,
+    submit: bool,
+) -> Result<(), String> {
+    if session_id.contains("::") {
+        return Err("paste_to_session accepts agent sessions only".into());
+    }
+    let pty_id = {
+        let session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
+        session_ptys
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| "no PTY for session".to_string())?
+    };
+    let instances = state.instances.lock().map_err(|e| e.to_string())?;
+    let instance = instances.get(&pty_id).ok_or("PTY instance not found")?;
+    let mut w = instance.writer.lock().map_err(|e| e.to_string())?;
+    write_bracketed(&mut *w, text, submit).map_err(|e| e.to_string())
 }
 
 /// Encode a frontend key event via wezterm-term and write the resulting
@@ -1297,4 +1394,155 @@ pub fn terminal_get_full_grid(
     differ
         .compute_update(&session_id, &snapshot)
         .ok_or_else(|| "differ produced no update after invalidate (unreachable)".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{Session, SessionStatus};
+
+    // ── Bracketed-paste encoder (send-as-prompt delivery primitive) ──
+
+    #[test]
+    fn sanitize_drops_c1_controls() {
+        // U+009B is 8-bit CSI: raw passthrough would let "\u{9b}201~" close
+        // the bracketed paste on terminals honoring 8-bit C1.
+        assert_eq!(sanitize_for_pty("\u{009b}201~"), "201~");
+        assert_eq!(sanitize_for_pty("a\u{0080}b\u{009f}c"), "abc");
+    }
+
+    #[test]
+    fn bracketed_paste_wraps_multiline_body_without_submit() {
+        let mut out: Vec<u8> = Vec::new();
+        write_bracketed(&mut out, "line1\nline2\nline3", false).unwrap();
+        assert_eq!(out, b"\x1b[200~line1\nline2\nline3\x1b[201~");
+        assert!(!out.contains(&b'\r'), "no submit byte without `submit`");
+    }
+
+    #[test]
+    fn bracketed_paste_submit_writes_cr_after_closing_marker() {
+        let mut out: Vec<u8> = Vec::new();
+        write_bracketed(&mut out, "do this\nnow", true).unwrap();
+        assert_eq!(out, b"\x1b[200~do this\nnow\x1b[201~\r");
+        // Exactly one \r and it is the final byte, outside the brackets.
+        assert_eq!(out.iter().filter(|b| **b == b'\r').count(), 1);
+    }
+
+    #[test]
+    fn paste_to_session_rejects_aux_shells() {
+        let mgr = PtyManager::new(false);
+        let err = paste_to_session(&mgr, "sess::shell", "x", false).unwrap_err();
+        assert!(err.contains("agent sessions only"));
+    }
+
+    // ── Injected-context assembly (vault + ClickUp concatenation) ──
+
+    #[test]
+    fn concat_preserves_none_when_both_sources_empty() {
+        assert!(concat_context_blocks(None, None).is_none());
+    }
+
+    #[test]
+    fn concat_passes_single_sources_through_unchanged() {
+        // Byte-identical to the pre-ClickUp behavior when only vault exists.
+        assert_eq!(
+            concat_context_blocks(Some("vault".into()), None).as_deref(),
+            Some("vault")
+        );
+        assert_eq!(
+            concat_context_blocks(None, Some("clickup".into())).as_deref(),
+            Some("clickup")
+        );
+    }
+
+    #[test]
+    fn concat_appends_clickup_after_vault() {
+        assert_eq!(
+            concat_context_blocks(Some("vault".into()), Some("clickup".into())).as_deref(),
+            Some("vault\nclickup")
+        );
+    }
+
+    fn seeded_db_with_session(active_task: Option<&str>) -> crate::db::Database {
+        let db = crate::db::Database::open_in_memory().unwrap();
+        db.create_workspace("ws1", "ws", "/tmp/repo").unwrap();
+        db.create_session(&Session {
+            id: "sess1".into(),
+            name: "s".into(),
+            workspace_id: "ws1".into(),
+            worktree_path: None,
+            worktree_branch: None,
+            merge_target: None,
+            status: SessionStatus::Idle,
+            created_at: 0,
+            updated_at: 0,
+            agent_id: "claude-code".into(),
+            agent_internal_session_id: None,
+            agent_capabilities: Vec::new(),
+            pinned_note_paths: Vec::new(),
+            launch_options: None,
+            env_shells: Vec::new(),
+            active_clickup_task_id: None,
+            pinned_clickup_task_ids: Vec::new(),
+        })
+        .unwrap();
+        if let Some(task) = active_task {
+            db.set_active_clickup_task("sess1", Some(task)).unwrap();
+        }
+        db
+    }
+
+    fn seed_mirror_task(db: &crate::db::Database, name: &str) {
+        use crate::clickup::{mirror, model};
+        let conn = db.conn();
+        let space: model::Space = serde_json::from_str(r#"{"id":"sp1","name":"Space"}"#).unwrap();
+        mirror::upsert_space(conn, &space, 1).unwrap();
+        let list: model::List = serde_json::from_str(r#"{"id":"l1","name":"List"}"#).unwrap();
+        mirror::upsert_list(conn, &list, "sp1").unwrap();
+        let task: model::Task = serde_json::from_value(serde_json::json!({
+            "id": "task1",
+            "name": name,
+            "status": {"status": "open"},
+            "url": "https://app.clickup.com/t/task1",
+            "list": {"id": "l1", "name": "List"},
+        }))
+        .unwrap();
+        mirror::upsert_task(conn, &task).unwrap();
+    }
+
+    #[test]
+    fn assemble_is_none_with_no_pins_and_no_bindings() {
+        let db = seeded_db_with_session(None);
+        assert!(assemble_injected_context(&db, "sess1").is_none());
+    }
+
+    #[test]
+    fn assemble_injects_bound_clickup_task_from_mirror() {
+        let db = seeded_db_with_session(Some("task1"));
+        seed_mirror_task(&db, "Implement the thing");
+        let out = assemble_injected_context(&db, "sess1").unwrap();
+        assert!(out.contains("# ClickUp task brief"));
+        assert!(out.contains("## Implement the thing"));
+    }
+
+    #[test]
+    fn assemble_rereads_current_mirror_content_per_spawn() {
+        // Resume path: the assembler runs again at spawn, so a task that
+        // changed in the mirror between spawns is re-injected fresh.
+        let db = seeded_db_with_session(Some("task1"));
+        seed_mirror_task(&db, "Original name");
+        let first = assemble_injected_context(&db, "sess1").unwrap();
+        assert!(first.contains("## Original name"));
+
+        seed_mirror_task(&db, "Renamed after sync");
+        let second = assemble_injected_context(&db, "sess1").unwrap();
+        assert!(second.contains("## Renamed after sync"));
+        assert!(!second.contains("## Original name"));
+    }
+
+    #[test]
+    fn assemble_skips_dangling_binding() {
+        let db = seeded_db_with_session(Some("ghost-task"));
+        assert!(assemble_injected_context(&db, "sess1").is_none());
+    }
 }

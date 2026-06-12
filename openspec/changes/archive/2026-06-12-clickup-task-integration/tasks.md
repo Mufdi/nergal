@@ -46,4 +46,9 @@
 
 - [x] 6.1 `cd src-tauri && cargo clippy -- -D warnings && cargo test && cargo fmt --check`
 - [x] 6.2 `npx tsc --noEmit`
-- [ ] 6.3 Manual walk per proposal § Cómo verifico.
+- [x] 6.3 Manual walk per proposal § Cómo verifico. (5 walk rounds 2026-06-11, all feedback resolved; commits `1c20778`, `9080f24`, `59d387b`, `ea0b8d2`.)
+
+> Post-build note: tasks 4.0a-4.0e and the gate halves of 4.3 were built as
+> specified and later REMOVED by design.md Revision 3 (send-gate dropped —
+> CC queues mid-turn prompts natively; the hook invaded global settings and
+> was CC-only). They stay checked as a faithful execution record.

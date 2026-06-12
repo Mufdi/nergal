@@ -15,7 +15,14 @@ import {
   UserCheck,
 } from "lucide-react";
 import { invoke } from "@/lib/tauri";
+import { focusIfPanelZone } from "@/lib/panelFocus";
 import { Select } from "@/components/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { zenModeAtom } from "@/stores/zenMode";
 import {
   GROUP_BY_ORDER,
@@ -230,12 +237,32 @@ export function ClickUpPanel() {
     });
   }
 
+  // Mount-time focus + initial cursor. Intentional opens set the zone to
+  // "panel" BEFORE this mounts, but togglePanel's rAF-deferred focusZone()
+  // runs while the collapsed RightPanel still has no zone container, so DOM
+  // focus stays in the terminal (which swallows arrows) — the "looks focused
+  // but arrows are dead" state. Same race NavigablePickerContainer solves
+  // with a deferred self-focus; gating on the zone keeps session-switch
+  // restores from stealing the prompt (BUG-09).
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const root = rootRef.current;
+      if (!root) return;
+      focusIfPanelZone(root);
+      if (root.querySelector("[data-nav-selected='true']")) return;
+      root.querySelector<HTMLElement>("[data-nav-item]")?.setAttribute("data-nav-selected", "true");
+    }, 50);
+    return () => clearTimeout(timer);
+  }, []);
+
   // Plain ↑/↓ moves a data-nav-selected cursor over the rows — window-level
   // like the git PRs picker (PrsChip): a handler on the panel div never fires
   // because focus normally sits on RightPanel's outer zone container, not
   // inside it. Cursor = selection attribute (patterns.md §5.2, styled by the
   // globals.css rule), never DOM focus — no focus ring on rows. Enter opens
-  // the selected item; ←/→ collapse/expand a selected group header. The
+  // the selected item; ←/→ collapse/expand a selected group header; ↑ from
+  // the first item steps up into the Space select (focus-based, the Settings
+  // convention for form controls). A/C toggle the header filters. The
   // terminal swallows its own keys at the canvas layer, so this only sees
   // strays.
   const listenerActive = !zenOpen && detailTaskId === null && sendConfirm === null;
@@ -249,16 +276,36 @@ export function ClickUpPanel() {
         || !!target?.closest(".cm-editor")
         || target?.getAttribute("contenteditable") === "true";
       if (inField) return;
-      // The sidebar and open dialogs (incl. swal confirms) own their keys.
-      if (target?.closest("[data-focus-zone='sidebar']") || target?.closest("[role='dialog']")) return;
+      // The sidebar, open dialogs (incl. swal confirms) and the select's
+      // own popup own their keys.
+      if (
+        target?.closest("[data-focus-zone='sidebar']")
+        || target?.closest("[role='dialog']")
+        || target?.closest("[role='listbox']")
+      ) return;
       const root = rootRef.current;
       if (!root) return;
+      if (e.code === "KeyA" || e.code === "KeyC") {
+        // Bare-letter toggles: only while the user is interacting with the
+        // panel (same zone scoping as the S/W/P/B task verbs).
+        if (!target?.closest("[data-focus-zone='panel']") && !target?.closest("[data-focus-zone='clickup']")) return;
+        e.preventDefault();
+        if (e.code === "KeyA") setAssignedToMe((prev) => !prev);
+        else setShowClosed((prev) => !prev);
+        return;
+      }
       const items = Array.from(root.querySelectorAll<HTMLElement>("[data-nav-item]"));
       if (items.length === 0) return;
       const selected = root.querySelector<HTMLElement>("[data-nav-selected='true']");
       const idx = selected ? items.indexOf(selected) : -1;
       if (e.code === "ArrowUp" || e.code === "ArrowDown") {
         e.preventDefault();
+        if (e.code === "ArrowUp" && idx === 0) {
+          // Top of the list → step up into the Space select.
+          selected?.removeAttribute("data-nav-selected");
+          root.querySelector<HTMLElement>("[role='combobox']")?.focus();
+          return;
+        }
         const next = e.code === "ArrowDown"
           ? (idx === -1 ? 0 : (idx + 1) % items.length)
           : (idx === -1 ? items.length - 1 : (idx - 1 + items.length) % items.length);
@@ -284,6 +331,36 @@ export function ClickUpPanel() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, [listenerActive, setAssignedToMe, setShowClosed]);
+
+  // ↓ from the focused Space select hands control back to the list cursor.
+  // Capture-phase on window so it runs BEFORE the select trigger's own
+  // capture handler (which would otherwise do a body-wide focus walk —
+  // its scope selector has no anchor inside this panel).
+  useEffect(() => {
+    if (!listenerActive) return;
+    function onSelectKey(e: KeyboardEvent) {
+      if (e.code !== "ArrowDown" && e.code !== "ArrowUp") return;
+      if (e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
+      const root = rootRef.current;
+      const target = e.target as HTMLElement | null;
+      if (!root || !target) return;
+      if (target !== root.querySelector("[role='combobox']")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.code !== "ArrowDown") return;
+      target.blur();
+      focusIfPanelZone(root);
+      const first = root.querySelector<HTMLElement>("[data-nav-item]");
+      if (!first) return;
+      for (const item of root.querySelectorAll("[data-nav-selected]")) {
+        item.removeAttribute("data-nav-selected");
+      }
+      first.setAttribute("data-nav-selected", "true");
+      first.scrollIntoView({ block: "nearest" });
+    }
+    window.addEventListener("keydown", onSelectKey, true);
+    return () => window.removeEventListener("keydown", onSelectKey, true);
   }, [listenerActive]);
 
   if (syncStatus?.state === "needs_team") {
@@ -295,7 +372,8 @@ export function ClickUpPanel() {
   }
 
   return (
-    <div ref={rootRef} className="flex h-full flex-col" data-focus-zone="clickup">
+    <TooltipProvider delay={0}>
+    <div ref={rootRef} tabIndex={-1} className="flex h-full flex-col outline-none" data-focus-zone="clickup">
       {/* Header: persistent Space selector + local filters */}
       <div className="flex shrink-0 items-center gap-1.5 border-b border-border/50 px-2 py-1.5">
         <Select
@@ -304,34 +382,46 @@ export function ClickUpPanel() {
           options={[{ value: "", label: "Todos" }, ...spaces.map((s) => ({ value: s.id, label: s.name }))]}
           className="h-6 w-auto min-w-28 flex-1 px-2 py-0 text-[11px]"
         />
-        <button
-          type="button"
-          onClick={() => setAssignedToMe(!assignedToMe)}
-          aria-label="Assigned to me"
-          aria-pressed={assignedToMe}
-          title="Assigned to me"
-          className={`flex size-6 shrink-0 items-center justify-center rounded transition-colors ${
-            assignedToMe
-              ? "bg-primary/10 text-primary"
-              : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
-          }`}
-        >
-          <UserCheck size={13} />
-        </button>
-        <button
-          type="button"
-          onClick={() => setShowClosed(!showClosed)}
-          aria-label="Show closed tasks"
-          aria-pressed={showClosed}
-          title="Show closed tasks"
-          className={`flex size-6 shrink-0 items-center justify-center rounded transition-colors ${
-            showClosed
-              ? "bg-primary/10 text-primary"
-              : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
-          }`}
-        >
-          {closedLoading ? <Loader2 size={13} className="animate-spin" /> : <CircleCheck size={13} />}
-        </button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                onClick={() => setAssignedToMe(!assignedToMe)}
+                aria-label="Assigned to me"
+                aria-pressed={assignedToMe}
+                className={`flex size-6 shrink-0 items-center justify-center rounded transition-colors ${
+                  assignedToMe
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+                }`}
+              />
+            }
+          >
+            <UserCheck size={13} />
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Assigned to me (A)</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                onClick={() => setShowClosed(!showClosed)}
+                aria-label="Show closed tasks"
+                aria-pressed={showClosed}
+                className={`flex size-6 shrink-0 items-center justify-center rounded transition-colors ${
+                  showClosed
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+                }`}
+              />
+            }
+          >
+            {closedLoading ? <Loader2 size={13} className="animate-spin" /> : <CircleCheck size={13} />}
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Show closed tasks (C)</TooltipContent>
+        </Tooltip>
       </div>
 
       {/* View chip strip: "My tasks" preset first, then plain group-by modes */}
@@ -385,6 +475,7 @@ export function ClickUpPanel() {
         )}
       </div>
     </div>
+    </TooltipProvider>
   );
 }
 
@@ -514,25 +605,33 @@ function RowAction({
   children: React.ReactNode;
 }) {
   // span[role=button]: the row itself is a <button>, nesting real buttons is
-  // invalid HTML (same pattern as the TopBar tab close affordance).
+  // invalid HTML (same pattern as the TopBar tab close affordance). Tooltip
+  // component (delay-0 provider) instead of native title — instant hover,
+  // same convention as the TopBar actions.
   return (
-    <span
-      role="button"
-      tabIndex={-1}
-      title={label}
-      aria-label={label}
-      onClick={(e) => {
-        e.stopPropagation();
-        onClick();
-      }}
-      className={`flex size-4 shrink-0 items-center justify-center rounded transition-colors ${
-        active
-          ? "text-primary hover:bg-secondary/60"
-          : "text-muted-foreground/70 hover:bg-secondary/60 hover:text-foreground"
-      }`}
-    >
-      {children}
-    </span>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            role="button"
+            tabIndex={-1}
+            aria-label={label}
+            onClick={(e) => {
+              e.stopPropagation();
+              onClick();
+            }}
+            className={`flex size-4 shrink-0 items-center justify-center rounded transition-colors ${
+              active
+                ? "text-primary hover:bg-secondary/60"
+                : "text-muted-foreground/70 hover:bg-secondary/60 hover:text-foreground"
+            }`}
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{label}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -622,13 +721,16 @@ function TaskRow({
         ))}
       </span>
 
+      {/* The keyboard cursor (data-nav-selected) mirrors the mouse hover:
+          list name yields, action buttons appear — same affordance, and it
+          doubles as the "which row am I on" signal. */}
       {showListName && (
-        <span className="max-w-20 shrink-0 truncate text-[10px] text-muted-foreground/70 group-hover:hidden">
+        <span className="max-w-20 shrink-0 truncate text-[10px] text-muted-foreground/70 group-hover:hidden group-data-[nav-selected=true]:hidden">
           {task.list_name}
         </span>
       )}
 
-      <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
+      <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex group-data-[nav-selected=true]:flex">
         <RowAction label={ACTION_LABELS.send} onClick={() => actions.send(task.id)}>
           <Send size={10} />
         </RowAction>

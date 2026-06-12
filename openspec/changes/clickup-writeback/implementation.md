@@ -6,7 +6,7 @@ Detailed plan mapped against the current codebase. No code — guides Mode B.
 
 - **Client**: `clickup/client.rs` from `clickup-sync` — extend with write methods, reusing its auth header + `429`/`Retry-After` backoff.
 - **Poller**: `clickup/poller.rs` reconcile from `clickup-sync` — the echo/conflict logic hooks in here. It hands the writeback layer the **fetched task payloads** (whole-task); the field-value comparison reads field values from those payloads (no per-field poller delta required — review #4).
-- **SessionStatus**: enum at `models.rs:8` (`Idle`, `Running`, `NeedsAttention`, `Completed`); `lib.rs:702` already branches on `Completed`. The mode-map writer (the single status-writing path) is where the **edge** `prev!=Completed && new==Completed` is detected for the closure (review #7).
+- **Closure trigger (design Revision 1)**: the `SessionStatus → Completed` anchor was falsified at build time (`db.update_session_status` `db.rs:440` has zero callers; the "mode-map writer" was the send-gate, removed by clickup-task-integration Revision 3). New anchors: **`ShipDialog.tsx` `runCommitPushPr` success path** (holds `state.sessionId` + `ShipResult.pr_info`; binding is NOT in hand — resolve via `workspacesAtom` + `clickupBindingMapAtom` + `resolveActiveClickUpTask` against the shipped session's row; export a by-id selector since `findSession` is private; raise the offer before/alongside the synchronous `close()`) + **manual "Close out task"** in the floating detail toolbar (`ClickUpTaskDetail.tsx`, plain `ToolbarAction`, no contextual letter). No hooks, no agent settings, no agent hardcoding.
 - **Binding**: `active_clickup_task_id` on `sessions` from `clickup-task-integration` — scopes the closure.
 - **`date_updated`**: present on task payloads — used only as a coarse "this task changed" trigger, NOT the echo key (review #5).
 
@@ -20,14 +20,14 @@ Detailed plan mapped against the current codebase. No code — guides Mode B.
 2. **`clickup/writeback.rs`**: the `recent_writes` map (value + pre-write value + TTL ≥ 2× poll). The optimistic mutation is **frontend-only** — the Rust side writes the mirror only on ack via reconcile. No durable optimistic write.
 3. **Echo + conflict in the poller reconcile** (value comparison): echo check runs **before** new-assignment detection (cross-change ordering — pin with a regression test). Field-class resolution: scalar = LWW+warn, additive = merge-no-warn.
 4. **Comments** (separate path): post-once, insert-after-id, ambiguous-failure re-fetch-before-retry, echo-match by author+text+timestamp.
-5. **Structural boundary + closure**: backend issues a confirmation token for a specific `(task, action, value)` on user confirm; closure + comment writes execute only via the token-requiring command. Closure trigger = the Completed **edge**, offer-idempotent. On confirm, independent writes with per-write outcome.
+5. **Structural boundary + closure**: backend issues a confirmation token for a specific `(task, action, value)` on user confirm; closure + comment writes execute only via the token-requiring command. Closure trigger (Revision 1) = **ship-success** (frontend ship flow raises the offer for bound sessions, one offer per successful ship, PR link prefill) + **manual "Close out task"** verb. On confirm, independent writes with per-write outcome.
 6. **Frontend**: optimistic-overlay write controls (pending/failed states); closure prompt; echo-silent / scalar-conflict-warn / additive-silent toasts.
 
 ## Reuse, don't reinvent
 
 - Auth + rate-limit: the `clickup-sync` client already has them.
 - Notification/toast: reuse `toastsAtom` + the notification plugin.
-- Status list for the closure picker: read `clickup_statuses` for the task's List (mirrored) — no live call.
+- Status list for the closure picker: `clickup_statuses` is mirrored but **never read today** (only `mirror::upsert_status` writes it) — the read path is a NEW command this change adds (`clickup_read_list_statuses(list_id)`, tasks 1.5), no live call.
 - The token-gate pattern echoes the structural human gate iprev forced onto `agent-spawned-worktrees` (sole entry = one command requiring a backend-issued token), scoped here to the closure + comment writes.
 
 ## Edge cases
@@ -37,7 +37,7 @@ Detailed plan mapped against the current codebase. No code — guides Mode B.
 - **Partial closure**: comment posted + status failed → comment is NOT rolled back (append-only); surface "comment posted; status failed — retry?".
 - **Assignee/checklist additive**: merge semantics, no false superseded-warning.
 - **Comment idempotency**: no ClickUp key → ambiguous-failure path re-fetches comments before any retry; the closure's offer-idempotency prevents a double-post from a re-fired prompt.
-- **Closure level vs edge**: `Completed` can be written repeatedly; only the not-Completed→Completed edge offers, once.
+- **Closure trigger discreteness (Revision 1)**: one offer per successful ship invocation — a discrete event, no edge/level bookkeeping. A later re-ship offers again (intentional: another unit shipped). Push-only does NOT offer.
 - **Comment prefill provenance**: user-authored default; agent-seeded text is marked editable and sanitized (strip/escape `@` mentions + task refs) and always user-reviewed before posting.
 - **TTL vs poll**: `recent_writes` TTL ≥ ~2× poll interval so the echo poll arrives before expiry and a silently-failed write doesn't suppress a real remote change unbounded.
 

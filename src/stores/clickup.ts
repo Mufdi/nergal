@@ -12,6 +12,85 @@ import {
   type Session,
 } from "./workspace";
 
+// ── Writeback: optimistic overlay (task 2.1) ──
+
+/// Per-field key for the overlay atom.
+export type OverlayKey = `${string}:${string}`; // `${taskId}:${field}`
+
+/// A pending edit that has been sent to the API but not yet ack'd by a
+/// mirror reconcile. The overlay is volatile — it is never written to SQLite.
+export interface OverlayEntry {
+  value: string | null; // null = clear (due date cleared)
+}
+
+/// In-memory optimistic overlay keyed by `${taskId}:${field}`. Cleared on
+/// API success (mirror reconcile will carry the truth); reverted on failure.
+export const clickupOverlayAtom = atom<Record<OverlayKey, OverlayEntry>>({});
+
+/// Merge the live overlay into a task view for display (Decision 1).
+/// Returns a shallow-merged copy; the durable mirror is never mutated.
+export function applyOverlay<T extends { id: string }>(
+  task: T,
+  overlay: Record<OverlayKey, OverlayEntry>,
+  mergeFields: Partial<Record<string, (entry: OverlayEntry, t: T) => Partial<T>>>,
+): T {
+  let merged = task;
+  for (const [field, merger] of Object.entries(mergeFields)) {
+    if (!merger) continue;
+    const key: OverlayKey = `${task.id}:${field}`;
+    const entry = overlay[key];
+    if (entry !== undefined) {
+      merged = { ...merged, ...merger(entry, merged) };
+    }
+  }
+  return merged;
+}
+
+/// Set an overlay entry for `taskId:field`.
+export function setOverlayEntry(
+  set: (updater: (prev: Record<OverlayKey, OverlayEntry>) => Record<OverlayKey, OverlayEntry>) => void,
+  taskId: string,
+  field: string,
+  value: string | null,
+) {
+  const key: OverlayKey = `${taskId}:${field}`;
+  set((prev) => ({ ...prev, [key]: { value } }));
+}
+
+/// Clear an overlay entry (on API success or failure).
+export function clearOverlayEntry(
+  set: (updater: (prev: Record<OverlayKey, OverlayEntry>) => Record<OverlayKey, OverlayEntry>) => void,
+  taskId: string,
+  field: string,
+) {
+  const key: OverlayKey = `${taskId}:${field}`;
+  set((prev) => {
+    const next = { ...prev };
+    delete next[key];
+    return next;
+  });
+}
+
+// ── Closure offer atom (task 5.2) ──
+
+export interface ClickUpClosureOffer {
+  taskId: string;
+  sessionId: string;
+  prUrl?: string;
+}
+
+/// Non-null when the closure prompt is open. Raised by ship-success (prUrl
+/// set) or by the manual "Close out task" verb (no prUrl).
+export const clickupClosureOfferAtom = atom<ClickUpClosureOffer | null>(null);
+
+// ── Shared list-status shape (matches mirror.rs StatusView serde output) ──
+
+export interface ClickUpListStatus {
+  name: string;
+  color: string | null;
+  orderindex: number | null;
+}
+
 type Store = ReturnType<typeof getDefaultStore>;
 
 // ── Backend view shapes (snake_case mirrors the Rust serde output) ──
@@ -194,6 +273,19 @@ function findSession(workspaces: { sessions: Session[] }[], sessionId: string): 
     }
   }
   return null;
+}
+
+/// Public binding resolver keyed by sessionId — wraps the module-private
+/// findSession so ShipDialog.tsx can resolve the shipped session's bound task
+/// without reading the active session (which may differ from the shipped one).
+export function resolveActiveClickUpTaskById(
+  workspaces: { sessions: Session[] }[],
+  bindingMap: Record<string, string | null>,
+  sessionId: string,
+): string | null {
+  const runtime = bindingMap[sessionId];
+  if (runtime !== undefined) return runtime;
+  return findSession(workspaces, sessionId)?.active_clickup_task_id ?? null;
 }
 
 export const activeSessionClickUpTaskAtom = atom<string | null>((get) => {
@@ -465,6 +557,23 @@ export async function setupClickUpListeners(store: Store): Promise<UnlistenFn[]>
     await listen<null>("clickup:changed", () => {
       void refreshClickUpMirror(store);
     }),
+  );
+
+  // Scalar write-conflict: remote superseded a local edit while we held an
+  // overlay entry (Decision 3 / task 6.3). Warn via toast; the overlay is
+  // already cleared by the failed/reverted path — this is a separate
+  // notification path from the poller.
+  unlisteners.push(
+    await listen<{ task_id: string; field: string; your_value: string; remote_value: string }>(
+      "clickup:write-conflict",
+      (payload) => {
+        store.set(toastsAtom, {
+          message: "ClickUp write conflict",
+          description: `${payload.field}: your change was superseded by a remote edit (remote: "${payload.remote_value}")`,
+          type: "info",
+        });
+      },
+    ),
   );
 
   try {

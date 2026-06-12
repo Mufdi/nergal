@@ -9,3 +9,41 @@ Round-2 residuals (documented, non-blocking): benign `recent_writes` crash-loss 
 
 ## Post-build reviewers
 _Placeholder — populated during Mode B execute (security escalation for the write paths + the token-gated closure; verify the gate is un-bypassable and echo-before-assignment ordering holds)._
+
+---
+
+# Build-time reviews (2026-06-11, post-implementation)
+
+## Reviewer: security (opus, authoritative) — PASS
+
+Findings (non-blocking):
+1. [low] `sanitize_comment_text` neutralizes ASCII `@`/`#` only; Unicode
+   confusables (U+FF20/U+FF03) pass. Not a live vector (ClickUp's parser keys
+   on ASCII) and `add_comment` hardcodes `notify_all: false` as second layer.
+   Hardening backlog: NFKC-normalize before the scan (needs a new dep — deferred).
+2. [low] Comment-length cap enforced at token issuance only — fine by
+   construction (text frozen into the token; execute reads only the tuple).
+
+Verified holds: token gate un-bypassable (UUIDv4 CSPRNG, single-use destructive
+take under Mutex, expiry on take, `clickup_execute_closure` takes ONLY the
+token, no non-token comment command registered); routine-write server-side
+validation present (status-vs-List, computed-field reject in Rust); echo runs
+before assignment detection with regression test; secret hygiene clean
+(`set_sensitive(true)`, no token logging); no frontend auto-fire (all writes
+behind click handlers; ShipDialog raises only the offer atom); agent-agnostic
+(nothing touches ~/.claude, hooks, or agent branches).
+
+## Reviewer: spec — PASS
+
+Divergence notes (non-blocking):
+1. Assignee UI is remove-only (no member directory in the mirror); API models
+   add/remove diffs per spec. Spec delta amended to state the UI scope.
+2. tasks.md checkboxes lagged the build — reconciled.
+3. Detail comment composer routes through the closure-token path — consistent
+   with Requirement 5 (observation, not divergence).
+4. Uncertain-comment verify that finds the comment landed does not insert it
+   into the mirror immediately (next poll reconciles). UX gap, not a spec
+   violation — noted for the walk.
+
+All six requirements verified implemented with file:line evidence; push-only
+never offers; partial-closure surfacing correct; optional halves enforced.

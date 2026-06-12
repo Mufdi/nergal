@@ -24,7 +24,12 @@ import {
 import { shipDialogAtom, triggerShipAtom, type ShipProgressEvent } from "@/stores/ship";
 import { toastsAtom } from "@/stores/toast";
 import { refreshGitInfoAtom } from "@/stores/git";
-import { activeWorkspaceAtom } from "@/stores/workspace";
+import { activeWorkspaceAtom, workspacesAtom } from "@/stores/workspace";
+import {
+  clickupBindingMapAtom,
+  clickupClosureOfferAtom,
+  resolveActiveClickUpTaskById,
+} from "@/stores/clickup";
 
 interface PrCommit { hash: string; subject: string }
 interface PrDiffstat { added: number; removed: number; files: number }
@@ -94,6 +99,9 @@ export function ShipDialog() {
   const addToast = useSetAtom(toastsAtom);
   const refreshGit = useSetAtom(refreshGitInfoAtom);
   const workspace = useAtomValue(activeWorkspaceAtom);
+  const workspaces = useAtomValue(workspacesAtom);
+  const bindingMap = useAtomValue(clickupBindingMapAtom);
+  const setClosureOffer = useSetAtom(clickupClosureOfferAtom);
 
   const [loading, setLoading] = useState(false);
   const [ghOk, setGhOk] = useState<boolean | null>(null);
@@ -296,13 +304,25 @@ export function ShipDialog() {
         type: "success",
       });
       refreshGit(state.sessionId);
+      // Offer ClickUp closure for the SHIPPED session's bound task (Revision 1,
+      // task 5.2a). Use the shipped sessionId — never the active session, which
+      // may differ (e.g. user switched tabs while shipping).
+      const shippedSessionId = state.sessionId;
+      const boundTaskId = resolveActiveClickUpTaskById(workspaces, bindingMap, shippedSessionId);
+      if (boundTaskId) {
+        setClosureOffer({
+          taskId: boundTaskId,
+          sessionId: shippedSessionId,
+          prUrl: result.pr_info.url,
+        });
+      }
       close();
     } catch (e) {
       setError(String(e));
     } finally {
       setShipping(false);
     }
-  }, [state.sessionId, state.inlineMessage, preview, ghOk, title, body, targetBranch, toStage, applyStageSelection, addToast, refreshGit, close]);
+  }, [state.sessionId, state.inlineMessage, preview, ghOk, title, body, targetBranch, toStage, applyStageSelection, addToast, refreshGit, close, workspaces, bindingMap, setClosureOffer]);
 
   const pushOnly = useCallback(async () => {
     if (!state.sessionId || pushing) return;

@@ -281,6 +281,8 @@ pub fn run() {
         .manage(crate::obsidian::templates_watcher::TemplatesWatcherState::new())
         .manage(crate::obsidian::pinned_notes_watcher::PinnedNotesWatcherState::new())
         .manage(clickup::poller::ClickUpSyncState::default())
+        .manage(clickup::writeback::WritebackRegistry::default())
+        .manage(clickup::closure::ClosureTokenStore::default())
         .manage(PendingDeepLinks::default())
         .invoke_handler(tauri::generate_handler![
             // PTY commands
@@ -447,6 +449,16 @@ pub fn run() {
             clickup::clickup_read_spaces,
             clickup::clickup_task_detail,
             clickup::clickup_fetch_closed_tasks,
+            // ClickUp (clickup-writeback): write commands + status read
+            clickup::clickup_read_list_statuses,
+            clickup::clickup_set_task_status,
+            clickup::clickup_set_checklist_item,
+            clickup::clickup_update_task,
+            clickup::clickup_set_custom_field,
+            // ClickUp (clickup-writeback module 5): structural closure token gate
+            clickup::closure::clickup_request_closure_token,
+            clickup::closure::clickup_execute_closure,
+            clickup::closure::clickup_verify_comment_landed,
             // ClickUp (clickup-task-integration): binding + task-to-agent verbs
             clickup::clickup_bind_task,
             clickup::clickup_unbind_task,

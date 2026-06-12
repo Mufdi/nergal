@@ -31,6 +31,7 @@ import { BrowserFloating } from "@/components/browser/BrowserFloating";
 import { BrowserHost } from "@/components/browser/BrowserHost";
 import { ClickUpTaskDetail } from "@/components/clickup/ClickUpTaskDetail";
 import { ClickUpSendConfirmDialog } from "@/components/clickup/ClickUpConfirmDialogs";
+import { ClickUpClosureDialog } from "@/components/clickup/ClickUpClosureDialog";
 import { activeConflictedFilesAtom, gitChipModeAtom } from "@/stores/git";
 import { selectedConflictFileMapAtom } from "@/stores/conflict";
 import {
@@ -431,6 +432,7 @@ export function Workspace() {
           its send/rebind confirms keep working) without the ClickUp panel. */}
       <ClickUpTaskDetail />
       <ClickUpSendConfirmDialog />
+      <ClickUpClosureDialog />
     </div>
   );
 }

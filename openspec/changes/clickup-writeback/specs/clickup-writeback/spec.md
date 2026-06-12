@@ -4,7 +4,7 @@
 
 ### Requirement: Bidirectional task editing with server-side validation
 
-The system SHALL let the user edit a task from Nergal — change status, post comments, toggle checklist items, and edit description, assignees, and due date — and reflect each change in ClickUp via the REST API. Assignee edits SHALL be modeled as add/remove diffs, not a full-set replace. Custom-field writes SHALL serialize per the field's type and SHALL reject computed fields (e.g. `automatic_progress`) and unsupported types **at the command boundary**, not only in the UI. Status writes SHALL validate the value is a real status of the task's List. Status options SHALL be drawn from the task's List statuses (`clickup_statuses`), never hardcoded.
+The system SHALL let the user edit a task from Nergal — change status, post comments, toggle checklist items, and edit description, assignees, and due date — and reflect each change in ClickUp via the REST API. Assignee edits SHALL be modeled as add/remove diffs, not a full-set replace; the UI surface is remove-only (the mirror holds no workspace member directory to pick additions from — adding assignees from Nergal would require a live member-list call, deferred). Custom-field writes SHALL serialize per the field's type and SHALL reject computed fields (e.g. `automatic_progress`) and unsupported types **at the command boundary**, not only in the UI. Status writes SHALL validate the value is a real status of the task's List. Status options SHALL be drawn from the task's List statuses (`clickup_statuses`), never hardcoded.
 
 #### Scenario: Status change reflects upstream after validation
 
@@ -85,15 +85,27 @@ The safety of outward-facing writes against a full-access personal token SHALL N
 - **THEN** the backend SHALL issue a short-lived token scoped to that action
 - **AND** the execution command SHALL accept only that token
 
-### Requirement: Edge-triggered, idempotent write-back-on-done closure
+### Requirement: Ship-anchored and manual write-back closure
 
-The system SHALL offer the closure on the transition edge `prev != Completed && new == Completed` for a session with an active bound task — not on every `Completed` write — and SHALL be idempotent per completion (one prompt per transition). The prompt SHALL offer to move the task's status (from its List statuses) and post a comment, and SHALL write only on explicit confirmation (via the token boundary). It SHALL be offered only for sessions that have an `active_clickup_task_id`.
+The system SHALL offer the write-back closure at two agent-agnostic moments: on demand via an explicit "Close out task" action in the task detail (the primary path), and automatically after a successful ship (PR created via Nergal's own ship flow) of a session that has an `active_clickup_task_id`, with the comment prefilled (editable) with the PR link. The closure prompt SHALL offer two independent, OPTIONAL halves: a status move chosen manually from the task's List statuses (per-List custom, never hardcoded) and a comment; confirm SHALL execute only the selected halves — a status-only closure SHALL be the frictionless path, an empty comment SHALL post nothing, and selecting neither SHALL disable confirm. One offer per successful ship; a push without a PR SHALL NOT trigger the offer. Writes SHALL occur only on explicit confirmation (via the token boundary). The trigger SHALL NOT rely on agent-specific hooks, SHALL NOT write to any agent's user settings, and SHALL NOT hardcode a specific agent. (Design Revision 1: the originally-specified `SessionStatus Completed` edge does not exist at runtime — nothing writes session status transitions.)
 
-#### Scenario: Closure offered on the completion edge only
+#### Scenario: Manual closure is the primary path
 
-- **WHEN** a session with an `active_clickup_task_id` transitions from not-Completed to Completed
-- **THEN** the system SHALL surface the closure prompt once
-- **AND** SHALL NOT re-fire it on a subsequent repeated `Completed` write
+- **WHEN** the user invokes "Close out task" from the task detail
+- **THEN** the system SHALL surface the closure prompt without a PR prefill
+- **AND** the status picker SHALL list the statuses of that task's List
+
+#### Scenario: Status-only closure posts no comment
+
+- **WHEN** the user confirms a closure with a status selected and the comment empty
+- **THEN** the system SHALL move the status
+- **AND** SHALL NOT post any comment
+
+#### Scenario: Closure offered after a successful ship of a bound session
+
+- **WHEN** a ship completes successfully (PR created) for a session with an `active_clickup_task_id`
+- **THEN** the system SHALL surface the closure prompt once for that ship
+- **AND** the comment prefill SHALL include the PR link and SHALL remain user-editable
 
 #### Scenario: No write without confirmation
 
@@ -102,7 +114,7 @@ The system SHALL offer the closure on the transition edge `prev != Completed && 
 
 #### Scenario: Unbound session offers no closure
 
-- **WHEN** a session without an `active_clickup_task_id` reaches Completed
+- **WHEN** a ship completes for a session without an `active_clickup_task_id`
 - **THEN** the system SHALL NOT surface a ClickUp closure prompt
 
 #### Scenario: Partial closure reports the irreversible half

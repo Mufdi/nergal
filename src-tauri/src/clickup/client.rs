@@ -9,8 +9,9 @@ use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
 use reqwest::StatusCode;
-use reqwest::header::{AUTHORIZATION, HeaderValue, RETRY_AFTER};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue, RETRY_AFTER};
 use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
 
 use super::model::{
     Comment, CommentsResponse, Folder, FoldersResponse, List, ListsResponse, Space, SpacesResponse,
@@ -219,6 +220,198 @@ impl ClickUpClient {
     pub async fn get_list(&self, list_id: &str) -> Result<List> {
         self.get_json(&format!("/list/{list_id}"), &[]).await
     }
+
+    // ── Write helpers (clickup-writeback) ──
+
+    async fn post_json_body<T: DeserializeOwned>(&self, path: &str, body: &Value) -> Result<T> {
+        let url = format!("{}{}", self.base_url, path);
+        let body_bytes = serde_json::to_vec(body)
+            .map_err(|e| anyhow!("clickup POST {path}: serializing body: {e}"))?;
+        let mut attempt: u32 = 0;
+        loop {
+            let resp = self
+                .http
+                .post(&url)
+                .header(AUTHORIZATION, self.auth.clone())
+                .header(CONTENT_TYPE, "application/json")
+                .body(body_bytes.clone())
+                .send()
+                .await
+                .map_err(|e| anyhow!("clickup POST {path}: {e}"))?;
+
+            let status = resp.status();
+            if status == StatusCode::TOO_MANY_REQUESTS {
+                attempt += 1;
+                if attempt > MAX_RATE_LIMIT_RETRIES {
+                    bail!(
+                        "clickup POST {path}: rate limited, gave up after {MAX_RATE_LIMIT_RETRIES} retries"
+                    );
+                }
+                let wait = retry_after(resp.headers())
+                    .unwrap_or_else(|| Duration::from_secs(u64::from(attempt)))
+                    .min(MAX_RETRY_AFTER);
+                tracing::debug!(
+                    "clickup 429 on POST {path}; retrying in {wait:?} (attempt {attempt})"
+                );
+                tokio::time::sleep(wait).await;
+                continue;
+            }
+            if !status.is_success() {
+                bail!("clickup POST {path}: HTTP {status}");
+            }
+            return resp
+                .json::<T>()
+                .await
+                .map_err(|e| anyhow!("clickup POST {path}: parsing response: {e}"));
+        }
+    }
+
+    async fn put_json_body<T: DeserializeOwned>(&self, path: &str, body: &Value) -> Result<T> {
+        let url = format!("{}{}", self.base_url, path);
+        let body_bytes = serde_json::to_vec(body)
+            .map_err(|e| anyhow!("clickup PUT {path}: serializing body: {e}"))?;
+        let mut attempt: u32 = 0;
+        loop {
+            let resp = self
+                .http
+                .put(&url)
+                .header(AUTHORIZATION, self.auth.clone())
+                .header(CONTENT_TYPE, "application/json")
+                .body(body_bytes.clone())
+                .send()
+                .await
+                .map_err(|e| anyhow!("clickup PUT {path}: {e}"))?;
+
+            let status = resp.status();
+            if status == StatusCode::TOO_MANY_REQUESTS {
+                attempt += 1;
+                if attempt > MAX_RATE_LIMIT_RETRIES {
+                    bail!(
+                        "clickup PUT {path}: rate limited, gave up after {MAX_RATE_LIMIT_RETRIES} retries"
+                    );
+                }
+                let wait = retry_after(resp.headers())
+                    .unwrap_or_else(|| Duration::from_secs(u64::from(attempt)))
+                    .min(MAX_RETRY_AFTER);
+                tracing::debug!(
+                    "clickup 429 on PUT {path}; retrying in {wait:?} (attempt {attempt})"
+                );
+                tokio::time::sleep(wait).await;
+                continue;
+            }
+            if !status.is_success() {
+                bail!("clickup PUT {path}: HTTP {status}");
+            }
+            return resp
+                .json::<T>()
+                .await
+                .map_err(|e| anyhow!("clickup PUT {path}: parsing response: {e}"));
+        }
+    }
+
+    /// `PUT /task/{id}` — moves the task to `status_name` in its list's workflow.
+    /// The caller is responsible for validating that `status_name` is a real
+    /// status for that list (command-boundary check in `mod.rs`).
+    pub async fn set_task_status(&self, task_id: &str, status_name: &str) -> Result<Task> {
+        self.put_json_body(
+            &format!("/task/{task_id}"),
+            &json!({ "status": status_name }),
+        )
+        .await
+    }
+
+    /// `POST /task/{id}/comment` — posts a new comment, returns the created
+    /// comment id. The comment body shape ClickUp expects is
+    /// `{ "comment_text": "…", "notify_all": false }`.
+    pub async fn add_comment(&self, task_id: &str, text: &str) -> Result<String> {
+        let body = json!({ "comment_text": text, "notify_all": false });
+        let resp: Value = self
+            .post_json_body(&format!("/task/{task_id}/comment"), &body)
+            .await?;
+        resp.get("id")
+            .and_then(|v| {
+                v.as_str()
+                    .map(String::from)
+                    .or_else(|| v.as_i64().map(|n| n.to_string()))
+            })
+            .ok_or_else(|| anyhow!("clickup add_comment: response missing 'id'"))
+    }
+
+    /// `PUT /checklist/{checklist_id}/checklist_item/{item_id}` — resolves or
+    /// un-resolves a checklist item.
+    pub async fn set_checklist_item(
+        &self,
+        checklist_id: &str,
+        item_id: &str,
+        resolved: bool,
+    ) -> Result<Value> {
+        self.put_json_body(
+            &format!("/checklist/{checklist_id}/checklist_item/{item_id}"),
+            &json!({ "resolved": resolved }),
+        )
+        .await
+    }
+
+    /// `PUT /task/{id}` — partial update for description, assignees, and
+    /// due_date. Only fields wrapped in `Some` are sent; absent fields are
+    /// not touched. Assignees follow the ClickUp v2 delta shape
+    /// `{ "add": [ids…], "rem": [ids…] }` rather than replacement.
+    pub async fn update_task(&self, task_id: &str, update: &TaskUpdate) -> Result<Task> {
+        let body = update.to_json();
+        self.put_json_body(&format!("/task/{task_id}"), &body).await
+    }
+
+    /// `POST /task/{id}/field/{field_id}` — sets a custom field value.
+    /// The `value` parameter must already be serialized to the correct JSON
+    /// shape for the field type; see `serialize_custom_field_value` in
+    /// `mod.rs`.
+    pub async fn set_custom_field(
+        &self,
+        task_id: &str,
+        field_id: &str,
+        value: Value,
+    ) -> Result<()> {
+        let body = json!({ "value": value });
+        // ClickUp returns 200 with `{}` on success.
+        let _: Value = self
+            .post_json_body(&format!("/task/{task_id}/field/{field_id}"), &body)
+            .await?;
+        Ok(())
+    }
+}
+
+/// Delta payload for `update_task`. Unset fields are omitted from the request.
+#[derive(Debug, Default)]
+pub struct TaskUpdate {
+    pub description: Option<String>,
+    /// User ids to add as assignees.
+    pub assignees_add: Vec<i64>,
+    /// User ids to remove as assignees.
+    pub assignees_rem: Vec<i64>,
+    /// Due date as Unix milliseconds; `Some(None)` clears the field.
+    pub due_date: Option<Option<i64>>,
+}
+
+impl TaskUpdate {
+    pub fn to_json(&self) -> Value {
+        let mut obj = serde_json::Map::new();
+        if let Some(ref d) = self.description {
+            obj.insert("description".into(), json!(d));
+        }
+        if !self.assignees_add.is_empty() || !self.assignees_rem.is_empty() {
+            obj.insert(
+                "assignees".into(),
+                json!({
+                    "add": self.assignees_add,
+                    "rem": self.assignees_rem,
+                }),
+            );
+        }
+        if let Some(dd) = &self.due_date {
+            obj.insert("due_date".into(), json!(dd));
+        }
+        Value::Object(obj)
+    }
 }
 
 fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
@@ -397,5 +590,155 @@ mod tests {
             panic!("expected header error");
         };
         assert!(!format!("{err:#}").contains("bad\ntoken"));
+    }
+
+    // ── Write method request-shape tests ──
+
+    #[tokio::test]
+    async fn set_task_status_sends_put_with_status_field() {
+        // Minimal Task response shape.
+        let task_body =
+            r#"{"id":"task1","name":"T","status":{"status":"in progress","type":"custom"}}"#;
+        let (base, seen) = spawn_mock(vec![ok(task_body)]).await;
+        let client = ClickUpClient::with_base_url(TOKEN, &base).unwrap();
+        client
+            .set_task_status("task1", "in progress")
+            .await
+            .unwrap();
+
+        let requests = seen.lock().await;
+        let req = &requests[0];
+        assert!(
+            req.starts_with("PUT /task/task1 "),
+            "expected PUT /task/task1, got: {req}"
+        );
+        assert!(
+            req.contains(r#""status":"in progress""#),
+            "body missing status field: {req}"
+        );
+        assert!(
+            req.to_lowercase()
+                .contains("content-type: application/json")
+        );
+    }
+
+    #[tokio::test]
+    async fn add_comment_sends_post_and_returns_id() {
+        let resp_body =
+            r#"{"id":"comment99","comment_text":"hello","user":{},"date":1717000000000}"#;
+        let (base, seen) = spawn_mock(vec![ok(resp_body)]).await;
+        let client = ClickUpClient::with_base_url(TOKEN, &base).unwrap();
+        let id = client.add_comment("task1", "hello").await.unwrap();
+        assert_eq!(id, "comment99");
+
+        let requests = seen.lock().await;
+        let req = &requests[0];
+        assert!(
+            req.starts_with("POST /task/task1/comment "),
+            "expected POST, got: {req}"
+        );
+        assert!(req.contains(r#""comment_text":"hello""#));
+        assert!(req.contains(r#""notify_all":false"#));
+    }
+
+    #[tokio::test]
+    async fn set_checklist_item_sends_put_to_correct_path() {
+        let resp_body = r#"{"checklist":{"id":"cl1","items":[]}}"#;
+        let (base, seen) = spawn_mock(vec![ok(resp_body)]).await;
+        let client = ClickUpClient::with_base_url(TOKEN, &base).unwrap();
+        client
+            .set_checklist_item("cl1", "item1", true)
+            .await
+            .unwrap();
+
+        let requests = seen.lock().await;
+        let req = &requests[0];
+        assert!(
+            req.starts_with("PUT /checklist/cl1/checklist_item/item1 "),
+            "expected PUT to checklist item path, got: {req}"
+        );
+        assert!(req.contains(r#""resolved":true"#));
+    }
+
+    #[tokio::test]
+    async fn update_task_sends_delta_assignees() {
+        let task_body = r#"{"id":"task1","name":"T"}"#;
+        let (base, seen) = spawn_mock(vec![ok(task_body)]).await;
+        let client = ClickUpClient::with_base_url(TOKEN, &base).unwrap();
+        let update = TaskUpdate {
+            assignees_add: vec![12345],
+            assignees_rem: vec![67890],
+            ..Default::default()
+        };
+        client.update_task("task1", &update).await.unwrap();
+
+        let requests = seen.lock().await;
+        let req = &requests[0];
+        assert!(
+            req.starts_with("PUT /task/task1 "),
+            "expected PUT /task/task1, got: {req}"
+        );
+        // Delta shape — not a replace.
+        assert!(req.contains(r#""assignees""#));
+        assert!(req.contains(r#""add""#));
+        assert!(req.contains(r#""rem""#));
+        // Description not sent when None.
+        assert!(!req.contains(r#""description""#));
+    }
+
+    #[tokio::test]
+    async fn update_task_omits_unset_fields() {
+        let task_body = r#"{"id":"task1","name":"T"}"#;
+        let (base, seen) = spawn_mock(vec![ok(task_body)]).await;
+        let client = ClickUpClient::with_base_url(TOKEN, &base).unwrap();
+        let update = TaskUpdate {
+            description: Some("new desc".into()),
+            ..Default::default()
+        };
+        client.update_task("task1", &update).await.unwrap();
+
+        let requests = seen.lock().await;
+        let req = &requests[0];
+        assert!(req.contains(r#""description":"new desc""#));
+        // Assignees and due_date are absent — ClickUp would reset on empty arrays.
+        assert!(!req.contains(r#""assignees""#));
+        assert!(!req.contains(r#""due_date""#));
+    }
+
+    #[tokio::test]
+    async fn set_custom_field_sends_post_with_value_wrapper() {
+        let resp_body = r#"{}"#;
+        let (base, seen) = spawn_mock(vec![ok(resp_body)]).await;
+        let client = ClickUpClient::with_base_url(TOKEN, &base).unwrap();
+        client
+            .set_custom_field("task1", "field-uuid", json!(42))
+            .await
+            .unwrap();
+
+        let requests = seen.lock().await;
+        let req = &requests[0];
+        assert!(
+            req.starts_with("POST /task/task1/field/field-uuid "),
+            "expected POST to field path, got: {req}"
+        );
+        assert!(req.contains(r#""value":42"#));
+    }
+
+    #[tokio::test]
+    async fn task_update_to_json_omits_empty_assignees() {
+        // Pure helper — no network needed.
+        let empty = TaskUpdate::default();
+        let j = empty.to_json();
+        assert!(!j.as_object().unwrap().contains_key("assignees"));
+        assert!(!j.as_object().unwrap().contains_key("due_date"));
+
+        let with_add = TaskUpdate {
+            assignees_add: vec![1],
+            ..Default::default()
+        };
+        let j2 = with_add.to_json();
+        assert!(j2.get("assignees").is_some());
+        assert_eq!(j2["assignees"]["add"][0], 1);
+        assert!(j2["assignees"]["rem"].as_array().unwrap().is_empty());
     }
 }

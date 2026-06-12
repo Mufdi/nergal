@@ -4,26 +4,50 @@
   "rigor_applied": {
     "discovery_invoked": false,
     "discovery_note": "Discovery crystallized in-conversation. Codebase validated: client.rs/poller.rs from clickup-sync, SessionStatus models.rs:8 + lib.rs:702 Completed branch, date_updated on task payloads, active_clickup_task_id binding from clickup-task-integration.",
-    "iprev_rounds": 2,
+    "iprev_rounds": 4,
     "iprev_evaluator": "claude",
-    "iprev_verdict": "APPROVED",
-    "reviewer_mode": "iterative-plan-review (pre-build) planned; security escalation planned for the write paths + closure",
-    "gates_phases_planned": ["compile", "test", "lint", "security", "scope"],
+    "iprev_verdict": "APPROVED (pre-build 2 rounds) + design Revision 1 re-review (2 adversarial rounds, APPROVED 2026-06-11)",
+    "reviewer_mode": "security (opus, authoritative, PASS) + spec (PASS), post-build",
+    "gates_phases_planned": [
+      "compile",
+      "test",
+      "lint",
+      "security",
+      "scope"
+    ],
     "per_phase_models": {
       "design": "claude-opus (this session)",
-      "implementation": "TBD at build",
+      "implementation": "claude-sonnet (5 builder subagents)",
       "exploration": "claude (codebase verification this session)"
-    }
+    },
+    "gates_phases_run": [
+      "compile",
+      "test",
+      "lint",
+      "security",
+      "scope"
+    ]
   },
   "spec_target": "clickup-writeback",
   "ceremony": "deep (implementation.md mandatory per openspec/config.yaml)",
-  "status": "plan-approved (iprev 2 rounds, Claude); implementation NOT started",
+  "status": "implemented 2026-06-11 (pending manual walk 7.3)",
   "implementation_order": 3,
-  "depends_on": ["clickup-sync", "clickup-task-integration"],
+  "depends_on": [
+    "clickup-sync",
+    "clickup-task-integration"
+  ],
   "parallel_track": "independent of context-bridge MCP-first changes",
   "notes": [
     "No migration (pending_writes is in-memory).",
     "Echo-dedup MUST run before new-assignment detection so an own write never self-notifies.",
     "Every write is outward-facing; closure is human-confirmed by design — no auto-write path."
+  ],
+  "files_touched": 16,
+  "events": [
+    {
+      "ts": "2026-06-11",
+      "type": "design-revision",
+      "reason": "Revision 1: SessionStatus Completed trigger falsified (zero runtime writers; mode-map writer was the removed send-gate) -> ship-success + manual verb, optional halves; iprev 2 rounds APPROVED"
+    }
   ]
 }

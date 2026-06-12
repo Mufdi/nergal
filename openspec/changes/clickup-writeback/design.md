@@ -50,9 +50,34 @@ This needs no per-field delta from `clickup-sync`'s poller (which diffs at task 
 - *UI-only confirmation* (the round-1 design): rejected — exactly the gap iprev forced closed on `agent-spawned-worktrees`.
 - *Token handshake on every field edit*: rejected as disproportionate — routine user-initiated status/checklist edits are reversible and low-blast-radius; the token gate is reserved for the auto-fireable closure and irreversible comments, with server-side validation covering the rest.
 
-## Decision 6 — Write-back-on-done: edge-triggered, idempotent, explicit
+## Decision 6 — Write-back-on-done: edge-triggered, idempotent, explicit — [SUPERSEDED by Revision 1]
 
 **Decision** (resolves review #7): the closure observes the **edge** `prev != Completed && new == Completed` (not the level — `SessionStatus` can be written `Completed` repeatedly; `lib.rs:702` already branches on `Completed`). The offer is idempotent per completion (one prompt per transition, not re-fired on every `Completed` write). The prompt is explicit; writes occur only on confirmation (via Decision 5's token); the status target is chosen from the task's List statuses (`clickup_statuses`), never hardcoded. Offered only for sessions with an `active_clickup_task_id`.
+
+**[Revision 1 kept the explicitness, idempotency, token gate and List-statuses sourcing; only the TRIGGER changed — see below.]**
+
+## Revision 1 — The closure's trigger signal does not exist; re-anchored to ship-success + manual (user decision 2026-06-11)
+
+**What pre-build verification falsified**: Decision 6 assumed a runtime `SessionStatus → Completed` transition observable at "the mode-map writer". Verified against the codebase at build time:
+
+1. **Nothing writes `Completed` — or any runtime status transition.** `db.update_session_status` (`db.rs:440`) has **zero callers**; the only status writes are the static `'idle'` at session creation and the reset on worktree removal (`db.rs:533`). `lib.rs:727` only READS `Completed` (close-marker filter). This is the same class of falsified premise as `clickup-task-integration`'s Revision 1 — and the gotcha was pre-recorded when that revision landed.
+2. **The "mode-map writer" the plan pointed at was the send-gate** — removed entirely by `clickup-task-integration` design Revision 3 (2026-06-11). There is no backend run-state writer left to hook, and re-introducing one would mean agent hooks in the user's global settings — explicitly rejected by the user (same decision that killed the gate: no user-settings writes, no CC-only mechanisms).
+
+**Decision — two agent-agnostic triggers, both inside Nergal's own surface**:
+
+1. **Ship-success offer (automatic)**: when `git_ship` succeeds (PR created) for a session with an `active_clickup_task_id`, the frontend ship flow (`ShipDialog.tsx` success path, which already holds `sessionId` + `ShipResult.pr_info`) raises the closure offer — task name, status picker from its List statuses, comment composer prefilled with the PR link (user-editable). Shipping IS the "work done" moment for worktree sessions — exactly where `spawn-worktree-with-task` binds by default. One offer per successful ship invocation (the event is discrete — no edge/level bookkeeping needed); a later re-ship offers again, intentionally (another unit of work shipped). The push-only path does NOT offer (no PR = no closure milestone).
+2. **Manual verb (the primary path)**: "Close out task" in the floating detail toolbar opens the same closure prompt without a PR prefill. The user's actual workflow creates PRs in-prompt (agent-driven), not via the ship modal — so the manual verb is the main entry, not a fallback; ship-success is kept because it is nearly free (the ship flow already holds everything) and correct when the modal IS used.
+
+**Both halves of the closure are OPTIONAL and independent (user decision 2026-06-11)**: the prompt offers a status move (picker over the task's List statuses — per-List custom, never hardcoded) and a comment composer; confirm executes only what was selected. Status-only is the expected common case (the user's habitual flow); an empty/untouched comment posts nothing. Selecting neither disables confirm. No comment is ever sent "by default."
+
+**Unchanged from the approved design**: explicit confirm, Decision 5 token boundary as the sole execution path, statuses from `clickup_statuses` (never hardcoded), only for sessions with an `active_clickup_task_id`, partial-failure surfacing.
+
+**Agent-agnostic constraint (user requirement, recorded)**: this change installs no hooks, writes nothing to any agent's user settings, and hardcodes no agent. `git_ship` is Nergal's own command and works identically for CC/Codex/OpenCode/Pi sessions.
+
+**Alternatives considered**:
+- *SessionEnd hook as trigger*: rejected — noisy (restarts via `--continue`, accidental tab closes, the known close+reopen bug would all fire false offers) and rides the hook pipeline, which is the coupling the user wants this change to avoid.
+- *Introduce a real `SessionStatus` writer to preserve the original design*: rejected — resurrects the Revision-3 problem (agent-specific run-state signals → hooks → user settings) for a feature that has a better in-app anchor.
+- *Automatic offer on merge/remove of the worktree*: deferred — merge often happens long after the work session; ship is the natural moment. The manual verb covers late closure.
 
 ## Decision 7 — Type-correct custom-field writes
 

@@ -20,6 +20,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use tauri::{AppHandle, Emitter, Manager};
 
 use super::client::ClickUpClient;
+use super::writeback::{self, EchoCheckResult, WriteConflict};
 use super::{auth, mirror, model};
 
 pub const DEFAULT_POLL_INTERVAL_SECS: u64 = 45;
@@ -158,17 +159,26 @@ pub struct ReconcileOutcome {
     /// `date_updated` advanced — the only poll-driven heavy-subdata refresh
     /// trigger (Decision 5).
     pub refresh_subdata: Vec<String>,
+    /// Scalar-field conflicts detected this cycle (emitted as
+    /// `clickup:write-conflict`). Empty when no registry is supplied or
+    /// during the baseline seed.
+    pub write_conflicts: Vec<WriteConflict>,
 }
 
 /// Commit one fetched cycle to the mirror in a single transaction. Order:
 /// spaces → folders → lists → statuses → hierarchy tombstones → tasks
 /// (two-pass for the `parent_id` FK) → subdata → task tombstones → GC →
 /// sync state. Any error rolls the whole cycle back.
+///
+/// `registry` is consulted for echo/conflict before new-assignment detection
+/// (cross-change ordering guarantee — Risk §10, design.md). Pass `None` in
+/// tests that do not need echo logic.
 pub fn reconcile_team(
     conn: &Connection,
     fetched: &FetchedCycle,
     me: Option<i64>,
     now: i64,
+    registry: Option<&writeback::WritebackRegistry>,
 ) -> Result<ReconcileOutcome> {
     let tx = conn.unchecked_transaction()?;
 
@@ -225,8 +235,18 @@ pub fn reconcile_team(
     upsert_tasks(&tx, fetched, now)?;
     tombstone_absent_tasks(&tx, fetched, now)?;
 
+    // Echo + conflict check MUST run before newly_assigned_names so an own
+    // assignment-write does not self-notify (cross-change ordering, Risk §10).
+    let (own_echo_task_ids, write_conflicts) = match registry {
+        Some(reg) => {
+            reg.purge_expired();
+            run_echo_check(fetched, reg)
+        }
+        None => (HashSet::new(), Vec::new()),
+    };
+
     let newly_assigned = match me {
-        Some(id) => newly_assigned_names(fetched, id, &prev_assigned),
+        Some(id) => newly_assigned_names(fetched, id, &prev_assigned, &own_echo_task_ids),
         None => Vec::new(),
     };
     let refresh_subdata = subdata_refresh_candidates(fetched, &prior_tasks);
@@ -247,7 +267,116 @@ pub fn reconcile_team(
         newly_assigned,
         gc_removed,
         refresh_subdata,
+        write_conflicts,
     })
+}
+
+/// Compare each fetched task against the registry.  Returns:
+/// - `own_echo_task_ids`: task ids where at least one field matched the
+///   written value (echo confirmed).  These are excluded from the
+///   new-assignment check to prevent self-notification.
+/// - `write_conflicts`: scalar conflicts to emit.
+///
+/// Echo entries are cleared from the registry immediately on confirmation;
+/// additive divergences are silently accepted (merge semantics).
+fn run_echo_check(
+    fetched: &FetchedCycle,
+    registry: &writeback::WritebackRegistry,
+) -> (HashSet<String>, Vec<WriteConflict>) {
+    let mut own_echo_ids: HashSet<String> = HashSet::new();
+    let mut conflicts: Vec<WriteConflict> = Vec::new();
+
+    for task in &fetched.tasks {
+        let entries = registry.entries_for_task(&task.id);
+        if entries.is_empty() {
+            continue;
+        }
+        for entry in &entries {
+            let server_value = task_field_value(task, &entry.field);
+            let Some(server_value) = server_value else {
+                continue;
+            };
+            match writeback::check_echo(entry, &server_value) {
+                EchoCheckResult::OwnEcho => {
+                    registry.clear_entry(&task.id, &entry.field);
+                    own_echo_ids.insert(task.id.clone());
+                    tracing::debug!(
+                        task = %task.id,
+                        field = ?entry.field,
+                        "clickup echo confirmed: own write reflected, suppressing notification"
+                    );
+                }
+                EchoCheckResult::ScalarConflict(conflict) => {
+                    tracing::warn!(
+                        task = %task.id,
+                        field = ?entry.field,
+                        your_value = %entry.written_value,
+                        remote_value = %server_value,
+                        "clickup write conflict: remote value supersedes local write"
+                    );
+                    conflicts.push(conflict);
+                    // Clear entry: conflict is surfaced once, then the server
+                    // value is the new truth via normal reconcile.
+                    registry.clear_entry(&task.id, &entry.field);
+                }
+                EchoCheckResult::AdditiveDivergence => {
+                    // Additive fields merge server-side; the mirror lands the
+                    // merged state via normal upsert.  No warning.
+                    registry.clear_entry(&task.id, &entry.field);
+                    tracing::debug!(
+                        task = %task.id,
+                        field = ?entry.field,
+                        "clickup additive field diverged; merged to server state silently"
+                    );
+                }
+                EchoCheckResult::Unrelated => {}
+            }
+        }
+    }
+    (own_echo_ids, conflicts)
+}
+
+/// Extract the canonical string value for a field from a fetched task payload.
+/// Returns `None` when the field is not present on this task (e.g. a custom
+/// field not configured for this task).
+fn task_field_value(task: &model::Task, field: &writeback::WriteField) -> Option<String> {
+    match field {
+        writeback::WriteField::Status => task.status.as_ref().map(|s| s.status.clone()),
+        writeback::WriteField::Description => task.text_content.clone(),
+        writeback::WriteField::DueDate => task.due_date.map(|d| d.to_string()),
+        writeback::WriteField::Assignees => {
+            // Canonical form: sorted comma-separated integer ids.  Sorting
+            // makes comparison order-independent, which matters because
+            // ClickUp returns assignees in arbitrary order and the write
+            // command records add-only deltas (not the full list).
+            let mut ids: Vec<i64> = task.assignees.iter().filter_map(|u| u.id).collect();
+            ids.sort_unstable();
+            Some(
+                ids.iter()
+                    .map(|id| id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            )
+        }
+        writeback::WriteField::ChecklistItem(key) => {
+            // key = "{checklist_id}:{item_id}"
+            let (checklist_id, item_id) = key.split_once(':')?;
+            let checklist = task.checklists.iter().find(|c| c.id == checklist_id)?;
+            let item = checklist.items.iter().find(|i| i.id == item_id)?;
+            Some(
+                if item.resolved.unwrap_or(false) {
+                    "true"
+                } else {
+                    "false"
+                }
+                .into(),
+            )
+        }
+        writeback::WriteField::CustomField(field_id) => {
+            let field = task.custom_fields.iter().find(|f| &f.id == field_id)?;
+            field.value.as_ref().map(|v| v.to_string())
+        }
+    }
 }
 
 fn upsert_list_with_statuses(tx: &Connection, list: &model::List, space_id: &str) -> Result<()> {
@@ -513,7 +642,12 @@ fn assigned_task_ids(tx: &Connection, me: i64) -> Result<HashSet<String>> {
     Ok(out)
 }
 
-fn newly_assigned_names(fetched: &FetchedCycle, me: i64, prev: &HashSet<String>) -> Vec<String> {
+fn newly_assigned_names(
+    fetched: &FetchedCycle,
+    me: i64,
+    prev: &HashSet<String>,
+    own_echo_ids: &HashSet<String>,
+) -> Vec<String> {
     let mut seen = HashSet::new();
     fetched
         .tasks
@@ -521,6 +655,8 @@ fn newly_assigned_names(fetched: &FetchedCycle, me: i64, prev: &HashSet<String>)
         .filter(|t| seen.insert(t.id.clone()))
         .filter(|t| t.assignees.iter().any(|u| u.id == Some(me)))
         .filter(|t| !prev.contains(&t.id))
+        // Own-echo tasks: the assignment change was ours, suppress notification.
+        .filter(|t| !own_echo_ids.contains(&t.id))
         .map(|t| t.name.clone())
         .collect()
 }
@@ -736,6 +872,10 @@ pub fn select_team(conn: &Connection, team_id: &str, now: i64) -> Result<()> {
 pub trait SyncEffects {
     fn notify(&mut self, title: &str, body: &str);
     fn emit_changed(&mut self);
+    /// Emit a `clickup:write-conflict` event.  Called once per conflict
+    /// detected this cycle.  The default is a no-op so existing impls
+    /// (test recording structs) do not need updating.
+    fn emit_write_conflict(&mut self, _conflict: &writeback::WriteConflict) {}
 }
 
 pub fn apply_outcome_effects(
@@ -750,6 +890,9 @@ pub fn apply_outcome_effects(
     }
     if fetch_changed || outcome.gc_removed > 0 {
         effects.emit_changed();
+    }
+    for conflict in &outcome.write_conflicts {
+        effects.emit_write_conflict(conflict);
     }
 }
 
@@ -787,6 +930,12 @@ impl SyncEffects for TauriEffects {
 
     fn emit_changed(&mut self) {
         let _ = self.app.emit("clickup:changed", ());
+    }
+
+    fn emit_write_conflict(&mut self, conflict: &writeback::WriteConflict) {
+        if let Err(e) = self.app.emit("clickup:write-conflict", conflict) {
+            tracing::warn!("clickup write-conflict emit failed: {e}");
+        }
     }
 }
 
@@ -1040,10 +1189,11 @@ async fn poll_once(
         let fetched = fetch_cycle(client, team_id).await?;
         let fp = fingerprint(&fetched);
         let now = now_secs();
+        let registry = app.state::<super::writeback::WritebackRegistry>();
         let outcome = {
             let db = app.state::<crate::db::SharedDb>();
             let guard = db.lock().map_err(|_| anyhow!("db lock poisoned"))?;
-            reconcile_team(guard.conn(), &fetched, me, now)?
+            reconcile_team(guard.conn(), &fetched, me, now, Some(&*registry))?
         };
         let fetch_changed = fingerprints.get(team_id) != Some(&fp);
         fingerprints.insert(team_id.clone(), fp);
@@ -1206,7 +1356,7 @@ mod tests {
     #[test]
     fn first_sync_of_preassigned_workspace_is_silent() {
         let conn = mirror_conn();
-        let outcome = reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000).unwrap();
+        let outcome = reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000, None).unwrap();
 
         // The empty mirror sees every assigned task as "new" — the unarmed
         // baseline gate is what keeps the seed silent.
@@ -1229,13 +1379,13 @@ mod tests {
     #[test]
     fn post_baseline_assignment_notifies_once() {
         let conn = mirror_conn();
-        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000).unwrap();
+        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000, None).unwrap();
 
         let mut cycle2 = fixture_cycle();
         cycle2
             .tasks
             .push(new_task("hotfix1", "Hotfix login", LIST_SPRINT, Some(ME)));
-        let outcome = reconcile_team(&conn, &cycle2, Some(ME), 2000).unwrap();
+        let outcome = reconcile_team(&conn, &cycle2, Some(ME), 2000, None).unwrap();
         assert!(outcome.notifications_armed);
         assert_eq!(outcome.newly_assigned, vec!["Hotfix login".to_string()]);
 
@@ -1248,7 +1398,7 @@ mod tests {
     #[test]
     fn bulk_assignment_coalesces_into_one_notification() {
         let conn = mirror_conn();
-        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000).unwrap();
+        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000, None).unwrap();
 
         let mut cycle2 = fixture_cycle();
         cycle2
@@ -1264,7 +1414,7 @@ mod tests {
                 ..Default::default()
             }];
         }
-        let outcome = reconcile_team(&conn, &cycle2, Some(ME), 2000).unwrap();
+        let outcome = reconcile_team(&conn, &cycle2, Some(ME), 2000, None).unwrap();
         assert_eq!(outcome.newly_assigned.len(), 3);
 
         let mut fx = RecordingEffects::default();
@@ -1276,7 +1426,7 @@ mod tests {
     #[test]
     fn status_change_and_list_move_update_mirror() {
         let conn = mirror_conn();
-        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000).unwrap();
+        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000, None).unwrap();
 
         let mut cycle2 = fixture_cycle();
         let parent = cycle2
@@ -1297,7 +1447,7 @@ mod tests {
             hidden: None,
             access: None,
         });
-        reconcile_team(&conn, &cycle2, Some(ME), 2000).unwrap();
+        reconcile_team(&conn, &cycle2, Some(ME), 2000, None).unwrap();
 
         assert_eq!(task_col_str(&conn, TASK_PARENT, "status_name"), "complete");
         assert_eq!(task_col_str(&conn, TASK_PARENT, "list_id"), LIST_INBOX);
@@ -1307,7 +1457,7 @@ mod tests {
     #[test]
     fn unassignment_updates_assignees_but_never_tombstones() {
         let conn = mirror_conn();
-        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000).unwrap();
+        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000, None).unwrap();
 
         let mut cycle2 = fixture_cycle();
         cycle2
@@ -1317,7 +1467,7 @@ mod tests {
             .unwrap()
             .assignees
             .clear();
-        let outcome = reconcile_team(&conn, &cycle2, Some(ME), 2000).unwrap();
+        let outcome = reconcile_team(&conn, &cycle2, Some(ME), 2000, None).unwrap();
         assert!(outcome.newly_assigned.is_empty());
 
         // Still present (not stale), just hidden by the assigned-to-me filter.
@@ -1338,17 +1488,17 @@ mod tests {
     #[test]
     fn absent_task_tombstones_and_reappearance_untombstones() {
         let conn = mirror_conn();
-        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000).unwrap();
+        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000, None).unwrap();
 
         let mut cycle2 = fixture_cycle();
         cycle2.tasks.retain(|t| t.id != TASK_SUB);
-        reconcile_team(&conn, &cycle2, Some(ME), 2000).unwrap();
+        reconcile_team(&conn, &cycle2, Some(ME), 2000, None).unwrap();
         assert_eq!(task_col_i64(&conn, TASK_SUB, "stale"), 1);
         assert_eq!(task_col_i64(&conn, TASK_SUB, "stale_since"), 2000);
 
         // Reappearance un-tombstones without a notification (it was already
         // in the prev-assigned baseline set).
-        let outcome = reconcile_team(&conn, &fixture_cycle(), Some(ME), 3000).unwrap();
+        let outcome = reconcile_team(&conn, &fixture_cycle(), Some(ME), 3000, None).unwrap();
         assert_eq!(task_col_i64(&conn, TASK_SUB, "stale"), 0);
         assert!(outcome.newly_assigned.is_empty());
     }
@@ -1356,14 +1506,14 @@ mod tests {
     #[test]
     fn absent_hierarchy_rows_tombstone_too() {
         let conn = mirror_conn();
-        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000).unwrap();
+        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000, None).unwrap();
 
         let mut cycle2 = fixture_cycle();
         cycle2.spaces[0].folderless_lists.clear();
         cycle2
             .tasks
             .retain(|t| t.list.as_ref().map(|l| l.id.as_str()) != Some(LIST_INBOX));
-        reconcile_team(&conn, &cycle2, Some(ME), 2000).unwrap();
+        reconcile_team(&conn, &cycle2, Some(ME), 2000, None).unwrap();
 
         let list_stale: i64 = conn
             .query_row(
@@ -1383,7 +1533,7 @@ mod tests {
         assert_eq!(folder_stale, 1);
 
         // Reappearance resets both.
-        reconcile_team(&conn, &fixture_cycle(), Some(ME), 3000).unwrap();
+        reconcile_team(&conn, &fixture_cycle(), Some(ME), 3000, None).unwrap();
         let list_stale: i64 = conn
             .query_row(
                 "SELECT stale FROM clickup_lists WHERE id = ?1",
@@ -1401,7 +1551,7 @@ mod tests {
         cycle
             .tasks
             .push(new_task("orphan1", "Orphan task", "L-unknown", Some(ME)));
-        reconcile_team(&conn, &cycle, Some(ME), 1000).unwrap();
+        reconcile_team(&conn, &cycle, Some(ME), 1000, None).unwrap();
 
         let folder_id: String = conn
             .query_row(
@@ -1426,7 +1576,7 @@ mod tests {
 
         // Second cycle: hierarchy still doesn't know the list — the
         // placeholder is exempt from the absent-hierarchy tombstone.
-        reconcile_team(&conn, &cycle, Some(ME), 2000).unwrap();
+        reconcile_team(&conn, &cycle, Some(ME), 2000, None).unwrap();
         let list_stale: i64 = conn
             .query_row(
                 "SELECT stale FROM clickup_lists WHERE id = 'L-unknown'",
@@ -1451,7 +1601,7 @@ mod tests {
             }),
             ..Default::default()
         });
-        reconcile_team(&conn, &cycle3, Some(ME), 3000).unwrap();
+        reconcile_team(&conn, &cycle3, Some(ME), 3000, None).unwrap();
         let folder_id: String = conn
             .query_row(
                 "SELECT folder_id FROM clickup_lists WHERE id = 'L-unknown'",
@@ -1475,7 +1625,7 @@ mod tests {
         let conn = mirror_conn();
         let mut cycle = fixture_cycle();
         cycle.tasks.reverse(); // subtask first, parent second
-        reconcile_team(&conn, &cycle, Some(ME), 1000).unwrap();
+        reconcile_team(&conn, &cycle, Some(ME), 1000, None).unwrap();
 
         let parent_id: Option<String> = conn
             .query_row(
@@ -1490,7 +1640,7 @@ mod tests {
     #[test]
     fn mid_transaction_failure_rolls_back_the_whole_cycle() {
         let conn = mirror_conn();
-        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000).unwrap();
+        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000, None).unwrap();
         let original_updated = task_col_i64(&conn, TASK_PARENT, "date_updated");
 
         conn.execute_batch(
@@ -1513,7 +1663,7 @@ mod tests {
             .tasks
             .push(new_task("boom", "Boom", LIST_SPRINT, None));
 
-        assert!(reconcile_team(&conn, &cycle2, Some(ME), 2000).is_err());
+        assert!(reconcile_team(&conn, &cycle2, Some(ME), 2000, None).is_err());
 
         // Partial work (the date bump + the good task) rolled back with it.
         assert_eq!(
@@ -1535,20 +1685,20 @@ mod tests {
     #[test]
     fn stale_gc_removes_old_rows_but_keeps_parents_with_children() {
         let conn = mirror_conn();
-        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000).unwrap();
+        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000, None).unwrap();
 
         // Cycle without the subtask → tombstoned at t=2000.
         let mut no_sub = fixture_cycle();
         no_sub.tasks.retain(|t| t.id != TASK_SUB);
-        reconcile_team(&conn, &no_sub, Some(ME), 2000).unwrap();
+        reconcile_team(&conn, &no_sub, Some(ME), 2000, None).unwrap();
 
         // Within retention: kept.
-        let outcome = reconcile_team(&conn, &no_sub, Some(ME), 2000 + 60).unwrap();
+        let outcome = reconcile_team(&conn, &no_sub, Some(ME), 2000 + 60, None).unwrap();
         assert_eq!(outcome.gc_removed, 0);
 
         // Past retention: the childless subtask is GC'd.
         let late = 2000 + STALE_RETENTION_SECS + 1;
-        let outcome = reconcile_team(&conn, &no_sub, Some(ME), late).unwrap();
+        let outcome = reconcile_team(&conn, &no_sub, Some(ME), late, None).unwrap();
         assert!(outcome.gc_removed >= 1);
         let sub_count: i64 = conn
             .query_row(
@@ -1563,9 +1713,9 @@ mod tests {
         // take the open child with it).
         let mut no_parent = fixture_cycle();
         no_parent.tasks.retain(|t| t.id != TASK_PARENT);
-        reconcile_team(&conn, &no_parent, Some(ME), late + 10).unwrap();
+        reconcile_team(&conn, &no_parent, Some(ME), late + 10, None).unwrap();
         let later = late + 10 + STALE_RETENTION_SECS + 1;
-        reconcile_team(&conn, &no_parent, Some(ME), later).unwrap();
+        reconcile_team(&conn, &no_parent, Some(ME), later, None).unwrap();
         let parent_count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM clickup_tasks WHERE id = ?1",
@@ -1579,7 +1729,7 @@ mod tests {
     #[test]
     fn subdata_refresh_only_for_materialized_and_advanced_tasks() {
         let conn = mirror_conn();
-        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000).unwrap();
+        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000, None).unwrap();
 
         // Materialize comments for the parent task only.
         let comments: crate::clickup::model::CommentsResponse =
@@ -1587,7 +1737,7 @@ mod tests {
         store_comments(&conn, TASK_PARENT, &comments.comments).unwrap();
 
         // Unchanged date_updated → no refresh.
-        let outcome = reconcile_team(&conn, &fixture_cycle(), Some(ME), 2000).unwrap();
+        let outcome = reconcile_team(&conn, &fixture_cycle(), Some(ME), 2000, None).unwrap();
         assert!(outcome.refresh_subdata.is_empty());
 
         // Advanced date_updated on both tasks → only the materialized one.
@@ -1595,14 +1745,14 @@ mod tests {
         for task in &mut cycle3.tasks {
             task.date_updated = Some(9_999_999_999_999);
         }
-        let outcome = reconcile_team(&conn, &cycle3, Some(ME), 3000).unwrap();
+        let outcome = reconcile_team(&conn, &cycle3, Some(ME), 3000, None).unwrap();
         assert_eq!(outcome.refresh_subdata, vec![TASK_PARENT.to_string()]);
     }
 
     #[test]
     fn store_task_detail_keeps_tombstone_and_replaces_comments() {
         let conn = mirror_conn();
-        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000).unwrap();
+        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000, None).unwrap();
         conn.execute(
             "UPDATE clickup_tasks SET stale = 1, stale_since = 999 WHERE id = ?1",
             [TASK_PARENT],
@@ -1671,7 +1821,7 @@ mod tests {
     fn switching_teams_tombstones_the_old_mirror() {
         let conn = mirror_conn();
         select_team(&conn, TEAM, 500).unwrap();
-        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000).unwrap();
+        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000, None).unwrap();
 
         select_team(&conn, "other-team", 2000).unwrap();
         let live: i64 = conn
@@ -1765,7 +1915,7 @@ mod tests {
     #[tokio::test]
     async fn failed_fetch_commits_nothing() {
         let conn = mirror_conn();
-        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000).unwrap();
+        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000, None).unwrap();
 
         // Hierarchy succeeds, the task fetch 500s mid-cycle: fetch_cycle
         // errors before any DB write — the design is fetch-all-then-commit.
@@ -1815,8 +1965,149 @@ mod tests {
 
         // The fetched cycle reconciles cleanly end to end.
         let conn = mirror_conn();
-        reconcile_team(&conn, &fetched, Some(ME), 1000).unwrap();
+        reconcile_team(&conn, &fetched, Some(ME), 1000, None).unwrap();
         let tasks = mirror::read_tasks(&conn, &TaskFilter::default()).unwrap();
         assert_eq!(tasks.len(), 3);
+    }
+
+    // ── Echo + conflict tests (tasks 3.3) ──
+
+    use crate::clickup::writeback::{WriteField, WritebackRegistry};
+
+    /// 3.3 — own write value-match → no notification + entry cleared.
+    #[test]
+    fn own_status_write_suppresses_echo_cycle_notification() {
+        let conn = mirror_conn();
+        // Baseline seed: arms notifications.
+        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000, None).unwrap();
+
+        let reg = WritebackRegistry::default();
+        // Simulate: we wrote status "en revisión - dev (pr)" for TASK_PARENT.
+        // The fixture already has that status, so the next cycle reflects our
+        // write — own echo.
+        reg.record(
+            TASK_PARENT,
+            WriteField::Status,
+            "en revisión - dev (pr)",
+            Some("backlog"),
+        );
+
+        let cycle2 = fixture_cycle();
+        let outcome = reconcile_team(&conn, &cycle2, Some(ME), 2000, Some(&reg)).unwrap();
+
+        // Echo matched → no conflict events.
+        assert!(
+            outcome.write_conflicts.is_empty(),
+            "own echo must not produce a conflict"
+        );
+        // Entry cleared after echo.
+        assert!(
+            reg.entries_for_task(TASK_PARENT).is_empty(),
+            "registry entry must be cleared after echo"
+        );
+    }
+
+    /// 3.3 — scalar conflict: server value ≠ written AND ≠ pre-write → conflict event.
+    #[test]
+    fn scalar_conflict_produces_write_conflict_event() {
+        let conn = mirror_conn();
+        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000, None).unwrap();
+
+        let reg = WritebackRegistry::default();
+        // We wrote "complete", but the server now shows "en revisión - dev (pr)"
+        // (which is neither what we wrote nor the pre-write "backlog").
+        reg.record(TASK_PARENT, WriteField::Status, "complete", Some("backlog"));
+
+        let cycle2 = fixture_cycle();
+        let outcome = reconcile_team(&conn, &cycle2, Some(ME), 2000, Some(&reg)).unwrap();
+
+        assert_eq!(
+            outcome.write_conflicts.len(),
+            1,
+            "scalar conflict must produce exactly one conflict event"
+        );
+        let c = &outcome.write_conflicts[0];
+        assert_eq!(c.task_id, TASK_PARENT);
+        assert_eq!(c.your_value, "complete");
+        assert_eq!(c.remote_value, "en revisión - dev (pr)");
+
+        // Entry cleared after conflict surfaced.
+        assert!(
+            reg.entries_for_task(TASK_PARENT).is_empty(),
+            "registry entry must be cleared after conflict"
+        );
+    }
+
+    /// 3.3 — additive field divergence (assignees) → no conflict warning.
+    #[test]
+    fn additive_assignee_divergence_produces_no_conflict() {
+        let conn = mirror_conn();
+        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000, None).unwrap();
+
+        let reg = WritebackRegistry::default();
+        // We added assignee 99999, but server still shows original list —
+        // additive divergence, no scalar conflict.
+        reg.record(TASK_PARENT, WriteField::Assignees, "[99999]", Some("[]"));
+
+        let cycle2 = fixture_cycle();
+        let outcome = reconcile_team(&conn, &cycle2, Some(ME), 2000, Some(&reg)).unwrap();
+
+        assert!(
+            outcome.write_conflicts.is_empty(),
+            "additive field divergence must not produce a conflict event"
+        );
+    }
+
+    /// 3.3 REGRESSION — own assignment-write does not self-notify.
+    ///
+    /// If we wrote an assignee addition for TASK_PARENT and the server
+    /// reflects exactly what we wrote, the echo check must suppress the
+    /// new-assignment notification (cross-change ordering guarantee).
+    #[test]
+    fn own_assignment_write_does_not_self_notify() {
+        let conn = mirror_conn();
+        // Baseline seed: arms notifications and establishes prev_assigned.
+        reconcile_team(&conn, &fixture_cycle(), Some(ME), 1000, None).unwrap();
+
+        // Simulate: a task NOT previously assigned to ME now appears assigned,
+        // and we have a recent_writes entry saying WE made the assignment.
+        let reg = WritebackRegistry::default();
+        // TASK_SUB had no assignees in the baseline. Add ME as assignee in
+        // cycle2, with a matching registry entry to mark it as our own write.
+        // Use the canonical form: sorted comma-separated ids (same as
+        // task_field_value and the write command recording).
+        let written_assignees = ME.to_string();
+        reg.record(
+            TASK_SUB,
+            WriteField::Assignees,
+            &written_assignees,
+            Some(""),
+        );
+
+        let mut cycle2 = fixture_cycle();
+        if let Some(sub) = cycle2.tasks.iter_mut().find(|t| t.id == TASK_SUB) {
+            sub.assignees = vec![model::User {
+                id: Some(ME),
+                username: Some("Felipe".into()),
+                ..Default::default()
+            }];
+        }
+
+        let outcome = reconcile_team(&conn, &cycle2, Some(ME), 2000, Some(&reg)).unwrap();
+
+        assert!(
+            outcome.notifications_armed,
+            "post-baseline: notifications must be armed"
+        );
+        assert!(
+            outcome.newly_assigned.is_empty(),
+            "own assignment-write must not appear in newly_assigned (self-notify suppressed)"
+        );
+        let mut fx = RecordingEffects::default();
+        apply_outcome_effects(&outcome, true, &mut fx);
+        assert!(
+            fx.notifications.is_empty(),
+            "own assignment-write must not fire a notification"
+        );
     }
 }

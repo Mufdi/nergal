@@ -1,5 +1,12 @@
 # ARCHITECT-BRIEF — clickup-writeback
 
+> **STALE NOTICE (2026-06-11)**: this brief predates later authoritative
+> revisions; where it conflicts, design.md wins. The closure trigger is NOT
+> `SessionStatus → Completed` (never written at runtime) — it is ship-success
+> + the manual "Close out task" verb (design **Revision 1**); optimism is a
+> frontend overlay, not a `pending_writes` registry + rollback (Decision 1);
+> echo/conflict is value-comparison, not `date_updated`-keying (Decision 2).
+
 ## Project mission
 Linux desktop wrapper for the Claude Code CLI. Tauri 2 + React 19. The agent CLI runs in a real PTY; React panels mirror state via Jotai atoms fed by the hook pipeline and transcript watchers.
 

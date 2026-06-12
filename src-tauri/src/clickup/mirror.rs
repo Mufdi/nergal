@@ -496,6 +496,39 @@ fn parse_tags(json: String) -> Vec<TagView> {
         .collect()
 }
 
+// ── Status read (writable surface + closure picker) ──
+
+/// Ordered status list for a List's workflow. Consumed by the write commands'
+/// server-side validation and the closure prompt's status picker.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StatusView {
+    pub name: String,
+    pub color: Option<String>,
+    pub orderindex: Option<i64>,
+}
+
+/// Mirror read over `clickup_statuses WHERE list_id = ?` ordered by
+/// `orderindex`. Returns an empty vec when the list is unknown (the caller
+/// decides whether that is a validation error).
+pub fn read_list_statuses(conn: &Connection, list_id: &str) -> Result<Vec<StatusView>> {
+    let mut stmt = conn.prepare(
+        "SELECT status, color, orderindex FROM clickup_statuses \
+         WHERE list_id = ?1 ORDER BY orderindex",
+    )?;
+    let rows = stmt.query_map([list_id], |r| {
+        Ok(StatusView {
+            name: r.get(0)?,
+            color: r.get(1)?,
+            orderindex: r.get(2)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
 // ── Detail read helpers (floating detail module reads the mirror only) ──
 
 #[derive(Debug, Clone, serde::Serialize)]

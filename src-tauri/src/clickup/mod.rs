@@ -5,10 +5,12 @@
 
 pub mod auth;
 pub mod client;
+pub mod closure;
 pub mod integration;
 pub mod mirror;
 pub mod model;
 pub mod poller;
+pub mod writeback;
 
 #[derive(Debug, serde::Serialize)]
 pub struct TokenStatus {
@@ -320,6 +322,281 @@ pub async fn clickup_task_detail(
     })
 }
 
+// ── Status read (clickup-writeback: 1.5) ──
+
+/// Ordered statuses for a List, consumed by the write-back controls and the
+/// closure prompt's status picker. Mirror-only — no live API call.
+#[tauri::command]
+pub fn clickup_read_list_statuses(
+    list_id: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<Vec<mirror::StatusView>, String> {
+    let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+    mirror::read_list_statuses(guard.conn(), &list_id).map_err(|e| format!("{e:#}"))
+}
+
+// ── Write commands (clickup-writeback: 1.2, 1.3) ──
+
+/// Custom-field value wire shape; the caller must pass the right variant for
+/// the field's type. The Tauri command validates this against the mirror's
+/// `clickup_custom_field_defs` before calling the client.
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+pub enum CustomFieldValue {
+    DropDown(String),
+    Labels(Vec<String>),
+    Number(f64),
+    /// Unix milliseconds.
+    Date(i64),
+    Url(String),
+    Text(String),
+    ShortText(String),
+    Checkbox(bool),
+}
+
+impl CustomFieldValue {
+    /// Serialize to the JSON value the ClickUp API expects inside
+    /// `{ "value": <here> }`.
+    pub fn to_api_value(&self) -> serde_json::Value {
+        use serde_json::json;
+        match self {
+            Self::DropDown(id) => json!(id),
+            Self::Labels(ids) => json!(ids),
+            Self::Number(n) => json!(n),
+            Self::Date(ms) => json!(ms.to_string()),
+            Self::Url(u) => json!(u),
+            Self::Text(t) => json!(t),
+            Self::ShortText(t) => json!(t),
+            Self::Checkbox(b) => json!(b),
+        }
+    }
+}
+
+/// Supported writable field types (from tasks.md § 1.2). Anything not in this
+/// set is rejected at the command boundary.
+fn is_writable_field_type(field_type: &str) -> bool {
+    matches!(
+        field_type,
+        "drop_down" | "labels" | "number" | "date" | "url" | "text" | "short_text" | "checkbox"
+    )
+}
+
+/// Validate that `status_name` is a real status for the task's list.
+/// Returns `Err` with a human-readable message when the status is unknown.
+fn validate_status_for_task(
+    conn: &rusqlite::Connection,
+    task_id: &str,
+    status_name: &str,
+) -> anyhow::Result<()> {
+    use rusqlite::OptionalExtension;
+    let list_id: Option<String> = conn
+        .query_row(
+            "SELECT list_id FROM clickup_tasks WHERE id = ?1",
+            [task_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let list_id =
+        list_id.ok_or_else(|| anyhow::anyhow!("task '{task_id}' not found in the local mirror"))?;
+    let statuses = mirror::read_list_statuses(conn, &list_id)?;
+    let valid = statuses.iter().any(|s| s.name == status_name);
+    if !valid {
+        let names: Vec<&str> = statuses.iter().map(|s| s.name.as_str()).collect();
+        anyhow::bail!(
+            "'{status_name}' is not a valid status for list '{list_id}'; \
+             known statuses: [{}]",
+            names.join(", ")
+        );
+    }
+    Ok(())
+}
+
+/// Load the stored token and build a client; returns a clean `Err(String)`
+/// for the command surface (mirrors the pattern in `clickup_validate_token`).
+async fn load_client() -> Result<client::ClickUpClient, String> {
+    let stored = tauri::async_runtime::spawn_blocking(auth::load_token)
+        .await
+        .map_err(|e| format!("token load task failed: {e}"))?
+        .map_err(|e| format!("{e:#}"))?;
+    let stored = stored.ok_or_else(|| "no ClickUp token configured".to_string())?;
+    client::ClickUpClient::new(&stored.token).map_err(|e| format!("{e:#}"))
+}
+
+/// Move a task to `status_name`. Validated server-side against the mirrored
+/// status list for the task's List (Decision 5, task 1.3).
+#[tauri::command]
+pub async fn clickup_set_task_status(
+    task_id: String,
+    status_name: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+    registry: tauri::State<'_, writeback::WritebackRegistry>,
+) -> Result<(), String> {
+    let pre = {
+        use rusqlite::OptionalExtension;
+        let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+        validate_status_for_task(guard.conn(), &task_id, &status_name)
+            .map_err(|e| format!("{e:#}"))?;
+        guard
+            .conn()
+            .query_row(
+                "SELECT status_name FROM clickup_tasks WHERE id = ?1",
+                [&task_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(|e| format!("{e:#}"))?
+            .flatten()
+    };
+    let cl = load_client().await?;
+    cl.set_task_status(&task_id, &status_name)
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+    registry.record(
+        &task_id,
+        writeback::WriteField::Status,
+        &status_name,
+        pre.as_deref(),
+    );
+    Ok(())
+}
+
+/// Toggle a checklist item's resolved state.
+#[tauri::command]
+pub async fn clickup_set_checklist_item(
+    checklist_id: String,
+    item_id: String,
+    resolved: bool,
+    registry: tauri::State<'_, writeback::WritebackRegistry>,
+) -> Result<(), String> {
+    let cl = load_client().await?;
+    cl.set_checklist_item(&checklist_id, &item_id, resolved)
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+    let key = format!("{checklist_id}:{item_id}");
+    registry.record(
+        // checklist items carry no task_id at the command surface; the key
+        // encodes checklist+item so echo matching can still find it.
+        &checklist_id,
+        writeback::WriteField::ChecklistItem(key),
+        if resolved { "true" } else { "false" },
+        None::<&str>,
+    );
+    Ok(())
+}
+
+/// Partial task update: description, assignee deltas, due date. Fields absent
+/// from the payload are not touched.
+#[tauri::command]
+pub async fn clickup_update_task(
+    task_id: String,
+    description: Option<String>,
+    assignees_add: Option<Vec<i64>>,
+    assignees_rem: Option<Vec<i64>>,
+    due_date: Option<serde_json::Value>,
+    registry: tauri::State<'_, writeback::WritebackRegistry>,
+) -> Result<(), String> {
+    let due = due_date.map(|v| match &v {
+        serde_json::Value::Number(n) => Some(n.as_i64().unwrap_or_default()),
+        serde_json::Value::Null => None,
+        _ => None,
+    });
+    let update = client::TaskUpdate {
+        description: description.clone(),
+        assignees_add: assignees_add.clone().unwrap_or_default(),
+        assignees_rem: assignees_rem.unwrap_or_default(),
+        due_date: due,
+    };
+    let cl = load_client().await?;
+    cl.update_task(&task_id, &update)
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+    if let Some(desc) = description {
+        registry.record(
+            &task_id,
+            writeback::WriteField::Description,
+            &desc,
+            None::<&str>,
+        );
+    }
+    if let Some(adds) = assignees_add.as_ref().filter(|v| !v.is_empty()) {
+        // Use the same canonical form as task_field_value: sorted
+        // comma-separated integer ids (not a JSON array) so echo matching
+        // works across the value comparison.
+        let mut sorted = adds.clone();
+        sorted.sort_unstable();
+        let canonical = sorted
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        registry.record(
+            &task_id,
+            writeback::WriteField::Assignees,
+            &canonical,
+            None::<&str>,
+        );
+    }
+    if let Some(ms) = due.flatten() {
+        registry.record(
+            &task_id,
+            writeback::WriteField::DueDate,
+            ms.to_string(),
+            None::<&str>,
+        );
+    }
+    Ok(())
+}
+
+/// Set a custom field value. Rejects computed types and unsupported types at
+/// the command boundary (Decision 5, tasks 1.2 / 1.3).
+#[tauri::command]
+pub async fn clickup_set_custom_field(
+    task_id: String,
+    field_id: String,
+    value: CustomFieldValue,
+    db: tauri::State<'_, crate::db::SharedDb>,
+    registry: tauri::State<'_, writeback::WritebackRegistry>,
+) -> Result<(), String> {
+    {
+        use rusqlite::OptionalExtension;
+        let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+        let field_type: Option<String> = guard
+            .conn()
+            .query_row(
+                "SELECT type FROM clickup_custom_field_defs WHERE id = ?1",
+                [&field_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| format!("{e:#}"))?;
+        let field_type =
+            field_type.ok_or_else(|| format!("field '{field_id}' not found in mirror"))?;
+        if field_type == "automatic_progress" {
+            return Err(format!(
+                "field '{field_id}' is computed (automatic_progress) and cannot be written"
+            ));
+        }
+        if !is_writable_field_type(&field_type) {
+            return Err(format!(
+                "field type '{field_type}' is not in the supported writable set"
+            ));
+        }
+    }
+    let api_value = value.to_api_value();
+    let written_str = api_value.to_string();
+    let cl = load_client().await?;
+    cl.set_custom_field(&task_id, &field_id, api_value)
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+    registry.record(
+        &task_id,
+        writeback::WriteField::CustomField(field_id),
+        &written_str,
+        None::<&str>,
+    );
+    Ok(())
+}
+
 // ── Session binding + task-to-agent verbs (clickup-task-integration) ──
 
 /// Bind `task_id` as the session's single active task (the write-back target
@@ -552,6 +829,141 @@ pub fn clickup_spawn_worktree_with_task(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
+
+    fn mirror_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        conn.execute_batch(include_str!("../../migrations/015_clickup_mirror.sql"))
+            .unwrap();
+        conn
+    }
+
+    /// Seed minimal hierarchy + one task so validation helpers have data.
+    fn seed_validation_fixtures(conn: &Connection) {
+        conn.execute_batch(
+            "INSERT INTO clickup_spaces(id, name, synced_at) VALUES ('sp1','S',0);
+             INSERT INTO clickup_folders(id, space_id, name) VALUES ('f1','sp1','F');
+             INSERT INTO clickup_lists(id, folder_id, space_id, name) VALUES ('list1','f1','sp1','L');
+             INSERT INTO clickup_statuses(id, list_id, status, orderindex)
+               VALUES ('s-todo','list1','todo',0),
+                      ('s-prog','list1','in progress',1),
+                      ('s-done','list1','done',2);
+             INSERT INTO clickup_tasks(id, list_id, name)
+               VALUES ('task1','list1','Task 1');
+             INSERT INTO clickup_custom_field_defs(id, name, type)
+               VALUES ('cf-text','Notes','short_text'),
+                      ('cf-auto','Progress','automatic_progress'),
+                      ('cf-unknown','Widget','3d_model');",
+        )
+        .unwrap();
+    }
+
+    // ── Status validation ──
+
+    #[test]
+    fn validate_status_accepts_known_status() {
+        let conn = mirror_conn();
+        seed_validation_fixtures(&conn);
+        assert!(validate_status_for_task(&conn, "task1", "todo").is_ok());
+        assert!(validate_status_for_task(&conn, "task1", "in progress").is_ok());
+        assert!(validate_status_for_task(&conn, "task1", "done").is_ok());
+    }
+
+    #[test]
+    fn validate_status_rejects_unknown_status() {
+        let conn = mirror_conn();
+        seed_validation_fixtures(&conn);
+        let err = validate_status_for_task(&conn, "task1", "nonexistent").unwrap_err();
+        assert!(
+            format!("{err:#}").contains("not a valid status"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn validate_status_rejects_unknown_task() {
+        let conn = mirror_conn();
+        seed_validation_fixtures(&conn);
+        let err = validate_status_for_task(&conn, "no-such-task", "todo").unwrap_err();
+        assert!(
+            format!("{err:#}").contains("not found"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    // ── Custom field type validation ──
+
+    #[test]
+    fn is_writable_accepts_supported_types() {
+        for t in &[
+            "drop_down",
+            "labels",
+            "number",
+            "date",
+            "url",
+            "text",
+            "short_text",
+            "checkbox",
+        ] {
+            assert!(is_writable_field_type(t), "expected writable: {t}");
+        }
+    }
+
+    #[test]
+    fn is_writable_rejects_computed_and_unsupported() {
+        assert!(!is_writable_field_type("automatic_progress"));
+        assert!(!is_writable_field_type("3d_model"));
+        assert!(!is_writable_field_type("rollup"));
+        assert!(!is_writable_field_type("formula"));
+    }
+
+    // ── CustomFieldValue serialization ──
+
+    #[test]
+    fn custom_field_value_to_api_value_shapes() {
+        use serde_json::json;
+        assert_eq!(
+            CustomFieldValue::DropDown("opt-id".into()).to_api_value(),
+            json!("opt-id")
+        );
+        assert_eq!(
+            CustomFieldValue::Labels(vec!["l1".into(), "l2".into()]).to_api_value(),
+            json!(["l1", "l2"])
+        );
+        assert_eq!(CustomFieldValue::Number(3.14).to_api_value(), json!(3.14));
+        // Date is sent as a string (ClickUp API convention).
+        assert_eq!(
+            CustomFieldValue::Date(1_717_000_000_000).to_api_value(),
+            json!("1717000000000")
+        );
+        assert_eq!(CustomFieldValue::Checkbox(true).to_api_value(), json!(true));
+        assert_eq!(
+            CustomFieldValue::Url("https://example.com".into()).to_api_value(),
+            json!("https://example.com")
+        );
+    }
+
+    // ── read_list_statuses ──
+
+    #[test]
+    fn read_list_statuses_returns_ordered_statuses() {
+        let conn = mirror_conn();
+        seed_validation_fixtures(&conn);
+        let statuses = mirror::read_list_statuses(&conn, "list1").unwrap();
+        assert_eq!(statuses.len(), 3);
+        assert_eq!(statuses[0].name, "todo");
+        assert_eq!(statuses[1].name, "in progress");
+        assert_eq!(statuses[2].name, "done");
+    }
+
+    #[test]
+    fn read_list_statuses_returns_empty_for_unknown_list() {
+        let conn = mirror_conn();
+        seed_validation_fixtures(&conn);
+        let statuses = mirror::read_list_statuses(&conn, "no-such-list").unwrap();
+        assert!(statuses.is_empty());
+    }
 
     #[test]
     fn closed_detection_covers_status_type_and_close_date() {

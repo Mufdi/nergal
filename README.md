@@ -42,7 +42,7 @@ The result is a keyboard-first HUD where the agent stays in the centerpiece term
 
 - **Task panel** — Your ClickUp tasks grouped by project, "assigned to me", or due date, with status / priority icons and a recursive subtask tree. Polls in the background and fires a desktop notification when a task is assigned to you.
 - **Task → agent** — Send a task to the agent as a prompt, or spawn a worktree session seeded with it. Pin or bind a task as session context that's injected at spawn / resume.
-- **Bidirectional write-back** — Change status, post comments, toggle checklist items, set due dates, and remove assignees from a Linear-style task detail you can open as its own document tab (`T`). Auth via a personal API token kept in the OS keyring.
+- **Bidirectional write-back** — Change status, post comments, toggle checklist items, set due dates, and remove assignees from a task detail you can open as its own document tab (`T`). Auth via a personal API token kept in the OS keyring.
 
 ### Code & docs
 
@@ -52,7 +52,7 @@ The result is a keyboard-first HUD where the agent stays in the centerpiece term
 
 ### Session UX
 
-- **Drop-down terminal** — A quake-style overlay (`Ctrl+}`) with per-session extra shells plus environment shells seeded by per-workspace suggestions, each remembering its own working directory across reopen. Configurable per session via launch options (agent, permission preset, startup command, env shells).
+- **Quake shell** — A drop-down terminal overlay (`Ctrl+}`) with per-session extra shells plus environment shells seeded by per-workspace suggestions, each remembering its own working directory across reopen. Configurable per session via launch options (agent, permission preset, startup command, env shells).
 - **Floating scratchpad** — Multi-tab notes anchored to a configurable directory. Semi-transparent floating panel that survives across sessions, with content-hash own-write tracking so the watcher does not echo.
 - **Activity timeline + DAG graph** — Timeline strip, event list (thinking blocks expandable inline), and an interactive DAG of tool calls for the active session.
 - **Theme system** — 13 built-in themes (v1-dark, gothic, dracula, monokai, tokyo-night, …) plus a custom theme editor with live preview.

@@ -2,9 +2,9 @@
 
 ## v0.3.0 — 2026-06-13
 
-* Added ClickUp integration: a panel listing your tasks by project, "assigned to me", and due date — with status/priority icons and a subtask tree — plus desktop notifications when a task is assigned to you, and a Linear-style task detail you can also open as its own tab (`T`)
+* Added ClickUp integration: a panel listing your tasks by project, "assigned to me", and due date — with status/priority icons and a subtask tree — plus desktop notifications when a task is assigned to you, and a task detail you can also open as its own tab (`T`)
 * Added ClickUp task actions: send a task to the agent as a prompt, spawn a worktree session from it, pin or bind it as session context, and write back status changes, comments, checklist toggles, due dates and assignee removals
-* Added a drop-down terminal overlay (`Ctrl+}`) with per-session shells, environment shells seeded by per-workspace suggestions, and a working directory remembered per shell
+* Added a quake shell (`Ctrl+}`): a drop-down terminal overlay with per-session shells, environment shells seeded by per-workspace suggestions, and a working directory remembered per shell
 * Added per-session launch options: choose the agent, permission preset, startup command and environment shells when creating a session
 * Added a provider status indicator in the status bar that surfaces active Claude/OpenAI incidents and links to the status page
 * Added a per-workspace, configurable OpenSpec specs path that live-refreshes when changes land on disk

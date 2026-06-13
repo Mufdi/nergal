@@ -182,6 +182,9 @@ export function FloatingPanel({
       const card = cardRef.current;
       const target = e.target as Node | null;
       if (!card) return;
+      // A nested popup (status dropdown, date picker) owns Escape — let it close
+      // itself instead of tearing down the whole panel.
+      if (card.querySelector("[data-floating-popup]")) return;
       if (target && card.contains(target)) {
         e.stopPropagation();
         e.preventDefault();
@@ -210,7 +213,7 @@ export function FloatingPanel({
       <div
         ref={cardRef}
         data-state={visible ? "open" : "closed"}
-        className={`pointer-events-auto absolute flex flex-col overflow-hidden rounded-lg shadow-lg transition-[opacity,transform] duration-100 ease-out data-[state=closed]:opacity-0 data-[state=closed]:scale-[0.97] data-[state=open]:opacity-100 data-[state=open]:scale-100 ${
+        className={`pointer-events-auto absolute flex flex-col overflow-hidden rounded-lg shadow-lg outline-none focus:outline-none focus-visible:outline-none transition-[opacity,transform] duration-100 ease-out data-[state=closed]:opacity-0 data-[state=closed]:scale-[0.97] data-[state=open]:opacity-100 data-[state=open]:scale-100 ${
           accent ? "border-2 border-primary cluihud-glow" : "border border-border"
         }`}
         style={{

@@ -33,7 +33,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { quickCaptureOpenAtom } from "./quickCapture";
 import { searchModalOpenAtom, searchScopeAtom } from "./search";
 import { quakeOpenMapAtom, quakeShellsAtom, addAdHocShell, cycleQuakeShell } from "./quake";
-import { clickupConfiguredAtom } from "./clickup";
+import { clickupSyncStatusAtom } from "./clickup";
 import { openInObsidian } from "@/lib/obsidian";
 
 /// `quake` is deliberately NOT in the alt+left/right cycle (getVisibleZones)
@@ -490,7 +490,10 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   // ctrl+shift+u is reserved by IBus (Linux unicode input) — never bind it.
   { id: "open-clickup", label: "Open ClickUp Panel", keys: "ctrl+shift+m", category: "panel", keywords: ["clickup", "tasks", "issues", "tracker", "panel"], handler: () => {
     const s = store();
-    if (!s.get(clickupConfiguredAtom)) {
+    // Only block on a CONFIRMED tokenless state. `null` (status not resolved
+    // yet) and `idle`/`syncing` are the startup window — open the panel and let
+    // it show "Waiting for the first sync…" instead of a false "no token" toast.
+    if (s.get(clickupSyncStatusAtom)?.state === "no_token") {
       s.set(toastsAtom, {
         message: "ClickUp panel",
         description: "No token configured — set it in Settings → ClickUp.",

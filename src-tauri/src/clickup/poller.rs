@@ -79,7 +79,7 @@ pub async fn fetch_cycle(client: &ClickUpClient, team_id: &str) -> Result<Fetche
         Vec::new()
     } else {
         client
-            .filter_team_tasks_all(team_id, &space_ids, false)
+            .filter_team_tasks_all(team_id, &space_ids, false, &[])
             .await?
     };
     Ok(FetchedCycle {
@@ -876,6 +876,10 @@ pub trait SyncEffects {
     /// detected this cycle.  The default is a no-op so existing impls
     /// (test recording structs) do not need updating.
     fn emit_write_conflict(&mut self, _conflict: &writeback::WriteConflict) {}
+    /// Emit a `clickup:assigned` event so the frontend can raise an in-app
+    /// toast (the desktop notification can be missed when the window is
+    /// focused or the notification daemon is flaky). Default no-op for tests.
+    fn emit_assigned(&mut self, _names: &[String]) {}
 }
 
 pub fn apply_outcome_effects(
@@ -883,10 +887,11 @@ pub fn apply_outcome_effects(
     fetch_changed: bool,
     effects: &mut dyn SyncEffects,
 ) {
-    if outcome.notifications_armed
-        && let Some((title, body)) = assignment_notification(&outcome.newly_assigned)
-    {
-        effects.notify(&title, &body);
+    if outcome.notifications_armed && !outcome.newly_assigned.is_empty() {
+        if let Some((title, body)) = assignment_notification(&outcome.newly_assigned) {
+            effects.notify(&title, &body);
+        }
+        effects.emit_assigned(&outcome.newly_assigned);
     }
     if fetch_changed || outcome.gc_removed > 0 {
         effects.emit_changed();
@@ -915,16 +920,18 @@ struct TauriEffects {
 
 impl SyncEffects for TauriEffects {
     fn notify(&mut self, title: &str, body: &str) {
-        use tauri_plugin_notification::NotificationExt;
-        if let Err(e) = self
-            .app
-            .notification()
-            .builder()
-            .title(title)
-            .body(body)
-            .show()
+        // `notify-send` directly, matching the rest of the app (commands.rs
+        // send_notification). tauri_plugin_notification's `.show()` is
+        // unreliable under WebKitGTK and was failing silently here.
+        if let Err(e) = std::process::Command::new("notify-send")
+            .arg("--app-name=cluihud")
+            .arg("--expire-time=5000")
+            .arg("--urgency=normal")
+            .arg(title)
+            .arg(body)
+            .spawn()
         {
-            tracing::warn!("clickup assignment notification failed: {e}");
+            tracing::warn!("clickup assignment notify-send failed: {e}");
         }
     }
 
@@ -935,6 +942,12 @@ impl SyncEffects for TauriEffects {
     fn emit_write_conflict(&mut self, conflict: &writeback::WriteConflict) {
         if let Err(e) = self.app.emit("clickup:write-conflict", conflict) {
             tracing::warn!("clickup write-conflict emit failed: {e}");
+        }
+    }
+
+    fn emit_assigned(&mut self, names: &[String]) {
+        if let Err(e) = self.app.emit("clickup:assigned", names) {
+            tracing::warn!("clickup assigned emit failed: {e}");
         }
     }
 }

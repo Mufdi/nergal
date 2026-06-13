@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { Loader2 } from "lucide-react";
 import { invoke } from "@/lib/tauri";
@@ -12,8 +12,12 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Kbd } from "@/components/ui/kbd";
+import { ProgressBar } from "@/components/ui/ProgressBar";
 import { toastsAtom } from "@/stores/toast";
 import {
+  clickupBindingMapAtom,
+  clickupClosedOutAtom,
   clickupClosureOfferAtom,
   clickupTasksAtom,
   type ClickUpListStatus,
@@ -54,9 +58,17 @@ export function ClickUpClosureDialog() {
   const [offer, setOffer] = useAtom(clickupClosureOfferAtom);
   const tasks = useAtomValue(clickupTasksAtom);
   const addToast = useSetAtom(toastsAtom);
+  const setBindingMap = useSetAtom(clickupBindingMapAtom);
+  const setClosedOut = useSetAtom(clickupClosedOutAtom);
 
   const [statuses, setStatuses] = useState<ClickUpListStatus[]>([]);
+  const [statusesLoading, setStatusesLoading] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState<string>("");
+  // Index cursor over [status chips…, comment] for arrow-nav inside the dialog
+  // (same pattern as the detail / new-session modal).
+  const [cursor, setCursor] = useState(0);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const commentRef = useRef<HTMLTextAreaElement | null>(null);
   const [comment, setComment] = useState<string>("");
   const [executing, setExecuting] = useState(false);
   // After an uncertain comment outcome, offer a verify+retry path.
@@ -69,7 +81,11 @@ export function ClickUpClosureDialog() {
 
   const hasStatus = selectedStatus.length > 0;
   const hasComment = comment.trim().length > 0;
-  const canConfirm = (hasStatus || hasComment) && !executing;
+  // Close-out's core act is marking the task done (unbind + local marker) — the
+  // status move and comment are OPTIONAL ClickUp updates layered on top. So the
+  // button is always armed; confirming with both empty just closes it out
+  // locally without touching ClickUp.
+  const canConfirm = !executing;
 
   // Fetch statuses when the offer opens and we know the list.
   useEffect(() => {
@@ -80,9 +96,11 @@ export function ClickUpClosureDialog() {
       return;
     }
     let cancelled = false;
+    setStatusesLoading(true);
     invoke<ClickUpListStatus[]>("clickup_read_list_statuses", { listId })
       .then((s) => { if (!cancelled) setStatuses(s); })
-      .catch(() => { if (!cancelled) setStatuses([]); });
+      .catch(() => { if (!cancelled) setStatuses([]); })
+      .finally(() => { if (!cancelled) setStatusesLoading(false); });
     return () => { cancelled = true; };
   }, [offer?.taskId, listId]);
 
@@ -92,6 +110,37 @@ export function ClickUpClosureDialog() {
     setComment(offer.prUrl ? sanitizeForDisplay(offer.prUrl) : "");
   }, [offer?.taskId, offer?.prUrl]);
 
+  // Grab focus into the dialog body when it opens (arrow-nav lives on the
+  // body container) and reset the cursor — the detail behind it would
+  // otherwise keep the focus.
+  useEffect(() => {
+    if (!offer) return;
+    setCursor(0);
+    const t = setTimeout(() => bodyRef.current?.focus({ preventScroll: true }), 50);
+    return () => clearTimeout(t);
+  }, [offer?.taskId]);
+
+  function handleBodyKeyDown(e: React.KeyboardEvent) {
+    if ((e.target as HTMLElement).tagName === "TEXTAREA") return; // comment owns its keys
+    const total = statuses.length + 1; // chips + comment row
+    if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+      e.preventDefault();
+      setCursor((c) => Math.min(c + 1, total - 1));
+    } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+      e.preventDefault();
+      setCursor((c) => Math.max(c - 1, 0));
+    } else if (e.key === "Enter" || e.key === " ") {
+      if (e.ctrlKey) return; // Ctrl+Enter confirms (handled on DialogContent)
+      e.preventDefault();
+      if (cursor < statuses.length) {
+        const s = statuses[cursor];
+        if (s) setSelectedStatus((prev) => (prev === s.name ? "" : s.name));
+      } else {
+        commentRef.current?.focus();
+      }
+    }
+  }
+
   function close() {
     setOffer(null);
     setExecuting(false);
@@ -99,8 +148,31 @@ export function ClickUpClosureDialog() {
     setRetrying(false);
   }
 
+  /// The local "done" half of close-out: unbind the task from the session and
+  /// record the worked-and-closed marker (separate from the ClickUp status).
+  /// Runs after a successful ClickUp write, or alone when nothing was written.
+  function finishCloseOut(description: string) {
+    if (offer) {
+      const closedTaskId = offer.taskId;
+      const closedSessionId = offer.sessionId;
+      void invoke("clickup_mark_closed_out", { taskId: closedTaskId }).catch(() => {});
+      setClosedOut((prev) => (prev.includes(closedTaskId) ? prev : [...prev, closedTaskId]));
+      void invoke("clickup_unbind_task", { sessionId: closedSessionId })
+        .then(() => setBindingMap((prev) => ({ ...prev, [closedSessionId]: null })))
+        .catch(() => {});
+    }
+    addToast({ message: "Task closed out", description, type: "success" });
+    void invoke("clickup_read_tasks", {}).catch(() => {});
+    close();
+  }
+
   async function handleConfirm() {
     if (!offer || !canConfirm) return;
+    // No ClickUp write requested — close it out locally and we're done.
+    if (!hasStatus && !hasComment) {
+      finishCloseOut("Marked done");
+      return;
+    }
     setExecuting(true);
     try {
       const token = await invoke<string>("clickup_request_closure_token", {
@@ -148,19 +220,18 @@ export function ClickUpClosureDialog() {
       }
     } else if (!commentOk && typeof commentOut === "object" && "failed" in commentOut) {
       addToast({ message: "Comment failed to post", description: commentOut.failed, type: "error" });
+      return;
     } else if (statusOk && commentOk) {
       const parts: string[] = [];
       if (statusOut === "ok") parts.push(`Status → ${selectedStatus}`);
       if (commentOut === "posted") parts.push("Comment posted");
-      addToast({
-        message: "Task closed out",
-        description: parts.join(" · ") || "No changes",
-        type: "success",
-      });
+      // Success → unbind + mark worked-and-closed (finishCloseOut closes the
+      // dialog and refreshes the mirror).
+      finishCloseOut(parts.join(" · ") || "Marked done");
+      return;
     }
 
-    // Mirror refresh: the poller will reconcile on the next cycle, but
-    // trigger an early read so the task detail's status chip updates sooner.
+    // Partial failure already toasted above; just refresh + close.
     void invoke("clickup_read_tasks", {}).catch(() => {});
     close();
   }
@@ -199,34 +270,47 @@ export function ClickUpClosureDialog() {
 
   return (
     <Dialog open={offer !== null} onOpenChange={(open) => !open && close()}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent
+        className="sm:max-w-md"
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && e.ctrlKey && canConfirm) {
+            e.preventDefault();
+            void handleConfirm();
+          }
+        }}
+      >
         <DialogHeader>
           <DialogTitle className="truncate">Close out: {taskName}</DialogTitle>
           <DialogDescription>
-            Choose what to update in ClickUp. Both halves are optional — confirm only what you want to apply.
+            Unbinds the task and marks it done in Nergal. Optionally move its ClickUp status and/or post a comment — both are optional.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-4">
+        <div ref={bodyRef} tabIndex={0} onKeyDown={handleBodyKeyDown} className="flex flex-col gap-4 outline-none">
           {/* Status picker — optional */}
           <div className="flex flex-col gap-1.5">
             <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
               Status (optional)
             </span>
-            {statuses.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No statuses available for this list.</p>
+            {statusesLoading ? (
+              <div className="flex min-h-[1.5rem] flex-col justify-center gap-1">
+                <span className="text-[10px] text-muted-foreground">Loading statuses…</span>
+                <ProgressBar />
+              </div>
+            ) : statuses.length === 0 ? (
+              <p className="min-h-[1.5rem] text-xs text-muted-foreground">No statuses available for this list.</p>
             ) : (
-              <div className="flex flex-wrap gap-1.5">
-                {statuses.map((s) => (
+              <div className="flex min-h-[1.5rem] flex-wrap gap-1.5">
+                {statuses.map((s, i) => (
                   <button
                     key={s.name}
                     type="button"
-                    onClick={() => setSelectedStatus((prev) => (prev === s.name ? "" : s.name))}
-                    className={`flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] transition-colors ${
+                    onClick={() => { setCursor(i); setSelectedStatus((prev) => (prev === s.name ? "" : s.name)); }}
+                    className={`flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] outline-none transition-colors ${
                       selectedStatus === s.name
                         ? "border border-orange-500 bg-orange-500/10 text-foreground"
                         : "border border-border bg-secondary/40 text-muted-foreground hover:text-foreground"
-                    }`}
+                    } ${cursor === i ? "ring-1 ring-foreground/50" : ""}`}
                   >
                     {s.color && (
                       <span
@@ -258,10 +342,12 @@ export function ClickUpClosureDialog() {
               )}
             </span>
             <Textarea
+              ref={commentRef}
               value={comment}
               onChange={(e) => setComment(e.target.value)}
+              onFocus={() => setCursor(statuses.length)}
               placeholder="Leave empty to skip the comment"
-              className="h-24 resize-none text-[12px] leading-relaxed"
+              className={`h-24 resize-none text-[12px] leading-relaxed ${cursor === statuses.length ? "ring-1 ring-foreground/50" : ""}`}
               disabled={executing}
             />
           </div>
@@ -291,9 +377,9 @@ export function ClickUpClosureDialog() {
           )}
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={close} disabled={executing}>
-            Cancel
+        <DialogFooter className="shrink-0 flex-nowrap gap-1.5">
+          <Button variant="secondary" size="sm" onClick={close} disabled={executing}>
+            Cancel <Kbd keys="esc" className="ml-1.5" />
           </Button>
           <Button
             size="sm"
@@ -303,7 +389,7 @@ export function ClickUpClosureDialog() {
             {executing ? (
               <><Loader2 size={12} className="mr-1.5 animate-spin" />Applying…</>
             ) : (
-              "Confirm"
+              <>Close out <Kbd keys="ctrl+enter" tone="onPrimary" className="ml-1.5" /></>
             )}
           </Button>
         </DialogFooter>

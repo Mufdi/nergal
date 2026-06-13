@@ -507,6 +507,28 @@ pub struct StatusView {
     pub orderindex: Option<i64>,
 }
 
+/// Replace the cached status rows for one list with a freshly-resolved set.
+/// `GET /list/{id}` returns the list's true workflow (statuses inherited from
+/// the Space/Folder are only resolved there — the folder/folderless poll
+/// endpoints return an empty `statuses[]` for non-overriding lists). The
+/// resolved status ids are Space/Folder-scoped and shared across every
+/// inheriting list, so they are stripped and re-synthesized per-list
+/// (`{list_id}:{status}`); keeping the shared id would collide on the PK and
+/// reassign another list's rows.
+pub fn replace_list_statuses(
+    conn: &Connection,
+    list_id: &str,
+    statuses: &[model::Status],
+) -> Result<()> {
+    conn.execute("DELETE FROM clickup_statuses WHERE list_id = ?1", [list_id])?;
+    for status in statuses {
+        let mut scoped = status.clone();
+        scoped.id = None;
+        upsert_status(conn, list_id, &scoped)?;
+    }
+    Ok(())
+}
+
 /// Mirror read over `clickup_statuses WHERE list_id = ?` ordered by
 /// `orderindex`. Returns an empty vec when the list is unknown (the caller
 /// decides whether that is a validation error).
@@ -682,6 +704,30 @@ pub fn read_custom_values(conn: &Connection, task_id: &str) -> Result<Vec<Custom
             value_json: r.get(4)?,
         })
     })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
+// ── Worked & closed marker (migration 019) ──
+
+/// Record that a task was closed out from a session. Local-only and separate
+/// from the ClickUp status (the task keeps whatever status ClickUp holds).
+pub fn mark_closed_out(conn: &Connection, task_id: &str, closed_at: i64) -> Result<()> {
+    conn.execute(
+        "INSERT INTO clickup_closed_out (task_id, closed_at) VALUES (?1, ?2) \
+         ON CONFLICT(task_id) DO UPDATE SET closed_at=?2",
+        params![task_id, closed_at],
+    )?;
+    Ok(())
+}
+
+/// All task ids that were closed out from a session (for the panel marker).
+pub fn read_closed_out(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT task_id FROM clickup_closed_out")?;
+    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
     let mut out = Vec::new();
     for row in rows {
         out.push(row?);
@@ -970,6 +1016,58 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn replace_list_statuses_scopes_shared_ids_and_replaces() {
+        let conn = mirror_conn();
+        seed_from_fixtures(&conn);
+
+        // Sprint 23 was seeded with the folder fixture's statuses; replace wipes
+        // them and installs the freshly-resolved set.
+        assert!(
+            !read_list_statuses(&conn, "901317020124")
+                .unwrap()
+                .is_empty()
+        );
+
+        // A Space-level status carries one id shared across every inheriting
+        // list — applying it to two lists must not reassign rows between them.
+        let shared = model::Status {
+            id: Some("p_space_abc".into()),
+            status: "in progress".into(),
+            color: Some("#0091ff".into()),
+            orderindex: Some(2),
+            status_type: Some("custom".into()),
+        };
+        replace_list_statuses(&conn, "901317020124", std::slice::from_ref(&shared)).unwrap();
+        replace_list_statuses(&conn, "901317010101", std::slice::from_ref(&shared)).unwrap();
+
+        assert_eq!(read_list_statuses(&conn, "901317020124").unwrap().len(), 1);
+        assert_eq!(read_list_statuses(&conn, "901317010101").unwrap().len(), 1);
+        let total: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM clickup_statuses WHERE status = 'in progress'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(total, 2, "shared id did not collide across lists");
+    }
+
+    #[test]
+    fn closed_out_marker_round_trips_and_is_idempotent() {
+        let conn = mirror_conn();
+        conn.execute_batch(include_str!("../../migrations/019_clickup_closed_out.sql"))
+            .unwrap();
+        assert!(read_closed_out(&conn).unwrap().is_empty());
+        mark_closed_out(&conn, "task-a", 1000).unwrap();
+        mark_closed_out(&conn, "task-b", 1001).unwrap();
+        // Re-mark updates closed_at without duplicating the row.
+        mark_closed_out(&conn, "task-a", 2000).unwrap();
+        let mut ids = read_closed_out(&conn).unwrap();
+        ids.sort();
+        assert_eq!(ids, vec!["task-a".to_string(), "task-b".to_string()]);
     }
 
     #[test]

@@ -4,16 +4,19 @@ import {
   ChevronDown,
   ChevronRight,
   CircleCheck,
+  ExternalLink,
   Flag,
   GitBranchPlus,
   Link2,
   Loader2,
   Pin,
   PinOff,
+  RefreshCw,
   Send,
   Unlink,
   UserCheck,
 } from "lucide-react";
+import { open as openShell } from "@tauri-apps/plugin-shell";
 import { invoke } from "@/lib/tauri";
 import { focusIfPanelZone } from "@/lib/panelFocus";
 import { Select } from "@/components/ui/select";
@@ -29,7 +32,10 @@ import {
   activeSessionClickUpPinsAtom,
   activeSessionClickUpTaskAtom,
   clickupAssignedToMeAtom,
+  clickupClosedOutAtom,
   clickupClosedTasksAtom,
+  clickupClosureOfferAtom,
+  reinjectTaskAction,
   clickupDetailTaskIdAtom,
   clickupGroupByAtom,
   clickupSendConfirmAtom,
@@ -47,6 +53,7 @@ import {
   type ClickUpTask,
   type ClickUpTaskActions,
 } from "@/stores/clickup";
+import { activeSessionIdAtom } from "@/stores/workspace";
 
 /// Chip-strip views: "mine" is a preset (assigned-to-me filter + grouped by
 /// status); the rest are plain group-by modes over the current filter state.
@@ -115,6 +122,7 @@ export function ClickUpPanel() {
   const [assignedToMe, setAssignedToMe] = useAtom(clickupAssignedToMeAtom);
   const [showClosed, setShowClosed] = useAtom(clickupShowClosedAtom);
   const [closedTasks, setClosedTasks] = useAtom(clickupClosedTasksAtom);
+  const userId = syncStatus?.user_id ?? null;
   const [detailTaskId, setDetailTaskId] = useAtom(clickupDetailTaskIdAtom);
   const sendConfirm = useAtomValue(clickupSendConfirmAtom);
   const zenOpen = useAtomValue(zenModeAtom).open;
@@ -128,6 +136,9 @@ export function ClickUpPanel() {
   const spawnWorktree = useSetAtom(spawnWorktreeWithTaskAction);
   const togglePin = useSetAtom(togglePinTaskAction);
   const requestBind = useSetAtom(requestBindTaskAction);
+  const reinject = useSetAtom(reinjectTaskAction);
+  const setClosureOffer = useSetAtom(clickupClosureOfferAtom);
+  const activeSessionId = useAtomValue(activeSessionIdAtom);
 
   const actions: ClickUpTaskActions = useMemo(
     () => ({
@@ -135,8 +146,16 @@ export function ClickUpPanel() {
       spawn: (id) => void spawnWorktree(id),
       togglePin: (id) => void togglePin(id),
       toggleBind: (id) => void requestBind(id),
+      reinject: (id) => void reinject(id),
+      closeOut: (id) => {
+        if (activeSessionId) setClosureOffer({ taskId: id, sessionId: activeSessionId });
+      },
+      openInClickup: (id) => {
+        const url = [...tasks, ...closedTasks].find((t) => t.id === id)?.url;
+        if (url && /^https?:\/\//i.test(url)) void openShell(url);
+      },
     }),
-    [requestSend, spawnWorktree, togglePin, requestBind],
+    [requestSend, spawnWorktree, togglePin, requestBind, reinject, setClosureOffer, activeSessionId, tasks, closedTasks],
   );
 
   // Derived chip state: the "mine" preset IS assigned-to-me + status, so a
@@ -193,6 +212,9 @@ export function ClickUpPanel() {
     setClosedLoading(true);
     invoke<ClickUpTask[]>("clickup_fetch_closed_tasks", {
       spaceId: spaceFilter ?? undefined,
+      // Scope to the current user when filtering to mine — the unscoped fetch
+      // pages the whole workspace's closed history and is very slow.
+      assigneeId: assignedToMe ? userId ?? undefined : undefined,
     })
       .then((rows) => {
         if (!cancelled) setClosedTasks(rows);
@@ -207,9 +229,7 @@ export function ClickUpPanel() {
     return () => {
       cancelled = true;
     };
-  }, [showClosed, spaceFilter, setClosedTasks]);
-
-  const userId = syncStatus?.user_id ?? null;
+  }, [showClosed, spaceFilter, assignedToMe, userId, setClosedTasks]);
 
   const { groups, closedIds, visibleCount } = useMemo(() => {
     const open = spaceFilter ? tasks.filter((t) => t.space_id === spaceFilter) : tasks;
@@ -285,9 +305,10 @@ export function ClickUpPanel() {
       ) return;
       const root = rootRef.current;
       if (!root) return;
-      if (e.code === "KeyA" || e.code === "KeyC") {
+      if (e.code === "KeyA" || e.code === "KeyH") {
         // Bare-letter toggles: only while the user is interacting with the
-        // panel (same zone scoping as the S/W/P/B task verbs).
+        // panel (same zone scoping as the S/W/P/B task verbs). "C" is reserved
+        // for close-out (the cursor row's verb); show-closed moved to "H".
         if (!target?.closest("[data-focus-zone='panel']") && !target?.closest("[data-focus-zone='clickup']")) return;
         e.preventDefault();
         if (e.code === "KeyA") setAssignedToMe((prev) => !prev);
@@ -420,7 +441,7 @@ export function ClickUpPanel() {
           >
             {closedLoading ? <Loader2 size={13} className="animate-spin" /> : <CircleCheck size={13} />}
           </TooltipTrigger>
-          <TooltipContent side="bottom">Show closed tasks (C)</TooltipContent>
+          <TooltipContent side="bottom">Show closed tasks (H)</TooltipContent>
         </Tooltip>
       </div>
 
@@ -656,6 +677,7 @@ function TaskRow({
 }) {
   const overdue = task.due_date !== null && task.due_date < Date.now() && !closed;
   const priorityColor = task.priority ? PRIORITY_COLOR[task.priority] ?? "#d8d8d8" : null;
+  const workedClosed = useAtomValue(clickupClosedOutAtom).includes(task.id);
 
   return (
     <button
@@ -683,6 +705,13 @@ function TaskRow({
       {/* Only the list name yields to the hover actions — priority, tags and
           the rest of the meta stay visible and shift next to the buttons. */}
       <span className="flex shrink-0 items-center gap-1.5">
+        {workedClosed && (
+          <CircleCheck
+            size={10}
+            className="shrink-0 text-emerald-500"
+            aria-label="Worked and closed out from a session"
+          />
+        )}
         {bound && (
           <Link2 size={10} className="shrink-0 text-primary" aria-label="Active task of the current session" />
         )}
@@ -751,6 +780,21 @@ function TaskRow({
         >
           {bound ? <Unlink size={10} /> : <Link2 size={10} />}
         </RowAction>
+        {(bound || pinned) && (
+          <RowAction label={ACTION_LABELS.reinject} onClick={() => actions.reinject(task.id)}>
+            <RefreshCw size={10} />
+          </RowAction>
+        )}
+        {bound && (
+          <RowAction label={ACTION_LABELS.closeOut} onClick={() => actions.closeOut(task.id)}>
+            <CircleCheck size={10} />
+          </RowAction>
+        )}
+        {task.url && (
+          <RowAction label={ACTION_LABELS.openInClickup} onClick={() => actions.openInClickup(task.id)}>
+            <ExternalLink size={10} />
+          </RowAction>
+        )}
       </span>
     </button>
   );

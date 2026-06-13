@@ -1137,3 +1137,13 @@ mark[data-ws-hidden] {
 .quake-exit {
   animation: quake-slide-up 200ms ease-in forwards;
 }
+
+/* Indeterminate progress sliver (ProgressBar). Travels left→right on loop;
+   keyframes (not a transition) so it animates reliably under WebKitGTK. */
+@keyframes cluihud-progress-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+.cluihud-progress-indeterminate {
+  animation: cluihud-progress-indeterminate 1.1s ease-in-out infinite;
+}

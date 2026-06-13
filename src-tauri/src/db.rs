@@ -182,6 +182,7 @@ impl Database {
             include_str!("../migrations/016_clickup_stale_since.sql"),
             include_str!("../migrations/017_clickup_user_id.sql"),
             include_str!("../migrations/018_clickup_session_binding.sql"),
+            include_str!("../migrations/019_clickup_closed_out.sql"),
         ];
 
         for (i, sql) in migrations.iter().enumerate() {

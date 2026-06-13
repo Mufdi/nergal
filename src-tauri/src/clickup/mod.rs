@@ -160,6 +160,7 @@ fn task_is_closed(task: &model::Task) -> bool {
 async fn fetch_closed_live(
     teams: &[String],
     space_ids: &[String],
+    assignee_ids: &[i64],
 ) -> anyhow::Result<Vec<mirror::TaskView>> {
     // Keyring access blocks on D-Bus; keep it off the async workers.
     let stored = tauri::async_runtime::spawn_blocking(auth::load_token)
@@ -172,7 +173,7 @@ async fn fetch_closed_live(
     let mut out = Vec::new();
     for team_id in teams {
         let tasks = client
-            .filter_team_tasks_all(team_id, space_ids, true)
+            .filter_team_tasks_all(team_id, space_ids, true, assignee_ids)
             .await?;
         for task in &tasks {
             if !task_is_closed(task) {
@@ -194,8 +195,13 @@ async fn fetch_closed_live(
 #[tauri::command]
 pub async fn clickup_fetch_closed_tasks(
     space_id: Option<String>,
+    assignee_id: Option<i64>,
     db: tauri::State<'_, crate::db::SharedDb>,
 ) -> Result<Vec<mirror::TaskView>, String> {
+    // Scope to the current user when the panel's assigned-to-me filter is on:
+    // the closed-task fetch otherwise pages through the whole workspace's
+    // closed history (the "show closed is too slow" report).
+    let assignee_ids: Vec<i64> = assignee_id.into_iter().collect();
     let (teams, space_ids) = {
         let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
         let conn = guard.conn();
@@ -211,7 +217,7 @@ pub async fn clickup_fetch_closed_tasks(
         (teams, space_ids)
     };
 
-    match fetch_closed_live(&teams, &space_ids).await {
+    match fetch_closed_live(&teams, &space_ids, &assignee_ids).await {
         Ok(views) => Ok(views),
         Err(e) => {
             tracing::warn!("closed-task fetch failed; serving tombstoned mirror rows: {e:#}");
@@ -322,17 +328,67 @@ pub async fn clickup_task_detail(
     })
 }
 
+// ── Worked & closed marker (walk follow-up) ──
+
+/// Record that a task was closed out from a session (local marker, separate
+/// from the ClickUp status). Called by the closure flow after a successful
+/// write so the panel can flag the task as worked-and-done.
+#[tauri::command]
+pub fn clickup_mark_closed_out(
+    task_id: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<(), String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+    mirror::mark_closed_out(guard.conn(), &task_id, now).map_err(|e| format!("{e:#}"))
+}
+
+/// Task ids that were closed out from a session — drives the panel marker.
+#[tauri::command]
+pub fn clickup_read_closed_out(
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<Vec<String>, String> {
+    let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+    mirror::read_closed_out(guard.conn()).map_err(|e| format!("{e:#}"))
+}
+
 // ── Status read (clickup-writeback: 1.5) ──
 
 /// Ordered statuses for a List, consumed by the write-back controls and the
-/// closure prompt's status picker. Mirror-only — no live API call.
+/// closure prompt's status picker. Resolves live via `GET /list/{id}` — the
+/// poll's folder/folderless endpoints return an empty `statuses[]` for lists
+/// that inherit the Space/Folder workflow, so the mirror cannot be the source
+/// for the picker. The resolved set (exactly what ClickUp will accept) is
+/// cached into the mirror so write-validation agrees. Any network failure
+/// degrades to whatever the mirror already holds (offline-friendly).
 #[tauri::command]
-pub fn clickup_read_list_statuses(
+pub async fn clickup_read_list_statuses(
     list_id: String,
     db: tauri::State<'_, crate::db::SharedDb>,
 ) -> Result<Vec<mirror::StatusView>, String> {
-    let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
-    mirror::read_list_statuses(guard.conn(), &list_id).map_err(|e| format!("{e:#}"))
+    match load_client().await {
+        Ok(client) => match client.get_list(&list_id).await {
+            Ok(list) => {
+                let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+                mirror::replace_list_statuses(guard.conn(), &list_id, &list.statuses)
+                    .map_err(|e| format!("{e:#}"))?;
+                mirror::read_list_statuses(guard.conn(), &list_id).map_err(|e| format!("{e:#}"))
+            }
+            Err(e) => {
+                tracing::warn!(list = %list_id, "live status resolve failed; serving mirror: {e:#}");
+                let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+                mirror::read_list_statuses(guard.conn(), &list_id).map_err(|e| format!("{e:#}"))
+            }
+        },
+        Err(e) => {
+            tracing::warn!(list = %list_id, "no client for status resolve; serving mirror: {e}");
+            let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+            mirror::read_list_statuses(guard.conn(), &list_id).map_err(|e| format!("{e:#}"))
+        }
+    }
 }
 
 // ── Write commands (clickup-writeback: 1.2, 1.3) ──
@@ -505,6 +561,10 @@ pub async fn clickup_update_task(
         assignees_add: assignees_add.clone().unwrap_or_default(),
         assignees_rem: assignees_rem.unwrap_or_default(),
         due_date: due,
+        // The UI sends a calendar date (local midnight, no time-of-day); pin
+        // due_date_time=false so ClickUp renders date-only instead of inventing
+        // a time. Only sent when due_date itself is part of this update.
+        due_date_time: due.map(|_| false),
     };
     let cl = load_client().await?;
     cl.update_task(&task_id, &update)

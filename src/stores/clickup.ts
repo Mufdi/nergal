@@ -214,6 +214,10 @@ export const clickupConfiguredAtom = atom((get) => {
 export const clickupTasksAtom = atom<ClickUpTask[]>([]);
 export const clickupSpacesAtom = atom<ClickUpSpace[]>([]);
 
+/// Task ids closed out from a session (worked-and-done). Local marker, fully
+/// separate from the ClickUp status — drives the panel/detail badge.
+export const clickupClosedOutAtom = atom<string[]>([]);
+
 // ── UI prefs ──
 // Module-level atoms: same persistence tier as gitChipModeAtom /
 // specSubTabMapAtom — survive panel close/reopen and session switches
@@ -316,6 +320,9 @@ export interface ClickUpTaskActions {
   spawn: (taskId: string) => void;
   togglePin: (taskId: string) => void;
   toggleBind: (taskId: string) => void;
+  reinject: (taskId: string) => void;
+  closeOut: (taskId: string) => void;
+  openInClickup: (taskId: string) => void;
 }
 
 /// Action labels advertise the contextual key (tooltip-as-source-of-truth).
@@ -326,6 +333,9 @@ export const CLICKUP_ACTION_LABELS = {
   unpin: `Unpin (P) — ${FUTURE_SPAWNS_HINT.toLowerCase()}`,
   bind: "Bind as active task (B)",
   unbind: `Unbind (B) — ${FUTURE_SPAWNS_HINT.toLowerCase()}`,
+  reinject: "Re-inject into the live session (R)",
+  closeOut: "Close out task (C) — mark done & unbind",
+  openInClickup: "Open in ClickUp (O)",
 } as const;
 
 export const requestSendTaskAction = atom(null, (get, set, taskId: string) => {
@@ -532,12 +542,14 @@ export const reinjectTaskAction = atom(null, async (get, set, taskId: string) =>
 
 export async function refreshClickUpMirror(store: Store): Promise<void> {
   try {
-    const [tasks, spaces] = await Promise.all([
+    const [tasks, spaces, closedOut] = await Promise.all([
       invoke<ClickUpTask[]>("clickup_read_tasks", {}),
       invoke<ClickUpSpace[]>("clickup_read_spaces"),
+      invoke<string[]>("clickup_read_closed_out"),
     ]);
     store.set(clickupTasksAtom, tasks);
     store.set(clickupSpacesAtom, spaces);
+    store.set(clickupClosedOutAtom, closedOut);
   } catch (err) {
     console.warn("[clickup] mirror read failed:", err);
   }
@@ -556,6 +568,20 @@ export async function setupClickUpListeners(store: Store): Promise<UnlistenFn[]>
   unlisteners.push(
     await listen<null>("clickup:changed", () => {
       void refreshClickUpMirror(store);
+    }),
+  );
+
+  // New tasks assigned to the token user (coalesced by the poller). In-app
+  // toast in addition to the desktop notification — the window may be focused
+  // (desktop notifications get suppressed) and the user asked to see new tasks.
+  unlisteners.push(
+    await listen<string[]>("clickup:assigned", (names) => {
+      if (!Array.isArray(names) || names.length === 0) return;
+      store.set(toastsAtom, {
+        message: names.length === 1 ? "New ClickUp task assigned" : `${names.length} new ClickUp tasks assigned`,
+        description: names.length === 1 ? names[0] : names.join(" · "),
+        type: "info",
+      });
     }),
   );
 

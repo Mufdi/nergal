@@ -21,6 +21,13 @@ import {
 import { invoke } from "@/lib/tauri";
 import { FloatingPanel } from "@/components/floating/FloatingPanel";
 import { MarkdownView } from "@/components/plan/MarkdownView";
+import { DatePopover } from "@/components/clickup/DatePopover";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import * as terminalService from "@/components/terminal/terminalService";
 import { focusZoneAtom } from "@/stores/shortcuts";
 import { activeSessionIdAtom } from "@/stores/workspace";
@@ -83,6 +90,20 @@ function formatDateTime(ms: number): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+/// True when two due-date timestamps fall on the same local calendar day
+/// (both null counts as equal). Used to confirm a due-date write past
+/// ClickUp's date normalization.
+function sameDueDay(a: number | null, b: number | null): boolean {
+  if (a === null || b === null) return a === b;
+  const da = new Date(a);
+  const db = new Date(b);
+  return (
+    da.getFullYear() === db.getFullYear() &&
+    da.getMonth() === db.getMonth() &&
+    da.getDate() === db.getDate()
+  );
 }
 
 /// Type-aware read-only rendering of a custom value, falling back to
@@ -178,6 +199,8 @@ function renderValue(value: unknown): string | null {
   return null;
 }
 
+/// Toolbar button with an instant tooltip (delay-0, TopBar pattern) instead of
+/// the OS-delayed native `title`.
 function ToolbarAction({
   label,
   onClick,
@@ -190,19 +213,25 @@ function ToolbarAction({
   children: React.ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-      className={`flex size-5 items-center justify-center rounded transition-colors ${
-        active
-          ? "text-primary hover:bg-secondary/60"
-          : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
-      }`}
-    >
-      {children}
-    </button>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={label}
+            onClick={onClick}
+            className={`flex size-5 items-center justify-center rounded transition-colors ${
+              active
+                ? "text-primary hover:bg-secondary/60"
+                : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+            }`}
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{label}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -229,13 +258,23 @@ export function ClickUpTaskDetail() {
 
   // Write-control local state
   const [statuses, setStatuses] = useState<ClickUpListStatus[]>([]);
+  const [statusesLoading, setStatusesLoading] = useState(false);
   const [editingDesc, setEditingDesc] = useState(false);
   const [descDraft, setDescDraft] = useState<string>("");
-  const [editingDueDate, setEditingDueDate] = useState(false);
-  const [dueDateDraft, setDueDateDraft] = useState<string>("");
+  const [statusPickerOpen, setStatusPickerOpen] = useState(false);
+  const [dueOpen, setDueOpen] = useState(false);
   const [commentDraft, setCommentDraft] = useState<string>("");
   const [postingComment, setPostingComment] = useState(false);
   const [uncertainComment, setUncertainComment] = useState<{ text: string; sentAtMs: number } | null>(null);
+  // Single-flight lock: the field name of the in-flight write, or null. Blocks
+  // every write control until the previous one resolves (the user reported
+  // changes "appearing to do nothing then landing" when fired back-to-back).
+  const [busy, setBusy] = useState<string | null>(null);
+  const commentRef = useRef<HTMLTextAreaElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  // Index cursor key over the body's actionable elements (AgentPickerModal
+  // pattern). Highlight is a bg/ring on the selected element — no DOM focus.
+  const [navKey, setNavKey] = useState<string | null>(null);
 
   // Contextual task verbs: bare letters scoped to ClickUp surfaces (same
   // convention as ConflictsPanel O/T, PrViewer A). Inside the floating
@@ -245,9 +284,10 @@ export function ClickUpTaskDetail() {
   // surface, so the keys keep working when the chip opens the detail
   // without the right panel.
   useEffect(() => {
+    const VERB_KEYS = ["KeyS", "KeyW", "KeyP", "KeyB", "KeyR", "KeyC", "KeyO"];
     function onKey(e: KeyboardEvent) {
       if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
-      if (e.code !== "KeyS" && e.code !== "KeyW" && e.code !== "KeyP" && e.code !== "KeyB") return;
+      if (!VERB_KEYS.includes(e.code)) return;
       const target = e.target as HTMLElement | null;
       const inField = target?.tagName === "INPUT"
         || target?.tagName === "TEXTAREA"
@@ -262,15 +302,28 @@ export function ClickUpTaskDetail() {
       );
       const id = inClickupZone && taskId ? taskId : selectedRow?.dataset.taskId ?? taskId;
       if (!id) return;
-      e.preventDefault();
-      if (e.code === "KeyS") requestSend(id);
-      else if (e.code === "KeyW") void spawnWorktree(id);
-      else if (e.code === "KeyP") void togglePin(id);
-      else void requestBind(id);
+      // S/W/P/B always apply; R/C/O are conditional (reinject needs a live
+      // injection target, close-out needs the bound task + a session, open
+      // needs a url) — only swallow the key when we actually act.
+      if (e.code === "KeyS") { e.preventDefault(); requestSend(id); }
+      else if (e.code === "KeyW") { e.preventDefault(); void spawnWorktree(id); }
+      else if (e.code === "KeyP") { e.preventDefault(); void togglePin(id); }
+      else if (e.code === "KeyB") { e.preventDefault(); void requestBind(id); }
+      else if (e.code === "KeyR") {
+        if (id === boundTaskId || pinnedTaskIds.includes(id)) { e.preventDefault(); void reinject(id); }
+      } else if (e.code === "KeyC") {
+        if (id === boundTaskId && activeSessionId) {
+          e.preventDefault();
+          setClosureOffer({ taskId: id, sessionId: activeSessionId });
+        }
+      } else if (e.code === "KeyO") {
+        const url = tasks.find((t) => t.id === id)?.url ?? (detail?.task?.id === id ? detail.task?.url : null);
+        if (url) { e.preventDefault(); openExternalUrl(url); }
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [taskId, requestSend, spawnWorktree, togglePin, requestBind]);
+  }, [taskId, requestSend, spawnWorktree, togglePin, requestBind, reinject, boundTaskId, pinnedTaskIds, activeSessionId, setClosureOffer, tasks, detail]);
 
   // Close path (Esc + the X button) hands focus back to the PTY — same
   // pattern as the scratchpad / vault search close. Only when a session is
@@ -306,13 +359,40 @@ export function ClickUpTaskDetail() {
       .catch(() => {});
   }, []);
 
+  // Reset the cursor and grab focus on the nav container when a task opens
+  // (or when drilling into a subtask) — the container holds the single focus,
+  // arrows move the highlight (no per-element DOM focus).
+  useEffect(() => {
+    setNavKey(null);
+    if (taskId === null) return;
+    const t = setTimeout(() => contentRef.current?.focus({ preventScroll: true }), 60);
+    return () => clearTimeout(t);
+  }, [taskId]);
+
+  // When a popup (status / date) closes, hand focus back to the nav container
+  // so arrow-nav resumes from the cursor.
+  useEffect(() => {
+    if (taskId === null || statusPickerOpen || dueOpen) return;
+    contentRef.current?.focus({ preventScroll: true });
+  }, [statusPickerOpen, dueOpen, taskId]);
+
+  // The cursor is state-driven (no DOM focus), so the scroll container won't
+  // follow it on its own — bring the highlighted element into view.
+  useEffect(() => {
+    if (!navKey) return;
+    contentRef.current
+      ?.querySelector<HTMLElement>(`[data-nav-key="${CSS.escape(navKey)}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [navKey]);
+
   useEffect(() => {
     if (!taskId) {
       setDetail(null);
       setError(null);
       setStatuses([]);
       setEditingDesc(false);
-      setEditingDueDate(false);
+      setDueOpen(false);
+      setStatusPickerOpen(false);
       setCommentDraft("");
       setUncertainComment(null);
       return;
@@ -342,9 +422,11 @@ export function ClickUpTaskDetail() {
     const listId = detail?.task?.list_id;
     if (!listId) { setStatuses([]); return; }
     let cancelled = false;
+    setStatusesLoading(true);
     invoke<ClickUpListStatus[]>("clickup_read_list_statuses", { listId })
       .then((s) => { if (!cancelled) setStatuses(s); })
-      .catch(() => { if (!cancelled) setStatuses([]); });
+      .catch(() => { if (!cancelled) setStatuses([]); })
+      .finally(() => { if (!cancelled) setStatusesLoading(false); });
     return () => { cancelled = true; };
   }, [detail?.task?.list_id]);
 
@@ -357,114 +439,143 @@ export function ClickUpTaskDetail() {
     }).catch(() => {});
   }
 
+  // After a write lands, ClickUp has read-after-write lag: an immediate GET can
+  // still return the pre-write value. Re-fetch a few times until the server
+  // reflects our optimistic value, then drop the overlay. Clearing the overlay
+  // on the first (stale) read was the source of the toggle/value flicker; the
+  // overlay stays applied across the loop so the display never bounces back.
+  async function confirmAfterWrite(
+    id: string,
+    field: string,
+    matches: (d: ClickUpTaskDetailData) => boolean,
+  ) {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const updated = await invoke<ClickUpTaskDetailData>("clickup_task_detail", { taskId: id });
+      setDetail(updated);
+      if (matches(updated)) break;
+      if (attempt < 4) await new Promise((r) => setTimeout(r, 800));
+    }
+    clearOverlayEntry(setOverlay, id, field);
+  }
+
   async function handleStatusChange(statusName: string) {
-    if (!taskId) return;
+    if (!taskId || busy) return;
     const field = "status";
     const prevStatus = task?.status_name ?? null;
+    setBusy(field);
     setOverlayEntry(setOverlay, taskId, field, statusName);
+    const id = taskId;
     try {
-      await invoke("clickup_set_task_status", { taskId, statusName });
-      clearOverlayEntry(setOverlay, taskId, field);
-      // Re-fetch detail so the status chip reflects the new value from the mirror.
-      const updated = await invoke<ClickUpTaskDetailData>("clickup_task_detail", { taskId });
-      setDetail(updated);
+      await invoke("clickup_set_task_status", { taskId: id, statusName });
+      await confirmAfterWrite(id, field, (d) => d.task?.status_name === statusName);
     } catch (err) {
-      clearOverlayEntry(setOverlay, taskId, field);
+      clearOverlayEntry(setOverlay, id, field);
       addToast({ message: "Status change failed", description: String(err), type: "error" });
-      // Revert: restore the pre-edit value in overlay briefly so the detail
-      // re-renders with the original while the detail refetch is in progress.
       if (prevStatus) {
-        setOverlayEntry(setOverlay, taskId, field, prevStatus);
-        setTimeout(() => clearOverlayEntry(setOverlay, taskId, field), 50);
+        setOverlayEntry(setOverlay, id, field, prevStatus);
+        setTimeout(() => clearOverlayEntry(setOverlay, id, field), 50);
       }
+    } finally {
+      setBusy(null);
     }
   }
 
   async function handleChecklistToggle(checklistId: string, item: ClickUpChecklistItem) {
-    if (!taskId) return;
+    if (!taskId || busy) return;
     const field = `checklist:${checklistId}:${item.id}`;
     const newResolved = !item.resolved;
-    setOverlayEntry(setOverlay, taskId, field, newResolved ? "true" : "false");
+    const id = taskId;
+    setBusy(field);
+    setOverlayEntry(setOverlay, id, field, newResolved ? "true" : "false");
     try {
-      await invoke("clickup_set_checklist_item", {
-        checklistId,
-        itemId: item.id,
-        resolved: newResolved,
-      });
-      clearOverlayEntry(setOverlay, taskId, field);
-      const updated = await invoke<ClickUpTaskDetailData>("clickup_task_detail", { taskId });
-      setDetail(updated);
+      await invoke("clickup_set_checklist_item", { checklistId, itemId: item.id, resolved: newResolved });
+      await confirmAfterWrite(id, field, (d) =>
+        d.checklists.find((cl) => cl.id === checklistId)?.items.find((it) => it.id === item.id)?.resolved === newResolved,
+      );
     } catch (err) {
-      clearOverlayEntry(setOverlay, taskId, field);
+      clearOverlayEntry(setOverlay, id, field);
       addToast({ message: "Checklist update failed", description: String(err), type: "error" });
+    } finally {
+      setBusy(null);
     }
   }
 
   async function handleDescSave() {
-    if (!taskId) return;
+    if (!taskId || busy) return;
     const field = "description";
     const draft = descDraft.trim();
+    const id = taskId;
     setEditingDesc(false);
-    setOverlayEntry(setOverlay, taskId, field, draft);
+    setBusy(field);
+    setOverlayEntry(setOverlay, id, field, draft);
     try {
-      await invoke("clickup_update_task", { taskId, description: draft });
-      clearOverlayEntry(setOverlay, taskId, field);
-      const updated = await invoke<ClickUpTaskDetailData>("clickup_task_detail", { taskId });
-      setDetail(updated);
+      await invoke("clickup_update_task", { taskId: id, description: draft });
+      await confirmAfterWrite(id, field, (d) => (d.description ?? "") === draft);
     } catch (err) {
-      clearOverlayEntry(setOverlay, taskId, field);
+      clearOverlayEntry(setOverlay, id, field);
       addToast({ message: "Description update failed", description: String(err), type: "error" });
+    } finally {
+      setBusy(null);
     }
   }
 
-  async function handleDueDateSave() {
-    if (!taskId) return;
+  /// `ms` is local-noon for the picked calendar date (or null to clear) —
+  /// see DatePopover. The match is by local calendar day, since ClickUp
+  /// normalizes a date-only due date to its own canonical time.
+  async function handleDueDateSave(ms: number | null) {
+    if (!taskId || busy) return;
     const field = "dueDate";
-    setEditingDueDate(false);
-    const ms = dueDateDraft ? new Date(dueDateDraft).getTime() : null;
-    setOverlayEntry(setOverlay, taskId, field, ms !== null ? String(ms) : null);
+    const id = taskId;
+    setDueOpen(false);
+    setBusy(field);
+    setOverlayEntry(setOverlay, id, field, ms !== null ? String(ms) : null);
     try {
-      await invoke("clickup_update_task", {
-        taskId,
-        dueDate: ms !== null ? ms : null,
-      });
-      clearOverlayEntry(setOverlay, taskId, field);
-      const updated = await invoke<ClickUpTaskDetailData>("clickup_task_detail", { taskId });
-      setDetail(updated);
+      await invoke("clickup_update_task", { taskId: id, dueDate: ms });
+      await confirmAfterWrite(id, field, (d) => sameDueDay(d.task?.due_date ?? null, ms));
     } catch (err) {
-      clearOverlayEntry(setOverlay, taskId, field);
+      clearOverlayEntry(setOverlay, id, field);
       addToast({ message: "Due date update failed", description: String(err), type: "error" });
+    } finally {
+      setBusy(null);
     }
   }
 
   async function handleRemoveAssignee(assigneeId: number) {
-    if (!taskId) return;
+    if (!taskId || busy) return;
+    const id = taskId;
+    setBusy("assignee");
     try {
-      await invoke("clickup_update_task", { taskId, assigneesRem: [assigneeId] });
-      const updated = await invoke<ClickUpTaskDetailData>("clickup_task_detail", { taskId });
+      await invoke("clickup_update_task", { taskId: id, assigneesRem: [assigneeId] });
+      const updated = await invoke<ClickUpTaskDetailData>("clickup_task_detail", { taskId: id });
       setDetail(updated);
     } catch (err) {
       addToast({ message: "Remove assignee failed", description: String(err), type: "error" });
+    } finally {
+      setBusy(null);
     }
   }
 
   async function handlePostComment() {
-    if (!taskId || !commentDraft.trim() || postingComment) return;
+    if (!taskId || !commentDraft.trim() || busy || postingComment) return;
+    const id = taskId;
     setPostingComment(true);
+    setBusy("comment");
     const text = commentDraft.trim();
     try {
-      const token = await invoke<string>("clickup_request_closure_token", {
-        taskId,
-        status: null,
-        comment: text,
-      });
+      const token = await invoke<string>("clickup_request_closure_token", { taskId: id, status: null, comment: text });
       const raw = await invoke<Record<string, unknown>>("clickup_execute_closure", { token });
       const commentStatus = (raw["comment"] as Record<string, unknown>)?.["status"];
       if (commentStatus === "posted") {
-        addToast({ message: "Comment posted", type: "success" });
+        // Hold the spinner until the comment actually shows (ClickUp lag), so
+        // it never appears to "save empty" then pop in a moment later.
+        for (let attempt = 0; attempt < 5; attempt++) {
+          const updated = await invoke<ClickUpTaskDetailData>("clickup_task_detail", { taskId: id });
+          setDetail(updated);
+          if (updated.comments.some((c) => (c.text ?? "").includes(text))) break;
+          if (attempt < 4) await new Promise((r) => setTimeout(r, 800));
+        }
         setCommentDraft("");
-        const updated = await invoke<ClickUpTaskDetailData>("clickup_task_detail", { taskId });
-        setDetail(updated);
+        addToast({ message: "Comment posted", type: "success" });
       } else if (commentStatus === "uncertain") {
         setUncertainComment({ text, sentAtMs: Date.now() });
         addToast({
@@ -480,6 +591,7 @@ export function ClickUpTaskDetail() {
       addToast({ message: "Comment failed", description: String(err), type: "error" });
     } finally {
       setPostingComment(false);
+      setBusy(null);
     }
   }
 
@@ -519,6 +631,69 @@ export function ClickUpTaskDetail() {
     return statuses.find((s) => s.name === overlayStatusName)?.color ?? task?.status_color ?? null;
   })();
 
+  // Optimistic due-date overlay (mirrors the status overlay) so the display
+  // holds the picked value while the confirm loop reconciles ClickUp's lag.
+  const overlayDue = taskId
+    ? (overlay as Record<string, { value: string | null } | undefined>)[`${taskId}:dueDate`]
+    : undefined;
+  const displayDueMs =
+    overlayDue !== undefined
+      ? overlayDue.value !== null
+        ? Number(overlayDue.value)
+        : null
+      : task?.due_date ?? null;
+
+  // Index cursor over the body's actionable elements — the new-session modal
+  // pattern (AgentPickerModal): one focus on the content container, ↑/↓ move a
+  // `data-nav-selected` highlight (bg via the global focus-zone rule, no
+  // per-element ring), Enter/Space activate. The DOM order of `[data-nav-key]`
+  // nodes is the source of truth, filtered to visible ones. An open popup
+  // (status / date) owns the arrows.
+  function activateNav(key: string) {
+    if (busy) return;
+    if (key === "status") setStatusPickerOpen(true);
+    else if (key === "due") setDueOpen(true);
+    else if (key.startsWith("sub:")) setTaskId(key.slice(4));
+    else if (key.startsWith("check:")) {
+      const [, clId, itemId] = key.split(":");
+      const cl = detail?.checklists.find((c) => c.id === clId);
+      const item = cl?.items.find((it) => it.id === itemId);
+      if (cl && item) void handleChecklistToggle(cl.id, item);
+    } else if (key === "comment") commentRef.current?.focus();
+  }
+
+  function navKeysInOrder(): string[] {
+    const content = contentRef.current;
+    if (!content) return [];
+    return Array.from(content.querySelectorAll<HTMLElement>("[data-nav-key]"))
+      .filter((el) => el.offsetParent !== null)
+      .map((el) => el.dataset.navKey ?? "")
+      .filter(Boolean);
+  }
+
+  function handleNavKeyDown(e: React.KeyboardEvent) {
+    if (statusPickerOpen || dueOpen) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.tagName === "TEXTAREA" || target?.tagName === "INPUT") {
+      // Let text fields own their keys; only Escape backs out to the cursor.
+      return;
+    }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      const keys = navKeysInOrder();
+      if (keys.length === 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const idx = navKey ? keys.indexOf(navKey) : -1;
+      const next =
+        e.key === "ArrowDown" ? Math.min(idx + 1, keys.length - 1) : Math.max(idx - 1, 0);
+      setNavKey(keys[idx === -1 ? 0 : next] ?? keys[0]);
+    } else if ((e.key === "Enter" || e.key === " ") && navKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      activateNav(navKey);
+    }
+  }
+
   return (
     // display:contents wrapper only marks the zone for the contextual keys —
     // the detail mounts at Workspace level, outside the panel's zone subtree.
@@ -547,7 +722,7 @@ export function ClickUpTaskDetail() {
         </>
       }
       toolbar={
-        <>
+        <TooltipProvider delay={0}>
           {taskId && (
             <>
               <ToolbarAction label={ACTION_LABELS.send} onClick={() => requestSend(taskId)}>
@@ -575,21 +750,18 @@ export function ClickUpTaskDetail() {
                   stale live context (design Decision 7 + risk table). */}
               {(taskId === boundTaskId || pinnedTaskIds.includes(taskId)) && (
                 <ToolbarAction
-                  label="Re-inject current task content into the live session (explicit refresh — never automatic)"
+                  label="Re-inject current task content into the live session (R) — explicit refresh, never automatic"
                   onClick={() => void reinject(taskId)}
                 >
                   <RefreshCw size={12} />
                 </ToolbarAction>
               )}
               {/* "Close out task" — manual closure verb (Revision 1, task 5.2b).
-                  Shown when this task is bound to the active session. No single-
-                  letter key (S/W/P/B are taken). */}
+                  Shown when this task is bound to the active session. */}
               {taskId === boundTaskId && activeSessionId && (
                 <ToolbarAction
-                  label="Close out task — move status and/or post a comment to mark this task done"
-                  onClick={() =>
-                    setClosureOffer({ taskId, sessionId: activeSessionId })
-                  }
+                  label="Close out task (C) — move status and/or post a comment to mark this task done"
+                  onClick={() => setClosureOffer({ taskId, sessionId: activeSessionId })}
                 >
                   <CircleCheck size={12} />
                 </ToolbarAction>
@@ -597,20 +769,30 @@ export function ClickUpTaskDetail() {
             </>
           )}
           {task?.url && (
-            <button
-              type="button"
-              aria-label="Open in ClickUp"
-              title="Open in ClickUp"
-              onClick={() => openExternalUrl(task.url)}
-              className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground transition-colors"
-            >
+            <ToolbarAction label="Open in ClickUp (O)" onClick={() => openExternalUrl(task.url)}>
               <ExternalLink size={12} />
-            </button>
+            </ToolbarAction>
           )}
-        </>
+        </TooltipProvider>
       }
     >
-      <div className="h-full overflow-y-auto">
+      <div
+        ref={contentRef}
+        tabIndex={0}
+        onKeyDown={handleNavKeyDown}
+        onClick={(e) => {
+          // Clicking an actionable element moves the cursor there; refocus the
+          // container (WebKitGTK doesn't focus buttons on click) so arrow-nav
+          // resumes — except when clicking into the comment field.
+          const target = e.target as HTMLElement | null;
+          const el = target?.closest<HTMLElement>("[data-nav-key]");
+          if (el?.dataset.navKey) setNavKey(el.dataset.navKey);
+          if (target && target.tagName !== "TEXTAREA" && target.tagName !== "INPUT") {
+            contentRef.current?.focus({ preventScroll: true });
+          }
+        }}
+        className="h-full overflow-y-auto outline-none"
+      >
         {loading && !detail ? (
           <div className="flex h-full items-center justify-center gap-2 text-xs text-muted-foreground">
             <Loader2 size={14} className="animate-spin" /> Loading…
@@ -629,59 +811,27 @@ export function ClickUpTaskDetail() {
                   currentStatus={displayStatusName}
                   currentColor={displayStatusColor}
                   statuses={statuses}
+                  loading={statusesLoading}
                   onSelect={(name) => void handleStatusChange(name)}
-                  pending={!!overlayStatusName}
+                  pending={!!overlayStatusName || busy === "status"}
+                  open={statusPickerOpen}
+                  onOpenChange={setStatusPickerOpen}
+                  navSelected={navKey === "status"}
                 />
               )}
               {task?.priority && <span>priority: {task.priority}</span>}
-              {/* Due date — inline editable */}
-              {editingDueDate ? (
-                <span className="flex items-center gap-1">
-                  <input
-                    type="date"
-                    value={dueDateDraft}
-                    onChange={(e) => setDueDateDraft(e.target.value)}
-                    className="h-5 rounded border border-input bg-transparent px-1 text-[10px] outline-none focus-visible:ring-1 focus-visible:ring-ring/50"
-                    autoFocus
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void handleDueDateSave()}
-                    className="rounded px-1 text-[10px] text-green-400 hover:text-green-300"
-                  >
-                    Save
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditingDueDate(false)}
-                    className="rounded px-1 text-[10px] text-muted-foreground hover:text-foreground"
-                  >
-                    Cancel
-                  </button>
-                  {dueDateDraft && (
-                    <button
-                      type="button"
-                      onClick={() => { setDueDateDraft(""); void handleDueDateSave(); }}
-                      className="rounded px-1 text-[10px] text-muted-foreground hover:text-red-400"
-                    >
-                      Clear
-                    </button>
-                  )}
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const ms = task?.due_date;
-                    setDueDateDraft(ms ? new Date(ms).toISOString().split("T")[0] : "");
-                    setEditingDueDate(true);
-                  }}
-                  className="hover:text-foreground transition-colors"
-                  title="Edit due date"
-                >
-                  {task?.due_date != null ? `due ${formatDateTime(task.due_date)}` : "set due date"}
-                </button>
-              )}
+              {/* Due date — local-TZ calendar popover (date-only). */}
+              <span className="flex items-center gap-1">
+                <DatePopover
+                  valueMs={displayDueMs}
+                  onSelect={(ms) => void handleDueDateSave(ms)}
+                  open={dueOpen}
+                  onOpenChange={setDueOpen}
+                  disabled={busy !== null}
+                  navSelected={navKey === "due"}
+                />
+                {busy === "dueDate" && <Loader2 size={9} className="animate-spin text-muted-foreground" />}
+              </span>
               {task && <span className="truncate">{task.list_name}</span>}
               {/* Assignees: show initials avatars + remove button on hover.
                   Add-assignee is scoped to remove-only: the mirror holds only
@@ -739,7 +889,7 @@ export function ClickUpTaskDetail() {
                     setDescDraft(detail.description ?? "");
                     setEditingDesc(true);
                   }}
-                  className="flex size-3.5 items-center justify-center rounded text-muted-foreground hover:text-foreground transition-colors"
+                  className="flex size-3.5 items-center justify-center rounded text-muted-foreground outline-none hover:text-foreground transition-colors"
                 >
                   <Pencil size={10} />
                 </button>
@@ -750,6 +900,12 @@ export function ClickUpTaskDetail() {
                 <textarea
                   value={descDraft}
                   onChange={(e) => setDescDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && e.ctrlKey) {
+                      e.preventDefault();
+                      void handleDescSave();
+                    }
+                  }}
                   className="min-h-[80px] rounded border border-input bg-secondary/30 p-2 text-[11px] leading-relaxed text-foreground/90 outline-none focus-visible:ring-1 focus-visible:ring-ring/50 resize-y"
                   autoFocus
                 />
@@ -759,7 +915,7 @@ export function ClickUpTaskDetail() {
                     onClick={() => void handleDescSave()}
                     className="rounded bg-secondary/60 px-2 py-0.5 text-[10px] text-green-400 hover:text-green-300 transition-colors"
                   >
-                    Save
+                    Save (Ctrl+Enter)
                   </button>
                   <button
                     type="button"
@@ -807,7 +963,9 @@ export function ClickUpTaskDetail() {
                       key={sub.id}
                       type="button"
                       onClick={() => setTaskId(sub.id)}
-                      className="flex items-center gap-1.5 rounded px-1 py-0.5 text-left text-[11px] text-foreground/80 transition-colors hover:bg-secondary/40"
+                      data-nav-key={`sub:${sub.id}`}
+                      data-nav-selected={navKey === `sub:${sub.id}` || undefined}
+                      className="flex items-center gap-1.5 rounded px-1 py-0.5 text-left text-[11px] text-foreground/80 outline-none transition-colors hover:bg-secondary/40"
                     >
                       <span
                         className="size-1.5 shrink-0 rounded-full"
@@ -839,7 +997,10 @@ export function ClickUpTaskDetail() {
                           key={item.id}
                           type="button"
                           onClick={() => void handleChecklistToggle(cl.id, item)}
-                          className={`flex items-center gap-1.5 rounded pl-1 py-0.5 text-[11px] text-left transition-colors hover:bg-secondary/40 ${pending ? "opacity-70" : ""}`}
+                          disabled={busy !== null && !pending}
+                          data-nav-key={`check:${cl.id}:${item.id}`}
+                          data-nav-selected={navKey === `check:${cl.id}:${item.id}` || undefined}
+                          className={`flex items-center gap-1.5 rounded pl-1 py-0.5 text-[11px] text-left outline-none transition-colors hover:bg-secondary/40 disabled:opacity-50 ${pending ? "opacity-70" : ""}`}
                         >
                           {resolved ? (
                             <CheckSquare size={11} className="shrink-0 text-green-500" />
@@ -913,24 +1074,37 @@ export function ClickUpTaskDetail() {
                 </div>
               )}
               <textarea
+                ref={commentRef}
                 value={commentDraft}
                 onChange={(e) => setCommentDraft(e.target.value)}
-                placeholder="Add a comment…"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && e.ctrlKey) {
+                    e.preventDefault();
+                    void handlePostComment();
+                  } else if (e.key === "Escape") {
+                    // Back out to the cursor so arrow-nav resumes.
+                    e.preventDefault();
+                    e.stopPropagation();
+                    contentRef.current?.focus();
+                  }
+                }}
+                data-nav-key="comment"
+                placeholder="Add a comment… (Ctrl+Enter to post)"
                 rows={2}
-                className="rounded border border-input bg-secondary/30 p-1.5 text-[11px] leading-relaxed text-foreground/90 outline-none focus-visible:ring-1 focus-visible:ring-ring/50 resize-none"
-                disabled={postingComment}
+                className={`rounded border bg-secondary/30 p-1.5 text-[11px] leading-relaxed text-foreground/90 outline-none focus-visible:ring-1 focus-visible:ring-ring/50 resize-none ${navKey === "comment" ? "border-foreground/40" : "border-input"}`}
+                disabled={postingComment || (busy !== null && busy !== "comment")}
               />
               <div className="flex justify-end">
                 <button
                   type="button"
                   onClick={() => void handlePostComment()}
-                  disabled={!commentDraft.trim() || postingComment}
+                  disabled={!commentDraft.trim() || postingComment || (busy !== null && busy !== "comment")}
                   className="flex items-center gap-1 rounded bg-secondary px-2 py-0.5 text-[10px] text-foreground/80 hover:bg-secondary/80 disabled:opacity-40 transition-colors"
                 >
                   {postingComment ? (
                     <><Loader2 size={9} className="animate-spin" /> Posting…</>
                   ) : (
-                    <><Send size={9} /> Comment</>
+                    <><Send size={9} /> Comment (Ctrl+Enter)</>
                   )}
                 </button>
               </div>
@@ -951,42 +1125,88 @@ function SectionCaps({ label }: { label: string }) {
   );
 }
 
-/// Inline status pill that expands to a mini-picker on click.
-/// Uses a local open/close state; clicking a status option calls onSelect
-/// and immediately closes, so the optimistic overlay takes effect at once.
+/// Inline status pill that expands to a mini-picker. Controlled open state so
+/// the detail's Enter can open it; the open dropdown owns ↑/↓ (cycle options,
+/// wraparound) + Enter (select) + Esc (close) — the annotation quick-actions
+/// pattern. Selecting refocuses the trigger so arrow-nav resumes.
 function StatusPicker({
   currentStatus,
   currentColor,
   statuses,
+  loading,
   onSelect,
   pending,
+  open,
+  onOpenChange,
+  navSelected,
 }: {
   currentStatus: string;
   currentColor: string | null;
   statuses: ClickUpListStatus[];
+  loading: boolean;
   onSelect: (name: string) => void;
   pending: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  navSelected: boolean;
 }) {
-  const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [activeIdx, setActiveIdx] = useState(0);
+
+  function choose(name: string) {
+    onOpenChange(false);
+    onSelect(name);
+  }
+
+  // Seed the highlight on the current status each time the dropdown opens.
+  useEffect(() => {
+    if (!open) return;
+    const cur = statuses.findIndex((s) => s.name === currentStatus);
+    setActiveIdx(cur >= 0 ? cur : 0);
+  }, [open, statuses, currentStatus]);
 
   useEffect(() => {
     if (!open) return;
     function onOutside(e: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
-        setOpen(false);
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) onOpenChange(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (statuses.length === 0) return;
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setActiveIdx((p) => (p + 1) % statuses.length);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setActiveIdx((p) => (p - 1 + statuses.length) % statuses.length);
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const s = statuses[activeIdx];
+        if (s) choose(s.name);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        onOpenChange(false);
       }
     }
     document.addEventListener("mousedown", onOutside);
-    return () => document.removeEventListener("mousedown", onOutside);
-  }, [open]);
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("mousedown", onOutside);
+      window.removeEventListener("keydown", onKey, true);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, statuses, activeIdx]);
 
   return (
     <div ref={wrapRef} className="relative">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        className={`flex items-center gap-1 rounded-full px-2 leading-4 transition-colors hover:opacity-80 ${pending ? "opacity-60" : ""}`}
+        data-nav-key="status"
+        onClick={() => onOpenChange(!open)}
+        className={`flex items-center gap-1 rounded-full px-2 leading-4 outline-none transition-colors hover:opacity-80 ${navSelected ? "ring-1 ring-foreground/50" : ""} ${pending ? "opacity-60" : ""}`}
         style={{
           background: currentColor ? `${currentColor}26` : "var(--color-secondary)",
           color: currentColor ?? "var(--color-secondary-foreground)",
@@ -995,17 +1215,26 @@ function StatusPicker({
         {currentStatus}
         {pending && <Loader2 size={8} className="animate-spin" />}
       </button>
-      {open && statuses.length > 0 && (
-        <div className="absolute left-0 top-full z-50 mt-1 min-w-[140px] rounded border border-border bg-card py-1 shadow-lg">
-          {statuses.map((s) => (
+      {open && (
+        <div
+          data-floating-popup
+          className="absolute left-0 top-full z-50 mt-1 min-w-[140px] rounded border border-border bg-card py-1 shadow-lg"
+        >
+          {loading ? (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] text-muted-foreground">
+              <Loader2 size={10} className="animate-spin" /> Loading statuses…
+            </div>
+          ) : statuses.length === 0 ? (
+            <div className="px-2.5 py-1 text-[10px] text-muted-foreground">No statuses available.</div>
+          ) : (
+            statuses.map((s, i) => (
             <button
               key={s.name}
               type="button"
-              onClick={() => {
-                setOpen(false);
-                onSelect(s.name);
-              }}
-              className={`flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[10px] transition-colors hover:bg-secondary/60 ${
+              data-nav-selected={i === activeIdx || undefined}
+              onMouseEnter={() => setActiveIdx(i)}
+              onClick={() => choose(s.name)}
+              className={`flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-[10px] transition-colors data-[nav-selected=true]:bg-secondary/60 ${
                 s.name === currentStatus ? "text-foreground" : "text-muted-foreground"
               }`}
             >
@@ -1014,7 +1243,8 @@ function StatusPicker({
               )}
               {s.name}
             </button>
-          ))}
+            ))
+          )}
         </div>
       )}
     </div>

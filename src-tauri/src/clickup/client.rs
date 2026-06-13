@@ -39,6 +39,10 @@ pub struct TaskFilterParams {
     pub space_ids: Vec<String>,
     pub page: u32,
     pub include_closed: bool,
+    /// Server-side assignee filter. Empty = no filter (whole space). Used to
+    /// scope the on-demand closed-task fetch to the current user so it doesn't
+    /// page through the entire workspace's closed history.
+    pub assignee_ids: Vec<i64>,
 }
 
 impl ClickUpClient {
@@ -163,6 +167,9 @@ impl ClickUpClient {
         for space_id in &params.space_ids {
             query.push(("space_ids[]".into(), space_id.clone()));
         }
+        for assignee in &params.assignee_ids {
+            query.push(("assignees[]".into(), assignee.to_string()));
+        }
         self.get_json(&format!("/team/{team_id}/task"), &query)
             .await
     }
@@ -175,12 +182,14 @@ impl ClickUpClient {
         team_id: &str,
         space_ids: &[String],
         include_closed: bool,
+        assignee_ids: &[i64],
     ) -> Result<Vec<Task>> {
         let mut tasks = Vec::new();
         let mut params = TaskFilterParams {
             space_ids: space_ids.to_vec(),
             page: 0,
             include_closed,
+            assignee_ids: assignee_ids.to_vec(),
         };
         loop {
             let page = self.filter_team_tasks(team_id, &params).await?;
@@ -390,6 +399,9 @@ pub struct TaskUpdate {
     pub assignees_rem: Vec<i64>,
     /// Due date as Unix milliseconds; `Some(None)` clears the field.
     pub due_date: Option<Option<i64>>,
+    /// Whether the due date carries a meaningful time-of-day. Sent alongside
+    /// `due_date` so ClickUp renders date-only instead of inventing a time.
+    pub due_date_time: Option<bool>,
 }
 
 impl TaskUpdate {
@@ -409,6 +421,9 @@ impl TaskUpdate {
         }
         if let Some(dd) = &self.due_date {
             obj.insert("due_date".into(), json!(dd));
+        }
+        if let Some(dt) = self.due_date_time {
+            obj.insert("due_date_time".into(), json!(dt));
         }
         Value::Object(obj)
     }
@@ -524,7 +539,7 @@ mod tests {
         let client = ClickUpClient::with_base_url(TOKEN, &base).unwrap();
 
         let tasks = client
-            .filter_team_tasks_all("9013000000", &["901312445262".into()], false)
+            .filter_team_tasks_all("9013000000", &["901312445262".into()], false, &[])
             .await
             .unwrap();
         assert_eq!(tasks.len(), 3);

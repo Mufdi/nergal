@@ -38,6 +38,12 @@ The result is a keyboard-first HUD where the agent stays in the centerpiece term
 - **Passive knowledge growth** — Quick capture into an inbox note, a per-session session log, and automatic MOC notes with backlinks written when a session ends.
 - **Deep links + templates** — `cluihud://` links open files or spawn sessions straight from Obsidian (cold-start included), and vault templates are sendable to the prompt from the command palette.
 
+### ClickUp integration
+
+- **Task panel** — Your ClickUp tasks grouped by project, "assigned to me", or due date, with status / priority icons and a recursive subtask tree. Polls in the background and fires a desktop notification when a task is assigned to you.
+- **Task → agent** — Send a task to the agent as a prompt, or spawn a worktree session seeded with it. Pin or bind a task as session context that's injected at spawn / resume.
+- **Bidirectional write-back** — Change status, post comments, toggle checklist items, set due dates, and remove assignees from a Linear-style task detail you can open as its own document tab (`T`). Auth via a personal API token kept in the OS keyring.
+
 ### Code & docs
 
 - **File panel with quick editing** — Project tree plus a CodeMirror 6 editor with syntax for TS / JS / JSON / MD / Rust / CSS / HTML. Single-click preview, double-click to pin.
@@ -46,6 +52,7 @@ The result is a keyboard-first HUD where the agent stays in the centerpiece term
 
 ### Session UX
 
+- **Drop-down terminal** — A quake-style overlay (`Ctrl+}`) with per-session extra shells plus environment shells seeded by per-workspace suggestions, each remembering its own working directory across reopen. Configurable per session via launch options (agent, permission preset, startup command, env shells).
 - **Floating scratchpad** — Multi-tab notes anchored to a configurable directory. Semi-transparent floating panel that survives across sessions, with content-hash own-write tracking so the watcher does not echo.
 - **Activity timeline + DAG graph** — Timeline strip, event list (thinking blocks expandable inline), and an interactive DAG of tool calls for the active session.
 - **Theme system** — 13 built-in themes (v1-dark, gothic, dracula, monokai, tokyo-night, …) plus a custom theme editor with live preview.

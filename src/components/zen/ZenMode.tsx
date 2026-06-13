@@ -9,6 +9,7 @@ import {
   prZenAtom,
 } from "@/stores/zenMode";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
+import { ProgressBar } from "@/components/ui/ProgressBar";
 import {
   prAnnotationsKey,
   prFilesCacheAtom,
@@ -386,7 +387,8 @@ function PrZenSidebar({ workspaceId, prNumber, sidebarActive }: { workspaceId: s
       </div>
       <div className="flex-1 overflow-y-auto">
         {files.length === 0 ? (
-          <div className="flex h-full items-center justify-center px-3">
+          <div className="flex h-full flex-col items-center justify-center gap-2 px-6">
+            <ProgressBar className="max-w-32" />
             <span className="text-[10px] text-muted-foreground/60">Loading PR files…</span>
           </div>
         ) : (

@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { invoke } from "@/lib/tauri";
+import { ProgressBar } from "@/components/ui/ProgressBar";
 import { useObsidianRemarkPlugin, isObsidianHref, openObsidianHref, obsidianUrlTransform } from "@/lib/markdown/obsidianMarkdown";
 
 interface TranscriptEntry {
@@ -27,7 +28,8 @@ export function TranscriptViewer({ sessionId }: TranscriptViewerProps) {
 
   if (entries === null) {
     return (
-      <div className="flex h-full items-center justify-center">
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-6">
+        <ProgressBar className="max-w-32" />
         <span className="text-[11px] text-muted-foreground">Loading...</span>
       </div>
     );

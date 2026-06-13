@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { focusIfPanelZone } from "@/lib/panelFocus";
+import { ProgressBar } from "@/components/ui/ProgressBar";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
 import { currentSpecArtifactAtom, specSubTabMapAtom } from "@/stores/rightPanel";
@@ -597,7 +598,8 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
             <SpecsList specs={change?.specs ?? []} onSelect={handleSpecClick} />
           </div>
         ) : loading ? (
-          <div className="flex h-32 items-center justify-center">
+          <div className="flex h-32 flex-col items-center justify-center gap-2 px-6">
+            <ProgressBar className="max-w-32" />
             <span className="text-[11px] text-muted-foreground">Loading...</span>
           </div>
         ) : error ? (

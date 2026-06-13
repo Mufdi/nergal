@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { Loader2 } from "lucide-react";
+import { PulseDots } from "@/components/ui/PulseDots";
 import { invoke } from "@/lib/tauri";
 import {
   Dialog,
@@ -368,7 +368,7 @@ export function ClickUpClosureDialog() {
                 disabled={retrying}
               >
                 {retrying ? (
-                  <><Loader2 size={12} className="mr-1.5 animate-spin" />Checking…</>
+                  <>Checking <PulseDots className="ml-1.5" /></>
                 ) : (
                   "Check if it landed"
                 )}
@@ -387,7 +387,7 @@ export function ClickUpClosureDialog() {
             disabled={!canConfirm}
           >
             {executing ? (
-              <><Loader2 size={12} className="mr-1.5 animate-spin" />Applying…</>
+              <>Applying <PulseDots className="ml-1.5" /></>
             ) : (
               <>Close out <Kbd keys="ctrl+enter" tone="onPrimary" className="ml-1.5" /></>
             )}

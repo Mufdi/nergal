@@ -27,7 +27,6 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
-  Loader2,
   GitMerge,
   MessageSquare,
   Sparkles,
@@ -39,6 +38,8 @@ import {
   FolderOpen,
 } from "lucide-react";
 import { Kbd } from "@/components/ui/kbd";
+import { ProgressBar } from "@/components/ui/ProgressBar";
+import { PulseDots } from "@/components/ui/PulseDots";
 
 type LineType = "add" | "remove" | "context" | "header" | "file";
 
@@ -723,8 +724,8 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
 
   if (loading && lines.length === 0) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2">
-        <Loader2 size={16} className="animate-spin text-muted-foreground" />
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-6">
+        <ProgressBar className="max-w-32" />
         <span className="text-[11px] text-muted-foreground">Loading PR #{prNumber}…</span>
       </div>
     );
@@ -1128,7 +1129,7 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
                 disabled={merging}
                 className="flex h-6 items-center gap-1 rounded bg-amber-500/20 px-2 text-[10px] font-medium text-amber-300 hover:bg-amber-500/30 disabled:opacity-50"
               >
-                {merging ? <Loader2 size={10} className="animate-spin" /> : <GitMerge size={10} />}
+                {merging ? <PulseDots count={1} dotClassName="size-1" /> : <GitMerge size={10} />}
                 Merge anyway
               </button>
             </>
@@ -1139,7 +1140,7 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
               className="flex h-6 items-center gap-1.5 rounded bg-green-500/20 px-2 text-[10px] font-medium text-green-300 hover:bg-green-500/30 disabled:cursor-not-allowed disabled:opacity-50"
               title={state === "OPEN" ? `Merge PR #${prNumber} into ${baseRefName}` : "PR is not open"}
             >
-              {merging ? <Loader2 size={10} className="animate-spin" /> : <GitMerge size={10} />}
+              {merging ? <PulseDots count={1} dotClassName="size-1" /> : <GitMerge size={10} />}
               Merge into {baseRefName}
               <Kbd keys="ctrl+enter" />
             </button>

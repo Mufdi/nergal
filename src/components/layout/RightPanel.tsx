@@ -31,6 +31,7 @@ import { GitPanel } from "@/components/git/GitPanel";
 import { FileBrowser } from "@/components/files/FileBrowser";
 import { ObsidianNoteView } from "@/components/obsidian/ObsidianNoteView";
 import { ClickUpPanel } from "@/components/clickup/ClickUpPanel";
+import { ClickUpTaskTab } from "@/components/clickup/ClickUpTaskTab";
 import { VaultNoteFinder } from "@/components/obsidian/VaultNoteFinder";
 import * as terminalService from "@/components/terminal/terminalService";
 import { CodeEditor } from "@/components/editor/CodeEditor";
@@ -472,6 +473,12 @@ function DocumentContent({ tab }: { tab: Tab }) {
       return <BrowserDockSlot />;
     case "clickup":
       return <ClickUpPanel />;
+    case "clickup-task": {
+      const taskId = tab.data?.taskId as string | undefined;
+      return taskId
+        ? <ClickUpTaskTab key={tab.id} taskId={taskId} />
+        : <PlaceholderView label="Select a task" />;
+    }
     case "obsidiannote": {
       const notePath = tab.data?.path as string | undefined;
       return notePath

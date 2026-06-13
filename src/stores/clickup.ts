@@ -3,6 +3,7 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import { invoke, listen } from "@/lib/tauri";
 import { confirm as swalConfirm } from "@/lib/swal";
 import { toastsAtom } from "./toast";
+import { openTabAction } from "./rightPanel";
 import {
   activeSessionIdAtom,
   activeWorkspaceAtom,
@@ -355,6 +356,7 @@ export interface ClickUpTaskActions {
   reinject: (taskId: string) => void;
   closeOut: (taskId: string) => void;
   openInClickup: (taskId: string) => void;
+  openTab: (taskId: string) => void;
   copyId: (displayId: string) => void;
 }
 
@@ -369,6 +371,7 @@ export const CLICKUP_ACTION_LABELS = {
   reinject: "Re-inject into the live session (R)",
   closeOut: "Close out task (C) — mark done & unbind",
   openInClickup: "Open in ClickUp (O)",
+  openAsTab: "Open as tab (T)",
 } as const;
 
 /// Copy a task identifier (custom id when present, else the internal id) to the
@@ -382,6 +385,33 @@ export const copyTaskIdAction = atom(null, (_get, set, taskId: string) => {
     .catch((err) =>
       set(toastsAtom, { message: "Copy failed", description: String(err), type: "error" }),
     );
+});
+
+/// Open a task as a full document tab (single-column detail). Non-singleton:
+/// each task gets its own tab keyed by id; a second open of the same task
+/// reactivates the existing tab instead of duplicating it. The tab label is the
+/// task name (the TabBar truncates it visually).
+export const openClickUpTaskTabAction = atom(null, (get, set, taskId: string) => {
+  if (!get(activeSessionIdAtom)) {
+    set(toastsAtom, {
+      message: "Open as tab",
+      description: "Tabs are session-scoped — select a session first.",
+      type: "info",
+    });
+    return;
+  }
+  const task =
+    get(clickupTasksAtom).find((t) => t.id === taskId) ??
+    get(clickupClosedTasksAtom).find((t) => t.id === taskId);
+  set(openTabAction, {
+    tab: {
+      id: `clickup-task:${taskId}`,
+      type: "clickup-task",
+      label: task?.name ?? "Task",
+      data: { taskId },
+    },
+    activate: true,
+  });
 });
 
 export const requestSendTaskAction = atom(null, (get, set, taskId: string) => {

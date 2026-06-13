@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { ExternalLink, Pin, PinOff } from "lucide-react";
 import { activeWorkspaceAtom, activeSessionIdAtom } from "@/stores/workspace";
+import { ProgressBar } from "@/components/ui/ProgressBar";
 import { activeSessionPinnedNotesAtom, pinNoteAtom, unpinNoteAtom } from "@/stores/pinnedNotes";
 import { setTabPathAction } from "@/stores/rightPanel";
 import { focusZoneAtom } from "@/stores/shortcuts";
@@ -131,8 +132,9 @@ export function ObsidianNoteView({ tabId, path }: { tabId: string; path: string 
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {loading ? (
-          <div className="flex items-center justify-center py-6 text-xs text-muted-foreground">
-            Loading…
+          <div className="flex flex-col items-center justify-center gap-2 px-6 py-6">
+            <ProgressBar className="max-w-32" />
+            <span className="text-xs text-muted-foreground">Loading…</span>
           </div>
         ) : (
           <MarkdownView content={body} onWikilinkNavigate={onWikilinkNavigate} />

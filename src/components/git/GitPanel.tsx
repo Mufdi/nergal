@@ -30,11 +30,11 @@ import {
   AlertTriangle,
   Check,
   CircleDashed,
-  Loader2,
   Maximize2,
   Pencil,
 } from "lucide-react";
 import { Kbd } from "@/components/ui/kbd";
+import { PulseDots } from "@/components/ui/PulseDots";
 import { sessionToWorkspaceMapAtom, workspacesAtom, type Workspace } from "@/stores/workspace";
 import { ChipStrip } from "./chips/ChipStrip";
 import { FilesChip } from "./chips/FilesChip";
@@ -323,7 +323,7 @@ export function GitPanel({ sessionId }: GitPanelProps) {
             disabled={initializingGit}
             className="flex h-6 items-center gap-1.5 rounded bg-primary px-3 text-[11px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
           >
-            {initializingGit ? <Loader2 size={10} className="animate-spin" /> : <GitBranch size={10} />}
+            {initializingGit ? <PulseDots count={1} dotClassName="size-1" /> : <GitBranch size={10} />}
             Init git
           </button>
         </div>
@@ -400,7 +400,7 @@ export function GitPanel({ sessionId }: GitPanelProps) {
             className="ml-2 shrink-0 flex h-6 items-center gap-1.5 rounded bg-green-500/20 px-2.5 text-[10px] font-medium text-green-300 hover:bg-green-500/30 transition-colors disabled:opacity-50"
             title="Creates a merge commit locally. No push."
           >
-            {completing ? <Loader2 size={10} className="animate-spin" /> : null}
+            {completing ? <PulseDots count={1} className="mr-0.5" dotClassName="size-1" /> : null}
             Finish merge <Kbd keys="ctrl+alt+enter" />
           </button>
         </div>

@@ -6,10 +6,11 @@ import { zenModeAtom, prZenAtom } from "@/stores/zenMode";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
 import { Textarea } from "@/components/ui/textarea";
 import { Kbd } from "@/components/ui/kbd";
+import { ProgressBar } from "@/components/ui/ProgressBar";
+import { PulseDots } from "@/components/ui/PulseDots";
 import {
   Archive,
   ChevronRight,
-  Loader2,
   GitBranch,
 } from "lucide-react";
 import type { StashEntry } from "@/stores/git";
@@ -248,8 +249,8 @@ export function StashesChip({ sessionId }: StashesChipProps) {
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center gap-2">
-        <Loader2 size={14} className="animate-spin text-muted-foreground" />
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-6">
+        <ProgressBar className="max-w-32" />
         <span className="text-[11px] text-muted-foreground">Loading stashes...</span>
       </div>
     );
@@ -313,7 +314,10 @@ export function StashesChip({ sessionId }: StashesChipProps) {
                 {isExpanded && (
                   <div className="border-b border-border/30 bg-card/40 px-3 py-1">
                     {files.length === 0 ? (
-                      <span className="text-[10px] text-muted-foreground/50">Loading files...</span>
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[10px] text-muted-foreground/50">Loading files...</span>
+                        <ProgressBar className="max-w-24" />
+                      </div>
                     ) : (
                       <ul className="ml-3">
                         {files.map((f) => (
@@ -401,7 +405,7 @@ export function StashesChip({ sessionId }: StashesChipProps) {
           disabled={creating}
           className="flex h-6 w-full items-center justify-center gap-1.5 rounded bg-primary text-[11px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
         >
-          {creating ? <Loader2 size={10} className="animate-spin" /> : <Archive size={10} />}
+          {creating ? <PulseDots count={1} dotClassName="size-1" /> : <Archive size={10} />}
           Save stash <Kbd keys="ctrl+enter" />
         </button>
         {stashes.length > 0 && (

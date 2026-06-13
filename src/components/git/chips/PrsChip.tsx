@@ -6,11 +6,11 @@ import type { PrSummary } from "@/stores/git";
 import { prsCacheMapAtom, PRS_CACHE_TTL_MS, activePrInChipMapAtom } from "@/stores/git";
 import { PrViewer } from "@/components/git/PrViewer";
 import { Kbd } from "@/components/ui/kbd";
+import { ProgressBar } from "@/components/ui/ProgressBar";
 import { zenModeAtom, prZenAtom } from "@/stores/zenMode";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
 import {
   ChevronLeft,
-  Loader2,
   GitPullRequest,
   ExternalLink,
 } from "lucide-react";
@@ -197,8 +197,8 @@ export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center gap-2">
-        <Loader2 size={14} className="animate-spin text-muted-foreground" />
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-6">
+        <ProgressBar className="max-w-32" />
         <span className="text-[11px] text-muted-foreground">Loading PRs...</span>
       </div>
     );

@@ -58,7 +58,6 @@ import {
   Upload,
   Rocket,
   GitMerge,
-  Loader2,
   AlertTriangle,
   Pin,
   SquareTerminal,
@@ -72,6 +71,7 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip";
+import { PulseDots } from "@/components/ui/PulseDots";
 import { SessionIndicator } from "@/components/session/SessionIndicator";
 
 // Editor logos
@@ -654,7 +654,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
                   />
                 }
               >
-                {pushBusy ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                {pushBusy ? <PulseDots count={1} dotClassName="size-1.5" /> : <Upload size={14} />}
               </TooltipTrigger>
               <TooltipContent side="bottom">Push (Ctrl+Alt+P){activeGitInfo && activeGitInfo.ahead > 0 ? ` — +${activeGitInfo.ahead}` : ""}</TooltipContent>
             </Tooltip>

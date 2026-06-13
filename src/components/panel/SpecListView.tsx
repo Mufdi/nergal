@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { invoke, listen } from "@/lib/tauri";
+import { ProgressBar } from "@/components/ui/ProgressBar";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { openTabAction } from "@/stores/rightPanel";
 import { ClipboardList, Archive, ChevronRight, ChevronDown, BookOpen } from "lucide-react";
@@ -68,7 +69,8 @@ export function SpecListView() {
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center">
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-6">
+        <ProgressBar className="max-w-32" />
         <span className="text-[11px] text-muted-foreground">Loading...</span>
       </div>
     );

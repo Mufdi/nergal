@@ -12,8 +12,9 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Kbd } from "@/components/ui/kbd";
+import { ProgressBar } from "@/components/ui/ProgressBar";
+import { PulseDots } from "@/components/ui/PulseDots";
 import {
-  Loader2,
   AlertTriangle,
   Check,
   CircleDashed,
@@ -570,9 +571,9 @@ export function ShipDialog() {
         <div className="flex min-h-0 flex-auto flex-col gap-4 overflow-y-auto pr-1">
 
         {loading && (
-          <div className="flex items-center gap-2 py-4">
-            <Loader2 size={14} className="animate-spin text-muted-foreground" />
+          <div className="flex flex-col gap-2 py-4">
             <span className="text-[11px] text-muted-foreground">Loading…</span>
+            <ProgressBar className="max-w-40" />
           </div>
         )}
 
@@ -713,7 +714,7 @@ export function ShipDialog() {
           </Button>
           {existingPr ? (
             <Button size="sm" onClick={pushOnly} disabled={pushing || shipping || loading}>
-              {pushing ? (<><Loader2 size={12} className="mr-1 animate-spin" />Pushing…</>) : "Push (update PR)"}
+              {pushing ? (<>Pushing <PulseDots className="ml-1" /></>) : "Push (update PR)"}
             </Button>
           ) : (
             <>
@@ -744,7 +745,7 @@ export function ShipDialog() {
                 onFocus={() => setArmedAction("commit-push-pr")}
                 disabled={commitPushPrDisabled}
               >
-                {shipping ? (<><Loader2 size={12} className="mr-1 animate-spin" />Shipping…</>) : "Commit + Push + PR"}
+                {shipping ? (<>Shipping <PulseDots className="ml-1" /></>) : "Commit + Push + PR"}
                 <Kbd keys="ctrl+3" tone="onPrimary" className="ml-1.5" />
               </Button>
             </>

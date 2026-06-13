@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { Loader2 } from "lucide-react";
+import { ProgressBar } from "@/components/ui/ProgressBar";
 import { invoke } from "@/lib/tauri";
 import {
   Dialog,
@@ -84,8 +84,9 @@ export function ClickUpSendConfirmDialog() {
               {compose}
             </pre>
           ) : (
-            <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
-              <Loader2 size={13} className="animate-spin" /> Composing…
+            <div className="flex flex-col gap-2 py-4">
+              <span className="text-xs text-muted-foreground">Composing…</span>
+              <ProgressBar className="max-w-40" />
             </div>
           )}
         </div>

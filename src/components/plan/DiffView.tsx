@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { focusIfPanelZone } from "@/lib/panelFocus";
+import { ProgressBar } from "@/components/ui/ProgressBar";
 import { useAtomValue } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
 import { activeSessionFilesAtom } from "@/stores/files";
@@ -563,7 +564,8 @@ export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen, i
 
   if (loading && lines.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center">
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-6">
+        <ProgressBar className="max-w-32" />
         <span className="text-[11px] text-muted-foreground">Loading diff...</span>
       </div>
     );

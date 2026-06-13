@@ -5,11 +5,12 @@ import { activeSessionIdAtom } from "@/stores/workspace";
 import { invoke } from "@/lib/tauri";
 import type { Task } from "@/lib/types";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChevronDown, ChevronRight, Trash2, CheckCircle2, Circle, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Trash2, CheckCircle2, Circle } from "lucide-react";
+import { PulseDots } from "@/components/ui/PulseDots";
 
+// in_progress renders as a pulsing dot (see below), not a static glyph.
 const STATUS_ICON: Record<string, typeof Circle> = {
   pending: Circle,
-  in_progress: Loader2,
   completed: CheckCircle2,
 };
 
@@ -92,7 +93,11 @@ export function TasksIsland() {
                 data-nav-item
                 className="group flex items-center gap-2 rounded px-2 py-1 hover:bg-secondary/30"
               >
-                <Icon className={`size-3 flex-shrink-0 ${color} ${task.status === "in_progress" ? "animate-spin" : ""}`} />
+                {task.status === "in_progress" ? (
+                  <PulseDots count={1} className={`flex-shrink-0 ${color}`} dotClassName="size-2" />
+                ) : (
+                  <Icon className={`size-3 flex-shrink-0 ${color}`} />
+                )}
                 <TooltipProvider delay={0}>
                   <Tooltip>
                     <TooltipTrigger

@@ -5,7 +5,7 @@ import { closedTabsStackAtom } from "./shortcuts";
 import { pinnedNotesMapAtom } from "./pinnedNotes";
 import { toastsAtom } from "./toast";
 
-export type TabType = "plan" | "diff" | "spec" | "tasks" | "git" | "transcript" | "file" | "browser" | "obsidiannote" | "clickup";
+export type TabType = "plan" | "diff" | "spec" | "tasks" | "git" | "transcript" | "file" | "browser" | "obsidiannote" | "clickup" | "clickup-task";
 
 export type PanelCategory = "document" | "tool";
 
@@ -23,6 +23,7 @@ export function viewPanelLabel(view: TabType): string {
     browser: "Browser",
     obsidiannote: "Obsidian",
     clickup: "ClickUp",
+    "clickup-task": "Task",
   };
   return labels[view];
 }
@@ -38,6 +39,8 @@ export const PANEL_CATEGORY_MAP: Record<TabType, PanelCategory> = {
   browser: "tool",
   obsidiannote: "document",
   clickup: "tool",
+  // A single task opened as a tab — content document, not a launcher/tool view.
+  "clickup-task": "document",
 };
 
 export interface Tab {

@@ -6,6 +6,7 @@ import {
   fetchPlanCapabilityAction,
 } from "@/stores/plan";
 import { activeSessionIdAtom } from "@/stores/workspace";
+import { ProgressBar } from "@/components/ui/ProgressBar";
 import { openTabAction, activeTabAtom } from "@/stores/rightPanel";
 import { invoke } from "@/lib/tauri";
 import { listen } from "@tauri-apps/api/event";
@@ -81,7 +82,8 @@ export function PlanListView() {
 
   if (listState.kind === "loading") {
     return (
-      <div className="flex h-full items-center justify-center">
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-6">
+        <ProgressBar className="max-w-32" />
         <span className="text-[11px] text-muted-foreground">Loading plans…</span>
       </div>
     );

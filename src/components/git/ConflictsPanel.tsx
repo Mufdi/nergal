@@ -29,6 +29,7 @@ import { zenModeAtom, prZenAtom } from "@/stores/zenMode";
 import * as terminalService from "@/components/terminal/terminalService";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
+import { ProgressBar } from "@/components/ui/ProgressBar";
 import {
   AlertTriangle,
   Check,
@@ -931,7 +932,12 @@ function ConflictView({
   }, [regions, focusedRegion, applyRegion, acceptAll, resetMerged, saveResolution, askClaude, listenerActiveInner, onNavFile, pickerOpen, pickerCursor, files, onPickFile]);
 
   if (!current?.loaded) {
-    return <div className="flex flex-1 items-center justify-center text-[11px] text-muted-foreground">Loading conflict…</div>;
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6">
+        <ProgressBar className="max-w-32" />
+        <span className="text-[11px] text-muted-foreground">Loading conflict…</span>
+      </div>
+    );
   }
 
   const isDirty = current.merged !== current.originalMerged;

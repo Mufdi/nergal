@@ -210,10 +210,10 @@ own bubble handler otherwise, so the field can't intercept it without this.
 A focused panel/surface exposes its actions as **single bare letters** (no
 modifier) that act on the current item, scoped to that zone so they don't fire
 globally. Precedents: ConflictsPanel (`O`/`T`), PrViewer (`A`),
-ClickUpPanel + ClickUpTaskDetail (`S`/`W`/`P`/`B`/`R`/`C`/`O` — send / spawn /
-pin / bind / reinject / close-out / open). These are **component-local window
-handlers**, not entries in `shortcuts.ts` (the binding only makes sense while
-the surface is engaged).
+ClickUpPanel + ClickUpTaskDetail (`S`/`W`/`P`/`B`/`R`/`C`/`O`/`T` — send / spawn /
+pin / bind / reinject / close-out / open / open-as-tab). These are
+**component-local window handlers**, not entries in `shortcuts.ts` (the binding
+only makes sense while the surface is engaged).
 
 Contract:
 
@@ -289,6 +289,64 @@ skipped inside editable fields). Both route through one store action that writes
 via the robust `terminal_clipboard_write` command (the plugin's Wayland backend
 stalls async tasks) and raises a confirmation toast. In a detail surface the id
 is also a first-class nav element (`data-nav-key`) that copies on Enter/click.
+
+## 13. Detail content as both a floating modal and a document tab
+
+A rich detail view (the ClickUp task) renders identically in two shells from one
+**shared controller hook + a layout-parametrized body**, so neither shell
+duplicates the fetch / optimistic-write / drill-in / cursor logic.
+`useClickUpTaskController({taskId, setTaskId})` owns all of it; the consumer
+supplies the controlled task: the **modal** passes the atom
+(`clickupDetailTaskIdAtom`), the **tab** passes local state (so its drill-in
+history is independent of the modal). `ClickUpTaskBody({c, layout})` renders the
+same `data-nav-key` cursor elements in DOM order (properties lead so the cursor
+starts at status/due) — two columns for `layout="modal"`, one column for
+`layout="tab"`. Canonical: `ClickUpTaskView.tsx` (controller + body + shared
+header pieces) + `ClickUpTaskTab.tsx` + `ClickUpTaskDetail.tsx`.
+
+Contract:
+
+- **Surface-specific stays with each consumer.** The modal keeps FloatingPanel
+  geometry, the close-focus restore, and its verb / `Ctrl+←/→` window listeners.
+  The tab scopes its own verb + history listeners to its **wrapper subtree**
+  (`wrapperRef.current.contains(target)`) so multiple open task tabs don't all
+  fire.
+- **The focusable container must persist across loading → loaded** (don't early-
+  return a different element) or the index cursor loses its single focus. Render
+  the placeholder *inside* the always-mounted container.
+- **Convert-to-tab** is the `T` verb / a toolbar button. From the floating detail
+  it closes the modal — and sets a `suppressCloseFocusRef` so the close-focus
+  restore does NOT yank focus back to the panel; the new tab keeps it. From a
+  panel row it just opens (nothing to close).
+- **Dual-zone gotcha:** both the panel root *and* the floating detail carry
+  `data-focus-zone="clickup"`, so "did this fire from the modal?" is
+  `inClickupZone && !inPanelZone` (the floating detail mounts outside the right
+  panel's `panel` zone). Don't key it on `inClickupZone` alone.
+- The tab type is a **non-singleton document tab** (`clickup-task`, id
+  `clickup-task:<taskId>`): multiple tasks coexist, reopening one reactivates it,
+  in-memory like every tab (survives session-switch, not restart).
+- **SWR detail cache** (module-level `Map` in the controller): revisiting a task
+  renders the cached detail **immediately** (no loader, no reload flash) then
+  revalidates silently; a loader only shows on a true cold load. A
+  `detail → cache` effect keeps it fresh so optimistic writes persist across
+  revisits.
+
+## 14. Loading indicators: ProgressBar (regions) vs PulseDots (inline)
+
+Two indeterminate indicators; **never a raw lucide `Loader2` spinner**.
+
+- **Region / panel / list loaders** → `<ProgressBar>` (a slim indeterminate
+  sliver) with the descriptive text, centered: `flex flex-col items-center
+  justify-center gap-2 px-6` with the bar `className="max-w-32"`. Canonical:
+  `ProgressBar.tsx`.
+- **Inline action-in-progress** (a button mid-action, an icon slot, a status
+  marker) → `<PulseDots>` (dots pulsing in a wave; `bg-current` so they inherit
+  the surrounding text tone). Label form: `Posting <PulseDots/>`; icon-slot /
+  status form: `<PulseDots count={1} dotClassName="size-…"/>`. Canonical:
+  `PulseDots.tsx` + the `cluihud-dot-pulse` keyframes in `globals.css`.
+
+Rule of thumb: if it fills a region while content loads → ProgressBar; if it
+sits inline next to (or replaces) a glyph while an action runs → PulseDots.
 
 ---
 

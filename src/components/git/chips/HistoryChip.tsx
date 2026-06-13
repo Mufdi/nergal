@@ -4,6 +4,7 @@ import { useAtomValue, useSetAtom } from "jotai";
 import { openZenModeAtom, zenModeAtom, zenActiveZoneAtom, prZenAtom } from "@/stores/zenMode";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
 import { Kbd } from "@/components/ui/kbd";
+import { ProgressBar } from "@/components/ui/ProgressBar";
 
 interface CommitEntry {
   hash: string;
@@ -100,7 +101,8 @@ export function HistoryChip({ sessionId, inZen = false }: HistoryChipProps) {
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center">
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-6">
+        <ProgressBar className="max-w-32" />
         <span className="text-[10px] text-muted-foreground">Loading history...</span>
       </div>
     );
@@ -162,8 +164,9 @@ export function HistoryChip({ sessionId, inZen = false }: HistoryChipProps) {
                 </div>
               )}
               {isExpanded && files.length === 0 && (
-                <div className="ml-6 mb-1 px-2 py-0.5">
+                <div className="ml-6 mb-1 flex flex-col gap-1 px-2 py-0.5">
                   <span className="text-[10px] text-muted-foreground/50">Loading files...</span>
+                  <ProgressBar className="max-w-24" />
                 </div>
               )}
             </div>

@@ -37,7 +37,7 @@ import { rust } from "@codemirror/lang-rust";
 import { searchKeymap } from "@codemirror/search";
 import { indentWithTab } from "@codemirror/commands";
 import { invoke } from "@/lib/tauri";
-import { Loader2 } from "lucide-react";
+import { ProgressBar } from "@/components/ui/ProgressBar";
 
 function getLanguageExtension(filePath: string) {
   const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
@@ -211,8 +211,8 @@ export function CodeEditor({ filePath, sessionId, readOnly = false, gotoLine = n
   return (
     <div className="relative h-full w-full overflow-hidden">
       {loading && (
-        <div className="absolute inset-0 flex items-center justify-center bg-card">
-          <Loader2 className="size-4 animate-spin text-muted-foreground" />
+        <div className="absolute inset-0 flex items-center justify-center bg-card px-6">
+          <ProgressBar className="max-w-32" />
         </div>
       )}
       {saved && (

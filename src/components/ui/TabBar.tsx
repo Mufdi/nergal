@@ -41,6 +41,7 @@ const TAB_ICONS: Record<TabType, ComponentType<{ size?: number | string; classNa
   browser: Globe,
   obsidiannote: ObsidianIcon,
   clickup: ClickUpIcon,
+  "clickup-task": ClickUpIcon,
 };
 
 export function TabBar() {

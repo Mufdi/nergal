@@ -18,7 +18,7 @@ import {
   GitFork,
   Link2,
   ListChecks,
-  Loader2,
+  PanelRight,
   Paperclip,
   Pin,
   PinOff,
@@ -35,6 +35,7 @@ import { Select } from "@/components/ui/select";
 import { StatusIcon } from "@/components/clickup/StatusIcon";
 import { PriorityIcon } from "@/components/clickup/PriorityIcon";
 import { ProgressBar } from "@/components/ui/ProgressBar";
+import { PulseDots } from "@/components/ui/PulseDots";
 import {
   Tooltip,
   TooltipContent,
@@ -62,6 +63,7 @@ import {
   clickupSyncStatusAtom,
   clickupTasksAtom,
   copyTaskIdAction,
+  openClickUpTaskTabAction,
   requestBindTaskAction,
   requestSendTaskAction,
   spawnWorktreeWithTaskAction,
@@ -198,6 +200,7 @@ export function ClickUpPanel() {
   const reinject = useSetAtom(reinjectTaskAction);
   const setClosureOffer = useSetAtom(clickupClosureOfferAtom);
   const copyTaskId = useSetAtom(copyTaskIdAction);
+  const openTaskTab = useSetAtom(openClickUpTaskTabAction);
   const activeSessionId = useAtomValue(activeSessionIdAtom);
 
   const actions: ClickUpTaskActions = useMemo(
@@ -214,9 +217,10 @@ export function ClickUpPanel() {
         const url = [...tasks, ...closedTasks].find((t) => t.id === id)?.url;
         if (url && /^https?:\/\//i.test(url)) void openShell(url);
       },
+      openTab: (id) => openTaskTab(id),
       copyId: (displayId) => copyTaskId(displayId),
     }),
-    [requestSend, spawnWorktree, togglePin, requestBind, reinject, setClosureOffer, copyTaskId, activeSessionId, tasks, closedTasks],
+    [requestSend, spawnWorktree, togglePin, requestBind, reinject, setClosureOffer, copyTaskId, openTaskTab, activeSessionId, tasks, closedTasks],
   );
 
   // Derived chip state: the "mine" preset IS assigned-to-me + status, so a
@@ -758,7 +762,7 @@ export function ClickUpPanel() {
               />
             }
           >
-            {closedLoading ? <Loader2 size={13} className="animate-spin" /> : <CircleCheck size={13} />}
+            {closedLoading ? <PulseDots count={1} dotClassName="size-1.5" /> : <CircleCheck size={13} />}
           </TooltipTrigger>
           <TooltipContent side="bottom">Show closed tasks (H)</TooltipContent>
         </Tooltip>
@@ -1155,6 +1159,9 @@ function TaskRow({
       )}
 
       <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex group-data-[nav-selected=true]:flex">
+        <RowAction label={ACTION_LABELS.openAsTab} onClick={() => actions.openTab(task.id)}>
+          <PanelRight size={10} />
+        </RowAction>
         <RowAction label={ACTION_LABELS.send} onClick={() => actions.send(task.id)}>
           <Send size={10} />
         </RowAction>

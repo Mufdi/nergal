@@ -492,6 +492,7 @@ pub fn run() {
             updater::download_app_update,
             updater::find_downloaded_update,
             updater::reveal_in_downloads,
+            updater::open_log_file,
         ])
         .setup(move |app| {
             if let Some(window) = app.get_webview_window("main") {

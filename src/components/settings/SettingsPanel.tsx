@@ -1888,6 +1888,26 @@ function AboutSection({ appVersion }: { appVersion: string }) {
         />
       </div>
 
+      <div className="grid gap-2">
+        <Label>Diagnostics</Label>
+        <button
+          type="button"
+          onClick={async () => {
+            try {
+              await invoke("open_log_file");
+            } catch (e) {
+              pushToast({ message: "No log file", description: String(e), type: "info" });
+            }
+          }}
+          className="inline-flex w-fit items-center gap-1.5 rounded-md border border-border/40 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
+        >
+          <NotebookText size={12} /> Open log file
+        </button>
+        <p className="text-[10px] text-muted-foreground/60">
+          Only written when Nergal is launched from the app launcher (not a terminal/dev run).
+        </p>
+      </div>
+
       <div className="grid gap-1 text-xs text-muted-foreground">
         <button
           type="button"

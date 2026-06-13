@@ -345,6 +345,29 @@ async fn show_items_via_dbus(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Open the app log in the user's default text editor for diagnostics. The log
+/// only exists when launched under journald redirect (the GNOME launcher path —
+/// see `redirect_journald_stdio_to_logfile`); a terminal/dev run logs to stderr,
+/// so report a clear error instead of opening a non-existent file.
+#[tauri::command]
+pub fn open_log_file() -> Result<(), String> {
+    let log_path = dirs::cache_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("cluihud")
+        .join("cluihud.log");
+    if !log_path.is_file() {
+        return Err(format!(
+            "no log file at {} (only written when launched from the app launcher)",
+            log_path.display()
+        ));
+    }
+    std::process::Command::new("xdg-open")
+        .arg(&log_path)
+        .spawn()
+        .map_err(|e| format!("xdg-open: {e}"))?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn reveal_in_downloads(path: String) -> Result<(), String> {
     let p = PathBuf::from(&path);

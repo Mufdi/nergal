@@ -7,6 +7,7 @@ import { setupHookListeners } from "./stores/hooks";
 import { setupObsidianListeners } from "./stores/obsidian";
 import { setupClickUpListeners } from "./stores/clickup";
 import { configAtom } from "./stores/config";
+import { toastsAtom } from "./stores/toast";
 import { invoke, listen } from "./lib/tauri";
 import { dispatchDeepLink } from "./lib/deepLinkRouter";
 import { applyTheme, extractPaletteFromComputedStyle } from "./lib/themes";
@@ -16,6 +17,10 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 // Trailing-edge debounce so rapid theme clicks collapse to a single backend
 // invocation. 150ms balances perceived responsiveness against thrashing pi's
 // hot-reloader / opencode's HTTP API when the user clicks through swatches.
+// Fire the launch update-check once per process — StrictMode double-mounts
+// effects in dev, and we don't want two GitHub round-trips / two toasts.
+let updateCheckDone = false;
+
 let themeSyncTimer: number | null = null;
 function debouncedSyncPaletteToAgents(palette: ThemePalette): void {
   if (themeSyncTimer !== null) window.clearTimeout(themeSyncTimer);
@@ -61,6 +66,7 @@ class ErrorBoundary extends Component<
 export function App() {
   const store = useStore();
   const setConfig = useSetAtom(configAtom);
+  const setToasts = useSetAtom(toastsAtom);
   const config = useAtomValue(configAtom);
   const themeMode = config.theme_mode;
   const customThemes = config.custom_themes;
@@ -74,6 +80,24 @@ export function App() {
       .then((cfg) => setConfig(cfg))
       .catch(() => {});
   }, [setConfig]);
+
+  // Surface a published release as a toast on launch so users on an older
+  // build discover it without opening Settings. Reuses the updater check;
+  // silent on failure (offline / GitHub rate-limit) — it's best-effort.
+  useEffect(() => {
+    if (updateCheckDone) return;
+    updateCheckDone = true;
+    invoke<{ hasUpdate: boolean; latestVersion: string }>("check_app_update")
+      .then((r) => {
+        if (!r.hasUpdate) return;
+        setToasts({
+          message: "Update available",
+          description: `Nergal v${r.latestVersion} is out — update from Settings › About.`,
+          type: "info",
+        });
+      })
+      .catch(() => {});
+  }, [setToasts]);
 
   useEffect(() => {
     applyTheme(themeMode, customThemes);

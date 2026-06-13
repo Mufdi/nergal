@@ -771,20 +771,25 @@ export function ClickUpPanel() {
       {/* View chip strip: "My tasks" preset first, then plain group-by modes */}
       <div className="flex shrink-0 items-center gap-1 border-b border-border/50 px-2 py-1.5">
         {VIEW_ORDER.map((view) => (
-          <button
-            key={view}
-            type="button"
-            onClick={() => selectView(view)}
-            aria-pressed={activeView === view}
-            title={`${VIEW_LABEL[view]} (Shift+←/→)`}
-            className={`flex shrink-0 items-center rounded-full px-2.5 py-0.5 text-[11px] whitespace-nowrap transition-colors ${
-              activeView === view
-                ? "bg-secondary text-foreground"
-                : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground/80"
-            }`}
-          >
-            {VIEW_LABEL[view]}
-          </button>
+          <Tooltip key={view}>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  onClick={() => selectView(view)}
+                  aria-pressed={activeView === view}
+                  className={`flex shrink-0 items-center rounded-full px-2.5 py-0.5 text-[11px] whitespace-nowrap transition-colors ${
+                    activeView === view
+                      ? "bg-secondary text-foreground"
+                      : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground/80"
+                  }`}
+                />
+              }
+            >
+              {VIEW_LABEL[view]}
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">{`${VIEW_LABEL[view]} (Shift+←/→)`}</TooltipContent>
+          </Tooltip>
         ))}
       </div>
 
@@ -1070,18 +1075,25 @@ function TaskRow({
         title={task.status_name ?? undefined}
       />
       {(task.custom_id ?? task.id) && (
-        <span
-          role="button"
-          tabIndex={-1}
-          title="Copy task ID"
-          onClick={(e) => {
-            e.stopPropagation();
-            actions.copyId(task.custom_id ?? task.id);
-          }}
-          className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/60 transition-colors hover:text-foreground"
-        >
-          {task.custom_id ?? task.id}
-        </span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                role="button"
+                tabIndex={-1}
+                aria-label="Copy task ID"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  actions.copyId(task.custom_id ?? task.id);
+                }}
+                className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/60 transition-colors hover:text-foreground"
+              />
+            }
+          >
+            {task.custom_id ?? task.id}
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-[10px]">Copy task ID</TooltipContent>
+        </Tooltip>
       )}
       <span
         className={`min-w-0 flex-1 truncate text-[11px] ${

@@ -16,6 +16,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Switch } from "@/components/ui/switch";
 import { Select } from "@/components/ui/select";
 import { CheckCircle2, AlertTriangle, XCircle, Info, FolderTree, Bot, Pencil, Palette, Terminal, NotebookText, RefreshCw, Check, ArrowLeft, Trash2, Sliders, Download, ExternalLink, FolderOpen } from "lucide-react";
@@ -1121,17 +1122,23 @@ function ThemePreviewCard({
             </>
           ) : (
             onCustomize && (
-              <span
-                role="button"
-                tabIndex={0}
-                aria-label="Customize theme"
-                onClick={(e) => { e.stopPropagation(); onCustomize(); }}
-                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); e.preventDefault(); onCustomize(); } }}
-                className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground"
-                title="Customize"
-              >
-                <Sliders size={11} />
-              </span>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      aria-label="Customize theme"
+                      onClick={(e) => { e.stopPropagation(); onCustomize(); }}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); e.preventDefault(); onCustomize(); } }}
+                      className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground"
+                    />
+                  }
+                >
+                  <Sliders size={11} />
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-[10px]">Customize</TooltipContent>
+              </Tooltip>
             )
           )}
         </div>
@@ -1247,10 +1254,13 @@ function ThemeEditor({
   return (
     <div className="space-y-4" data-theme-editor ref={editorRef}>
       <div className="flex items-center gap-2">
-        <Button variant="ghost" size="sm" onClick={onClose} title="Back (Esc)">
-          <ArrowLeft size={14} />
-          Back
-        </Button>
+        <Tooltip>
+          <TooltipTrigger render={<Button variant="ghost" size="sm" onClick={onClose} />}>
+            <ArrowLeft size={14} />
+            Back
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-[10px]">Back (Esc)</TooltipContent>
+        </Tooltip>
         <Input
           value={custom.label}
           onChange={(e) => patch({ label: e.target.value })}
@@ -2023,16 +2033,22 @@ function renderUpdateButton({
       );
     case "up_to_date":
       return (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onCheck}
-          className="w-fit text-emerald-500"
-          title="Click to check again"
-        >
-          <CheckCircle2 size={12} />
-          Up to date (v{state.latest})
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onCheck}
+                className="w-fit text-emerald-500"
+              />
+            }
+          >
+            <CheckCircle2 size={12} />
+            Up to date (v{state.latest})
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-[10px]">Click to check again</TooltipContent>
+        </Tooltip>
       );
     case "available": {
       const { result } = state;

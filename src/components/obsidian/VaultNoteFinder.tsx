@@ -8,6 +8,7 @@ import {
   unpinNoteAtom,
 } from "@/stores/pinnedNotes";
 import { openTabAction } from "@/stores/rightPanel";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { type SearchHit } from "@/stores/search";
 import {
   obsidianConfigAtom,
@@ -247,20 +248,26 @@ export function VaultNoteFinder({ onClose, className }: { onClose: () => void; c
                   {hit.title ?? noteName(hit.path)}
                 </span>
               </button>
-              <button
-                type="button"
-                onClick={() =>
-                  sessionId &&
-                  (isPinned
-                    ? unpinNote({ sessionId, path: hit.path })
-                    : void pinToSession(hit))
-                }
-                disabled={!sessionId}
-                title={isPinned ? "Unpin from session" : "Pin to session (Shift+Enter)"}
-                className="rounded p-1 text-muted-foreground opacity-0 transition hover:bg-background/80 hover:text-foreground group-hover:opacity-100 disabled:opacity-30"
-              >
-                {isPinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
-              </button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      onClick={() =>
+                        sessionId &&
+                        (isPinned
+                          ? unpinNote({ sessionId, path: hit.path })
+                          : void pinToSession(hit))
+                      }
+                      disabled={!sessionId}
+                      className="rounded p-1 text-muted-foreground opacity-0 transition hover:bg-background/80 hover:text-foreground group-hover:opacity-100 disabled:opacity-30"
+                    />
+                  }
+                >
+                  {isPinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-[10px]">{isPinned ? "Unpin from session" : "Pin to session (Shift+Enter)"}</TooltipContent>
+              </Tooltip>
             </div>
           );
         })}

@@ -30,6 +30,7 @@ import * as terminalService from "@/components/terminal/terminalService";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { ProgressBar } from "@/components/ui/ProgressBar";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import {
   AlertTriangle,
   Check,
@@ -950,22 +951,34 @@ function ConflictView({
         <span className="text-[10px] font-medium uppercase tracking-wider text-yellow-400">Conflict</span>
         {onNavFile && (
           <span className="flex shrink-0 items-center">
-            <button
-              onClick={() => onNavFile("prev")}
-              className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-              aria-label="Previous file"
-              title="Previous file (Ctrl+←)"
-            >
-              <ChevronLeftIcon size={11} />
-            </button>
-            <button
-              onClick={() => onNavFile("next")}
-              className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-              aria-label="Next file"
-              title="Next file (Ctrl+→)"
-            >
-              <ChevronRightIcon size={11} />
-            </button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    onClick={() => onNavFile("prev")}
+                    className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                    aria-label="Previous file"
+                  />
+                }
+              >
+                <ChevronLeftIcon size={11} />
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-[10px]">Previous file (Ctrl+←)</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    onClick={() => onNavFile("next")}
+                    className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                    aria-label="Next file"
+                  />
+                }
+              >
+                <ChevronRightIcon size={11} />
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-[10px]">Next file (Ctrl+→)</TooltipContent>
+            </Tooltip>
           </span>
         )}
         <span className="truncate font-mono text-[11px] text-foreground/85" title={path}>{path}</span>
@@ -977,22 +990,35 @@ function ConflictView({
         <span className="ml-auto flex items-center gap-2">
           <span className="text-[10px] text-muted-foreground">{regions.length} region{regions.length !== 1 ? "s" : ""}</span>
           {isDirty && <span className="text-[10px] text-amber-400">modified</span>}
-          <button
-            onClick={() => setSyncScroll((s) => !s)}
-            className={`flex size-5 items-center justify-center rounded transition-colors ${
-              syncScroll
-                ? "text-orange-400 hover:bg-secondary"
-                : "text-muted-foreground/60 hover:bg-secondary hover:text-foreground"
-            }`}
-            title={syncScroll ? "Scroll sync ON — click or press S to scroll panes independently" : "Scroll sync OFF — click or press S to re-sync the 3 panes"}
-            aria-label={syncScroll ? "Disable scroll sync" : "Enable scroll sync"}
-          >
-            {syncScroll ? <Link2 size={11} /> : <Unlink2 size={11} />}
-          </button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  onClick={() => setSyncScroll((s) => !s)}
+                  className={`flex size-5 items-center justify-center rounded transition-colors ${
+                    syncScroll
+                      ? "text-orange-400 hover:bg-secondary"
+                      : "text-muted-foreground/60 hover:bg-secondary hover:text-foreground"
+                  }`}
+                  aria-label={syncScroll ? "Disable scroll sync" : "Enable scroll sync"}
+                />
+              }
+            >
+              {syncScroll ? <Link2 size={11} /> : <Unlink2 size={11} />}
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">{syncScroll ? "Scroll sync ON — click or press S to scroll panes independently" : "Scroll sync OFF — click or press S to re-sync the 3 panes"}</TooltipContent>
+          </Tooltip>
           {onToggleZen && (
-            <button onClick={onToggleZen} className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors" title={inZen ? "Collapse (Ctrl+Shift+0)" : "Expand (Ctrl+Shift+0)"}>
-              {inZen ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
-            </button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button onClick={onToggleZen} className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors" />
+                }
+              >
+                {inZen ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-[10px]">{inZen ? "Collapse (Ctrl+Shift+0)" : "Expand (Ctrl+Shift+0)"}</TooltipContent>
+            </Tooltip>
           )}
         </span>
       </div>
@@ -1014,12 +1040,27 @@ function ConflictView({
                   <span className="text-rose-400">+{regions[focusedRegion].theirsLines.length}</span>
                 </span>
               )}
-              <button onClick={() => applyRegion(focusedRegion, "ours")} className="ml-2 flex h-5 items-center gap-1 rounded bg-blue-500/15 px-2 text-[10px] text-blue-300 hover:bg-blue-500/25 transition-colors" title="Accept ours for this region (O)">Ours <Kbd keys="o" /></button>
-              <button onClick={() => applyRegion(focusedRegion, "theirs")} className="flex h-5 items-center gap-1 rounded bg-rose-500/15 px-2 text-[10px] text-rose-300 hover:bg-rose-500/25 transition-colors" title="Accept theirs for this region (T)">Theirs <Kbd keys="t" /></button>
-              <button onClick={() => applyRegion(focusedRegion, "both")} className="flex h-5 items-center gap-1 rounded bg-green-500/15 px-2 text-[10px] text-green-300 hover:bg-green-500/25 transition-colors" title="Keep both versions stacked (ours then theirs). Useful when both sides added independent additions; you'll usually need to hand-edit afterward (B)">Both <Kbd keys="b" /></button>
+              <Tooltip>
+                <TooltipTrigger render={<button onClick={() => applyRegion(focusedRegion, "ours")} className="ml-2 flex h-5 items-center gap-1 rounded bg-blue-500/15 px-2 text-[10px] text-blue-300 hover:bg-blue-500/25 transition-colors" />}>Ours <Kbd keys="o" /></TooltipTrigger>
+                <TooltipContent side="bottom" className="text-[10px]">Accept ours for this region (O)</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger render={<button onClick={() => applyRegion(focusedRegion, "theirs")} className="flex h-5 items-center gap-1 rounded bg-rose-500/15 px-2 text-[10px] text-rose-300 hover:bg-rose-500/25 transition-colors" />}>Theirs <Kbd keys="t" /></TooltipTrigger>
+                <TooltipContent side="bottom" className="text-[10px]">Accept theirs for this region (T)</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger render={<button onClick={() => applyRegion(focusedRegion, "both")} className="flex h-5 items-center gap-1 rounded bg-green-500/15 px-2 text-[10px] text-green-300 hover:bg-green-500/25 transition-colors" />}>Both <Kbd keys="b" /></TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-xs text-[10px]">Keep both versions stacked (ours then theirs). Useful when both sides added independent additions; you'll usually need to hand-edit afterward (B)</TooltipContent>
+              </Tooltip>
               <span className="mx-1 h-3 w-px bg-border/50" />
-              <button onClick={() => acceptAll("ours")} className="flex h-5 items-center whitespace-nowrap rounded border border-blue-500/40 bg-blue-500/5 px-2 text-[10px] text-blue-300 hover:bg-blue-500/20 transition-colors" title="Accept ours for ALL regions in this file (Ctrl+Shift+O)">All Ours</button>
-              <button onClick={() => acceptAll("theirs")} className="flex h-5 items-center whitespace-nowrap rounded border border-rose-500/40 bg-rose-500/5 px-2 text-[10px] text-rose-300 hover:bg-rose-500/20 transition-colors" title="Accept theirs for ALL regions in this file (Ctrl+Shift+T)">All Theirs</button>
+              <Tooltip>
+                <TooltipTrigger render={<button onClick={() => acceptAll("ours")} className="flex h-5 items-center whitespace-nowrap rounded border border-blue-500/40 bg-blue-500/5 px-2 text-[10px] text-blue-300 hover:bg-blue-500/20 transition-colors" />}>All Ours</TooltipTrigger>
+                <TooltipContent side="bottom" className="text-[10px]">Accept ours for ALL regions in this file (Ctrl+Shift+O)</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger render={<button onClick={() => acceptAll("theirs")} className="flex h-5 items-center whitespace-nowrap rounded border border-rose-500/40 bg-rose-500/5 px-2 text-[10px] text-rose-300 hover:bg-rose-500/20 transition-colors" />}>All Theirs</TooltipTrigger>
+                <TooltipContent side="bottom" className="text-[10px]">Accept theirs for ALL regions in this file (Ctrl+Shift+T)</TooltipContent>
+              </Tooltip>
             </>
           ) : (
             <span className="text-[10px] text-green-400">No markers remain — ready to save.</span>
@@ -1030,9 +1071,12 @@ function ConflictView({
                 <RotateCcw size={10} /> Reset <Kbd keys="ctrl+shift+z" />
               </Button>
             )}
-            <Button size="sm" onClick={saveResolution} className="h-6 gap-1 px-2 text-[10px]" title="Save resolution and stage the file (Ctrl+Shift+Enter)">
-              <Save size={10} /> Save
-            </Button>
+            <Tooltip>
+              <TooltipTrigger render={<Button size="sm" onClick={saveResolution} className="h-6 gap-1 px-2 text-[10px]" />}>
+                <Save size={10} /> Save
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-[10px]">Save resolution and stage the file (Ctrl+Shift+Enter)</TooltipContent>
+            </Tooltip>
           </div>
         </div>
         {regions.length > 0 && (
@@ -1075,9 +1119,18 @@ function ConflictView({
                   {(region.oursLines[0] ?? region.theirsLines[0] ?? "").trim() || "(empty line)"}
                 </span>
                 <span className="ml-auto flex shrink-0 items-center gap-0.5">
-                  <button onClick={(e) => { e.stopPropagation(); applyRegion(i, "ours"); }} className="rounded bg-blue-500/10 px-1.5 py-0.5 text-[9px] text-blue-300 hover:bg-blue-500/25 transition-colors" title="Accept ours for this region (O)">O</button>
-                  <button onClick={(e) => { e.stopPropagation(); applyRegion(i, "theirs"); }} className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[9px] text-rose-300 hover:bg-rose-500/25 transition-colors" title="Accept theirs for this region (T)">T</button>
-                  <button onClick={(e) => { e.stopPropagation(); applyRegion(i, "both"); }} className="rounded bg-green-500/10 px-1.5 py-0.5 text-[9px] text-green-300 hover:bg-green-500/25 transition-colors" title="Keep both stacked (B)">B</button>
+                  <Tooltip>
+                    <TooltipTrigger render={<button onClick={(e) => { e.stopPropagation(); applyRegion(i, "ours"); }} className="rounded bg-blue-500/10 px-1.5 py-0.5 text-[9px] text-blue-300 hover:bg-blue-500/25 transition-colors" />}>O</TooltipTrigger>
+                    <TooltipContent side="bottom" className="text-[10px]">Accept ours for this region (O)</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger render={<button onClick={(e) => { e.stopPropagation(); applyRegion(i, "theirs"); }} className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[9px] text-rose-300 hover:bg-rose-500/25 transition-colors" />}>T</TooltipTrigger>
+                    <TooltipContent side="bottom" className="text-[10px]">Accept theirs for this region (T)</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger render={<button onClick={(e) => { e.stopPropagation(); applyRegion(i, "both"); }} className="rounded bg-green-500/10 px-1.5 py-0.5 text-[9px] text-green-300 hover:bg-green-500/25 transition-colors" />}>B</TooltipTrigger>
+                    <TooltipContent side="bottom" className="text-[10px]">Keep both stacked (B)</TooltipContent>
+                  </Tooltip>
                 </span>
               </div>
             );

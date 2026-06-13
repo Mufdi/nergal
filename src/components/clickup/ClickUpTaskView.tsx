@@ -841,20 +841,27 @@ export function ClickUpTaskBody({ c, layout }: { c: TaskController; layout: "mod
   }
 
   const taskIdEl = task && (task.custom_id ?? task.id) ? (
-    <button
-      type="button"
-      data-nav-key="taskid"
-      data-nav-selected={navKey === "taskid" || undefined}
-      title="Copy task ID"
-      onClick={(e) => {
-        e.stopPropagation();
-        c.copyTaskId(task.custom_id ?? task.id);
-      }}
-      className="flex items-center gap-1 self-start rounded px-1 font-mono text-[10px] tabular-nums text-muted-foreground outline-none transition-colors hover:text-foreground"
-    >
-      {task.custom_id ?? task.id}
-      <Copy size={9} className="shrink-0" />
-    </button>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            data-nav-key="taskid"
+            data-nav-selected={navKey === "taskid" || undefined}
+            aria-label="Copy task ID"
+            onClick={(e) => {
+              e.stopPropagation();
+              c.copyTaskId(task.custom_id ?? task.id);
+            }}
+            className="flex items-center gap-1 self-start rounded px-1 font-mono text-[10px] tabular-nums text-muted-foreground outline-none transition-colors hover:text-foreground"
+          />
+        }
+      >
+        {task.custom_id ?? task.id}
+        <Copy size={9} className="shrink-0" />
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="text-[10px]">Copy task ID</TooltipContent>
+    </Tooltip>
   ) : null;
 
   const statusEl = c.displayStatusName ? (
@@ -893,14 +900,21 @@ export function ClickUpTaskBody({ c, layout }: { c: TaskController; layout: "mod
       </span>
       <span className="min-w-0 flex-1 truncate">{a.username ?? "Unknown"}</span>
       {a.id !== null && (
-        <button
-          type="button"
-          title={`Remove ${a.username ?? "assignee"}`}
-          onClick={() => void c.handleRemoveAssignee(a.id!)}
-          className="hidden size-3 shrink-0 items-center justify-center rounded-full bg-secondary/80 text-muted-foreground group-hover:flex hover:text-red-400"
-        >
-          <UserMinus size={8} />
-        </button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-label={`Remove ${a.username ?? "assignee"}`}
+                onClick={() => void c.handleRemoveAssignee(a.id!)}
+                className="hidden size-3 shrink-0 items-center justify-center rounded-full bg-secondary/80 text-muted-foreground group-hover:flex hover:text-red-400"
+              />
+            }
+          >
+            <UserMinus size={8} />
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-[10px]">{`Remove ${a.username ?? "assignee"}`}</TooltipContent>
+        </Tooltip>
       )}
     </div>
   ));
@@ -976,20 +990,27 @@ export function ClickUpTaskBody({ c, layout }: { c: TaskController; layout: "mod
       <div className="flex items-center gap-2">
         <SectionCaps label="Description" />
         {!c.editingDesc && (
-          <button
-            type="button"
-            title="Edit description"
-            data-nav-key="desc"
-            data-nav-selected={navKey === "desc" || undefined}
-            onClick={(e) => {
-              e.stopPropagation();
-              c.setDescDraft(detail.description ?? "");
-              c.setEditingDesc(true);
-            }}
-            className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground outline-none hover:bg-secondary/60 hover:text-foreground transition-colors"
-          >
-            <Pencil size={11} />
-          </button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label="Edit description"
+                  data-nav-key="desc"
+                  data-nav-selected={navKey === "desc" || undefined}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    c.setDescDraft(detail.description ?? "");
+                    c.setEditingDesc(true);
+                  }}
+                  className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground outline-none hover:bg-secondary/60 hover:text-foreground transition-colors"
+                />
+              }
+            >
+              <Pencil size={11} />
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">Edit description</TooltipContent>
+          </Tooltip>
         )}
       </div>
       {c.editingDesc ? (

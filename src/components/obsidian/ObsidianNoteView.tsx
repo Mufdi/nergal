@@ -3,6 +3,7 @@ import { useAtomValue, useSetAtom } from "jotai";
 import { ExternalLink, Pin, PinOff } from "lucide-react";
 import { activeWorkspaceAtom, activeSessionIdAtom } from "@/stores/workspace";
 import { ProgressBar } from "@/components/ui/ProgressBar";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { activeSessionPinnedNotesAtom, pinNoteAtom, unpinNoteAtom } from "@/stores/pinnedNotes";
 import { setTabPathAction } from "@/stores/rightPanel";
 import { focusZoneAtom } from "@/stores/shortcuts";
@@ -104,31 +105,43 @@ export function ObsidianNoteView({ tabId, path }: { tabId: string; path: string 
         <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground/80">
           {noteName(path)}
         </span>
-        <button
-          type="button"
-          onClick={() =>
-            sessionId &&
-            (isPinned ? unpinNote({ sessionId, path }) : pinNote({ sessionId, path }))
-          }
-          disabled={!sessionId}
-          title={isPinned ? "Unpin from session (P)" : "Pin to session (P)"}
-          className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50"
-        >
-          {isPinned ? <PinOff size={13} /> : <Pin size={13} />}
-        </button>
-        <button
-          type="button"
-          onClick={() =>
-            workspace &&
-            openInObsidian(workspace.id, path).catch((err) =>
-              setToasts({ message: "Open in Obsidian failed", description: String(err), type: "error" }),
-            )
-          }
-          title="Open in Obsidian"
-          className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground"
-        >
-          <ExternalLink size={13} />
-        </button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                onClick={() =>
+                  sessionId &&
+                  (isPinned ? unpinNote({ sessionId, path }) : pinNote({ sessionId, path }))
+                }
+                disabled={!sessionId}
+                className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50"
+              />
+            }
+          >
+            {isPinned ? <PinOff size={13} /> : <Pin size={13} />}
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-[10px]">{isPinned ? "Unpin from session (P)" : "Pin to session (P)"}</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                onClick={() =>
+                  workspace &&
+                  openInObsidian(workspace.id, path).catch((err) =>
+                    setToasts({ message: "Open in Obsidian failed", description: String(err), type: "error" }),
+                  )
+                }
+                className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground"
+              />
+            }
+          >
+            <ExternalLink size={13} />
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-[10px]">Open in Obsidian</TooltipContent>
+        </Tooltip>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {loading ? (

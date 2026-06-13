@@ -20,7 +20,10 @@ applyCachedTheme();
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <Provider store={appStore}>
-      <TooltipProvider>
+      {/* delay={0} app-wide: action tooltips are instant everywhere (the TopBar
+          convention). Local `TooltipProvider delay={0}` wrappers become
+          redundant but harmless. */}
+      <TooltipProvider delay={0}>
         <App />
       </TooltipProvider>
     </Provider>

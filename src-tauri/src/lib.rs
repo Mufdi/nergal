@@ -252,7 +252,13 @@ pub fn run() {
             // App closing with sessions still open → snapshot them before exit.
             // Detached + non-blocking so the window closes immediately.
             if let tauri::WindowEvent::CloseRequested { .. } = event {
-                queue_close_markers(window.app_handle());
+                // Stop shell-started processes before exit so they don't leak
+                // (BUG-06). Quick (just signals); window still closes at once.
+                let app = window.app_handle();
+                if let Some(pty) = app.try_state::<crate::pty::PtyManager>() {
+                    pty.shutdown_all();
+                }
+                queue_close_markers(app);
             }
         })
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -307,6 +313,8 @@ pub fn run() {
             commands::validate_path,
             // Task commands
             commands::get_tasks,
+            commands::clear_completed_tasks,
+            commands::delete_task,
             // Plan commands
             commands::get_plan,
             commands::save_plan,
@@ -497,6 +505,25 @@ pub fn run() {
                 match window.set_icon(icon) {
                     Ok(()) => tracing::info!("window.set_icon OK"),
                     Err(e) => tracing::error!("window.set_icon failed: {e}"),
+                }
+
+                // BUG-01: a WebKitWebProcess crash (e.g. SIGILL from external
+                // browser-panel content) turns every shared webview — including
+                // the main UI — gray, and the Rust side never hears about it.
+                // Connect `web-process-terminated` so we at least log it and
+                // reload the webview to recover instead of staying a gray zombie.
+                #[cfg(target_os = "linux")]
+                {
+                    use webkit2gtk::WebViewExt;
+                    let _ = window.with_webview(|pw| {
+                        let wv = pw.inner();
+                        wv.connect_web_process_terminated(|wv, reason| {
+                            tracing::error!(
+                                "webkit web process terminated ({reason:?}); reloading to recover (BUG-01)"
+                            );
+                            wv.reload();
+                        });
+                    });
                 }
             } else {
                 tracing::warn!("main window not found at setup");

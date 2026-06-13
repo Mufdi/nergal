@@ -23,6 +23,7 @@ import {
   browserSetModeAction,
   localhostPortsAtom,
 } from "@/stores/browser";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
 interface Props {
   sessionId: string;
@@ -261,15 +262,21 @@ function ToolbarButton({
   title: string;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      aria-label={title}
-      className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition hover:bg-secondary/60 hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
-    >
-      {children}
-    </button>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            onClick={onClick}
+            disabled={disabled}
+            aria-label={title}
+            className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition hover:bg-secondary/60 hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="text-[10px]">{title}</TooltipContent>
+    </Tooltip>
   );
 }

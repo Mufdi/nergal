@@ -13,6 +13,7 @@ import {
   Tooltip,
   TooltipTrigger,
   TooltipContent,
+  TooltipProvider,
 } from "@/components/ui/tooltip";
 
 interface PlanPanelProps {
@@ -171,6 +172,7 @@ export function PlanPanel({ path }: PlanPanelProps) {
     <div className="flex h-full flex-col">
       {/* Header: annotation toggle + review actions */}
       <div className="flex h-8 shrink-0 items-center border-b border-border/50 px-2">
+        <TooltipProvider delay={0}>
         <div className="flex flex-1 items-center justify-end gap-1.5">
           {canAnnotate && (
             <Tooltip>
@@ -242,6 +244,7 @@ export function PlanPanel({ path }: PlanPanelProps) {
             </>
           )}
         </div>
+        </TooltipProvider>
       </div>
 
       {/* Global comment input */}

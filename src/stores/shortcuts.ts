@@ -663,7 +663,14 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
         return;
       }
     }
-    if (activeTab?.type === "plan" || activeTab?.type === "spec") {
+    // The plan/spec surface can be an active document tab OR the standalone
+    // view panel (activeTab is null then) — cover both so Ctrl+Shift+R works
+    // in the plan panel regardless of how it's mounted.
+    const panelView = s.get(activePanelViewAtom);
+    if (
+      activeTab?.type === "plan" || activeTab?.type === "spec"
+      || panelView === "plan" || panelView === "spec"
+    ) {
       document.dispatchEvent(new CustomEvent("cluihud:revise-plan"));
     }
   }},

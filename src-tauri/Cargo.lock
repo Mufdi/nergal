@@ -751,6 +751,7 @@ dependencies = [
  "url",
  "uuid",
  "walkdir",
+ "webkit2gtk",
  "wezterm-term",
  "which",
  "zbus 5.14.0",

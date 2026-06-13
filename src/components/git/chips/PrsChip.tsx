@@ -7,6 +7,7 @@ import { prsCacheMapAtom, PRS_CACHE_TTL_MS, activePrInChipMapAtom } from "@/stor
 import { PrViewer } from "@/components/git/PrViewer";
 import { Kbd } from "@/components/ui/kbd";
 import { ProgressBar } from "@/components/ui/ProgressBar";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { zenModeAtom, prZenAtom } from "@/stores/zenMode";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
 import {
@@ -281,17 +282,23 @@ export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
               <span className="shrink-0 font-mono text-[9px] text-muted-foreground/60">
                 {pr.head_ref_name} → {pr.base_ref_name}
               </span>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openShell(pr.url).catch((err) => console.error("[pr] open github failed:", err));
-                }}
-                className="shrink-0 text-muted-foreground/50 hover:text-foreground"
-                title="Open on GitHub"
-              >
-                <ExternalLink size={10} />
-              </button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openShell(pr.url).catch((err) => console.error("[pr] open github failed:", err));
+                      }}
+                      className="shrink-0 text-muted-foreground/50 hover:text-foreground"
+                    />
+                  }
+                >
+                  <ExternalLink size={10} />
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-[10px]">Open on GitHub</TooltipContent>
+              </Tooltip>
             </button>
           );
         })}

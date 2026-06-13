@@ -2,6 +2,7 @@ import { useRef, useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { activeAnnotationsAtom, removeAnnotationAtom, clearAnnotationsAtom, type Annotation } from "@/stores/annotations";
 import { X, Trash2, MessageSquareDashed, MessageSquare } from "lucide-react";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
 const TYPE_BADGE: Record<Annotation["type"], { label: string; bg: string; text: string }> = {
   comment: { label: "COMMENT", bg: "bg-blue-500/15", text: "text-blue-400" },
@@ -118,13 +119,20 @@ export function AnnotationsDrawer({ open, onToggle }: AnnotationsDrawerProps) {
 
   if (!open) {
     return (
-      <button
-        onClick={onToggle}
-        className="mt-1 flex h-7 shrink-0 items-center gap-1.5 rounded-lg border-2 border-border bg-card px-3 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-      >
-        <MessageSquareDashed size={11} className="text-primary" />
-        <span>{annotations.length} annotation{annotations.length !== 1 ? "s" : ""}</span>
-      </button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              onClick={onToggle}
+              className="mt-1 flex h-7 shrink-0 items-center gap-1.5 rounded-lg border-2 border-border bg-card px-3 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+            />
+          }
+        >
+          <MessageSquareDashed size={11} className="text-primary" />
+          <span>{annotations.length} annotation{annotations.length !== 1 ? "s" : ""}</span>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="text-[10px]">Show annotations (Ctrl+Shift+J)</TooltipContent>
+      </Tooltip>
     );
   }
 
@@ -145,26 +153,45 @@ export function AnnotationsDrawer({ open, onToggle }: AnnotationsDrawerProps) {
           <span className="text-[10px] text-muted-foreground">({annotations.length})</span>
         </div>
         <div className="flex items-center gap-1">
-          <button
-            onClick={() => document.dispatchEvent(new CustomEvent("cluihud:toggle-global-comment"))}
-            className="rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-            title="Add global comment"
-          >
-            <MessageSquare size={12} />
-          </button>
-          <button
-            onClick={() => clearAnnotations()}
-            className="rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-            title="Clear all annotations"
-          >
-            <Trash2 size={12} />
-          </button>
-          <button
-            onClick={onToggle}
-            className="rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-          >
-            <X size={14} />
-          </button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  onClick={() => document.dispatchEvent(new CustomEvent("cluihud:toggle-global-comment"))}
+                  className="rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                />
+              }
+            >
+              <MessageSquare size={12} />
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">Add global comment (Ctrl+Shift+O)</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  onClick={() => clearAnnotations()}
+                  className="rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                />
+              }
+            >
+              <Trash2 size={12} />
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">Clear all annotations (Ctrl+Shift+X)</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  onClick={onToggle}
+                  className="rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                />
+              }
+            >
+              <X size={14} />
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">Collapse (Ctrl+Shift+J)</TooltipContent>
+          </Tooltip>
         </div>
       </div>
 

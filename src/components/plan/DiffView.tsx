@@ -598,22 +598,34 @@ export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen, i
         <div className="flex min-w-0 items-center gap-1">
           {onNavFile && (
             <>
-              <button
-                onClick={() => onNavFile("prev")}
-                className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-                aria-label="Previous file"
-                title="Previous file (Ctrl+←)"
-              >
-                <ChevronLeft size={12} />
-              </button>
-              <button
-                onClick={() => onNavFile("next")}
-                className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-                aria-label="Next file"
-                title="Next file (Ctrl+→)"
-              >
-                <ChevronRight size={12} />
-              </button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      onClick={() => onNavFile("prev")}
+                      className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                      aria-label="Previous file"
+                    />
+                  }
+                >
+                  <ChevronLeft size={12} />
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-[10px]">Previous file (Ctrl+←)</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      onClick={() => onNavFile("next")}
+                      className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                      aria-label="Next file"
+                    />
+                  }
+                >
+                  <ChevronRight size={12} />
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-[10px]">Next file (Ctrl+→)</TooltipContent>
+              </Tooltip>
             </>
           )}
           <Tooltip>
@@ -635,33 +647,53 @@ export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen, i
               <span className="text-[10px] text-muted-foreground">
                 {activeHunk + 1}/{hunks.length}
               </span>
-              <button
-                onClick={() => navigateHunk(-1)}
-                disabled={activeHunk <= 0}
-                className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary disabled:opacity-30 transition-colors"
-                aria-label="Previous change (K)"
-              >
-                <ChevronUp size={12} />
-              </button>
-              <button
-                onClick={() => navigateHunk(1)}
-                disabled={activeHunk >= hunks.length - 1}
-                className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary disabled:opacity-30 transition-colors"
-                aria-label="Next change (J)"
-              >
-                <ChevronDown size={12} />
-              </button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      onClick={() => navigateHunk(-1)}
+                      disabled={activeHunk <= 0}
+                      className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary disabled:opacity-30 transition-colors"
+                      aria-label="Previous change (K)"
+                    />
+                  }
+                >
+                  <ChevronUp size={12} />
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-[10px]">Previous change (K)</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      onClick={() => navigateHunk(1)}
+                      disabled={activeHunk >= hunks.length - 1}
+                      className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary disabled:opacity-30 transition-colors"
+                      aria-label="Next change (J)"
+                    />
+                  }
+                >
+                  <ChevronDown size={12} />
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-[10px]">Next change (J)</TooltipContent>
+              </Tooltip>
             </div>
           )}
           {onOpenZen && (
-            <button
-              onClick={onOpenZen}
-              className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-              aria-label="Expand to Zen Mode"
-              title="Expand (Ctrl+Shift+0)"
-            >
-              <Maximize2 size={11} />
-            </button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    onClick={onOpenZen}
+                    className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                    aria-label="Expand to Zen Mode"
+                  />
+                }
+              >
+                <Maximize2 size={11} />
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-[10px]">Expand (Ctrl+Shift+0)</TooltipContent>
+            </Tooltip>
           )}
         </div>
       </div>

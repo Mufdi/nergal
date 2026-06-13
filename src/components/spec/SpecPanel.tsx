@@ -18,7 +18,7 @@ import { toastsAtom } from "@/stores/toast";
 import { MarkdownView } from "@/components/plan/MarkdownView";
 import { AnnotatableMarkdownView } from "@/components/plan/AnnotatableMarkdownView";
 import { useObsidianMentionPicker } from "@/hooks/useObsidianMentionPicker";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import { FileText, Pencil, CheckSquare, ClipboardList, Wrench, Cog, ArrowLeft, Highlighter, MessageSquare, Trash2 } from "lucide-react";
 
 interface SpecEntry {
@@ -421,6 +421,7 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
         )}
 
         {isEditable && showingContent && (
+          <TooltipProvider delay={0}>
           <div className="ml-auto flex shrink-0 items-center gap-1.5">
             {totalAnnotations > 0 && (
               <Tooltip>
@@ -508,6 +509,7 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
               </>
             )}
           </div>
+          </TooltipProvider>
         )}
       </div>
 

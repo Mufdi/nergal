@@ -17,6 +17,7 @@ import { toastsAtom } from "@/stores/toast";
 import { openInObsidian } from "@/lib/obsidian";
 import { pinNoteAtom } from "@/stores/pinnedNotes";
 import { invoke } from "@/lib/tauri";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import * as terminalService from "@/components/terminal/terminalService";
 import {
   scratchpadActiveTabIdAtom,
@@ -195,8 +196,8 @@ export function VaultSearchModal() {
         if (!hit) return;
         if (e.shiftKey) void pinToSession(hit);
         else if (e.altKey) void citeInScratchpad(hit);
-        else if (e.ctrlKey || e.metaKey) void sendToAgent(hit);
-        else openHit(hit);
+        else if (e.ctrlKey || e.metaKey) openHit(hit);
+        else void sendToAgent(hit);
       }
     }
     document.addEventListener("keydown", handleKeyDown);
@@ -261,7 +262,7 @@ export function VaultSearchModal() {
             <div className="flex flex-col items-center gap-1 py-6">
               <span className="text-xs text-muted-foreground">Type to search your vault</span>
               <span className="text-[10px] text-muted-foreground/60">
-                Enter: open · Ctrl+Enter: send · Alt+Enter: cite · Shift+Enter: pin
+                Enter: send · Ctrl+Enter: open · Alt+Enter: cite · Shift+Enter: pin
               </span>
             </div>
           )}
@@ -283,10 +284,13 @@ export function VaultSearchModal() {
                 >
                   <FileText className="size-3.5 shrink-0 text-muted-foreground" />
                   <span className="flex min-w-0 flex-col">
-                    <span className="truncate text-xs text-foreground">{displayLabel(hit)}</span>
-                    {hit.lineText && (
+                    {/* Lead with the file name (the user searches by name); the
+                        matched content line + exact path follow (omnisearch). */}
+                    <span className="truncate text-xs text-foreground">{noteWikiName(hit)}</span>
+                    {hit.lineText && hit.lineText !== noteWikiName(hit) && (
                       <span className="truncate text-[10px] text-muted-foreground">{hit.lineText}</span>
                     )}
+                    <span className="truncate text-[9px] text-muted-foreground/50">{hit.path}</span>
                   </span>
                 </button>
                 <span
@@ -297,7 +301,7 @@ export function VaultSearchModal() {
                   <ActionButton title="Pin to session (Shift+Enter)" onClick={() => void pinToSession(hit)}>
                     <Pin className="size-3" />
                   </ActionButton>
-                  <ActionButton title="Send to agent (Ctrl+Enter)" onClick={() => void sendToAgent(hit)}>
+                  <ActionButton title="Send to agent (Enter)" onClick={() => void sendToAgent(hit)}>
                     <Send className="size-3" />
                   </ActionButton>
                   <ActionButton title="Cite in scratchpad (Alt+Enter)" onClick={() => void citeInScratchpad(hit)}>
@@ -323,13 +327,20 @@ function ActionButton({
   children: React.ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      title={title}
-      onClick={onClick}
-      className="rounded p-1 text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground"
-    >
-      {children}
-    </button>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={title}
+            onClick={onClick}
+            className="rounded p-1 text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground"
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="text-[10px]">{title}</TooltipContent>
+    </Tooltip>
   );
 }

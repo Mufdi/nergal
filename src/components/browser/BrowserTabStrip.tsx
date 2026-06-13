@@ -6,6 +6,7 @@ import {
   browserNewTabAction,
   browserSessionForActiveAtom,
 } from "@/stores/browser";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
 interface Props {
   sessionId: string;
@@ -54,31 +55,43 @@ export function BrowserTabStrip({ sessionId }: Props) {
               >
                 {tab.label}
               </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  close({ sessionId, tabId: tab.id });
-                }}
-                className="rounded text-muted-foreground/60 opacity-0 transition group-hover:opacity-100 hover:bg-secondary hover:text-foreground"
-                aria-label="Close tab"
-                title="Close tab"
-              >
-                <X size={10} />
-              </button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        close({ sessionId, tabId: tab.id });
+                      }}
+                      className="rounded text-muted-foreground/60 opacity-0 transition group-hover:opacity-100 hover:bg-secondary hover:text-foreground"
+                      aria-label="Close tab"
+                    />
+                  }
+                >
+                  <X size={10} />
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-[10px]">Close tab</TooltipContent>
+              </Tooltip>
             </div>
           );
         })}
       </div>
-      <button
-        type="button"
-        onClick={() => void newTab({ sessionId })}
-        className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-muted-foreground transition hover:bg-secondary/60 hover:text-foreground"
-        aria-label="New tab"
-        title="New tab"
-      >
-        <Plus size={12} />
-      </button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              onClick={() => void newTab({ sessionId })}
+              className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-muted-foreground transition hover:bg-secondary/60 hover:text-foreground"
+              aria-label="New tab"
+            />
+          }
+        >
+          <Plus size={12} />
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="text-[10px]">New tab</TooltipContent>
+      </Tooltip>
     </div>
   );
 }

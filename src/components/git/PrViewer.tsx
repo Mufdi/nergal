@@ -763,17 +763,23 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
           <span className="truncate text-[11px] font-medium text-foreground/90" title={title}>
             {title}
           </span>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              openShell(url).catch((err) => console.error("[pr] open github failed:", err));
-            }}
-            className="ml-auto flex shrink-0 items-center text-muted-foreground hover:text-foreground"
-            title="Open on GitHub"
-          >
-            <ExternalLink size={11} />
-          </button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openShell(url).catch((err) => console.error("[pr] open github failed:", err));
+                  }}
+                  className="ml-auto flex shrink-0 items-center text-muted-foreground hover:text-foreground"
+                />
+              }
+            >
+              <ExternalLink size={11} />
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">Open on GitHub</TooltipContent>
+          </Tooltip>
         </div>
         <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-mono">
           <span className="truncate">{headRefName}</span>
@@ -791,52 +797,70 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
           <div className="flex items-center gap-1.5 text-[10px]">
             {prFiles.length > 1 && (
               <>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const idx = prFiles.indexOf(selectedFile);
-                    if (idx === -1) return;
-                    const prev = prFiles[(idx - 1 + prFiles.length) % prFiles.length];
-                    if (prev) setSelectedFile(prev);
-                  }}
-                  className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-                  aria-label="Previous file"
-                  title="Previous file (Ctrl+←)"
-                >
-                  <ChevronLeft size={12} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const idx = prFiles.indexOf(selectedFile);
-                    if (idx === -1) return;
-                    const next = prFiles[(idx + 1) % prFiles.length];
-                    if (next) setSelectedFile(next);
-                  }}
-                  className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-                  aria-label="Next file"
-                  title="Next file (Ctrl+→)"
-                >
-                  <ChevronRight size={12} />
-                </button>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const idx = prFiles.indexOf(selectedFile);
+                          if (idx === -1) return;
+                          const prev = prFiles[(idx - 1 + prFiles.length) % prFiles.length];
+                          if (prev) setSelectedFile(prev);
+                        }}
+                        className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                        aria-label="Previous file"
+                      />
+                    }
+                  >
+                    <ChevronLeft size={12} />
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="text-[10px]">Previous file (Ctrl+←)</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const idx = prFiles.indexOf(selectedFile);
+                          if (idx === -1) return;
+                          const next = prFiles[(idx + 1) % prFiles.length];
+                          if (next) setSelectedFile(next);
+                        }}
+                        className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                        aria-label="Next file"
+                      />
+                    }
+                  >
+                    <ChevronRight size={12} />
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="text-[10px]">Next file (Ctrl+→)</TooltipContent>
+                </Tooltip>
               </>
             )}
-            <button
-              type="button"
-              onClick={() => {
-                const idx = selectedFile ? prFiles.indexOf(selectedFile) : -1;
-                setPickerCursor(idx >= 0 ? idx : 0);
-                setPickerOpen((v) => !v);
-              }}
-              className="flex shrink-0 items-center gap-1 rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors px-1 py-0.5"
-              title="Pick file (Ctrl+Shift+K)"
-            >
-              <FolderOpen size={11} />
-              <span className="font-mono text-foreground/85 truncate max-w-[18rem]">{selectedFile}</span>
-              <span className="text-muted-foreground/60 tabular-nums">
-                {prFiles.length > 0 && `· ${prFiles.indexOf(selectedFile) + 1}/${prFiles.length}`}
-              </span>
-            </button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const idx = selectedFile ? prFiles.indexOf(selectedFile) : -1;
+                      setPickerCursor(idx >= 0 ? idx : 0);
+                      setPickerOpen((v) => !v);
+                    }}
+                    className="flex shrink-0 items-center gap-1 rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors px-1 py-0.5"
+                  />
+                }
+              >
+                <FolderOpen size={11} />
+                <span className="font-mono text-foreground/85 truncate max-w-[18rem]">{selectedFile}</span>
+                <span className="text-muted-foreground/60 tabular-nums">
+                  {prFiles.length > 0 && `· ${prFiles.indexOf(selectedFile) + 1}/${prFiles.length}`}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-[10px]">Pick file (Ctrl+Shift+K)</TooltipContent>
+            </Tooltip>
             <span className="text-muted-foreground/40">·</span>
             <span className="font-mono">
               <span className="text-green-400">+{fileStats[selectedFile]?.adds ?? 0}</span>
@@ -906,17 +930,23 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
                           : "border-t-border/30 bg-secondary/30 hover:bg-secondary/50"
                       }`}
                     >
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleCollapse(line.hunkIndex);
-                          (e.currentTarget as HTMLElement).blur();
-                        }}
-                        className="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:bg-secondary"
-                        title={isCollapsed ? "Expand (Space)" : "Collapse (Space)"}
-                      >
-                        <ChevronRight size={10} className={`transition-transform ${isCollapsed ? "" : "rotate-90"}`} />
-                      </button>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleCollapse(line.hunkIndex);
+                                (e.currentTarget as HTMLElement).blur();
+                              }}
+                              className="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:bg-secondary"
+                            />
+                          }
+                        >
+                          <ChevronRight size={10} className={`transition-transform ${isCollapsed ? "" : "rotate-90"}`} />
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="text-[10px]">{isCollapsed ? "Expand (Space)" : "Collapse (Space)"}</TooltipContent>
+                      </Tooltip>
                       <span className={`text-[10px] truncate ${isActive ? "text-blue-400" : "text-muted-foreground"}`}>
                         {line.content}
                       </span>
@@ -1074,13 +1104,19 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
           </span>
         )}
         {annotations.length > 0 && (
-          <button
-            onClick={clearAllAnnotations}
-            className="flex h-6 items-center gap-1 rounded text-[10px] text-muted-foreground hover:bg-secondary hover:text-foreground"
-            title="Remove all annotations"
-          >
-            <Trash2 size={10} /> Clear
-          </button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  onClick={clearAllAnnotations}
+                  className="flex h-6 items-center gap-1 rounded text-[10px] text-muted-foreground hover:bg-secondary hover:text-foreground"
+                />
+              }
+            >
+              <Trash2 size={10} /> Clear
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">Remove all annotations</TooltipContent>
+          </Tooltip>
         )}
 
         {annotations.length > 0 && (
@@ -1134,16 +1170,22 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
               </button>
             </>
           ) : (
-            <button
-              onClick={handleMergeClick}
-              disabled={merging || state !== "OPEN"}
-              className="flex h-6 items-center gap-1.5 rounded bg-green-500/20 px-2 text-[10px] font-medium text-green-300 hover:bg-green-500/30 disabled:cursor-not-allowed disabled:opacity-50"
-              title={state === "OPEN" ? `Merge PR #${prNumber} into ${baseRefName}` : "PR is not open"}
-            >
-              {merging ? <PulseDots count={1} dotClassName="size-1" /> : <GitMerge size={10} />}
-              Merge into {baseRefName}
-              <Kbd keys="ctrl+enter" />
-            </button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    onClick={handleMergeClick}
+                    disabled={merging || state !== "OPEN"}
+                    className="flex h-6 items-center gap-1.5 rounded bg-green-500/20 px-2 text-[10px] font-medium text-green-300 hover:bg-green-500/30 disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                }
+              >
+                {merging ? <PulseDots count={1} dotClassName="size-1" /> : <GitMerge size={10} />}
+                Merge into {baseRefName}
+                <Kbd keys="ctrl+enter" />
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-[10px]">{state === "OPEN" ? `Merge PR #${prNumber} into ${baseRefName}` : "PR is not open"}</TooltipContent>
+            </Tooltip>
           )}
         </div>
       </div>

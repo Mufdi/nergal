@@ -213,6 +213,30 @@ pub fn get_tasks(session_id: String, db: State<'_, SharedDb>) -> Result<Vec<Task
     db.get_visible_tasks(&session_id).map_err(|e| e.to_string())
 }
 
+/// Tombstone all completed tasks of a session (status -> 'deleted'). The clear
+/// must persist, otherwise the next `get_tasks` hydration re-adds them (BUG-12).
+/// 'deleted' rows are excluded from `get_visible_tasks`, so the TodoWrite hook
+/// (which seeds its store from visible tasks) never resurrects them.
+#[tauri::command]
+pub fn clear_completed_tasks(session_id: String, db: State<'_, SharedDb>) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    db.mark_completed_tasks_deleted(&session_id)
+        .map_err(|e| e.to_string())
+}
+
+/// Tombstone a single task (status -> 'deleted'); same persistence rationale as
+/// `clear_completed_tasks`.
+#[tauri::command]
+pub fn delete_task(
+    session_id: String,
+    task_id: String,
+    db: State<'_, SharedDb>,
+) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    db.mark_task_deleted(&session_id, &task_id)
+        .map_err(|e| e.to_string())
+}
+
 // -- Plan commands --
 
 #[derive(Clone, serde::Serialize)]
@@ -2072,10 +2096,16 @@ pub fn get_session_git_info(
     };
 
     if let Some(ref wt_path) = session.worktree_path {
-        let branch = session
-            .worktree_branch
-            .clone()
-            .unwrap_or_else(|| "unknown".into());
+        // Read the live HEAD, not the cached DB value: when the agent creates or
+        // switches a branch inside the worktree, `worktree_branch` goes stale and
+        // the status bar / git panel keep showing the old branch (BUG-04). Fall
+        // back to the cached name only if the live read fails.
+        let branch = crate::worktree::current_branch(wt_path).unwrap_or_else(|_| {
+            session
+                .worktree_branch
+                .clone()
+                .unwrap_or_else(|| "unknown".into())
+        });
         let dirty = crate::worktree::is_worktree_dirty(wt_path).unwrap_or(false);
         let stat = crate::worktree::diff_shortstat(std::path::Path::new(wt_path)).unwrap_or(
             crate::worktree::DiffShortstat {

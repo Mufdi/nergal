@@ -1,5 +1,6 @@
 import { atom } from "jotai";
 import type { Task } from "@/lib/types";
+import { invoke } from "@/lib/tauri";
 import { activeSessionIdAtom } from "./workspace";
 
 export const taskMapAtom = atom<Record<string, Task[]>>({});
@@ -18,6 +19,9 @@ export const removeTaskAtom = atom(null, (get, set, taskId: string) => {
     const tasks = prev[id] ?? [];
     return { ...prev, [id]: tasks.filter((t) => t.id !== taskId) };
   });
+  // Persist the tombstone — a frontend-only filter is undone by the next
+  // get_tasks hydration / TodoWrite emit (BUG-12).
+  void invoke("delete_task", { sessionId: id, taskId }).catch(() => {});
 });
 
 export const clearCompletedTasksAtom = atom(null, (get, set) => {
@@ -27,4 +31,5 @@ export const clearCompletedTasksAtom = atom(null, (get, set) => {
     const tasks = prev[id] ?? [];
     return { ...prev, [id]: tasks.filter((t) => t.status !== "completed") };
   });
+  void invoke("clear_completed_tasks", { sessionId: id }).catch(() => {});
 });

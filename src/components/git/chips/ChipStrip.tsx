@@ -7,6 +7,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { CHIP_ORDER, type ChipMode } from "@/stores/git";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
 interface ChipStripProps {
   active: ChipMode;
@@ -58,36 +59,40 @@ export function ChipStrip({ active, conflictCount, prCount, stashCount, onSelect
           const conflictHot = mode === "conflicts" && conflictCount > 0;
           const dim = mode === "conflicts" && conflictCount === 0 && !isActive;
           return (
-            <button
-              key={mode}
-              onClick={() => onSelect(mode)}
-              className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] whitespace-nowrap transition-colors ${
-                isActive
-                  ? conflictHot
-                    ? "bg-red-500/20 text-red-300 ring-1 ring-red-500/60"
-                    : "bg-secondary text-foreground"
-                  : conflictHot
-                    ? "bg-red-500/10 text-red-400 ring-1 ring-red-500/40 animate-pulse hover:bg-red-500/15"
-                    : dim
-                      ? "text-muted-foreground/40 hover:text-muted-foreground hover:bg-secondary/30"
-                      : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground/80"
-              }`}
-              aria-pressed={isActive}
-              title={`${label} (Shift+←/→)`}
-            >
-              <Icon size={11} />
-              {label}
-              {count > 0 && (
-                <span
-                  className={`flex h-3.5 items-center justify-center rounded-full px-1 text-[9px] font-medium tabular-nums ${
-                    conflictHot ? "bg-red-500/30 text-red-200" : "bg-primary/15 text-primary"
-                  }`}
-                  title={`${count}`}
-                >
-                  {count}
-                </span>
-              )}
-            </button>
+            <Tooltip key={mode}>
+              <TooltipTrigger
+                render={
+                  <button
+                    onClick={() => onSelect(mode)}
+                    className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] whitespace-nowrap transition-colors ${
+                      isActive
+                        ? conflictHot
+                          ? "bg-red-500/20 text-red-300 ring-1 ring-red-500/60"
+                          : "bg-secondary text-foreground"
+                        : conflictHot
+                          ? "bg-red-500/10 text-red-400 ring-1 ring-red-500/40 animate-pulse hover:bg-red-500/15"
+                          : dim
+                            ? "text-muted-foreground/40 hover:text-muted-foreground hover:bg-secondary/30"
+                            : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground/80"
+                    }`}
+                    aria-pressed={isActive}
+                  />
+                }
+              >
+                <Icon size={11} />
+                {label}
+                {count > 0 && (
+                  <span
+                    className={`flex h-3.5 items-center justify-center rounded-full px-1 text-[9px] font-medium tabular-nums ${
+                      conflictHot ? "bg-red-500/30 text-red-200" : "bg-primary/15 text-primary"
+                    }`}
+                  >
+                    {count}
+                  </span>
+                )}
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-[10px]">{label} (Shift+←/→)</TooltipContent>
+            </Tooltip>
           );
         })}
       </div>

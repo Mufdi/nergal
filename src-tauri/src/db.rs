@@ -670,6 +670,25 @@ impl Database {
         Ok(())
     }
 
+    /// Tombstone every completed task of a session so a clear survives reload
+    /// (BUG-12). 'deleted' rows are filtered out of `get_visible_tasks`.
+    pub fn mark_completed_tasks_deleted(&self, session_id: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE tasks SET status = 'deleted', updated_at = ?2 WHERE session_id = ?1 AND status = 'completed'",
+            params![session_id, now_secs()],
+        )?;
+        Ok(())
+    }
+
+    /// Tombstone a single task by id.
+    pub fn mark_task_deleted(&self, session_id: &str, task_id: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE tasks SET status = 'deleted', updated_at = ?3 WHERE session_id = ?1 AND id = ?2",
+            params![session_id, task_id, now_secs()],
+        )?;
+        Ok(())
+    }
+
     pub fn get_visible_tasks(&self, session_id: &str) -> Result<Vec<Task>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, subject, description, status, active_form, blocked_by FROM tasks WHERE session_id = ?1 AND status != 'deleted' ORDER BY created_at",

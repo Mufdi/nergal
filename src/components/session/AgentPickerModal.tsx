@@ -466,9 +466,13 @@ export function AgentPickerModal({
                         disabled={added}
                         title={sg.cwd ? `${sg.cwd} $ ${sg.command}` : sg.command}
                         onFocus={() => setOptIdx(suggRowIdx)}
-                        onClick={() =>
-                          setEnvShells((prev) => [...prev, { ...sg }])
-                        }
+                        onClick={() => {
+                          setEnvShells((prev) => [...prev, { ...sg }]);
+                          // The chip becomes disabled (added) and drops focus —
+                          // hand it to the freshly autofilled shell row so
+                          // keyboard nav continues.
+                          setOptIdx(envRowStart + envShells.length);
+                        }}
                         onKeyDown={(e) => {
                           if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
                             e.preventDefault();
@@ -490,6 +494,7 @@ export function AgentPickerModal({
                             e.preventDefault();
                             e.stopPropagation();
                             setEnvShells((prev) => [...prev, { ...sg }]);
+                            setOptIdx(envRowStart + envShells.length);
                           }
                         }}
                         className={`rounded-full border px-2 py-0.5 text-[10px] transition-colors outline-none focus:ring-1 focus:ring-orange-500/60 ${

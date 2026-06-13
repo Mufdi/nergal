@@ -42,6 +42,7 @@ import { openZenModeAtom } from "@/stores/zenMode";
 import { activeSessionFilesAtom } from "@/stores/files";
 import { TabBar } from "@/components/ui/TabBar";
 import { FolderOpen } from "lucide-react";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
 const PICKER_TYPES: TabType[] = ["plan", "file", "diff", "spec", "obsidiannote"];
 
@@ -192,17 +193,26 @@ export function RightPanel({ collapsed }: RightPanelProps) {
             <TabBar />
           </div>
           {hasPicker && (
-            <button
-              onClick={() => setPickerOpen(!pickerOpen)}
-              className={`flex size-7 shrink-0 items-center justify-center transition-colors ${
-                pickerOpen
-                  ? "text-foreground bg-secondary"
-                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-              }`}
-              aria-label={pickerOpen ? "Close file picker" : "Open file picker"}
-            >
-              <FolderOpen size={12} />
-            </button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    onClick={() => setPickerOpen(!pickerOpen)}
+                    className={`flex size-7 shrink-0 items-center justify-center transition-colors ${
+                      pickerOpen
+                        ? "text-foreground bg-secondary"
+                        : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                    }`}
+                    aria-label={pickerOpen ? "Close file picker" : "Open file picker"}
+                  />
+                }
+              >
+                <FolderOpen size={12} />
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-[10px]">
+                {pickerOpen ? "Close file picker" : "Open file picker"} (Ctrl+Shift+K)
+              </TooltipContent>
+            </Tooltip>
           )}
         </div>
 

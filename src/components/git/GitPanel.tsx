@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { Kbd } from "@/components/ui/kbd";
 import { PulseDots } from "@/components/ui/PulseDots";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { sessionToWorkspaceMapAtom, workspacesAtom, type Workspace } from "@/stores/workspace";
 import { ChipStrip } from "./chips/ChipStrip";
 import { FilesChip } from "./chips/FilesChip";
@@ -354,15 +355,21 @@ export function GitPanel({ sessionId }: GitPanelProps) {
               {branch || <span className="text-muted-foreground/40">…</span>}
             </span>
             {branch && (
-              <button
-                type="button"
-                aria-label="Rename branch"
-                title="Rename branch (local only — remote and PR keep their name)"
-                onClick={() => { setBranchInput(branch); setRenamingBranch(true); }}
-                className="hidden size-4 shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:bg-secondary hover:text-foreground transition-colors group-hover:flex"
-              >
-                <Pencil size={9} />
-              </button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-label="Rename branch"
+                      onClick={() => { setBranchInput(branch); setRenamingBranch(true); }}
+                      className="hidden size-4 shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:bg-secondary hover:text-foreground transition-colors group-hover:flex"
+                    />
+                  }
+                >
+                  <Pencil size={9} />
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-[10px]">Rename branch (local only — remote and PR keep their name)</TooltipContent>
+              </Tooltip>
             )}
           </>
         )}
@@ -380,29 +387,41 @@ export function GitPanel({ sessionId }: GitPanelProps) {
             </a>
           </>
         )}
-        <button
-          onClick={() => expandGitZen(sessionId)}
-          className="ml-auto flex h-5 items-center gap-1 rounded text-muted-foreground hover:text-foreground hover:bg-secondary px-1.5 transition-colors"
-          title="Expand to Zen mode"
-        >
-          <Maximize2 size={10} />
-          <Kbd keys="ctrl+shift+0" />
-        </button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                onClick={() => expandGitZen(sessionId)}
+                className="ml-auto flex h-5 items-center gap-1 rounded text-muted-foreground hover:text-foreground hover:bg-secondary px-1.5 transition-colors"
+              />
+            }
+          >
+            <Maximize2 size={10} />
+            <Kbd keys="ctrl+shift+0" />
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-[10px]">Expand to Zen mode</TooltipContent>
+        </Tooltip>
       </div>
 
       {pendingMerge && conflictedFiles.length === 0 && (
         <div className="shrink-0 flex items-center gap-2 border-b border-border/50 bg-green-500/10 px-3 py-1.5">
           <Check size={12} className="shrink-0 text-green-400" />
           <span className="flex-1 min-w-0 text-[11px] text-green-300">In-progress merge ready to finish (creates a local merge commit).</span>
-          <button
-            onClick={handleCompleteMerge}
-            disabled={completing}
-            className="ml-2 shrink-0 flex h-6 items-center gap-1.5 rounded bg-green-500/20 px-2.5 text-[10px] font-medium text-green-300 hover:bg-green-500/30 transition-colors disabled:opacity-50"
-            title="Creates a merge commit locally. No push."
-          >
-            {completing ? <PulseDots count={1} className="mr-0.5" dotClassName="size-1" /> : null}
-            Finish merge <Kbd keys="ctrl+alt+enter" />
-          </button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  onClick={handleCompleteMerge}
+                  disabled={completing}
+                  className="ml-2 shrink-0 flex h-6 items-center gap-1.5 rounded bg-green-500/20 px-2.5 text-[10px] font-medium text-green-300 hover:bg-green-500/30 transition-colors disabled:opacity-50"
+                />
+              }
+            >
+              {completing ? <PulseDots count={1} className="mr-0.5" dotClassName="size-1" /> : null}
+              Finish merge <Kbd keys="ctrl+alt+enter" />
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">Creates a merge commit locally. No push.</TooltipContent>
+          </Tooltip>
         </div>
       )}
 
@@ -412,13 +431,19 @@ export function GitPanel({ sessionId }: GitPanelProps) {
           <span className="flex-1 min-w-0 text-[11px] text-purple-300">
             PR #{prInfo.number} is {prInfo.state.toLowerCase()}. Cleanup will delete this session, its worktree, branch and plan files.
           </span>
-          <button
-            onClick={handleCleanupSession}
-            className="ml-2 shrink-0 flex h-6 items-center gap-1.5 rounded bg-purple-500/20 px-2.5 text-[10px] font-medium text-purple-300 hover:bg-purple-500/30 transition-colors"
-            title="Permanently deletes the session — irreversible"
-          >
-            Cleanup session
-          </button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  onClick={handleCleanupSession}
+                  className="ml-2 shrink-0 flex h-6 items-center gap-1.5 rounded bg-purple-500/20 px-2.5 text-[10px] font-medium text-purple-300 hover:bg-purple-500/30 transition-colors"
+                />
+              }
+            >
+              Cleanup session
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">Permanently deletes the session — irreversible</TooltipContent>
+          </Tooltip>
         </div>
       )}
 

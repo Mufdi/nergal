@@ -11,7 +11,7 @@ import {
   browserSetModeAction,
   localhostPortsAtom,
 } from "@/stores/browser";
-import { openTabAction } from "@/stores/rightPanel";
+import { openTabAction, expandRightPanelAtom } from "@/stores/rightPanel";
 import { Badge } from "@/components/ui/badge";
 import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock, Globe, CalendarRange, Pencil, TriangleAlert, Timer } from "lucide-react";
 import { activeIncidentsAtom } from "@/stores/statusFeed";
@@ -127,15 +127,21 @@ export function StatusBar() {
               </TooltipTrigger>
               <TooltipContent>{gitInfo.branch}</TooltipContent>
             </Tooltip>
-            <button
-              type="button"
-              aria-label="Rename branch"
-              title="Rename branch (Ctrl+Alt+R)"
-              onClick={() => setRenameBranchSignal((p) => p + 1)}
-              className="hidden size-4 shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:bg-secondary hover:text-foreground transition-colors group-hover:flex"
-            >
-              <Pencil className="size-2.5" />
-            </button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label="Rename branch"
+                    onClick={() => setRenameBranchSignal((p) => p + 1)}
+                    className="hidden size-4 shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:bg-secondary hover:text-foreground transition-colors group-hover:flex"
+                  />
+                }
+              >
+                <Pencil className="size-2.5" />
+              </TooltipTrigger>
+              <TooltipContent side="top" className="text-[10px]">Rename branch (Ctrl+Alt+R)</TooltipContent>
+            </Tooltip>
             {gitInfo.dirty && (
               <span className="inline-block size-1.5 shrink-0 rounded-full bg-orange-500" aria-label="Uncommitted changes" />
             )}
@@ -305,6 +311,7 @@ function IncidentChips() {
   const newTab = useSetAtom(browserNewTabAction);
   const setMode = useSetAtom(browserSetModeAction);
   const openTab = useSetAtom(openTabAction);
+  const expandPanel = useSetAtom(expandRightPanelAtom);
 
   if (incidents.length === 0) return null;
 
@@ -314,6 +321,10 @@ function IncidentChips() {
     openTab({
       tab: { id: `browser:${sessionId}`, type: "browser", label: "Browser" },
     });
+    // Re-clicking the chip after the right panel was hidden must re-open it —
+    // openTab only (re)activates the tab; expanding the collapsed panel needs
+    // this signal (Workspace listens and calls panel.expand()).
+    expandPanel((n) => n + 1);
     try {
       await newTab({ sessionId, url });
     } catch {

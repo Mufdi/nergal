@@ -45,6 +45,76 @@ struct PtyInstance {
     terminal: TerminalHandle,
 }
 
+impl Drop for PtyInstance {
+    fn drop(&mut self) {
+        // Stop processes started in the shell when the session (or the whole
+        // app) closes — otherwise dev servers / watchers leak (BUG-06).
+        #[cfg(target_os = "linux")]
+        if let Some(pid) = self.child_pid
+            && pid > 1
+        {
+            kill_process_tree(pid);
+        }
+        // Other unixes: best-effort process-group SIGTERM (no /proc).
+        #[cfg(all(unix, not(target_os = "linux")))]
+        if let Some(pid) = self.child_pid
+            && pid > 1
+        {
+            unsafe {
+                libc::kill(-(pid as libc::pid_t), libc::SIGTERM);
+            }
+        }
+    }
+}
+
+/// SIGTERM the shell's whole descendant tree, not just its process group.
+/// Dropping the PTY master only SIGHUPs the foreground group, and `kill(-pgid)`
+/// misses children that `pnpm`/`node` spawn in a *new* process group — exactly
+/// the leak in BUG-06 (the server survived session close, dying only via the
+/// app-exit cascade). Walks /proc by PPID to find every descendant.
+#[cfg(target_os = "linux")]
+fn kill_process_tree(root: u32) {
+    fn ppid_of(pid: u32) -> Option<u32> {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        // `comm` (field 2) may contain spaces/parens — split after the last ')'.
+        let rest = &stat[stat.rfind(')')? + 1..];
+        rest.split_whitespace().nth(1)?.parse().ok()
+    }
+
+    let procs: Vec<(u32, u32)> = match std::fs::read_dir("/proc") {
+        Ok(rd) => rd
+            .flatten()
+            .filter_map(|e| e.file_name().to_str().and_then(|s| s.parse::<u32>().ok()))
+            .filter_map(|pid| Some((pid, ppid_of(pid)?)))
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+
+    // BFS the descendant set of `root`.
+    let mut tree = vec![root];
+    let mut i = 0;
+    while i < tree.len() {
+        let parent = tree[i];
+        for &(pid, ppid) in &procs {
+            if ppid == parent && pid != root && !tree.contains(&pid) {
+                tree.push(pid);
+            }
+        }
+        i += 1;
+    }
+
+    // Descendants first, then the root's process group + the root itself.
+    for &pid in tree.iter().skip(1).rev() {
+        unsafe {
+            libc::kill(pid as libc::pid_t, libc::SIGTERM);
+        }
+    }
+    unsafe {
+        libc::kill(-(root as libc::pid_t), libc::SIGTERM);
+        libc::kill(root as libc::pid_t, libc::SIGTERM);
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn process_cwd(pid: u32) -> Option<String> {
     std::fs::read_link(format!("/proc/{pid}/cwd"))
@@ -88,6 +158,18 @@ impl PtyManager {
             aux_line_trackers: Mutex::new(HashMap::new()),
             pending_prompts: Mutex::new(HashMap::new()),
             kitty_keyboard,
+        }
+    }
+
+    /// Tear down every live PTY (main + aux shells) on app exit. Clearing the
+    /// map drops each `PtyInstance`, whose `Drop` SIGTERMs the shell's process
+    /// group so shell-started processes don't outlive Nergal (BUG-06).
+    pub fn shutdown_all(&self) {
+        if let Ok(mut instances) = self.instances.lock() {
+            instances.clear();
+        }
+        if let Ok(mut s) = self.session_ptys.lock() {
+            s.clear();
         }
     }
 }

@@ -10,6 +10,10 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
 const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
+/// While an incident is active we re-check far sooner so the badge disappears
+/// promptly once the provider recovers (instead of lingering up to a full
+/// idle interval after resolution).
+const POLL_ACTIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(45);
 
 const PROVIDERS: &[(&str, &str, &str)] = &[
     (
@@ -86,11 +90,8 @@ pub async fn run_status_feed(app: AppHandle) {
     };
 
     let mut previous: Option<Vec<ProviderStatus>> = None;
-    let mut interval = tokio::time::interval(POLL_INTERVAL);
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {
-        interval.tick().await;
         let mut current = Vec::with_capacity(PROVIDERS.len());
         for (provider, endpoint, url) in PROVIDERS {
             // An unreachable page is reported as "unknown", never as an
@@ -116,7 +117,19 @@ pub async fn run_status_feed(app: AppHandle) {
         if let Err(e) = app.emit("status:providers", &current) {
             tracing::warn!("emit status:providers failed: {e}");
         }
+
+        // Adaptive cadence: poll fast while an incident is showing so its badge
+        // clears soon after recovery; otherwise the relaxed idle interval.
+        let active = current
+            .iter()
+            .any(|s| s.indicator != "none" && s.indicator != "unknown");
         previous = Some(current);
+        tokio::time::sleep(if active {
+            POLL_ACTIVE_INTERVAL
+        } else {
+            POLL_INTERVAL
+        })
+        .await;
     }
 }
 

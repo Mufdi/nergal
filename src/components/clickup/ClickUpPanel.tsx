@@ -1,17 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
+  AlignLeft,
+  ArrowDown,
+  ArrowUp,
+  CalendarClock,
+  CalendarPlus,
   ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   CircleCheck,
+  Clock,
   ExternalLink,
   Flag,
   GitBranchPlus,
+  GitFork,
   Link2,
+  ListChecks,
   Loader2,
+  Paperclip,
   Pin,
   PinOff,
   RefreshCw,
+  RotateCcw,
   Send,
   Unlink,
   UserCheck,
@@ -20,6 +32,9 @@ import { open as openShell } from "@tauri-apps/plugin-shell";
 import { invoke } from "@/lib/tauri";
 import { focusIfPanelZone } from "@/lib/panelFocus";
 import { Select } from "@/components/ui/select";
+import { StatusIcon } from "@/components/clickup/StatusIcon";
+import { PriorityIcon } from "@/components/clickup/PriorityIcon";
+import { ProgressBar } from "@/components/ui/ProgressBar";
 import {
   Tooltip,
   TooltipContent,
@@ -35,21 +50,27 @@ import {
   clickupClosedOutAtom,
   clickupClosedTasksAtom,
   clickupClosureOfferAtom,
+  clickupListStatusesAtom,
   reinjectTaskAction,
   clickupDetailTaskIdAtom,
   clickupGroupByAtom,
   clickupSendConfirmAtom,
   clickupShowClosedAtom,
+  clickupSortAtom,
   clickupSpaceFilterAtom,
   clickupSpacesAtom,
   clickupSyncStatusAtom,
   clickupTasksAtom,
+  copyTaskIdAction,
   requestBindTaskAction,
   requestSendTaskAction,
   spawnWorktreeWithTaskAction,
+  statusFraction,
   togglePinTaskAction,
   CLICKUP_ACTION_LABELS as ACTION_LABELS,
   type ClickUpGroupBy,
+  type ClickUpListStatus,
+  type ClickUpSortField,
   type ClickUpTask,
   type ClickUpTaskActions,
 } from "@/stores/clickup";
@@ -67,17 +88,40 @@ const VIEW_LABEL: Record<ClickUpView, string> = {
   assignee: "Assignee",
 };
 
-const PRIORITY_COLOR: Record<string, string> = {
-  urgent: "#f50000",
-  high: "#ffcc00",
-  normal: "#6fddff",
-  low: "#d8d8d8",
-};
+const PRIORITY_RANK: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
+
+/// Numeric sort key per field. Nulls sort last (oldest / no-due / no-priority).
+function sortKey(t: ClickUpTask, field: ClickUpSortField): number {
+  switch (field) {
+    case "updated":
+      return t.date_updated ?? 0;
+    case "created":
+      return t.date_created ?? 0;
+    case "priority":
+      return t.priority ? PRIORITY_RANK[t.priority] ?? 4 : 4;
+    case "due":
+      return t.due_date ?? Number.MAX_SAFE_INTEGER;
+  }
+}
+
+/// Sort picker buttons. Priority sorts ascending by default (urgent first); the
+/// date fields descending (newest/soonest-changed first).
+const SORT_FIELDS: { field: ClickUpSortField; label: string; Icon: typeof Clock }[] = [
+  { field: "updated", label: "Updated", Icon: Clock },
+  { field: "created", label: "Created", Icon: CalendarPlus },
+  { field: "priority", label: "Priority", Icon: Flag },
+  { field: "due", label: "Due date", Icon: CalendarClock },
+];
+
+function defaultDirFor(field: ClickUpSortField): "asc" | "desc" {
+  return field === "priority" ? "asc" : "desc";
+}
 
 interface TaskGroup {
   key: string;
   label: string;
   color: string | null;
+  statusType: string | null;
   tasks: ClickUpTask[];
 }
 
@@ -87,10 +131,16 @@ export function formatDueDate(ms: number): string {
 
 function groupTasks(tasks: ClickUpTask[], groupBy: ClickUpGroupBy): TaskGroup[] {
   const groups = new Map<string, TaskGroup>();
-  const push = (key: string, label: string, color: string | null, task: ClickUpTask) => {
+  const push = (
+    key: string,
+    label: string,
+    color: string | null,
+    statusType: string | null,
+    task: ClickUpTask,
+  ) => {
     let group = groups.get(key);
     if (!group) {
-      group = { key, label, color, tasks: [] };
+      group = { key, label, color, statusType, tasks: [] };
       groups.set(key, group);
     }
     group.tasks.push(task);
@@ -98,15 +148,15 @@ function groupTasks(tasks: ClickUpTask[], groupBy: ClickUpGroupBy): TaskGroup[] 
   for (const task of tasks) {
     if (groupBy === "status") {
       const label = task.status_name ?? "No status";
-      push(`status:${label}`, label, task.status_color, task);
+      push(`status:${label}`, label, task.status_color, task.status_type, task);
     } else if (groupBy === "list") {
-      push(`list:${task.list_id}`, task.list_name, null, task);
+      push(`list:${task.list_id}`, task.list_name, null, null, task);
     } else if (task.assignees.length === 0) {
-      push("assignee:none", "Unassigned", null, task);
+      push("assignee:none", "Unassigned", null, null, task);
     } else {
       // A multi-assignee task appears under each of its assignees.
       for (const a of task.assignees) {
-        push(`assignee:${a.id ?? a.username ?? "?"}`, a.username ?? "Unknown", a.color, task);
+        push(`assignee:${a.id ?? a.username ?? "?"}`, a.username ?? "Unknown", a.color, null, task);
       }
     }
   }
@@ -129,6 +179,15 @@ export function ClickUpPanel() {
   const rootRef = useRef<HTMLDivElement>(null);
   const [closedLoading, setClosedLoading] = useState(false);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  // Per-task subtask expansion. Default COLLAPSED in the panel (absent = closed);
+  // Space toggles the keyboard-cursor task, the chevron toggles on click. (The
+  // detail modal shows subtasks expanded — it doesn't use this set.)
+  const [expandedTaskIds, setExpandedTaskIds] = useState<ReadonlySet<string>>(new Set());
+  const [sort, setSort] = useAtom(clickupSortAtom);
+  const setListStatuses = useSetAtom(clickupListStatusesAtom);
+  // Lists whose workflow has been requested this session (loaded or in-flight)
+  // — keeps the background resolve to one network call per list.
+  const resolvedListsRef = useRef<Set<string>>(new Set());
 
   const boundTaskId = useAtomValue(activeSessionClickUpTaskAtom);
   const pinnedTaskIds = useAtomValue(activeSessionClickUpPinsAtom);
@@ -138,6 +197,7 @@ export function ClickUpPanel() {
   const requestBind = useSetAtom(requestBindTaskAction);
   const reinject = useSetAtom(reinjectTaskAction);
   const setClosureOffer = useSetAtom(clickupClosureOfferAtom);
+  const copyTaskId = useSetAtom(copyTaskIdAction);
   const activeSessionId = useAtomValue(activeSessionIdAtom);
 
   const actions: ClickUpTaskActions = useMemo(
@@ -154,8 +214,9 @@ export function ClickUpPanel() {
         const url = [...tasks, ...closedTasks].find((t) => t.id === id)?.url;
         if (url && /^https?:\/\//i.test(url)) void openShell(url);
       },
+      copyId: (displayId) => copyTaskId(displayId),
     }),
-    [requestSend, spawnWorktree, togglePin, requestBind, reinject, setClosureOffer, activeSessionId, tasks, closedTasks],
+    [requestSend, spawnWorktree, togglePin, requestBind, reinject, setClosureOffer, copyTaskId, activeSessionId, tasks, closedTasks],
   );
 
   // Derived chip state: the "mine" preset IS assigned-to-me + status, so a
@@ -231,7 +292,41 @@ export function ClickUpPanel() {
     };
   }, [showClosed, spaceFilter, assignedToMe, userId, setClosedTasks]);
 
-  const { groups, closedIds, visibleCount } = useMemo(() => {
+  // Status glyphs need each list's ordered workflow for the proportional pie
+  // fill. Bulk mirror read seeds whatever is already cached (instant, no
+  // network); then any visible list still missing is resolved live once
+  // (GET /list/{id}, which also caches into the mirror), so the proportions
+  // snap in progressively. Tracked per session via resolvedListsRef.
+  useEffect(() => {
+    let cancelled = false;
+    invoke<Record<string, ClickUpListStatus[]>>("clickup_read_all_list_statuses")
+      .then((cached) => {
+        if (cancelled) return;
+        setListStatuses((prev) => ({ ...cached, ...prev }));
+        for (const id of Object.keys(cached)) resolvedListsRef.current.add(id);
+        const missing = [...new Set([...tasks, ...closedTasks].map((t) => t.list_id))].filter(
+          (id) => !resolvedListsRef.current.has(id),
+        );
+        for (const id of missing) resolvedListsRef.current.add(id);
+        void (async () => {
+          for (const listId of missing) {
+            try {
+              const s = await invoke<ClickUpListStatus[]>("clickup_read_list_statuses", { listId });
+              if (cancelled) return;
+              setListStatuses((prev) => ({ ...prev, [listId]: s }));
+            } catch {
+              resolvedListsRef.current.delete(listId);
+            }
+          }
+        })();
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [tasks, closedTasks, setListStatuses]);
+
+  const { groups, closedIds, visibleCount, childMap } = useMemo(() => {
     const open = spaceFilter ? tasks.filter((t) => t.space_id === spaceFilter) : tasks;
     const openIds = new Set(open.map((t) => t.id));
     // Fetched-while-offline fallback rows are tombstoned mirror rows scoped
@@ -241,18 +336,71 @@ export function ClickUpPanel() {
       ? closedTasks.filter((t) => !openIds.has(t.id))
       : [];
     const closedIds = new Set(closedExtra.map((t) => t.id));
-    let all = [...open, ...closedExtra];
-    if (assignedToMe && userId !== null) {
-      all = all.filter((t) => t.assignees.some((a) => a.id === userId));
+    // The full pool (space + show-closed scoped, but NOT assignee-filtered) is
+    // the nesting source: a visible parent shows ALL its subtasks, even ones
+    // assigned to someone else, mirroring ClickUp/Linear's expand behavior.
+    const pool = [...open, ...closedExtra];
+    const compare = (a: ClickUpTask, b: ClickUpTask) => {
+      const ka = sortKey(a, sort.field);
+      const kb = sortKey(b, sort.field);
+      const base = ka < kb ? -1 : ka > kb ? 1 : 0;
+      return sort.dir === "asc" ? base : -base;
+    };
+    const childMap = new Map<string, ClickUpTask[]>();
+    for (const t of pool) {
+      if (t.parent_id) {
+        const arr = childMap.get(t.parent_id);
+        if (arr) arr.push(t);
+        else childMap.set(t.parent_id, [t]);
+      }
     }
-    return { groups: groupTasks(all, groupBy), closedIds, visibleCount: all.length };
-  }, [tasks, closedTasks, spaceFilter, showClosed, assignedToMe, userId, groupBy]);
+    for (const arr of childMap.values()) arr.sort(compare);
+    // The assignee filter only scopes which tasks become TOP-LEVEL rows; their
+    // subtrees come from the pool via childMap.
+    const visible =
+      assignedToMe && userId !== null
+        ? pool.filter((t) => t.assignees.some((a) => a.id === userId))
+        : pool;
+    const visibleIds = new Set(visible.map((t) => t.id));
+    // A visible task is a top-level row unless its parent is also visible — in
+    // which case it nests under that parent instead of grouping separately (so
+    // it never renders twice).
+    const topLevel = visible
+      .filter((t) => !t.parent_id || !visibleIds.has(t.parent_id))
+      .sort(compare);
+    return {
+      groups: groupTasks(topLevel, groupBy),
+      closedIds,
+      visibleCount: visible.length,
+      childMap,
+    };
+  }, [tasks, closedTasks, spaceFilter, showClosed, assignedToMe, userId, groupBy, sort]);
+
+  // Latest parent-id set for the expand/collapse-all shortcut (the window
+  // keydown closure can't see the freshest childMap without re-subscribing).
+  const allParentIdsRef = useRef<ReadonlyMap<string, ClickUpTask[]>>(new Map());
+  allParentIdsRef.current = childMap;
+
+  const allExpanded = expandedTaskIds.size > 0;
+  function toggleExpandAll() {
+    setExpandedTaskIds(allExpanded ? new Set() : new Set(childMap.keys()));
+  }
+  const isDefaultSort = sort.field === "updated" && sort.dir === "desc";
 
   function toggleGroup(key: string) {
     setCollapsed((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
+      return next;
+    });
+  }
+
+  function toggleTaskExpand(id: string) {
+    setExpandedTaskIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   }
@@ -289,12 +437,27 @@ export function ClickUpPanel() {
   useEffect(() => {
     if (!listenerActive) return;
     function onKey(e: KeyboardEvent) {
-      if (e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
       const target = e.target as HTMLElement | null;
       const inField = target?.tagName === "INPUT"
         || target?.tagName === "TEXTAREA"
         || !!target?.closest(".cm-editor")
         || target?.getAttribute("contenteditable") === "true";
+      // Ctrl+C over the keyboard-cursor task copies its id (custom id or
+      // internal). Editable fields keep native copy; runs before the
+      // modifier-bail below.
+      if (e.code === "KeyC" && e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+        if (inField) return;
+        if (!target?.closest("[data-focus-zone='panel']") && !target?.closest("[data-focus-zone='clickup']")) return;
+        const sel = rootRef.current?.querySelector<HTMLElement>(
+          "[data-nav-selected='true'][data-task-copy-id]",
+        );
+        if (sel?.dataset.taskCopyId) {
+          e.preventDefault();
+          copyTaskId(sel.dataset.taskCopyId);
+        }
+        return;
+      }
+      if (e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
       if (inField) return;
       // The sidebar, open dialogs (incl. swal confirms) and the select's
       // own popup own their keys.
@@ -305,20 +468,50 @@ export function ClickUpPanel() {
       ) return;
       const root = rootRef.current;
       if (!root) return;
-      if (e.code === "KeyA" || e.code === "KeyH") {
+      // Focus on a header-action button: its own arrow-nav (the capture handler
+      // below) + native Enter/Space own the keys — don't run list nav here.
+      if (target?.closest("[data-header-action]")) return;
+      if (e.code === "KeyA" || e.code === "KeyH" || e.code === "KeyE") {
         // Bare-letter toggles: only while the user is interacting with the
         // panel (same zone scoping as the S/W/P/B task verbs). "C" is reserved
-        // for close-out (the cursor row's verb); show-closed moved to "H".
+        // for close-out (the cursor row's verb); show-closed moved to "H";
+        // "E" expands/collapses all subtask trees.
         if (!target?.closest("[data-focus-zone='panel']") && !target?.closest("[data-focus-zone='clickup']")) return;
-        e.preventDefault();
-        if (e.code === "KeyA") setAssignedToMe((prev) => !prev);
-        else setShowClosed((prev) => !prev);
+        if (e.code === "KeyA") {
+          // Disabled while the "My tasks" preset is active (it already implies
+          // assigned-to-me) — leave it via the chips instead.
+          if (assignedToMe && groupBy === "status") return;
+          e.preventDefault();
+          setAssignedToMe((prev) => !prev);
+        } else if (e.code === "KeyH") {
+          e.preventDefault();
+          setShowClosed((prev) => !prev);
+        } else {
+          e.preventDefault();
+          setExpandedTaskIds((prev) =>
+            prev.size > 0 ? new Set() : new Set(allParentIdsRef.current.keys()),
+          );
+        }
         return;
       }
       const items = Array.from(root.querySelectorAll<HTMLElement>("[data-nav-item]"));
       if (items.length === 0) return;
       const selected = root.querySelector<HTMLElement>("[data-nav-selected='true']");
       const idx = selected ? items.indexOf(selected) : -1;
+      if (e.code === "Space") {
+        // Toggle the cursor task's subtasks (only when it has a subtree).
+        const id = selected?.dataset.taskId;
+        if (id && selected?.dataset.hasSubtree !== undefined) {
+          e.preventDefault();
+          setExpandedTaskIds((prev) => {
+            const nextSet = new Set(prev);
+            if (nextSet.has(id)) nextSet.delete(id);
+            else nextSet.add(id);
+            return nextSet;
+          });
+        }
+        return;
+      }
       if (e.code === "ArrowUp" || e.code === "ArrowDown") {
         e.preventDefault();
         if (e.code === "ArrowUp" && idx === 0) {
@@ -352,7 +545,7 @@ export function ClickUpPanel() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [listenerActive, setAssignedToMe, setShowClosed]);
+  }, [listenerActive, setAssignedToMe, setShowClosed, setExpandedTaskIds, assignedToMe, groupBy, copyTaskId]);
 
   // ↓ from the focused Space select hands control back to the list cursor.
   // Capture-phase on window so it runs BEFORE the select trigger's own
@@ -384,6 +577,45 @@ export function ClickUpPanel() {
     return () => window.removeEventListener("keydown", onSelectKey, true);
   }, [listenerActive]);
 
+  // Header-action row keyboard nav: → from the Space select enters the header
+  // buttons (sort / reset / expand-all / filters); ←/→ move along them; ← from
+  // the first returns to the select. Capture phase so it beats the Select's own
+  // handler and the list-cursor nav. Disabled buttons (e.g. "assigned to me"
+  // while locked in My tasks) are skipped.
+  useEffect(() => {
+    if (!listenerActive) return;
+    function onHeaderNav(e: KeyboardEvent) {
+      if (e.code !== "ArrowLeft" && e.code !== "ArrowRight") return;
+      if (e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
+      const root = rootRef.current;
+      const target = e.target as HTMLElement | null;
+      if (!root || !target) return;
+      const combobox = root.querySelector<HTMLElement>("[role='combobox']");
+      const onCombobox = target === combobox;
+      const headerBtn = target.closest<HTMLElement>("[data-header-action]");
+      if (!onCombobox && !headerBtn) return;
+      const btns = Array.from(
+        root.querySelectorAll<HTMLElement>("[data-header-action]:not([disabled])"),
+      );
+      if (btns.length === 0) return;
+      if (onCombobox) {
+        if (e.code !== "ArrowRight") return;
+        e.preventDefault();
+        e.stopPropagation();
+        btns[0].focus();
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      const i = btns.indexOf(headerBtn!);
+      if (e.code === "ArrowRight") btns[Math.min(i + 1, btns.length - 1)]?.focus();
+      else if (i <= 0) combobox?.focus();
+      else btns[i - 1]?.focus();
+    }
+    window.addEventListener("keydown", onHeaderNav, true);
+    return () => window.removeEventListener("keydown", onHeaderNav, true);
+  }, [listenerActive]);
+
   if (syncStatus?.state === "needs_team") {
     return (
       <div className="flex h-full flex-col" data-focus-zone="clickup">
@@ -403,15 +635,99 @@ export function ClickUpPanel() {
           options={[{ value: "", label: "Todos" }, ...spaces.map((s) => ({ value: s.id, label: s.name }))]}
           className="h-6 w-auto min-w-28 flex-1 px-2 py-0 text-[11px]"
         />
+        {/* Sort: one icon per field (click the active field to flip direction)
+            + reset-to-default. Keyboard-reachable via the header-action row. */}
+        {SORT_FIELDS.map(({ field, label, Icon }) => {
+          const active = sort.field === field;
+          return (
+            <Tooltip key={field}>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    data-header-action
+                    aria-label={`Sort by ${label}`}
+                    aria-pressed={active}
+                    onClick={() =>
+                      setSort(
+                        active
+                          ? { field, dir: sort.dir === "asc" ? "desc" : "asc" }
+                          : { field, dir: defaultDirFor(field) },
+                      )
+                    }
+                    className={`flex size-6 shrink-0 items-center justify-center rounded transition-colors ${
+                      active
+                        ? "bg-primary/10 text-primary"
+                        : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+                    }`}
+                  />
+                }
+              >
+                {active ? (
+                  <span className="flex items-center gap-px">
+                    <Icon size={12} />
+                    {sort.dir === "asc" ? <ArrowUp size={9} /> : <ArrowDown size={9} />}
+                  </span>
+                ) : (
+                  <Icon size={13} />
+                )}
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {`Sort by ${label.toLowerCase()}${active ? (sort.dir === "asc" ? " · asc" : " · desc") : ""}`}
+              </TooltipContent>
+            </Tooltip>
+          );
+        })}
         <Tooltip>
           <TooltipTrigger
             render={
               <button
                 type="button"
+                data-header-action
+                onClick={() => {
+                  setSort({ field: "updated", dir: "desc" });
+                  // The button disables itself once default — keep focus in the
+                  // panel so the bare-letter shortcuts (E/A/H) keep firing.
+                  rootRef.current?.focus({ preventScroll: true });
+                }}
+                disabled={isDefaultSort}
+                aria-label="Reset sort to default"
+                className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+              />
+            }
+          >
+            <RotateCcw size={12} />
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Reset sort (Updated · desc)</TooltipContent>
+        </Tooltip>
+        <span className="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden />
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                data-header-action
+                onClick={toggleExpandAll}
+                aria-label={allExpanded ? "Collapse all subtasks" : "Expand all subtasks"}
+                className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
+              />
+            }
+          >
+            {allExpanded ? <ChevronsDownUp size={13} /> : <ChevronsUpDown size={13} />}
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{allExpanded ? "Collapse all subtasks (E)" : "Expand all subtasks (E)"}</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                data-header-action
                 onClick={() => setAssignedToMe(!assignedToMe)}
+                disabled={activeView === "mine"}
                 aria-label="Assigned to me"
                 aria-pressed={assignedToMe}
-                className={`flex size-6 shrink-0 items-center justify-center rounded transition-colors ${
+                className={`flex size-6 shrink-0 items-center justify-center rounded transition-colors disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent ${
                   assignedToMe
                     ? "bg-primary/10 text-primary"
                     : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
@@ -421,13 +737,16 @@ export function ClickUpPanel() {
           >
             <UserCheck size={13} />
           </TooltipTrigger>
-          <TooltipContent side="bottom">Assigned to me (A)</TooltipContent>
+          <TooltipContent side="bottom">
+            {activeView === "mine" ? "Assigned to me — locked in My tasks" : "Assigned to me (A)"}
+          </TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger
             render={
               <button
                 type="button"
+                data-header-action
                 onClick={() => setShowClosed(!showClosed)}
                 aria-label="Show closed tasks"
                 aria-pressed={showClosed}
@@ -472,7 +791,16 @@ export function ClickUpPanel() {
       )}
 
       <div className="min-h-0 flex-1 overflow-y-auto" data-scrollable>
-        {visibleCount === 0 ? (
+        {/* "My tasks" can't be filtered until we know who "me" is — the mirror
+            read returns before the user_id resolves, so without this gate the
+            panel briefly flashes every task. Hold a progress bar instead. */}
+        {assignedToMe && userId === null
+          && syncStatus?.state !== "error" && syncStatus?.state !== "no_token" ? (
+          <div className="flex h-full flex-col items-center justify-center gap-2 px-6">
+            <ProgressBar className="max-w-32" />
+            <span className="text-[11px] text-muted-foreground">Loading your tasks…</span>
+          </div>
+        ) : visibleCount === 0 ? (
           <div className="flex h-full items-center justify-center">
             <span className="text-xs text-muted-foreground">
               {syncStatus?.last_sync == null ? "Waiting for the first sync…" : "No tasks"}
@@ -485,6 +813,9 @@ export function ClickUpPanel() {
               group={group}
               expanded={!collapsed.has(group.key)}
               onToggle={() => toggleGroup(group.key)}
+              expandedTaskIds={expandedTaskIds}
+              onToggleTask={toggleTaskExpand}
+              childMap={childMap}
               closedIds={closedIds}
               showListName={groupBy !== "list"}
               onOpen={(id) => setDetailTaskId(id)}
@@ -543,6 +874,9 @@ function GroupSection({
   group,
   expanded,
   onToggle,
+  expandedTaskIds,
+  onToggleTask,
+  childMap,
   closedIds,
   showListName,
   onOpen,
@@ -553,6 +887,9 @@ function GroupSection({
   group: TaskGroup;
   expanded: boolean;
   onToggle: () => void;
+  expandedTaskIds: ReadonlySet<string>;
+  onToggleTask: (taskId: string) => void;
+  childMap: ReadonlyMap<string, ClickUpTask[]>;
   closedIds: ReadonlySet<string>;
   showListName: boolean;
   onOpen: (taskId: string) => void;
@@ -560,12 +897,41 @@ function GroupSection({
   pinnedTaskIds: string[];
   actions: ClickUpTaskActions;
 }) {
-  // Subtasks nest under their parent only when the parent landed in the same
-  // group; otherwise they render flat in their own group.
-  const inGroup = new Set(group.tasks.map((t) => t.id));
-  const roots = group.tasks.filter((t) => !t.parent_id || !inGroup.has(t.parent_id));
-  const childrenOf = (id: string) => group.tasks.filter((t) => t.parent_id === id);
+  const listStatuses = useAtomValue(clickupListStatusesAtom);
+  const headerFraction = statusFraction(listStatuses[group.tasks[0]?.list_id], group.label);
 
+  // Render a task and (when expanded) its full subtree, recursively. Children
+  // come from the global childMap — a visible parent shows ALL its subtasks
+  // regardless of the assignee/status filter. `seen` guards against a malformed
+  // parent cycle.
+  function renderNode(task: ClickUpTask, depth: number, seen: ReadonlySet<string>): React.ReactNode {
+    const children = seen.has(task.id) ? [] : childMap.get(task.id) ?? [];
+    const hasChildren = children.length > 0;
+    const taskExpanded = expandedTaskIds.has(task.id);
+    const nextSeen = hasChildren ? new Set([...seen, task.id]) : seen;
+    return (
+      <div key={task.id}>
+        <TaskRow
+          task={task}
+          depth={depth}
+          hasChildren={hasChildren}
+          expanded={taskExpanded}
+          onToggleExpand={() => onToggleTask(task.id)}
+          closed={closedIds.has(task.id)}
+          showListName={showListName}
+          onOpen={onOpen}
+          bound={task.id === boundTaskId}
+          pinned={pinnedTaskIds.includes(task.id)}
+          actions={actions}
+        />
+        {hasChildren && taskExpanded && children.map((c) => renderNode(c, depth + 1, nextSeen))}
+      </div>
+    );
+  }
+
+  // Linear-style group header: colored workflow glyph + normal-case label +
+  // count (not the uppercase section-caps used elsewhere — the panel mirrors
+  // Linear's grouped issue list here).
   return (
     <div>
       <button
@@ -574,42 +940,18 @@ function GroupSection({
         data-nav-expanded={expanded}
         data-group-key={group.key}
         onClick={onToggle}
-        className="flex w-full items-center gap-1.5 px-3 py-1 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground transition-colors hover:bg-secondary/30"
+        className="flex w-full items-center gap-1.5 bg-secondary/40 px-3 py-1.5 text-left text-[11px] font-medium text-foreground/70 transition-colors hover:bg-secondary/60"
       >
-        {expanded ? <ChevronDown size={10} className="shrink-0" /> : <ChevronRight size={10} className="shrink-0" />}
-        {group.color && (
+        {expanded ? <ChevronDown size={11} className="shrink-0 text-muted-foreground" /> : <ChevronRight size={11} className="shrink-0 text-muted-foreground" />}
+        {group.statusType !== null ? (
+          <StatusIcon type={group.statusType} color={group.color} fraction={headerFraction} size={13} className="shrink-0" title={group.label} />
+        ) : group.color ? (
           <span className="size-1.5 shrink-0 rounded-full" style={{ background: group.color }} />
-        )}
+        ) : null}
         <span className="truncate">{group.label}</span>
-        <span className="tabular-nums text-muted-foreground/60">{group.tasks.length}</span>
+        <span className="tabular-nums text-muted-foreground/50">{group.tasks.length}</span>
       </button>
-      {expanded &&
-        roots.map((task) => (
-          <div key={task.id}>
-            <TaskRow
-              task={task}
-              closed={closedIds.has(task.id)}
-              showListName={showListName}
-              onOpen={onOpen}
-              bound={task.id === boundTaskId}
-              pinned={pinnedTaskIds.includes(task.id)}
-              actions={actions}
-            />
-            {childrenOf(task.id).map((sub) => (
-              <TaskRow
-                key={sub.id}
-                task={sub}
-                closed={closedIds.has(sub.id)}
-                showListName={showListName}
-                onOpen={onOpen}
-                bound={sub.id === boundTaskId}
-                pinned={pinnedTaskIds.includes(sub.id)}
-                actions={actions}
-                indented
-              />
-            ))}
-          </div>
-        ))}
+      {expanded && group.tasks.map((task) => renderNode(task, 0, new Set<string>()))}
     </div>
   );
 }
@@ -664,7 +1006,10 @@ function TaskRow({
   bound,
   pinned,
   actions,
-  indented = false,
+  depth = 0,
+  hasChildren = false,
+  expanded = true,
+  onToggleExpand,
 }: {
   task: ClickUpTask;
   closed: boolean;
@@ -673,27 +1018,67 @@ function TaskRow({
   bound: boolean;
   pinned: boolean;
   actions: ClickUpTaskActions;
-  indented?: boolean;
+  depth?: number;
+  hasChildren?: boolean;
+  expanded?: boolean;
+  onToggleExpand?: () => void;
 }) {
   const overdue = task.due_date !== null && task.due_date < Date.now() && !closed;
-  const priorityColor = task.priority ? PRIORITY_COLOR[task.priority] ?? "#d8d8d8" : null;
   const workedClosed = useAtomValue(clickupClosedOutAtom).includes(task.id);
+  const listStatuses = useAtomValue(clickupListStatusesAtom);
 
   return (
     <button
       type="button"
       data-nav-item
       data-task-id={task.id}
+      data-task-copy-id={task.custom_id ?? task.id}
+      data-has-subtree={hasChildren ? "true" : undefined}
       onClick={() => onOpen(task.id)}
-      className={`group flex w-full items-center gap-1.5 py-1 pr-3 text-left transition-colors hover:bg-secondary/40 ${
-        indented ? "pl-7" : "pl-3"
-      } ${closed ? "opacity-60" : ""}`}
+      style={{ paddingLeft: 12 + depth * 16 }}
+      className={`group flex w-full items-center gap-1.5 py-1 pr-3 text-left transition-colors hover:bg-secondary/40 ${closed ? "opacity-60" : ""}`}
     >
-      <span
-        className="size-1.5 shrink-0 rounded-full"
-        style={{ background: task.status_color ?? "var(--color-muted-foreground)" }}
+      {/* Chevron slot: toggles subtasks when present (Space when keyboard-
+          hovered), else a spacer so every row's priority/status stay aligned. */}
+      {hasChildren ? (
+        <span
+          role="button"
+          tabIndex={-1}
+          aria-label={expanded ? "Collapse subtasks" : "Expand subtasks"}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleExpand?.();
+          }}
+          className="flex size-3.5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+        >
+          {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+        </span>
+      ) : (
+        <span className="w-3.5 shrink-0" aria-hidden />
+      )}
+      <PriorityIcon priority={task.priority} size={12} className="shrink-0" />
+      <StatusIcon
+        type={task.status_type}
+        color={task.status_color}
+        fraction={statusFraction(listStatuses[task.list_id], task.status_name)}
+        size={13}
+        className="shrink-0"
         title={task.status_name ?? undefined}
       />
+      {(task.custom_id ?? task.id) && (
+        <span
+          role="button"
+          tabIndex={-1}
+          title="Copy task ID"
+          onClick={(e) => {
+            e.stopPropagation();
+            actions.copyId(task.custom_id ?? task.id);
+          }}
+          className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/60 transition-colors hover:text-foreground"
+        >
+          {task.custom_id ?? task.id}
+        </span>
+      )}
       <span
         className={`min-w-0 flex-1 truncate text-[11px] ${
           closed ? "text-muted-foreground line-through" : "text-foreground/80"
@@ -718,8 +1103,18 @@ function TaskRow({
         {pinned && !bound && (
           <Pin size={10} className="shrink-0 text-primary/70" aria-label="Pinned as context for the current session" />
         )}
-        {priorityColor && (
-          <Flag size={10} className="shrink-0" style={{ color: priorityColor }} aria-label={`Priority: ${task.priority}`} />
+        {(task.has_description || task.subtask_count > 0 || task.checklist_count > 0 || task.attachment_count > 0) && (
+          <span className="flex shrink-0 items-center gap-1 text-muted-foreground/50">
+            {task.has_description && <AlignLeft size={10} aria-label="Has description" />}
+            {task.subtask_count > 0 && (
+              <span className="flex items-center gap-0.5">
+                <GitFork size={10} />
+                <span className="text-[9px] tabular-nums">{task.subtask_count}</span>
+              </span>
+            )}
+            {task.checklist_count > 0 && <ListChecks size={10} aria-label="Has checklist" />}
+            {task.attachment_count > 0 && <Paperclip size={10} aria-label="Has attachment" />}
+          </span>
         )}
         {task.tags.slice(0, 2).map((tag) => (
           <span

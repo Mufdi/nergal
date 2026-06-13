@@ -1,9 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { open as openShell } from "@tauri-apps/plugin-shell";
 import {
   CheckSquare,
+  ChevronLeft,
+  ChevronRight,
   CircleCheck,
+  Copy,
   ExternalLink,
   GitBranchPlus,
   Link2,
@@ -22,6 +25,8 @@ import { invoke } from "@/lib/tauri";
 import { FloatingPanel } from "@/components/floating/FloatingPanel";
 import { MarkdownView } from "@/components/plan/MarkdownView";
 import { DatePopover } from "@/components/clickup/DatePopover";
+import { StatusIcon } from "@/components/clickup/StatusIcon";
+import { PriorityIcon } from "@/components/clickup/PriorityIcon";
 import {
   Tooltip,
   TooltipContent,
@@ -40,26 +45,35 @@ import {
   activeSessionClickUpTaskAtom,
   clickupClosureOfferAtom,
   clickupDetailTaskIdAtom,
+  clickupListStatusesAtom,
   clickupOverlayAtom,
   clickupTasksAtom,
   clearOverlayEntry,
+  copyTaskIdAction,
   reinjectTaskAction,
   requestBindTaskAction,
   requestSendTaskAction,
   setOverlayEntry,
   spawnWorktreeWithTaskAction,
+  statusFraction,
   togglePinTaskAction,
   CLICKUP_ACTION_LABELS as ACTION_LABELS,
   type ClickUpAttachment,
   type ClickUpChecklistItem,
   type ClickUpCustomValue,
   type ClickUpListStatus,
+  type ClickUpTask,
   type ClickUpTaskDetailData,
 } from "@/stores/clickup";
 import { toastsAtom } from "@/stores/toast";
 
 const DETAIL_PANEL_ID = "clickup-task-detail";
-const DEFAULT_GEOMETRY: FloatingGeometry = { x: 240, y: 120, width: 560, height: 520 };
+const DEFAULT_GEOMETRY: FloatingGeometry = { x: 200, y: 90, width: 780, height: 660 };
+// A two-column issue detail has a real minimum usable footprint — enforce it
+// so a geometry persisted from an earlier, narrower layout grows on load
+// instead of staying cramped.
+const MIN_WIDTH = 680;
+const MIN_HEIGHT = 600;
 
 /// Gate for the lazy thumbnail: a non-image `thumbnail_url` must never
 /// auto-load, so the decision keys on the attachment's mimetype/extension —
@@ -238,6 +252,7 @@ function ToolbarAction({
 export function ClickUpTaskDetail() {
   const [taskId, setTaskId] = useAtom(clickupDetailTaskIdAtom);
   const tasks = useAtomValue(clickupTasksAtom);
+  const listStatuses = useAtomValue(clickupListStatusesAtom);
   const boundTaskId = useAtomValue(activeSessionClickUpTaskAtom);
   const pinnedTaskIds = useAtomValue(activeSessionClickUpPinsAtom);
   const requestSend = useSetAtom(requestSendTaskAction);
@@ -245,6 +260,7 @@ export function ClickUpTaskDetail() {
   const togglePin = useSetAtom(togglePinTaskAction);
   const requestBind = useSetAtom(requestBindTaskAction);
   const reinject = useSetAtom(reinjectTaskAction);
+  const copyTaskId = useSetAtom(copyTaskIdAction);
   const activeSessionId = useAtomValue(activeSessionIdAtom);
   const setFocusZone = useSetAtom(focusZoneAtom);
   const setClosureOffer = useSetAtom(clickupClosureOfferAtom);
@@ -264,6 +280,7 @@ export function ClickUpTaskDetail() {
   const [statusPickerOpen, setStatusPickerOpen] = useState(false);
   const [dueOpen, setDueOpen] = useState(false);
   const [commentDraft, setCommentDraft] = useState<string>("");
+  const [commentFocused, setCommentFocused] = useState(false);
   const [postingComment, setPostingComment] = useState(false);
   const [uncertainComment, setUncertainComment] = useState<{ text: string; sentAtMs: number } | null>(null);
   // Single-flight lock: the field name of the in-flight write, or null. Blocks
@@ -272,6 +289,12 @@ export function ClickUpTaskDetail() {
   const [busy, setBusy] = useState<string | null>(null);
   const commentRef = useRef<HTMLTextAreaElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const mainRef = useRef<HTMLDivElement | null>(null);
+  // Drill-in history: clicking a subtask navigates the detail into it; the
+  // header ‹ › step back/forward through the visited stack.
+  const detailHistory = useRef<{ stack: string[]; index: number }>({ stack: [], index: -1 });
+  const navInternal = useRef(false);
+  const [histNav, setHistNav] = useState({ canBack: false, canFwd: false });
   // Index cursor key over the body's actionable elements (AgentPickerModal
   // pattern). Highlight is a bg/ring on the selected element — no DOM focus.
   const [navKey, setNavKey] = useState<string | null>(null);
@@ -333,10 +356,20 @@ export function ClickUpTaskDetail() {
       wasOpenRef.current = true;
       return;
     }
-    if (wasOpenRef.current && activeSessionId) {
+    if (wasOpenRef.current) {
       requestAnimationFrame(() => {
-        setFocusZone("terminal");
-        terminalService.focusActive();
+        // Prefer returning focus to the ClickUp panel it was opened from (its
+        // root carries a tabindex; the detail's display:contents wrapper does
+        // not) so the panel's bare-letter shortcuts (E, A, H) keep working.
+        // Fall back to the terminal only when the panel isn't mounted.
+        const panel = document.querySelector<HTMLElement>("[data-focus-zone='clickup'][tabindex]");
+        if (panel) {
+          setFocusZone("panel");
+          panel.focus({ preventScroll: true });
+        } else if (activeSessionId) {
+          setFocusZone("terminal");
+          terminalService.focusActive();
+        }
       });
     }
     wasOpenRef.current = false;
@@ -351,7 +384,12 @@ export function ClickUpTaskDetail() {
       .then((row) => {
         if (!row) return;
         try {
-          setGeometry(clampGeometryToViewport(JSON.parse(row.geometry_json) as FloatingGeometry));
+          const saved = clampGeometryToViewport(JSON.parse(row.geometry_json) as FloatingGeometry);
+          setGeometry({
+            ...saved,
+            width: Math.max(saved.width, MIN_WIDTH),
+            height: Math.max(saved.height, MIN_HEIGHT),
+          });
         } catch {
           setGeometry(DEFAULT_GEOMETRY);
         }
@@ -369,6 +407,57 @@ export function ClickUpTaskDetail() {
     return () => clearTimeout(t);
   }, [taskId]);
 
+  // Maintain the drill-in history stack. A fresh open (closed → id) seeds it; a
+  // drill (new id while open) truncates any forward entries and pushes; a
+  // back/forward step (navInternal) just updates the enabled flags.
+  useEffect(() => {
+    const h = detailHistory.current;
+    if (taskId === null) {
+      detailHistory.current = { stack: [], index: -1 };
+      setHistNav({ canBack: false, canFwd: false });
+      return;
+    }
+    if (navInternal.current) {
+      navInternal.current = false;
+    } else if (h.index >= 0 && h.stack[h.index] === taskId) {
+      // already current — no-op
+    } else if (h.index === -1) {
+      h.stack = [taskId];
+      h.index = 0;
+    } else {
+      h.stack = [...h.stack.slice(0, h.index + 1), taskId];
+      h.index = h.stack.length - 1;
+    }
+    setHistNav({ canBack: h.index > 0, canFwd: h.index < h.stack.length - 1 });
+  }, [taskId]);
+
+  function stepHistory(delta: number) {
+    const h = detailHistory.current;
+    const next = h.index + delta;
+    if (next < 0 || next >= h.stack.length) return;
+    h.index = next;
+    navInternal.current = true;
+    setTaskId(h.stack[next]);
+    setHistNav({ canBack: next > 0, canFwd: next < h.stack.length - 1 });
+  }
+
+  // Ctrl+←/→ steps the drill-in history (no collision — shortcuts.ts has no
+  // Ctrl+Arrow binding). Editable fields keep their own word-nav.
+  useEffect(() => {
+    if (taskId === null) return;
+    function onKey(e: KeyboardEvent) {
+      if (!e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      if (e.code !== "ArrowLeft" && e.code !== "ArrowRight") return;
+      const t = e.target as HTMLElement | null;
+      if (t?.tagName === "TEXTAREA" || t?.tagName === "INPUT") return;
+      e.preventDefault();
+      stepHistory(e.code === "ArrowLeft" ? -1 : 1);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskId]);
+
   // When a popup (status / date) closes, hand focus back to the nav container
   // so arrow-nav resumes from the cursor.
   useEffect(() => {
@@ -377,12 +466,20 @@ export function ClickUpTaskDetail() {
   }, [statusPickerOpen, dueOpen, taskId]);
 
   // The cursor is state-driven (no DOM focus), so the scroll container won't
-  // follow it on its own — bring the highlighted element into view.
+  // follow it on its own — bring the highlighted element into view (smoothly).
+  // Status/due live in the rail (logically the top); landing on them scrolls
+  // the main column back to its top so its leading content (description) is
+  // visible again — otherwise moving down then back up to the rail would leave
+  // the main column stuck scrolled down.
   useEffect(() => {
     if (!navKey) return;
+    if (navKey === "status" || navKey === "due") {
+      mainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
     contentRef.current
       ?.querySelector<HTMLElement>(`[data-nav-key="${CSS.escape(navKey)}"]`)
-      ?.scrollIntoView({ block: "nearest" });
+      ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [navKey]);
 
   useEffect(() => {
@@ -621,6 +718,57 @@ export function ClickUpTaskDetail() {
   const task = detail?.task ?? null;
   const subtasks = taskId ? tasks.filter((t) => t.parent_id === taskId) : [];
 
+  // Full parent → children map for the recursive subtask tree (sub-subtasks
+  // and deeper). Built from the mirror's open tasks, same source the panel uses.
+  const childrenByParent = useMemo(() => {
+    const m = new Map<string, ClickUpTask[]>();
+    for (const t of tasks) {
+      if (t.parent_id) {
+        const arr = m.get(t.parent_id);
+        if (arr) arr.push(t);
+        else m.set(t.parent_id, [t]);
+      }
+    }
+    return m;
+  }, [tasks]);
+
+  // Subtasks usually share the parent's list, whose workflow is already loaded
+  // in `statuses`; fall back to the panel-cached set for cross-list subtasks.
+  function subFraction(sub: ClickUpTask): number {
+    const set = sub.list_id === task?.list_id ? statuses : listStatuses[sub.list_id];
+    return statusFraction(set, sub.status_name);
+  }
+
+  function renderSubtree(parentId: string, depth: number, seen: ReadonlySet<string>): React.ReactNode {
+    const children = childrenByParent.get(parentId) ?? [];
+    return children.map((sub) => {
+      const recurse = !seen.has(sub.id);
+      return (
+        <div key={sub.id}>
+          <button
+            type="button"
+            onClick={() => setTaskId(sub.id)}
+            data-nav-key={`sub:${sub.id}`}
+            data-nav-selected={navKey === `sub:${sub.id}` || undefined}
+            style={{ paddingLeft: 4 + depth * 16 }}
+            className="flex w-full items-center gap-1.5 rounded py-0.5 pr-1 text-left text-[11px] text-foreground/80 outline-none transition-colors hover:bg-secondary/40"
+          >
+            <StatusIcon
+              type={sub.status_type}
+              color={sub.status_color}
+              fraction={subFraction(sub)}
+              size={12}
+              className="shrink-0"
+              title={sub.status_name ?? undefined}
+            />
+            <span className="truncate">{sub.name}</span>
+          </button>
+          {recurse && renderSubtree(sub.id, depth + 1, new Set([...seen, sub.id]))}
+        </div>
+      );
+    });
+  }
+
   // Apply optimistic overlay to status_name for the status pill.
   const overlayStatusName = taskId
     ? (overlay as Record<string, { value: string | null } | undefined>)[`${taskId}:status`]?.value ?? null
@@ -629,6 +777,10 @@ export function ClickUpTaskDetail() {
   const displayStatusColor = (() => {
     if (!overlayStatusName || !taskId) return task?.status_color ?? null;
     return statuses.find((s) => s.name === overlayStatusName)?.color ?? task?.status_color ?? null;
+  })();
+  const displayStatusType = (() => {
+    if (!overlayStatusName || !taskId) return task?.status_type ?? null;
+    return statuses.find((s) => s.name === overlayStatusName)?.status_type ?? task?.status_type ?? null;
   })();
 
   // Optimistic due-date overlay (mirrors the status overlay) so the display
@@ -651,9 +803,14 @@ export function ClickUpTaskDetail() {
   // (status / date) owns the arrows.
   function activateNav(key: string) {
     if (busy) return;
-    if (key === "status") setStatusPickerOpen(true);
+    if (key === "taskid") {
+      if (task) copyTaskId(task.custom_id ?? task.id);
+    } else if (key === "status") setStatusPickerOpen(true);
     else if (key === "due") setDueOpen(true);
-    else if (key.startsWith("sub:")) setTaskId(key.slice(4));
+    else if (key === "desc") {
+      setDescDraft(detail?.description ?? "");
+      setEditingDesc(true);
+    } else if (key.startsWith("sub:")) setTaskId(key.slice(4));
     else if (key.startsWith("check:")) {
       const [, clId, itemId] = key.split(":");
       const cl = detail?.checklists.find((c) => c.id === clId);
@@ -706,17 +863,42 @@ export function ClickUpTaskDetail() {
       onGeometryChange={handleGeometryChange}
       opacity={1}
       zIndex={50}
-      minWidth={380}
-      minHeight={260}
+      minWidth={MIN_WIDTH}
+      minHeight={MIN_HEIGHT}
       accent
       autoFocus
       title={
         <>
-          <span
-            className="size-1.5 shrink-0 rounded-full"
-            style={{ background: task?.status_color ?? "var(--color-muted-foreground)" }}
+          {/* Drill-in history: step back/forward through visited subtasks. */}
+          <button
+            type="button"
+            aria-label="Back"
+            disabled={!histNav.canBack}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => stepHistory(-1)}
+            className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground disabled:opacity-25 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+          >
+            <ChevronLeft size={14} />
+          </button>
+          <button
+            type="button"
+            aria-label="Forward"
+            disabled={!histNav.canFwd}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => stepHistory(1)}
+            className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground disabled:opacity-25 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+          >
+            <ChevronRight size={14} />
+          </button>
+          <StatusIcon
+            type={displayStatusType}
+            color={displayStatusColor}
+            fraction={statusFraction(statuses, displayStatusName)}
+            size={13}
+            className="shrink-0"
+            title={displayStatusName ?? undefined}
           />
-          <span className="truncate text-xs font-medium text-foreground">
+          <span className="truncate text-sm font-medium text-foreground">
             {task?.name ?? "ClickUp task"}
           </span>
         </>
@@ -791,91 +973,148 @@ export function ClickUpTaskDetail() {
             contentRef.current?.focus({ preventScroll: true });
           }
         }}
-        className="h-full overflow-y-auto outline-none"
+        className="flex h-full outline-none"
       >
         {loading && !detail ? (
-          <div className="flex h-full items-center justify-center gap-2 text-xs text-muted-foreground">
+          <div className="flex h-full w-full items-center justify-center gap-2 text-xs text-muted-foreground">
             <Loader2 size={14} className="animate-spin" /> Loading…
           </div>
         ) : error ? (
-          <div className="flex h-full items-center justify-center px-6 text-center text-xs text-red-400">
+          <div className="flex h-full w-full items-center justify-center px-6 text-center text-xs text-red-400">
             {error}
           </div>
         ) : detail ? (
-          <div className="flex flex-col gap-3 px-3 py-2">
-            {/* Meta strip */}
-            <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
-              {/* Status pill — clicking opens the inline status picker */}
-              {displayStatusName && (
-                <StatusPicker
-                  currentStatus={displayStatusName}
-                  currentColor={displayStatusColor}
-                  statuses={statuses}
-                  loading={statusesLoading}
-                  onSelect={(name) => void handleStatusChange(name)}
-                  pending={!!overlayStatusName || busy === "status"}
-                  open={statusPickerOpen}
-                  onOpenChange={setStatusPickerOpen}
-                  navSelected={navKey === "status"}
-                />
-              )}
-              {task?.priority && <span>priority: {task.priority}</span>}
-              {/* Due date — local-TZ calendar popover (date-only). */}
-              <span className="flex items-center gap-1">
-                <DatePopover
-                  valueMs={displayDueMs}
-                  onSelect={(ms) => void handleDueDateSave(ms)}
-                  open={dueOpen}
-                  onOpenChange={setDueOpen}
-                  disabled={busy !== null}
-                  navSelected={navKey === "due"}
-                />
-                {busy === "dueDate" && <Loader2 size={9} className="animate-spin text-muted-foreground" />}
-              </span>
-              {task && <span className="truncate">{task.list_name}</span>}
-              {/* Assignees: show initials avatars + remove button on hover.
-                  Add-assignee is scoped to remove-only: the mirror holds only
-                  the task's current assignees and there is no workspace members
-                  directory in the mirror — add would require a live API call
-                  for the member list. Remove-only is correct for this MVP. */}
-              {task?.assignees.map((a) => (
-                <span
-                  key={a.id ?? a.username ?? "?"}
-                  className="group relative flex items-center gap-0.5"
-                >
-                  <span
-                    title={a.username ?? undefined}
-                    className="flex size-4 items-center justify-center rounded-full text-[8px] font-medium text-white"
-                    style={{ background: a.color ?? "var(--color-secondary)" }}
+          <>
+            {/* Properties rail — DOM-first so the index cursor still leads with
+                status/due; order-2 places it visually on the right (Linear's
+                issue-detail layout). */}
+            <aside className="order-2 flex w-44 shrink-0 flex-col gap-3 border-l border-border/50 px-2.5 py-2">
+              <div className="flex flex-col gap-1.5">
+                <SectionCaps label="Properties" />
+                {task && (task.custom_id ?? task.id) && (
+                  <button
+                    type="button"
+                    data-nav-key="taskid"
+                    data-nav-selected={navKey === "taskid" || undefined}
+                    title="Copy task ID"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      copyTaskId(task.custom_id ?? task.id);
+                    }}
+                    className="flex items-center gap-1 self-start rounded px-1 font-mono text-[10px] tabular-nums text-muted-foreground outline-none transition-colors hover:text-foreground"
                   >
-                    {a.initials ?? (a.username?.slice(0, 2).toUpperCase() ?? "?")}
-                  </span>
-                  {a.id !== null && (
-                    <button
-                      type="button"
-                      title={`Remove ${a.username ?? "assignee"}`}
-                      onClick={() => void handleRemoveAssignee(a.id!)}
-                      className="hidden group-hover:flex size-3 items-center justify-center rounded-full bg-secondary/80 text-muted-foreground hover:text-red-400"
+                    {task.custom_id ?? task.id}
+                    <Copy size={9} className="shrink-0" />
+                  </button>
+                )}
+                {displayStatusName && (
+                  <StatusPicker
+                    currentStatus={displayStatusName}
+                    currentColor={displayStatusColor}
+                    currentType={displayStatusType}
+                    statuses={statuses}
+                    loading={statusesLoading}
+                    onSelect={(name) => void handleStatusChange(name)}
+                    pending={!!overlayStatusName || busy === "status"}
+                    open={statusPickerOpen}
+                    onOpenChange={setStatusPickerOpen}
+                    navSelected={navKey === "status"}
+                  />
+                )}
+                {task?.priority && (
+                  <div className="flex items-center gap-1.5 text-[11px] text-foreground/80">
+                    <PriorityIcon priority={task.priority} size={13} className="shrink-0" />
+                    <span className="capitalize">{task.priority}</span>
+                  </div>
+                )}
+                {/* Assignees: avatar + name, remove on hover. Remove-only —
+                    the mirror has no workspace members directory to add from. */}
+                {task?.assignees.map((a) => (
+                  <div
+                    key={a.id ?? a.username ?? "?"}
+                    className="group flex items-center gap-1.5 text-[11px] text-foreground/80"
+                  >
+                    <span
+                      title={a.username ?? undefined}
+                      className="flex size-4 shrink-0 items-center justify-center rounded-full text-[8px] font-medium text-white"
+                      style={{ background: a.color ?? "var(--color-secondary)" }}
                     >
-                      <UserMinus size={8} />
-                    </button>
-                  )}
-                </span>
-              ))}
-              {task?.tags.map((tag) => (
-                <span
-                  key={tag.name}
-                  className="rounded-full px-1.5 leading-4"
-                  style={{
-                    background: tag.tag_bg ? `${tag.tag_bg}33` : "var(--color-secondary)",
-                    color: tag.tag_fg ?? tag.tag_bg ?? "var(--color-secondary-foreground)",
-                  }}
-                >
-                  {tag.name}
-                </span>
-              ))}
-            </div>
+                      {a.initials ?? (a.username?.slice(0, 2).toUpperCase() ?? "?")}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">{a.username ?? "Unknown"}</span>
+                    {a.id !== null && (
+                      <button
+                        type="button"
+                        title={`Remove ${a.username ?? "assignee"}`}
+                        onClick={() => void handleRemoveAssignee(a.id!)}
+                        className="hidden size-3 shrink-0 items-center justify-center rounded-full bg-secondary/80 text-muted-foreground group-hover:flex hover:text-red-400"
+                      >
+                        <UserMinus size={8} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {/* Due date — local-TZ calendar popover (date-only). */}
+                <div className="flex items-center gap-1.5 text-[11px]">
+                  <DatePopover
+                    valueMs={displayDueMs}
+                    onSelect={(ms) => void handleDueDateSave(ms)}
+                    open={dueOpen}
+                    onOpenChange={setDueOpen}
+                    disabled={busy !== null}
+                    navSelected={navKey === "due"}
+                  />
+                  {busy === "dueDate" && <Loader2 size={9} className="animate-spin text-muted-foreground" />}
+                </div>
+                {task && (
+                  <span className="truncate text-[11px] text-muted-foreground" title={task.list_name}>
+                    {task.list_name}
+                  </span>
+                )}
+              </div>
 
+              {task && task.tags.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <SectionCaps label="Labels" />
+                  <div className="flex flex-wrap gap-1">
+                    {task.tags.map((tag) => (
+                      <span
+                        key={tag.name}
+                        className="rounded-full px-1.5 text-[10px] leading-4"
+                        style={{
+                          background: tag.tag_bg ? `${tag.tag_bg}33` : "var(--color-secondary)",
+                          color: tag.tag_fg ?? tag.tag_bg ?? "var(--color-secondary-foreground)",
+                        }}
+                      >
+                        {tag.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {detail.custom_values.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <SectionCaps label="Fields" />
+                  <div className="flex flex-col gap-1.5 text-[11px]">
+                    {detail.custom_values.map((cv) => {
+                      const rendered = formatCustomValue(cv);
+                      if (rendered === null) return null;
+                      return (
+                        <div key={cv.field_id} className="flex flex-col">
+                          <span className="text-[10px] text-muted-foreground">{cv.name}</span>
+                          <span className="min-w-0 truncate text-foreground/80" title={rendered}>
+                            {rendered}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </aside>
+
+            <main ref={mainRef} className="order-1 flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-2">
             {/* Description — untrusted multi-writer markdown: rendered through
                 the same sanitizing pipeline as vault note bodies (MarkdownView
                 / react-markdown skips raw HTML; never raw-HTML passthrough). */}
@@ -885,18 +1124,26 @@ export function ClickUpTaskDetail() {
                 <button
                   type="button"
                   title="Edit description"
-                  onClick={() => {
+                  data-nav-key="desc"
+                  data-nav-selected={navKey === "desc" || undefined}
+                  onClick={(e) => {
+                    // Don't let the container's click-to-refocus handler steal
+                    // focus from the textarea this opens (§5.5).
+                    e.stopPropagation();
                     setDescDraft(detail.description ?? "");
                     setEditingDesc(true);
                   }}
-                  className="flex size-3.5 items-center justify-center rounded text-muted-foreground outline-none hover:text-foreground transition-colors"
+                  className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground outline-none hover:bg-secondary/60 hover:text-foreground transition-colors"
                 >
-                  <Pencil size={10} />
+                  <Pencil size={11} />
                 </button>
               )}
             </div>
             {editingDesc ? (
-              <div className="flex flex-col gap-1.5">
+              // data-floating-popup makes the FloatingPanel's window Escape
+              // handler skip the close while editing (§7) — Escape cancels the
+              // edit instead of tearing down the whole detail.
+              <div className="flex flex-col gap-1.5" data-floating-popup>
                 <textarea
                   value={descDraft}
                   onChange={(e) => setDescDraft(e.target.value)}
@@ -904,6 +1151,13 @@ export function ClickUpTaskDetail() {
                     if (e.key === "Enter" && e.ctrlKey) {
                       e.preventDefault();
                       void handleDescSave();
+                    } else if (e.key === "Escape") {
+                      // Cancel + return the cursor to the pencil for keyboard nav.
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setEditingDesc(false);
+                      setNavKey("desc");
+                      contentRef.current?.focus({ preventScroll: true });
                     }
                   }}
                   className="min-h-[80px] rounded border border-input bg-secondary/30 p-2 text-[11px] leading-relaxed text-foreground/90 outline-none focus-visible:ring-1 focus-visible:ring-ring/50 resize-y"
@@ -934,46 +1188,11 @@ export function ClickUpTaskDetail() {
               <p className="text-xs text-muted-foreground">No description</p>
             )}
 
-            {detail.custom_values.length > 0 && (
-              <>
-                <SectionCaps label="Fields" />
-                <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px]">
-                  {detail.custom_values.map((cv) => {
-                    const rendered = formatCustomValue(cv);
-                    if (rendered === null) return null;
-                    return (
-                      <div key={cv.field_id} className="contents">
-                        <span className="text-muted-foreground">{cv.name}</span>
-                        <span className="min-w-0 truncate text-foreground/80" title={rendered}>
-                          {rendered}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-
             {subtasks.length > 0 && (
               <>
                 <SectionCaps label={`Subtasks · ${subtasks.length}`} />
                 <div className="flex flex-col">
-                  {subtasks.map((sub) => (
-                    <button
-                      key={sub.id}
-                      type="button"
-                      onClick={() => setTaskId(sub.id)}
-                      data-nav-key={`sub:${sub.id}`}
-                      data-nav-selected={navKey === `sub:${sub.id}` || undefined}
-                      className="flex items-center gap-1.5 rounded px-1 py-0.5 text-left text-[11px] text-foreground/80 outline-none transition-colors hover:bg-secondary/40"
-                    >
-                      <span
-                        className="size-1.5 shrink-0 rounded-full"
-                        style={{ background: sub.status_color ?? "var(--color-muted-foreground)" }}
-                      />
-                      <span className="truncate">{sub.name}</span>
-                    </button>
-                  ))}
+                  {renderSubtree(taskId ?? "", 0, new Set<string>())}
                 </div>
               </>
             )}
@@ -1076,6 +1295,11 @@ export function ClickUpTaskDetail() {
               <textarea
                 ref={commentRef}
                 value={commentDraft}
+                // While focused, mark a floating-popup so the FloatingPanel's
+                // Escape skips the close (§7) and the handler below backs out.
+                data-floating-popup={commentFocused || undefined}
+                onFocus={() => setCommentFocused(true)}
+                onBlur={() => setCommentFocused(false)}
                 onChange={(e) => setCommentDraft(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && e.ctrlKey) {
@@ -1085,6 +1309,7 @@ export function ClickUpTaskDetail() {
                     // Back out to the cursor so arrow-nav resumes.
                     e.preventDefault();
                     e.stopPropagation();
+                    setNavKey("comment");
                     contentRef.current?.focus();
                   }
                 }}
@@ -1109,7 +1334,8 @@ export function ClickUpTaskDetail() {
                 </button>
               </div>
             </div>
-          </div>
+            </main>
+          </>
         ) : null}
       </div>
     </FloatingPanel>
@@ -1132,6 +1358,7 @@ function SectionCaps({ label }: { label: string }) {
 function StatusPicker({
   currentStatus,
   currentColor,
+  currentType,
   statuses,
   loading,
   onSelect,
@@ -1142,6 +1369,7 @@ function StatusPicker({
 }: {
   currentStatus: string;
   currentColor: string | null;
+  currentType: string | null;
   statuses: ClickUpListStatus[];
   loading: boolean;
   onSelect: (name: string) => void;
@@ -1206,12 +1434,19 @@ function StatusPicker({
         type="button"
         data-nav-key="status"
         onClick={() => onOpenChange(!open)}
-        className={`flex items-center gap-1 rounded-full px-2 leading-4 outline-none transition-colors hover:opacity-80 ${navSelected ? "ring-1 ring-foreground/50" : ""} ${pending ? "opacity-60" : ""}`}
+        className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] leading-tight outline-none transition-colors hover:opacity-80 ${navSelected ? "ring-1 ring-foreground/50" : ""} ${pending ? "opacity-60" : ""}`}
         style={{
           background: currentColor ? `${currentColor}26` : "var(--color-secondary)",
           color: currentColor ?? "var(--color-secondary-foreground)",
         }}
       >
+        <StatusIcon
+          type={currentType}
+          color={currentColor}
+          fraction={statusFraction(statuses, currentStatus)}
+          size={11}
+          className="shrink-0"
+        />
         {currentStatus}
         {pending && <Loader2 size={8} className="animate-spin" />}
       </button>
@@ -1238,9 +1473,13 @@ function StatusPicker({
                 s.name === currentStatus ? "text-foreground" : "text-muted-foreground"
               }`}
             >
-              {s.color && (
-                <span className="size-1.5 shrink-0 rounded-full" style={{ background: s.color }} />
-              )}
+              <StatusIcon
+                type={s.status_type}
+                color={s.color}
+                fraction={statuses.length > 1 ? i / (statuses.length - 1) : 0.5}
+                size={11}
+                className="shrink-0"
+              />
               {s.name}
             </button>
             ))

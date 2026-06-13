@@ -284,6 +284,10 @@ pub struct Comment {
 pub struct Task {
     #[serde(deserialize_with = "de_string")]
     pub id: String,
+    /// Human-readable workspace identifier (e.g. "DEV-142"); only present when
+    /// the workspace enabled custom task ids — falls back to `id` for display.
+    #[serde(default, deserialize_with = "de_opt_string")]
+    pub custom_id: Option<String>,
     #[serde(default)]
     pub name: String,
     #[serde(default)]

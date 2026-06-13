@@ -519,6 +519,8 @@ mod tests {
         conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
         conn.execute_batch(include_str!("../../migrations/015_clickup_mirror.sql"))
             .unwrap();
+        conn.execute_batch(include_str!("../../migrations/020_clickup_status_type.sql"))
+            .unwrap();
         // Minimal hierarchy so the task FK is satisfied.
         conn.execute_batch(
             "INSERT INTO clickup_spaces(id, name, synced_at) VALUES ('sp1','S',0);

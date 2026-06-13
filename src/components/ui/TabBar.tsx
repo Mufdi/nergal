@@ -4,8 +4,11 @@ import {
   activeTabsAtom,
   activeTabAtom,
   activeTabIdAtom,
+  activePanelViewAtom,
   closeTabAction,
   reorderTabsAction,
+  viewPanelLabel,
+  PANEL_CATEGORY_MAP,
   type Tab,
   type TabType,
 } from "@/stores/rightPanel";
@@ -45,6 +48,21 @@ export function TabBar() {
   const activeTab = useAtomValue(activeTabAtom);
   const pinnedPaths = useAtomValue(activeSessionPinnedNotesAtom);
   const setActiveTabId = useSetAtom(activeTabIdAtom);
+  // A "tool" view panel (ClickUp / git / diff / browser — the view IS the
+  // content) shows as a virtual tab so Ctrl+Tab cycling lands somewhere
+  // visible. "document" panels (spec / file / plan) are launcher lists, not a
+  // cycle target, so they get no virtual tab. Active when activeTabId === null.
+  const viewPanel = useAtomValue(activePanelViewAtom);
+  const setActivePanelView = useSetAtom(activePanelViewAtom);
+  const showVirtual = viewPanel !== null && PANEL_CATEGORY_MAP[viewPanel] === "tool";
+  const ViewIcon = viewPanel ? TAB_ICONS[viewPanel] : null;
+
+  function closeViewPanel() {
+    // Fall back to the last document tab if the view was the active content;
+    // otherwise just clear the standalone view.
+    if (!activeTab && tabs.length > 0) setActiveTabId(tabs[tabs.length - 1].id);
+    setActivePanelView(null);
+  }
 
   const isContextPinned = (tab: Tab) =>
     tab.type === "obsidiannote" && pinnedPaths.includes(tab.data?.path as string);
@@ -106,7 +124,7 @@ export function TabBar() {
     dragIdRef.current = null;
   }
 
-  if (tabs.length === 0) return null;
+  if (tabs.length === 0 && !showVirtual) return null;
 
   return (
     <div className="flex shrink-0 items-center">
@@ -129,6 +147,29 @@ export function TabBar() {
             onDrop={(e) => handleDrop(tab.id, e)}
           />
         ))}
+        {viewPanel && showVirtual && ViewIcon && (
+          // Virtual tab for a "tool" view panel. Active when no document tab is
+          // selected; click to show it, close (X / middle-click) clears the view.
+          <div
+            data-tab-active={!activeTab}
+            onClick={() => setActiveTabId(null)}
+            onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); closeViewPanel(); } }}
+            title={viewPanelLabel(viewPanel)}
+            className={`group flex min-w-20 max-w-40 shrink-0 cursor-pointer items-center gap-1.5 px-2.5 py-1.5 text-xs transition-colors ${
+              !activeTab ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground/80"
+            }`}
+          >
+            <ViewIcon size={12} className="shrink-0" />
+            <span className="truncate">{viewPanelLabel(viewPanel)}</span>
+            <button
+              onClick={(e) => { e.stopPropagation(); closeViewPanel(); }}
+              className="ml-auto flex size-4 shrink-0 items-center justify-center rounded opacity-0 transition-opacity group-hover:opacity-100 hover:bg-secondary"
+              aria-label={`Close ${viewPanelLabel(viewPanel)}`}
+            >
+              <X size={10} />
+            </button>
+          </div>
+        )}
       </div>
 
       {overflowing && (

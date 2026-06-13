@@ -489,6 +489,29 @@ Three traffic-light buttons, **color-encoded by destructiveness**:
 All `size-7`. Don't extend this pattern to other buttons — it's reserved for
 window chrome.
 
+### 3.16 ClickUp status & priority glyphs
+
+Two SVG glyphs mirror Linear's issue iconography (ClickUp panel + detail), using
+ClickUp's own colors rather than a fixed palette.
+
+**`StatusIcon`** (`src/components/clickup/StatusIcon.tsx`) — a circular workflow
+glyph driven by the ClickUp status `type`, colored by the status color:
+- `open` → hollow ring · `custom` → **proportional inner pie** (fill =
+  `orderindex / (n-1)` of the list's ordered workflow; a small wedge — inner
+  `r=2`, with a visible gap to the `r=6` ring — **not** a half-disc) ·
+  `done`/`closed` → filled disc + white check.
+- `type === null` (pre-migration rows) falls back to the legacy `size-1.5` dot.
+
+**`PriorityIcon`** (`src/components/clickup/PriorityIcon.tsx`) — three ascending
+signal bars filled to the priority level (low=1 … urgent=3, urgent in red); a
+null priority renders three faint bars so list rows stay column-aligned.
+
+The detail is a **two-column floating panel**: a scrolling main column
+(description / sub-issues / comments) + a right **Properties rail** (task id,
+status, priority, assignees, due, list + Labels + Fields). Status-group headers
+in the panel carry a persistent `bg-secondary/40` band (Linear-style) instead of
+the uppercase section-caps used for dividers elsewhere.
+
 ---
 
 ## 4. Motion vocabulary

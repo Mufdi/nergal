@@ -357,6 +357,18 @@ pub fn clickup_read_closed_out(
 
 // ── Status read (clickup-writeback: 1.5) ──
 
+/// Mirror-only bulk read of every cached list's workflow, keyed by list id.
+/// Feeds the panel's status glyphs without a per-list network call; lists not
+/// yet resolved are absent and the panel falls back to a neutral glyph until a
+/// detail-open or background resolve caches them.
+#[tauri::command]
+pub fn clickup_read_all_list_statuses(
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<std::collections::HashMap<String, Vec<mirror::StatusView>>, String> {
+    let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+    mirror::read_all_list_statuses(guard.conn()).map_err(|e| format!("{e:#}"))
+}
+
 /// Ordered statuses for a List, consumed by the write-back controls and the
 /// closure prompt's status picker. Resolves live via `GET /list/{id}` — the
 /// poll's folder/folderless endpoints return an empty `statuses[]` for lists
@@ -895,6 +907,8 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
         conn.execute_batch(include_str!("../../migrations/015_clickup_mirror.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../../migrations/020_clickup_status_type.sql"))
             .unwrap();
         conn
     }

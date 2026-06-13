@@ -89,6 +89,23 @@ export interface ClickUpListStatus {
   name: string;
   color: string | null;
   orderindex: number | null;
+  status_type: string | null;
+}
+
+/// list_id → its ordered workflow (mirror-cached). Feeds the panel's status
+/// glyphs: the proportional "in progress" pie fill needs the full ordered set
+/// to know a status's position. Lazily filled — bulk mirror read on mount, then
+/// a background live-resolve for any visible list not yet cached.
+export const clickupListStatusesAtom = atom<Record<string, ClickUpListStatus[]>>({});
+
+/// Pie fill for the "in progress" glyph: the status's position in its list's
+/// ordered workflow (statuses arrive ordered by orderindex). An unknown status
+/// or a list with <2 statuses falls back to a half-pie until the set resolves.
+export function statusFraction(statuses: ClickUpListStatus[] | undefined, name: string | null): number {
+  if (!name || !statuses || statuses.length < 2) return 0.5;
+  const idx = statuses.findIndex((s) => s.name === name);
+  if (idx < 0) return 0.5;
+  return idx / (statuses.length - 1);
 }
 
 type Store = ReturnType<typeof getDefaultStore>;
@@ -110,6 +127,7 @@ export interface ClickUpTag {
 
 export interface ClickUpTask {
   id: string;
+  custom_id: string | null;
   name: string;
   list_id: string;
   list_name: string;
@@ -117,14 +135,20 @@ export interface ClickUpTask {
   parent_id: string | null;
   status_name: string | null;
   status_color: string | null;
+  status_type: string | null;
   priority: string | null;
   assignees: ClickUpAssignee[];
   tags: ClickUpTag[];
   due_date: number | null;
   start_date: number | null;
+  date_created: number | null;
   date_updated: number | null;
   url: string | null;
   archived: boolean;
+  has_description: boolean;
+  subtask_count: number;
+  checklist_count: number;
+  attachment_count: number;
   stale: boolean;
 }
 
@@ -226,6 +250,14 @@ export const clickupClosedOutAtom = atom<string[]>([]);
 export type ClickUpGroupBy = "status" | "list" | "assignee";
 export const GROUP_BY_ORDER: ClickUpGroupBy[] = ["status", "list", "assignee"];
 
+/// Sort applied to tasks within each group (and to nested subtask siblings).
+export type ClickUpSortField = "updated" | "created" | "priority" | "due";
+export interface ClickUpSort {
+  field: ClickUpSortField;
+  dir: "asc" | "desc";
+}
+export const clickupSortAtom = atom<ClickUpSort>({ field: "updated", dir: "desc" });
+
 /// null = "Todos" (all Spaces).
 export const clickupSpaceFilterAtom = atom<string | null>(null);
 export const clickupGroupByAtom = atom<ClickUpGroupBy>("status");
@@ -323,6 +355,7 @@ export interface ClickUpTaskActions {
   reinject: (taskId: string) => void;
   closeOut: (taskId: string) => void;
   openInClickup: (taskId: string) => void;
+  copyId: (displayId: string) => void;
 }
 
 /// Action labels advertise the contextual key (tooltip-as-source-of-truth).
@@ -337,6 +370,19 @@ export const CLICKUP_ACTION_LABELS = {
   closeOut: "Close out task (C) — mark done & unbind",
   openInClickup: "Open in ClickUp (O)",
 } as const;
+
+/// Copy a task identifier (custom id when present, else the internal id) to the
+/// OS clipboard + toast. Uses the robust spawn_blocking writer (the plugin's
+/// Wayland backend stalls async tasks — see terminalService).
+export const copyTaskIdAction = atom(null, (_get, set, taskId: string) => {
+  void invoke("terminal_clipboard_write", { text: taskId })
+    .then(() =>
+      set(toastsAtom, { message: "Task ID copied", description: taskId, type: "success" }),
+    )
+    .catch((err) =>
+      set(toastsAtom, { message: "Copy failed", description: String(err), type: "error" }),
+    );
+});
 
 export const requestSendTaskAction = atom(null, (get, set, taskId: string) => {
   const sessionId = get(activeSessionIdAtom);

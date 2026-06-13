@@ -93,12 +93,12 @@ pub fn upsert_task(conn: &Connection, task: &model::Task) -> Result<()> {
     conn.execute(
         "INSERT INTO clickup_tasks (id, list_id, parent_id, name, text_content, status_name, \
             status_color, priority, assignees_json, tags_json, due_date, start_date, \
-            date_created, date_updated, url, archived, stale) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 0) \
+            date_created, date_updated, url, archived, status_type, custom_id, stale) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, 0) \
          ON CONFLICT(id) DO UPDATE SET list_id=?2, parent_id=?3, name=?4, text_content=?5, \
             status_name=?6, status_color=?7, priority=?8, assignees_json=?9, tags_json=?10, \
             due_date=?11, start_date=?12, date_created=?13, date_updated=?14, url=?15, \
-            archived=?16, stale=0",
+            archived=?16, status_type=?17, custom_id=?18, stale=0",
         params![
             task.id,
             list.id,
@@ -116,6 +116,8 @@ pub fn upsert_task(conn: &Connection, task: &model::Task) -> Result<()> {
             task.date_updated,
             task.url,
             task.archived.unwrap_or(false) as i64,
+            task.status.as_ref().and_then(|s| s.status_type.as_deref()),
+            task.custom_id,
         ],
     )?;
     Ok(())
@@ -364,16 +366,23 @@ pub struct TaskView {
     pub list_name: String,
     pub space_id: String,
     pub parent_id: Option<String>,
+    pub custom_id: Option<String>,
     pub status_name: Option<String>,
     pub status_color: Option<String>,
+    pub status_type: Option<String>,
     pub priority: Option<String>,
     pub assignees: Vec<AssigneeView>,
     pub tags: Vec<TagView>,
     pub due_date: Option<i64>,
     pub start_date: Option<i64>,
+    pub date_created: Option<i64>,
     pub date_updated: Option<i64>,
     pub url: Option<String>,
     pub archived: bool,
+    pub has_description: bool,
+    pub subtask_count: i64,
+    pub checklist_count: i64,
+    pub attachment_count: i64,
     pub stale: bool,
 }
 
@@ -382,7 +391,13 @@ pub fn read_tasks(conn: &Connection, filter: &TaskFilter) -> Result<Vec<TaskView
     let mut stmt = conn.prepare(
         "SELECT t.id, t.name, t.list_id, l.name, l.space_id, t.parent_id, t.status_name, \
                 t.status_color, t.priority, t.assignees_json, t.tags_json, t.due_date, \
-                t.start_date, t.date_updated, t.url, t.archived, t.stale \
+                t.start_date, t.date_updated, t.url, t.archived, t.stale, t.status_type, \
+                t.custom_id, \
+                (t.text_content IS NOT NULL AND t.text_content != ''), \
+                (SELECT COUNT(*) FROM clickup_tasks c WHERE c.parent_id = t.id AND c.stale = 0), \
+                (SELECT COUNT(*) FROM clickup_checklists cl WHERE cl.task_id = t.id), \
+                (SELECT COUNT(*) FROM clickup_attachments a WHERE a.task_id = t.id), \
+                t.date_created \
          FROM clickup_tasks t \
          JOIN clickup_lists l ON l.id = t.list_id \
          WHERE (?1 IS NULL OR l.space_id = ?1) \
@@ -408,6 +423,13 @@ pub fn read_tasks(conn: &Connection, filter: &TaskFilter) -> Result<Vec<TaskView
             url: r.get(14)?,
             archived: r.get::<_, i64>(15)? != 0,
             stale: r.get::<_, i64>(16)? != 0,
+            status_type: r.get(17)?,
+            custom_id: r.get(18)?,
+            has_description: r.get::<_, i64>(19)? != 0,
+            subtask_count: r.get(20)?,
+            checklist_count: r.get(21)?,
+            attachment_count: r.get(22)?,
+            date_created: r.get(23)?,
         })
     })?;
 
@@ -441,8 +463,10 @@ pub fn task_to_view(task: &model::Task) -> Option<TaskView> {
             .map(|s| s.id.clone())
             .unwrap_or_default(),
         parent_id: task.parent.clone(),
+        custom_id: task.custom_id.clone(),
         status_name: task.status.as_ref().map(|s| s.status.clone()),
         status_color: task.status.as_ref().and_then(|s| s.color.clone()),
+        status_type: task.status.as_ref().and_then(|s| s.status_type.clone()),
         priority: task.priority.as_ref().and_then(|p| p.priority.clone()),
         assignees: task
             .assignees
@@ -465,9 +489,14 @@ pub fn task_to_view(task: &model::Task) -> Option<TaskView> {
             .collect(),
         due_date: task.due_date,
         start_date: task.start_date,
+        date_created: task.date_created,
         date_updated: task.date_updated,
         url: task.url.clone(),
         archived: task.archived.unwrap_or(false),
+        has_description: task.text_content.as_deref().is_some_and(|t| !t.is_empty()),
+        subtask_count: task.subtasks.len() as i64,
+        checklist_count: task.checklists.len() as i64,
+        attachment_count: task.attachments.len() as i64,
         stale: false,
     })
 }
@@ -505,6 +534,7 @@ pub struct StatusView {
     pub name: String,
     pub color: Option<String>,
     pub orderindex: Option<i64>,
+    pub status_type: Option<String>,
 }
 
 /// Replace the cached status rows for one list with a freshly-resolved set.
@@ -529,12 +559,44 @@ pub fn replace_list_statuses(
     Ok(())
 }
 
+/// Mirror-only bulk read of every cached list's ordered workflow, keyed by
+/// list id. Feeds the panel's status glyphs (proportional pie fill needs the
+/// full ordered set per list); pure mirror, never a network call — lists whose
+/// workflow has not been resolved yet are simply absent and the caller falls
+/// back to a neutral glyph until a detail-open / background resolve caches them.
+pub fn read_all_list_statuses(
+    conn: &Connection,
+) -> Result<std::collections::HashMap<String, Vec<StatusView>>> {
+    let mut stmt = conn.prepare(
+        "SELECT list_id, status, color, orderindex, type FROM clickup_statuses \
+         ORDER BY list_id, orderindex",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            StatusView {
+                name: r.get(1)?,
+                color: r.get(2)?,
+                orderindex: r.get(3)?,
+                status_type: r.get(4)?,
+            },
+        ))
+    })?;
+    let mut out: std::collections::HashMap<String, Vec<StatusView>> =
+        std::collections::HashMap::new();
+    for row in rows {
+        let (list_id, status) = row?;
+        out.entry(list_id).or_default().push(status);
+    }
+    Ok(out)
+}
+
 /// Mirror read over `clickup_statuses WHERE list_id = ?` ordered by
 /// `orderindex`. Returns an empty vec when the list is unknown (the caller
 /// decides whether that is a validation error).
 pub fn read_list_statuses(conn: &Connection, list_id: &str) -> Result<Vec<StatusView>> {
     let mut stmt = conn.prepare(
-        "SELECT status, color, orderindex FROM clickup_statuses \
+        "SELECT status, color, orderindex, type FROM clickup_statuses \
          WHERE list_id = ?1 ORDER BY orderindex",
     )?;
     let rows = stmt.query_map([list_id], |r| {
@@ -542,6 +604,7 @@ pub fn read_list_statuses(conn: &Connection, list_id: &str) -> Result<Vec<Status
             name: r.get(0)?,
             color: r.get(1)?,
             orderindex: r.get(2)?,
+            status_type: r.get(3)?,
         })
     })?;
     let mut out = Vec::new();
@@ -747,6 +810,8 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
         conn.execute_batch(include_str!("../../migrations/015_clickup_mirror.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../../migrations/020_clickup_status_type.sql"))
             .unwrap();
         conn
     }

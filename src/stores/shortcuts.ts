@@ -14,6 +14,7 @@ import {
   activePanelViewAtom,
   tabStateMapAtom,
   currentSpecArtifactAtom,
+  PANEL_CATEGORY_MAP,
   type Tab,
 } from "./rightPanel";
 import { layoutPresetAtom, sessionLayoutPresetAtom, applyPresetSignalAtom, terminalFullscreenAtom, type LayoutPreset } from "./layout";
@@ -346,24 +347,36 @@ function prevSessionTab() {
   s.set(activeSessionIdAtom, tabIds[prev]);
 }
 
-function nextPanelTab() {
+/// Cycle the right panel across both document tabs AND the standalone view
+/// panel (ClickUp / git / diff / specs / …). The view panel occupies a virtual
+/// slot after the tabs; landing on it clears the active tab so RightPanel falls
+/// through to render `activePanelView`. Without this slot, once a document tab
+/// was open the view panel became unreachable via Ctrl+Tab.
+function cyclePanelTab(dir: 1 | -1) {
   const s = store();
   const tabs = s.get(activeTabsAtom);
+  const view = s.get(activePanelViewAtom);
   const activeId = s.get(activeTabIdAtom);
-  if (tabs.length === 0) return;
-  const idx = tabs.findIndex((t) => t.id === activeId);
-  const next = (idx + 1) % tabs.length;
-  s.set(activeTabIdAtom, tabs[next].id);
+  // Only "tool" view panels (ClickUp / git / diff / browser — the view IS the
+  // content) get a cycle slot. "document" panels (spec / file / plan) are
+  // launcher lists for document tabs, not a persistent cycle target — including
+  // them surfaced a ghost "new list" slot while a document of that type was open.
+  const includeView = view && PANEL_CATEGORY_MAP[view] === "tool";
+  const slots = tabs.length + (includeView ? 1 : 0);
+  if (slots === 0) return;
+  // Current slot: a real document tab, or the view slot when no tab is active.
+  let cur = tabs.findIndex((t) => t.id === activeId);
+  if (cur < 0) cur = includeView ? tabs.length : 0;
+  const next = (cur + dir + slots) % slots;
+  s.set(activeTabIdAtom, includeView && next === tabs.length ? null : tabs[next].id);
+}
+
+function nextPanelTab() {
+  cyclePanelTab(1);
 }
 
 function prevPanelTab() {
-  const s = store();
-  const tabs = s.get(activeTabsAtom);
-  const activeId = s.get(activeTabIdAtom);
-  if (tabs.length === 0) return;
-  const idx = tabs.findIndex((t) => t.id === activeId);
-  const prev = idx <= 0 ? tabs.length - 1 : idx - 1;
-  s.set(activeTabIdAtom, tabs[prev].id);
+  cyclePanelTab(-1);
 }
 
 function closeCurrentTab() {
@@ -371,7 +384,18 @@ function closeCurrentTab() {
   const zone = s.get(focusZoneAtom);
   if (zone === "panel") {
     const activeId = s.get(activeTabIdAtom);
-    if (activeId) s.set(closeTabAction, activeId);
+    if (activeId) {
+      s.set(closeTabAction, activeId);
+      return;
+    }
+    // No document tab active → a standalone "tool" view panel (ClickUp / git /
+    // …) is showing. Ctrl+W closes it, falling back to the last doc tab if any.
+    const view = s.get(activePanelViewAtom);
+    if (view && PANEL_CATEGORY_MAP[view] === "tool") {
+      const tabs = s.get(activeTabsAtom);
+      if (tabs.length > 0) s.set(activeTabIdAtom, tabs[tabs.length - 1].id);
+      s.set(activePanelViewAtom, null);
+    }
     return;
   }
   // Terminal/sidebar zones close the active session tab via soft-close: the

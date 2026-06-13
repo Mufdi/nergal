@@ -199,6 +199,12 @@ tears down the whole panel instead of the dropdown the user meant to dismiss.
 The same attribute gates the click-to-refocus logic (§5.5) so clicking a
 popup's ephemeral options doesn't move the index cursor.
 
+The same marker also covers **in-card editing fields**: a description/comment
+textarea sets `data-floating-popup` while editing/focused so `Esc` cancels the
+edit (and hands the cursor back to its nav element) instead of closing the whole
+panel — the FloatingPanel's window-capture Escape fires before the textarea's
+own bubble handler otherwise, so the field can't intercept it without this.
+
 ## 8. Bare-letter verbs scoped to a focus zone
 
 A focused panel/surface exposes its actions as **single bare letters** (no
@@ -228,6 +234,61 @@ Contract:
   mounts inside the clickup zone), the panel's own letter toggles
   (e.g. show-closed) must vacate the letter the verb claims (show-closed moved
   `C → H` to free `C` for close-out).
+
+## 9. Expandable index-cursor trees
+
+A list whose items nest (ClickUp subtasks, recursive) renders each row with a
+**leading chevron slot**: a chevron when the item has children, else a
+same-width spacer so every row's content stays column-aligned. Indentation is
+`paddingLeft: base + depth * 16`. Canonical: `ClickUpPanel.tsx` (`renderNode`).
+
+- **Default state differs by surface**: the panel defaults **collapsed**
+  (`expandedTaskIds`, absent = closed); the detail modal renders the tree
+  **always expanded** (it doesn't share the collapse-set).
+- **Space** toggles the keyboard-cursor row when it has a subtree
+  (`data-has-subtree`); the chevron toggles on click (`stopPropagation`). An
+  expand/collapse-**all** affordance flips the whole set (header button + `E`),
+  refocusing the panel root afterwards so the bare-letter shortcuts keep firing.
+- Children come from a **global parent→children map** over the full (unfiltered)
+  pool, so a visible parent shows ALL its children even when a filter
+  (assigned-to-me) would exclude them; a `seen` set guards malformed cycles.
+
+## 10. Header-action row keyboard nav
+
+A panel header with a focusable control (a `Select`) followed by a row of icon
+buttons (sort / filters / toggles) is reachable without a mouse: from the
+control, **→ enters the button row**; **←/→ move along it**; **← from the first
+returns to the control**. Mark each button `data-header-action`; a capture-phase
+window handler (beats the Select's own keys + the list-cursor nav) drives it and
+**skips disabled buttons** (`:not([disabled])`). The list-nav handler
+early-returns when focus sits on a `data-header-action` button so native
+Enter/Space activate it. A button that disables itself on click (e.g. a
+reset-to-default) must refocus the panel root so the zone keeps its shortcuts.
+Canonical: `ClickUpPanel.tsx`.
+
+## 11. View panels join the right-panel tab cycle
+
+A standalone **"tool" view panel** (ClickUp / git / diff / browser — the view
+*is* the content) shows as a **virtual tab** in the `TabBar` and takes a slot in
+the `Ctrl+Tab` cycle after the document tabs. Landing on it clears the active
+document tab (`activeTabId = null`) so `RightPanel` falls through to render
+`activePanelView`. **"document" launcher panels** (spec / file / plan — lists
+that *open* document tabs) are gated out (`PANEL_CATEGORY_MAP[view] === "tool"`):
+no virtual tab, no cycle slot — otherwise the launcher list surfaces as a
+confusing ghost slot. The virtual tab closes via its X, middle-click, or
+`Ctrl+W`. Canonical: `TabBar.tsx` + `cyclePanelTab` / `closeCurrentTab` in
+`shortcuts.ts`.
+
+## 12. Copyable identifiers
+
+A short identifier shown in a row (the ClickUp task id) is copyable two ways:
+**click** the id (a `span role="button"` with `stopPropagation` so the row's own
+click doesn't fire) and **`Ctrl+C`** while the keyboard cursor is on the row
+(read from a `data-task-copy-id` attribute; handled before the modifier-bail,
+skipped inside editable fields). Both route through one store action that writes
+via the robust `terminal_clipboard_write` command (the plugin's Wayland backend
+stalls async tasks) and raises a confirmation toast. In a detail surface the id
+is also a first-class nav element (`data-nav-key`) that copies on Enter/click.
 
 ---
 

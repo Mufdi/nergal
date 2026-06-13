@@ -451,6 +451,7 @@ pub fn run() {
             clickup::clickup_fetch_closed_tasks,
             // ClickUp (clickup-writeback): write commands + status read
             clickup::clickup_read_list_statuses,
+            clickup::clickup_read_all_list_statuses,
             clickup::clickup_mark_closed_out,
             clickup::clickup_read_closed_out,
             clickup::clickup_set_task_status,

@@ -489,6 +489,8 @@ mod tests {
         conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
         conn.execute_batch(include_str!("../../migrations/015_clickup_mirror.sql"))
             .unwrap();
+        conn.execute_batch(include_str!("../../migrations/020_clickup_status_type.sql"))
+            .unwrap();
 
         let space: model::Space =
             serde_json::from_str(r#"{"id":"901312445262","name":"Producto"}"#).unwrap();

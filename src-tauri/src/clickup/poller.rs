@@ -1275,6 +1275,8 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!("../../migrations/016_clickup_stale_since.sql"))
             .unwrap();
+        conn.execute_batch(include_str!("../../migrations/020_clickup_status_type.sql"))
+            .unwrap();
         conn
     }
 

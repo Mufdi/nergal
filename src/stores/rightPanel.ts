@@ -9,6 +9,24 @@ export type TabType = "plan" | "diff" | "spec" | "tasks" | "git" | "transcript" 
 
 export type PanelCategory = "document" | "tool";
 
+/// Display label for a standalone view panel (and its virtual tab in the
+/// TabBar). Single source for RightPanel's header + the TabBar virtual tab.
+export function viewPanelLabel(view: TabType): string {
+  const labels: Record<TabType, string> = {
+    plan: "Plans",
+    file: "Files",
+    diff: "Diff",
+    spec: "Spec",
+    tasks: "Tasks",
+    git: "Git",
+    transcript: "Transcript",
+    browser: "Browser",
+    obsidiannote: "Obsidian",
+    clickup: "ClickUp",
+  };
+  return labels[view];
+}
+
 export const PANEL_CATEGORY_MAP: Record<TabType, PanelCategory> = {
   plan: "document",
   spec: "document",

@@ -9,6 +9,7 @@ import {
   setTabPathAction,
   tabOpenedSignalAtom,
   filePickerOpenAtom,
+  viewPanelLabel,
   type Tab,
   type TabType,
 } from "@/stores/rightPanel";
@@ -407,23 +408,6 @@ function PickerContent({ type }: { type: TabType }) {
 }
 
 // ── Helpers ──
-
-function viewPanelLabel(view: TabType): string {
-  const labels: Record<TabType, string> = {
-    plan: "Plans",
-    file: "Files",
-    diff: "Diff",
-    spec: "Spec",
-    tasks: "Tasks",
-    git: "Git",
-    transcript: "Transcript",
-    browser: "Browser",
-    obsidiannote: "Obsidian",
-    clickup: "ClickUp",
-  };
-  return labels[view];
-}
-
 
 function ViewPanelContent({ view }: { view: TabType }) {
   switch (view) {

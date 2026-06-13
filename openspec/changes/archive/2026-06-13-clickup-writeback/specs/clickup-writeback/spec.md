@@ -4,7 +4,13 @@
 
 ### Requirement: Bidirectional task editing with server-side validation
 
-The system SHALL let the user edit a task from Nergal — change status, post comments, toggle checklist items, and edit description, assignees, and due date — and reflect each change in ClickUp via the REST API. Assignee edits SHALL be modeled as add/remove diffs, not a full-set replace; the UI surface is remove-only (the mirror holds no workspace member directory to pick additions from — adding assignees from Nergal would require a live member-list call, deferred). Custom-field writes SHALL serialize per the field's type and SHALL reject computed fields (e.g. `automatic_progress`) and unsupported types **at the command boundary**, not only in the UI. Status writes SHALL validate the value is a real status of the task's List. Status options SHALL be drawn from the task's List statuses (`clickup_statuses`), never hardcoded.
+The system SHALL let the user edit a task from Nergal — change status, post comments, toggle checklist items, and edit description, assignees, and due date — and reflect each change in ClickUp via the REST API. Assignee edits SHALL be modeled as add/remove diffs, not a full-set replace; the UI surface is remove-only (the mirror holds no workspace member directory to pick additions from — adding assignees from Nergal would require a live member-list call, deferred). Custom-field writes SHALL serialize per the field's type and SHALL reject computed fields (e.g. `automatic_progress`) and unsupported types **at the command boundary**, not only in the UI. Status writes SHALL validate the value is a real status of the task's List. Status options SHALL be the task's List statuses (per-List custom, never hardcoded). Because a List that inherits its Space/Folder workflow returns an empty `statuses[]` from the poll's folder/folderless endpoints, the option set and the write-validation source SHALL be resolved live from `GET /list/{id}` (the fully-resolved set ClickUp accepts) and cached into `clickup_statuses`; a network failure SHALL degrade to whatever the mirror already holds.
+
+#### Scenario: Status options resolve the List's true workflow
+
+- **WHEN** the user opens the status picker for a task whose List inherits the Space workflow
+- **THEN** the system SHALL resolve the List's statuses live and present the full set ClickUp accepts
+- **AND** SHALL validate a status write against that resolved set
 
 #### Scenario: Status change reflects upstream after validation
 
@@ -87,7 +93,7 @@ The safety of outward-facing writes against a full-access personal token SHALL N
 
 ### Requirement: Ship-anchored and manual write-back closure
 
-The system SHALL offer the write-back closure at two agent-agnostic moments: on demand via an explicit "Close out task" action in the task detail (the primary path), and automatically after a successful ship (PR created via Nergal's own ship flow) of a session that has an `active_clickup_task_id`, with the comment prefilled (editable) with the PR link. The closure prompt SHALL offer two independent, OPTIONAL halves: a status move chosen manually from the task's List statuses (per-List custom, never hardcoded) and a comment; confirm SHALL execute only the selected halves — a status-only closure SHALL be the frictionless path, an empty comment SHALL post nothing, and selecting neither SHALL disable confirm. One offer per successful ship; a push without a PR SHALL NOT trigger the offer. Writes SHALL occur only on explicit confirmation (via the token boundary). The trigger SHALL NOT rely on agent-specific hooks, SHALL NOT write to any agent's user settings, and SHALL NOT hardcode a specific agent. (Design Revision 1: the originally-specified `SessionStatus Completed` edge does not exist at runtime — nothing writes session status transitions.)
+The system SHALL offer the write-back closure at two agent-agnostic moments: on demand via an explicit "Close out task" action in the task detail (the primary path), and automatically after a successful ship (PR created via Nergal's own ship flow) of a session that has an `active_clickup_task_id`, with the comment prefilled (editable) with the PR link. Close-out's core act SHALL be marking the task done locally — it SHALL unbind the task from the session and persist a local "worked & closed" marker that is independent of the ClickUp status (the task keeps whatever status ClickUp holds) and SHALL surface as a panel badge. Layered on top, the prompt SHALL offer two independent, OPTIONAL halves: a status move chosen manually from the task's List statuses (per-List custom, never hardcoded) and a comment; confirm SHALL execute only the selected halves — a status-only closure SHALL be the frictionless path and an empty comment SHALL post nothing. Confirm SHALL always be armed: confirming with neither half selected SHALL still close the task out locally (unbind + marker) without any ClickUp write. One offer per successful ship; a push without a PR SHALL NOT trigger the offer. Writes SHALL occur only on explicit confirmation (via the token boundary). The trigger SHALL NOT rely on agent-specific hooks, SHALL NOT write to any agent's user settings, and SHALL NOT hardcode a specific agent. (Design Revision 1: the originally-specified `SessionStatus Completed` edge does not exist at runtime — nothing writes session status transitions.)
 
 #### Scenario: Manual closure is the primary path
 
@@ -100,6 +106,19 @@ The system SHALL offer the write-back closure at two agent-agnostic moments: on 
 - **WHEN** the user confirms a closure with a status selected and the comment empty
 - **THEN** the system SHALL move the status
 - **AND** SHALL NOT post any comment
+
+#### Scenario: Close-out with no halves still marks the task done
+
+- **WHEN** the user confirms a closure with neither a status nor a comment selected
+- **THEN** the system SHALL NOT write anything to ClickUp
+- **AND** SHALL unbind the task from the session
+- **AND** SHALL persist the local "worked & closed" marker
+
+#### Scenario: Worked-and-closed marker is independent of ClickUp status
+
+- **WHEN** a task has been closed out from a session
+- **THEN** the panel SHALL flag it with a worked-and-closed badge
+- **AND** the badge SHALL persist across restarts regardless of the task's ClickUp status
 
 #### Scenario: Closure offered after a successful ship of a bound session
 

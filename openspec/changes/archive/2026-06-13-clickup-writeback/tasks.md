@@ -50,4 +50,4 @@
 
 - [x] 7.1 `cd src-tauri && cargo clippy -- -D warnings && cargo test && cargo fmt --check`
 - [x] 7.2 `npx tsc --noEmit`
-- [ ] 7.3 Manual walk per proposal § Cómo verifico.
+- [x] 7.3 Manual walk per proposal § Cómo verifico.

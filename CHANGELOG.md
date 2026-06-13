@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.3.0 — 2026-06-13
+
+* Added ClickUp integration: a panel listing your tasks by project, "assigned to me", and due date — with status/priority icons and a subtask tree — plus desktop notifications when a task is assigned to you, and a Linear-style task detail you can also open as its own tab (`T`)
+* Added ClickUp task actions: send a task to the agent as a prompt, spawn a worktree session from it, pin or bind it as session context, and write back status changes, comments, checklist toggles, due dates and assignee removals
+* Added a drop-down terminal overlay (`Ctrl+}`) with per-session shells, environment shells seeded by per-workspace suggestions, and a working directory remembered per shell
+* Added per-session launch options: choose the agent, permission preset, startup command and environment shells when creating a session
+* Added a provider status indicator in the status bar that surfaces active Claude/OpenAI incidents and links to the status page
+* Added a per-workspace, configurable OpenSpec specs path that live-refreshes when changes land on disk
+* Added an "update available" toast on launch when a newer release is published, and an "Open log file" action in Settings › About for diagnostics
+* Changed loading indicators app-wide: a slim progress bar for panels and pulsing dots for inline actions, replacing the old spinners
+* Fixed the browser panel turning the whole app gray when its web content crashed; the view now recovers automatically
+* Fixed processes started in a session's shells outliving the session — they're now stopped when you close the session or quit Nergal
+* Fixed the status bar and Git panel showing the previous branch after the agent created or switched branches
+* Fixed clearing or deleting tasks not sticking; the change now persists across reloads instead of reappearing
+* Fixed the Obsidian search having Enter and Ctrl+Enter reversed, and results showing inner content instead of the file name
+* Fixed `Ctrl+Shift+R` not sending a plan to review when the plan was shown as a panel rather than a tab
+* Fixed losing keyboard focus after picking an environment-shell suggestion when creating a session
+* Fixed the status chip not re-opening the browser panel after the right panel had been hidden
+* Fixed OpenCode failing to start with a theme color error
+* Fixed the Claude status badge lingering long after the incident had cleared
+* Improved tooltips: every action button now shows its tooltip instantly and with a consistent style
+
 ## v0.2.0 — 2026-06-05
 
 * Added Obsidian vault integration, configured per workspace: quick capture into an inbox note, a per-session session log, and automatic MOC notes with backlinks when a session ends

@@ -1,10 +1,9 @@
 import { useState } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { activeActivityAtom, activityDrawerOpenAtom } from "@/stores/activity";
-import { openTabAction, expandRightPanelAtom } from "@/stores/rightPanel";
 import type { ActivityEntry } from "@/lib/types";
 import { PulseDots } from "@/components/ui/PulseDots";
-import { X, ExternalLink, Zap, ChevronDown, ChevronRight, Search } from "lucide-react";
+import { X, Zap, ChevronDown, ChevronRight, Search } from "lucide-react";
 
 const TYPE_COLORS: Record<ActivityEntry["type"], string> = {
   tool_use: "bg-blue-500",
@@ -45,8 +44,6 @@ export function ActivityDrawer() {
   const entries = useAtomValue(activeActivityAtom);
   const isOpen = useAtomValue(activityDrawerOpenAtom);
   const setOpen = useSetAtom(activityDrawerOpenAtom);
-  const openTab = useSetAtom(openTabAction);
-  const setExpand = useSetAtom(expandRightPanelAtom);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const [activeTypes, setActiveTypes] = useState<Set<ActivityEntry["type"]>>(new Set());
@@ -83,14 +80,6 @@ export function ActivityDrawer() {
     });
   }
 
-  function openDagTab() {
-    setOpen(false);
-    openTab({
-      tab: { id: "dag-graph", type: "transcript", label: "Activity DAG" },
-    });
-    setExpand((p) => p + 1);
-  }
-
   return (
     <div className="flex flex-col rounded-lg border-2 border-border bg-card" style={{ maxHeight: "30vh" }}>
       {/* Header */}
@@ -102,23 +91,13 @@ export function ActivityDrawer() {
             ({isFiltering ? `${filtered.length}/${entries.length}` : entries.length} events)
           </span>
         </div>
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={openDagTab}
-            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-secondary hover:text-foreground"
-          >
-            <ExternalLink className="size-3" />
-            Open as Tab
-          </button>
-          <button
-            type="button"
-            onClick={() => setOpen(false)}
-            className="rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
-          >
-            <X className="size-3.5" />
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className="rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+        >
+          <X className="size-3.5" />
+        </button>
       </div>
 
       {/* Filters: search + per-type toggles */}

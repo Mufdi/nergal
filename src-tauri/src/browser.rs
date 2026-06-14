@@ -246,27 +246,119 @@ fn pid_for_socket_inode(inode: &str) -> Option<u32> {
     None
 }
 
-fn process_name(pid: u32) -> Option<String> {
+fn basename(p: &str) -> &str {
+    p.rsplit('/').next().unwrap_or(p)
+}
+
+/// Drop a script extension so a cmdline arg reads as a tool name (`vite.js` →
+/// `vite`).
+fn strip_script_ext(s: &str) -> &str {
+    for ext in [".js", ".mjs", ".cjs", ".ts"] {
+        if let Some(stripped) = s.strip_suffix(ext) {
+            return stripped;
+        }
+    }
+    s
+}
+
+/// A human label for a process from its full cmdline (not the 15-char,
+/// thread-name-leaking `comm`). For an interpreter (node/python/…) the label is
+/// the script/module it runs (`node …/vite` → `vite`), otherwise arg0's
+/// basename. Falls back to `comm`.
+fn process_label(pid: u32) -> String {
+    const INTERPRETERS: &[&str] = &[
+        "node", "python", "python3", "python2", "ruby", "deno", "bun", "php", "sh", "bash",
+    ];
+    if let Ok(raw) = std::fs::read(format!("/proc/{pid}/cmdline")) {
+        let args: Vec<String> = raw
+            .split(|&b| b == 0)
+            .filter(|s| !s.is_empty())
+            .map(|s| String::from_utf8_lossy(s).into_owned())
+            .collect();
+        if let Some(arg0) = args.first() {
+            let base = basename(arg0);
+            if INTERPRETERS.contains(&base) {
+                // Skip flags and `-m`; the first plain arg is the script/module.
+                for a in args.iter().skip(1) {
+                    if a.starts_with('-') {
+                        continue;
+                    }
+                    return strip_script_ext(basename(a)).to_string();
+                }
+            }
+            return strip_script_ext(base).to_string();
+        }
+    }
     std::fs::read_to_string(format!("/proc/{pid}/comm"))
-        .ok()
         .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| "unknown".into())
+}
+
+/// The working-directory basename of a process — usually the project folder.
+fn process_cwd_name(pid: u32) -> Option<String> {
+    let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).ok()?;
+    cwd.file_name().map(|n| n.to_string_lossy().into_owned())
+}
+
+/// Best-effort Docker attribution for a published port (the listener on the
+/// host is root-owned `docker-proxy`, so /proc can't see it). No-op when the
+/// `docker` CLI is absent or the user lacks access.
+fn docker_container_for_port(port: u16) -> Option<PortProcess> {
+    let out = std::process::Command::new("docker")
+        .args(["ps", "--format", "{{.Names}}\t{{.Image}}\t{{.Ports}}"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let needle = format!(":{port}->");
+    for line in text.lines() {
+        let cols: Vec<&str> = line.split('\t').collect();
+        let [name, image, ports] = cols.as_slice() else {
+            continue;
+        };
+        if ports.contains(&needle) {
+            return Some(PortProcess {
+                label: name.to_string(),
+                project: Some((*image).to_string()),
+                kind: "docker".into(),
+                pid: None,
+            });
+        }
+    }
+    None
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PortProcess {
-    pub pid: u32,
-    pub name: String,
+    /// Tool/process name (`vite`) or container name.
+    pub label: String,
+    /// Project folder (process cwd) or docker image.
+    pub project: Option<String>,
+    /// "process" (owned, killable) | "docker" (external).
+    pub kind: String,
+    /// Owning PID — present only for `process` kind (used by kill_port).
+    pub pid: Option<u32>,
 }
 
-/// Which process is listening on `port` (PID + comm name), or None when it
-/// can't be attributed (socket owned by another user, or already gone).
+/// Identify what's listening on `port`: an owned process (label from cmdline +
+/// project from cwd) when /proc can attribute it, else a best-effort Docker
+/// container, else None.
 #[tauri::command]
 pub fn port_process_info(port: u16) -> Option<PortProcess> {
-    let inode = listen_inode_for_port(port)?;
-    let pid = pid_for_socket_inode(&inode)?;
-    let name = process_name(pid).unwrap_or_else(|| "unknown".into());
-    Some(PortProcess { pid, name })
+    if let Some(inode) = listen_inode_for_port(port)
+        && let Some(pid) = pid_for_socket_inode(&inode)
+    {
+        return Some(PortProcess {
+            label: process_label(pid),
+            project: process_cwd_name(pid),
+            kind: "process".into(),
+            pid: Some(pid),
+        });
+    }
+    docker_container_for_port(port)
 }
 
 /// SIGTERM the process listening on `port` to free it. Resolves the owning PID

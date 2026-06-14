@@ -35,7 +35,6 @@ import { ClickUpTaskTab } from "@/components/clickup/ClickUpTaskTab";
 import { VaultNoteFinder } from "@/components/obsidian/VaultNoteFinder";
 import * as terminalService from "@/components/terminal/terminalService";
 import { CodeEditor } from "@/components/editor/CodeEditor";
-import { DagGraph } from "@/components/activity/DagGraph";
 import { DOCK_SLOT_ATTR } from "@/components/browser/BrowserHost";
 import { browserModeForSessionAtom, browserSetModeAction } from "@/stores/browser";
 import { openZenModeAtom } from "@/stores/zenMode";
@@ -434,8 +433,6 @@ function ViewPanelContent({ view }: { view: TabType }) {
       return <GitPanelWrapper />;
     case "spec":
       return null;
-    case "transcript":
-      return <DagGraph />;
     case "browser":
       return <BrowserDockSlot />;
     case "clickup":
@@ -453,7 +450,7 @@ function DocumentContent({ tab }: { tab: Tab }) {
       return null;
     case "transcript": {
       const sessionId = tab.data?.sessionId as string | undefined;
-      return sessionId ? <TranscriptViewer sessionId={sessionId} /> : <DagGraph />;
+      return sessionId ? <TranscriptViewer sessionId={sessionId} /> : null;
     }
     case "diff": {
       const diffPath = tab.data?.path as string | undefined;

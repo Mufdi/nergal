@@ -15,14 +15,9 @@ import { openTabAction, expandRightPanelAtom } from "@/stores/rightPanel";
 import { toastsAtom } from "@/stores/toast";
 import { invoke } from "@/lib/tauri";
 import { Badge } from "@/components/ui/badge";
-import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock, Globe, CalendarRange, Pencil, TriangleAlert, Timer, Bell, X } from "lucide-react";
+import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock, Globe, CalendarRange, Pencil, TriangleAlert, Timer, History, X } from "lucide-react";
 import { activeIncidentsAtom } from "@/stores/statusFeed";
-import {
-  notificationHistoryAtom,
-  unreadNotificationsAtom,
-  markNotificationsSeenAtom,
-  clearNotificationsAtom,
-} from "@/stores/notifications";
+import { notificationHistoryAtom, clearNotificationsAtom } from "@/stores/notifications";
 import {
   Tooltip,
   TooltipProvider,
@@ -200,7 +195,7 @@ export function StatusBar() {
                 <span className="text-muted-foreground/60">│</span>
                 <span>{summary.actionCount} actions</span>
                 <span className="text-muted-foreground/60">│</span>
-                <span>{formatElapsed(summary.elapsedSeconds)}</span>
+                <span className="inline-block min-w-[3.25rem] text-right tabular-nums">{formatElapsed(summary.elapsedSeconds)}</span>
               </>
             ) : (
               <span>No activity</span>
@@ -212,7 +207,7 @@ export function StatusBar() {
 
         <LocalhostPortChips />
         <IncidentChips />
-        <NotificationBell />
+        <NotificationHistory />
       </div>
 
       {/* Right: context %, rate limits, model, duration. Progress bars live
@@ -282,7 +277,9 @@ export function StatusBar() {
           <Tooltip>
             <TooltipTrigger className="flex cursor-default items-center gap-0.5">
               <Clock className="size-3 shrink-0" />
-              {formatDurationFromStart(sl.session_started_at, now)}
+              <span className="inline-block min-w-[3rem] text-right tabular-nums">
+                {formatDurationFromStart(sl.session_started_at, now)}
+              </span>
             </TooltipTrigger>
             <TooltipContent>Session duration</TooltipContent>
           </Tooltip>
@@ -322,21 +319,12 @@ function formatRelativeTime(ts: number, now: number): string {
   return new Date(ts).toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-/// Bell chip + upward popover mirroring every toast (the notification center).
-/// Opening marks everything seen so the unread badge clears.
-function NotificationBell() {
+/// History chip + upward popover: a passive log of every toast, consulted on
+/// demand. No unread tracking — toasts are ephemeral status messages.
+function NotificationHistory() {
   const history = useAtomValue(notificationHistoryAtom);
-  const unread = useAtomValue(unreadNotificationsAtom);
-  const markSeen = useSetAtom(markNotificationsSeenAtom);
   const clearAll = useSetAtom(clearNotificationsAtom);
   const [open, setOpen] = useState(false);
-
-  function toggle() {
-    setOpen((v) => {
-      if (!v) markSeen();
-      return !v;
-    });
-  }
 
   const now = Date.now();
 
@@ -344,25 +332,20 @@ function NotificationBell() {
     <div className="relative flex items-center">
       <Tooltip>
         <TooltipTrigger
-          onClick={toggle}
+          onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
           className={`relative flex items-center gap-1 rounded px-1.5 py-0 text-[10px] transition-colors text-muted-foreground hover:bg-secondary hover:text-foreground ${open ? "bg-secondary text-foreground" : ""}`}
         >
-          <Bell className="size-3 shrink-0" />
-          {unread > 0 && (
-            <span className="flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-medium tabular-nums text-primary-foreground">
-              {unread > 9 ? "9+" : unread}
-            </span>
-          )}
+          <History className="size-3 shrink-0" />
         </TooltipTrigger>
-        <TooltipContent>Notifications</TooltipContent>
+        <TooltipContent>Notification history</TooltipContent>
       </Tooltip>
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className="absolute bottom-full right-0 z-50 mb-1.5 max-h-72 w-72 overflow-y-auto rounded-md border border-border bg-card shadow-lg">
             <div className="sticky top-0 flex items-center justify-between border-b border-border/50 bg-card px-2.5 py-1.5">
-              <span className="text-[10px] font-medium text-foreground">Notifications</span>
+              <span className="text-[10px] font-medium text-foreground">Notification history</span>
               {history.length > 0 && (
                 <button
                   onClick={() => clearAll()}
@@ -480,7 +463,9 @@ function LocalhostPortChips() {
   const setMode = useSetAtom(browserSetModeAction);
   const openTab = useSetAtom(openTabAction);
   const [open, setOpen] = useState(false);
-  const [procInfo, setProcInfo] = useState<Record<number, { pid: number; name: string } | null>>({});
+  const [procInfo, setProcInfo] = useState<
+    Record<number, { label: string; project: string | null; kind: string; pid: number | null } | null>
+  >({});
   const pushToast = useSetAtom(toastsAtom);
   const hasPorts = ports.length > 0;
 
@@ -496,7 +481,10 @@ function LocalhostPortChips() {
     let cancelled = false;
     Promise.all(
       ports.map((port) =>
-        invoke<{ pid: number; name: string } | null>("port_process_info", { port })
+        invoke<{ label: string; project: string | null; kind: string; pid: number | null } | null>(
+          "port_process_info",
+          { port },
+        )
           .then((info) => [port, info] as const)
           .catch(() => [port, null] as const),
       ),
@@ -574,18 +562,24 @@ function LocalhostPortChips() {
                     <span className="inline-block size-1.5 shrink-0 rounded-full bg-green-500" aria-hidden="true" />
                     <span className="shrink-0">localhost:{port}</span>
                     {info && (
-                      <span className="truncate text-muted-foreground/45">{info.name}·{info.pid}</span>
+                      <span className="truncate text-muted-foreground/45">
+                        {info.label}
+                        {info.project ? ` · ${info.project}` : ""}
+                        {info.kind === "docker" ? " · docker" : ""}
+                      </span>
                     )}
                   </button>
-                  <Tooltip>
-                    <TooltipTrigger
-                      onClick={() => killPort(port)}
-                      className="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground/40 opacity-0 transition-all hover:bg-red-500/15 hover:text-red-400 group-hover:opacity-100"
-                    >
-                      <X className="size-3" />
-                    </TooltipTrigger>
-                    <TooltipContent>Kill the process on this port (SIGTERM)</TooltipContent>
-                  </Tooltip>
+                  {info?.pid != null && (
+                    <Tooltip>
+                      <TooltipTrigger
+                        onClick={() => killPort(port)}
+                        className="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground/40 opacity-0 transition-all hover:bg-red-500/15 hover:text-red-400 group-hover:opacity-100"
+                      >
+                        <X className="size-3" />
+                      </TooltipTrigger>
+                      <TooltipContent>Kill the process on this port (SIGTERM)</TooltipContent>
+                    </Tooltip>
+                  )}
                 </div>
               );
             })}

@@ -67,5 +67,12 @@ export const activitySummaryAtom = atom((get) => {
   };
 });
 
+/// Clear the active session's activity log.
+export const clearActivityAtom = atom(null, (get, set) => {
+  const id = get(activeSessionIdAtom);
+  if (!id) return;
+  set(activityMapAtom, (prev) => ({ ...prev, [id]: [] }));
+});
+
 /// Controls whether the activity drawer is open.
 export const activityDrawerOpenAtom = atom(false);

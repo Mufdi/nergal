@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { activeActivityAtom, activityDrawerOpenAtom, clearActivityAtom } from "@/stores/activity";
 import { openTabAction, expandRightPanelAtom } from "@/stores/rightPanel";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import type { ActivityEntry } from "@/lib/types";
+import * as terminalService from "@/components/terminal/terminalService";
 import { PulseDots } from "@/components/ui/PulseDots";
 import { X, Zap, ChevronDown, ChevronRight, Search, Trash2 } from "lucide-react";
 
@@ -83,6 +84,164 @@ export function ActivityDrawer() {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const [activeTypes, setActiveTypes] = useState<Set<ActivityEntry["type"]>>(new Set());
+  const rootRef = useRef<HTMLDivElement>(null);
+  const wasOpenRef = useRef(false);
+
+  // Return focus to the terminal when the drawer closes so the keyboard flow
+  // isn't orphaned on <body> (canonical close-focus pattern).
+  useEffect(() => {
+    if (isOpen) {
+      wasOpenRef.current = true;
+      return;
+    }
+    if (wasOpenRef.current) {
+      wasOpenRef.current = false;
+      requestAnimationFrame(() => terminalService.focusActive());
+    }
+  }, [isOpen]);
+
+  // Focus the drawer + seed the cursor on open so arrows work immediately
+  // (ClickUp panel pattern). Deferred so the DOM exists.
+  useEffect(() => {
+    if (!isOpen) return;
+    const t = setTimeout(() => {
+      const root = rootRef.current;
+      if (!root) return;
+      root.focus({ preventScroll: true });
+      if (root.querySelector("[data-nav-selected='true']")) return;
+      root.querySelector<HTMLElement>("[data-nav-item]")?.setAttribute("data-nav-selected", "true");
+    }, 50);
+    return () => clearTimeout(t);
+  }, [isOpen]);
+
+  // Keyboard nav, scoped to the drawer zone (patterns.md §1/§8/§10, mirroring
+  // ClickUpPanel): ↑/↓ move a data-nav-selected cursor over rows (scroll
+  // follows); Enter opens the cursor row's file (or toggles a group); ↑ from
+  // the first row jumps to the filter chips; ←/→ move across chips when one is
+  // focused, or expand/collapse a group header; c clears.
+  useEffect(() => {
+    if (!isOpen) return;
+    function toggleGroupKey(k: string) {
+      setExpandedGroups((prev) => {
+        const n = new Set(prev);
+        if (n.has(k)) n.delete(k);
+        else n.add(k);
+        return n;
+      });
+    }
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      if (!target?.closest("[data-focus-zone='activity']")) return;
+      const root = rootRef.current;
+      if (!root) return;
+      const inField = target.tagName === "INPUT" || target.tagName === "TEXTAREA";
+
+      // c → clear (bare letter, not while typing in the search box).
+      if (!inField && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.code === "KeyC") {
+        e.preventDefault();
+        clearActivity();
+        return;
+      }
+
+      // Filter chips: ←/→ move between them, ↓ drops to the list.
+      if (target.closest("[data-header-action]")) {
+        const chips = Array.from(root.querySelectorAll<HTMLElement>("[data-header-action]"));
+        const i = chips.indexOf(target.closest("[data-header-action]") as HTMLElement);
+        if (e.code === "ArrowDown") {
+          e.preventDefault();
+          const first = root.querySelector<HTMLElement>("[data-nav-item]");
+          if (first) {
+            root.focus({ preventScroll: true });
+            for (const it of root.querySelectorAll("[data-nav-selected]")) it.removeAttribute("data-nav-selected");
+            first.setAttribute("data-nav-selected", "true");
+            first.scrollIntoView({ block: "nearest" });
+          }
+          return;
+        }
+        if (e.code === "ArrowRight") {
+          e.preventDefault();
+          chips[Math.min(i + 1, chips.length - 1)]?.focus();
+          return;
+        }
+        if (e.code === "ArrowLeft") {
+          e.preventDefault();
+          chips[Math.max(i - 1, 0)]?.focus();
+          return;
+        }
+        return; // Enter/Space toggle the chip natively
+      }
+
+      // Search box: ↓ drops to the list; otherwise let typing/caret work.
+      if (inField) {
+        if (e.code === "ArrowDown") {
+          e.preventDefault();
+          const first = root.querySelector<HTMLElement>("[data-nav-item]");
+          if (first) {
+            (target as HTMLElement).blur();
+            root.focus({ preventScroll: true });
+            for (const it of root.querySelectorAll("[data-nav-selected]")) it.removeAttribute("data-nav-selected");
+            first.setAttribute("data-nav-selected", "true");
+            first.scrollIntoView({ block: "nearest" });
+          }
+        }
+        return;
+      }
+
+      const items = Array.from(root.querySelectorAll<HTMLElement>("[data-nav-item]"));
+      if (items.length === 0) return;
+      const selected = root.querySelector<HTMLElement>("[data-nav-selected='true']");
+      const idx = selected ? items.indexOf(selected) : -1;
+
+      if (e.code === "ArrowDown" || e.code === "ArrowUp") {
+        e.preventDefault();
+        if (e.code === "ArrowUp" && idx === 0) {
+          selected?.removeAttribute("data-nav-selected");
+          root.querySelector<HTMLElement>("[data-header-action]")?.focus();
+          return;
+        }
+        const next = e.code === "ArrowDown"
+          ? (idx === -1 ? 0 : (idx + 1) % items.length)
+          : (idx === -1 ? items.length - 1 : (idx - 1 + items.length) % items.length);
+        for (const it of items) it.removeAttribute("data-nav-selected");
+        items[next].setAttribute("data-nav-selected", "true");
+        items[next].scrollIntoView({ block: "nearest" });
+        return;
+      }
+
+      if (e.code === "Space" && selected?.dataset.groupKey) {
+        e.preventDefault();
+        toggleGroupKey(selected.dataset.groupKey);
+        return;
+      }
+
+      if (e.code === "Enter") {
+        if (!selected) return;
+        e.preventDefault();
+        if (selected.dataset.groupKey) {
+          toggleGroupKey(selected.dataset.groupKey);
+          return;
+        }
+        const file = selected.dataset.file;
+        if (file) {
+          openTab({
+            tab: { id: `file:${file}`, type: "file", label: basename(file), data: { path: file, sessionId } },
+          });
+          setExpand((p) => p + 1);
+        }
+        return;
+      }
+
+      if ((e.code === "ArrowLeft" || e.code === "ArrowRight") && selected?.dataset.groupKey) {
+        e.preventDefault();
+        const expanded = selected.dataset.navExpanded === "true";
+        if ((e.code === "ArrowLeft" && expanded) || (e.code === "ArrowRight" && !expanded)) {
+          toggleGroupKey(selected.dataset.groupKey);
+        }
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, sessionId, openTab, setExpand, clearActivity]);
 
   if (!isOpen) return null;
 
@@ -141,7 +300,12 @@ export function ActivityDrawer() {
     const isExpanded = expandedIds.has(entry.id);
     const hasFiles = !!entry.files && entry.files.length > 0;
     return (
-      <div key={entry.id} className={`rounded hover:bg-secondary/50 ${indented ? "pl-2" : ""}`}>
+      <div
+        key={entry.id}
+        data-nav-item
+        data-file={entry.files?.[0]}
+        className={`rounded hover:bg-secondary/50 ${indented ? "pl-2" : ""}`}
+      >
         <div className="flex items-start gap-2 px-2 py-1.5">
           <span
             className={`mt-1.5 size-1.5 flex-shrink-0 rounded-full ${TYPE_COLORS[entry.type]}`}
@@ -202,7 +366,13 @@ export function ActivityDrawer() {
   }
 
   return (
-    <div className="flex flex-col rounded-lg border-2 border-border bg-card" style={{ maxHeight: "30vh" }}>
+    <div
+      ref={rootRef}
+      data-focus-zone="activity"
+      tabIndex={-1}
+      className="flex flex-col rounded-lg border-2 border-border bg-card outline-none"
+      style={{ maxHeight: "30vh" }}
+    >
       {/* Header */}
       <div className="flex h-8 items-center justify-between border-b border-border px-3">
         <div className="flex items-center gap-2">
@@ -252,6 +422,7 @@ export function ActivityDrawer() {
               <button
                 key={t}
                 type="button"
+                data-header-action
                 onClick={() => toggleType(t)}
                 className={`flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[9px] transition-colors ${
                   active ? "bg-secondary text-foreground" : "text-muted-foreground/50 hover:text-foreground"
@@ -295,6 +466,9 @@ export function ActivityDrawer() {
                 <div key={row.key} className="rounded">
                   <button
                     type="button"
+                    data-nav-item
+                    data-group-key={row.key}
+                    data-nav-expanded={expanded}
                     onClick={() => toggleGroup(row.key)}
                     className="flex w-full items-center gap-2 rounded px-2 py-1.5 hover:bg-secondary/50"
                   >

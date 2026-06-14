@@ -82,6 +82,12 @@ pub struct Config {
     /// map verbatim — validation (collisions, reserved combos) lives frontend.
     #[serde(default)]
     pub keymap_overrides: HashMap<String, String>,
+    /// Enable the MCP daemon that exposes the live session directory to agents
+    /// over the dedicated socket. Default **off** until the user knowingly
+    /// opts into the global-read-within-uid posture (design Decision 8). When
+    /// off, the daemon still binds but `tools/call` returns `mcp_disabled`.
+    #[serde(default)]
+    pub mcp_server_enabled: bool,
 }
 
 /// Custom theme — forked from a builtin via Settings → Appearance →
@@ -126,6 +132,7 @@ impl Default for Config {
             custom_themes: Vec::new(),
             clickup_poll_interval_secs: None,
             keymap_overrides: HashMap::new(),
+            mcp_server_enabled: false,
         }
     }
 }

@@ -23,6 +23,9 @@ enum Commands {
     /// Detached background runner: drain pending session-end markers (MOC +
     /// reverse backlinks). Spawned by the app, not invoked by hand.
     PostSession,
+    /// stdio MCP shim: relays JSON-RPC between an agent and the cluihud MCP
+    /// daemon. Registered into agent MCP configs; not invoked by hand.
+    Mcp,
 }
 
 #[derive(Subcommand)]
@@ -115,6 +118,13 @@ fn main() {
         Some(Commands::PostSession) => {
             if let Err(e) = cluihud::obsidian::post_session::run() {
                 eprintln!("cluihud post-session: {e:#}");
+                std::process::exit(1);
+            }
+        }
+
+        Some(Commands::Mcp) => {
+            if let Err(e) = cluihud::mcp::shim::run() {
+                eprintln!("cluihud mcp: {e:#}");
                 std::process::exit(1);
             }
         }

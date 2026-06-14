@@ -20,6 +20,10 @@ use super::claude_code::ClaudeCodeAdapter;
 use super::registry::AgentRegistry;
 use crate::hooks::events::HookEvent;
 
+/// `(background_tasks, session_crons)` captured from a Stop payload, stored as
+/// raw JSON values (pass-through, tolerant of CC shape drift).
+pub type SessionBackground = (Vec<serde_json::Value>, Vec<serde_json::Value>);
+
 /// Shared agent runtime state. Cheap to clone the inner `Arc`s.
 #[derive(Clone)]
 pub struct AgentRuntimeState {
@@ -43,6 +47,17 @@ pub struct AgentRuntimeState {
     /// One-shot slot holding the receiver until the runtime takes it. Wrapped
     /// in a sync mutex (rare access, no need for tokio::Mutex).
     event_receiver: Arc<Mutex<Option<UnboundedReceiver<HookEvent>>>>,
+    /// `claude_code_session_id → cluihud_session_id` side map for MCP identity
+    /// resolution (a shim may know only CC's own id). Torn down alongside
+    /// [`Self::forget_session`]. Empty until a CC id is learned; the primary
+    /// path is the inherited `CLUIHUD_SESSION_ID` env hint validated directly
+    /// against `agent_id_cache`.
+    pub cc_session_map: Arc<DashMap<String, String>>,
+    /// `cluihud_session_id → (background_tasks, session_crons)` captured from
+    /// CC `Stop`/`SubagentStop` payloads (v2.1.150). Stored as raw JSON values
+    /// (pass-through, tolerant of CC shape drift) and surfaced in the MCP
+    /// session descriptor. Cleared on [`Self::forget_session`].
+    session_background: Arc<DashMap<String, SessionBackground>>,
 }
 
 impl AgentRuntimeState {
@@ -61,6 +76,8 @@ impl AgentRuntimeState {
             claude_code,
             event_sink: tx,
             event_receiver: Arc::new(Mutex::new(Some(rx))),
+            cc_session_map: Arc::new(DashMap::new()),
+            session_background: Arc::new(DashMap::new()),
         })
     }
 
@@ -77,9 +94,63 @@ impl AgentRuntimeState {
             .insert(cluihud_session_id.to_string(), agent_id);
     }
 
-    /// Drop the cache entry for a session. Idempotent.
+    /// Drop the cache entry for a session. Idempotent. Also tears down any
+    /// `claude_code_session_id → cluihud_session_id` side-map entries pointing
+    /// at this session so MCP identity can't resolve a dead session.
     pub fn forget_session(&self, cluihud_session_id: &str) {
         self.agent_id_cache.remove(cluihud_session_id);
+        self.cc_session_map
+            .retain(|_cc, csid| csid != cluihud_session_id);
+        self.session_background.remove(cluihud_session_id);
+    }
+
+    /// Snapshot of the live session id set (the directory's liveness source:
+    /// sessions with an entry in the agent cache). Owned, lock-free per entry.
+    pub fn live_session_ids(&self) -> std::collections::HashSet<String> {
+        self.agent_id_cache
+            .iter()
+            .map(|e| e.key().clone())
+            .collect()
+    }
+
+    /// Record background tasks + crons captured from a `Stop`/`SubagentStop`
+    /// payload for a session (overwrites the previous snapshot).
+    pub fn set_session_background(
+        &self,
+        cluihud_session_id: &str,
+        background_tasks: Vec<serde_json::Value>,
+        session_crons: Vec<serde_json::Value>,
+    ) {
+        self.session_background.insert(
+            cluihud_session_id.to_string(),
+            (background_tasks, session_crons),
+        );
+    }
+
+    /// `(background_tasks, session_crons)` for a session; empty when none seen.
+    pub fn session_background(&self, cluihud_session_id: &str) -> SessionBackground {
+        self.session_background
+            .get(cluihud_session_id)
+            .map(|r| r.clone())
+            .unwrap_or_default()
+    }
+
+    /// Record a `claude_code_session_id → cluihud_session_id` mapping for MCP
+    /// identity resolution. No-op overwrite if already present.
+    pub fn map_cc_session(&self, cc_session_id: &str, cluihud_session_id: &str) {
+        self.cc_session_map
+            .insert(cc_session_id.to_string(), cluihud_session_id.to_string());
+    }
+
+    /// Resolve an MCP-reported env hint to a live `cluihud_session_id`. Tries
+    /// the hint as a cluihud id (the primary, inherited `CLUIHUD_SESSION_ID`
+    /// path), then the CC side map. Returns `None` for an unknown id
+    /// (unidentified caller).
+    pub fn resolve_session_hint(&self, hint: &str) -> Option<String> {
+        if self.agent_id_cache.contains_key(hint) {
+            return Some(hint.to_string());
+        }
+        self.cc_session_map.get(hint).map(|r| r.clone())
     }
 
     /// Resolve a session to its agent id. Cache-only — the DB-fallback path
@@ -121,5 +192,41 @@ mod tests {
     fn unknown_session_resolves_to_none() {
         let state = AgentRuntimeState::bootstrap().unwrap();
         assert!(state.resolve("never-registered").is_none());
+    }
+
+    #[test]
+    fn hint_resolves_registered_cluihud_id() {
+        let state = AgentRuntimeState::bootstrap().unwrap();
+        state.register_session("clui-1", AgentId::claude_code());
+        assert_eq!(
+            state.resolve_session_hint("clui-1").as_deref(),
+            Some("clui-1")
+        );
+    }
+
+    #[test]
+    fn unknown_hint_is_unidentified() {
+        let state = AgentRuntimeState::bootstrap().unwrap();
+        assert!(state.resolve_session_hint("nope").is_none());
+    }
+
+    #[test]
+    fn cc_side_map_resolves_to_cluihud_id() {
+        let state = AgentRuntimeState::bootstrap().unwrap();
+        state.register_session("clui-1", AgentId::claude_code());
+        state.map_cc_session("cc-abc", "clui-1");
+        assert_eq!(
+            state.resolve_session_hint("cc-abc").as_deref(),
+            Some("clui-1")
+        );
+    }
+
+    #[test]
+    fn forget_tears_down_cc_side_map() {
+        let state = AgentRuntimeState::bootstrap().unwrap();
+        state.register_session("clui-1", AgentId::claude_code());
+        state.map_cc_session("cc-abc", "clui-1");
+        state.forget_session("clui-1");
+        assert!(state.resolve_session_hint("cc-abc").is_none());
     }
 }

@@ -46,6 +46,7 @@ export interface Config {
   agent_overrides: Record<string, string>;
   custom_themes: CustomTheme[];
   keymap_overrides: Record<string, string>;
+  mcp_server_enabled: boolean;
 }
 
 export interface CustomThemeFonts {

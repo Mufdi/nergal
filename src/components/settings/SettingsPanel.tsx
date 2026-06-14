@@ -19,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Switch } from "@/components/ui/switch";
 import { Select } from "@/components/ui/select";
-import { CheckCircle2, AlertTriangle, XCircle, Info, FolderTree, Bot, Pencil, Palette, Terminal, NotebookText, RefreshCw, Check, ArrowLeft, Trash2, Sliders, Download, ExternalLink, FolderOpen, ClipboardCopy, Bug, Keyboard } from "lucide-react";
+import { CheckCircle2, AlertTriangle, XCircle, Info, FolderTree, Bot, Pencil, Palette, Terminal, NotebookText, RefreshCw, Check, ArrowLeft, Trash2, Sliders, Download, ExternalLink, FolderOpen, ClipboardCopy, Bug, Keyboard, Network } from "lucide-react";
 import { ClickUpIcon } from "@/components/icons/ClickUpIcon";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -49,6 +49,7 @@ import { appStore } from "@/stores/jotaiStore";
 import type { ResolvedObsidianConfig } from "@/lib/types";
 import { ObsidianIcon } from "@/components/icons/ObsidianIcon";
 import { KeymapSection } from "@/components/settings/KeymapSection";
+import { McpSection } from "@/components/settings/McpSection";
 import { keymapCaptureActiveAtom } from "@/stores/shortcuts";
 import type { ObsidianConfig } from "@/lib/types";
 import {
@@ -1663,7 +1664,7 @@ function AppearanceSection({
   );
 }
 
-type SectionId = "paths" | "agents" | "editor" | "appearance" | "terminal" | "keymap" | "scratchpad" | "obsidian" | "clickup" | "about";
+type SectionId = "paths" | "agents" | "editor" | "appearance" | "terminal" | "keymap" | "mcp" | "scratchpad" | "obsidian" | "clickup" | "about";
 
 const SECTIONS: { id: SectionId; label: string; icon: typeof FolderTree }[] = [
   { id: "paths", label: "Paths", icon: FolderTree },
@@ -1672,6 +1673,7 @@ const SECTIONS: { id: SectionId; label: string; icon: typeof FolderTree }[] = [
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "terminal", label: "Terminal", icon: Terminal },
   { id: "keymap", label: "Keymap", icon: Keyboard },
+  { id: "mcp", label: "MCP", icon: Network },
   { id: "scratchpad", label: "Scratchpad", icon: NotebookText },
   { id: "obsidian", label: "Obsidian", icon: ObsidianIcon },
   { id: "clickup", label: "ClickUp", icon: ClickUpIcon },
@@ -2766,6 +2768,8 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
             )}
 
             {activeSection === "keymap" && <KeymapSection />}
+
+            {activeSection === "mcp" && <McpSection />}
 
             {activeSection === "scratchpad" && <ScratchpadPathField />}
 

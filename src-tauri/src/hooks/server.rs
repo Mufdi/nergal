@@ -62,6 +62,7 @@ impl FrontendHookEvent {
                     session_id,
                     stop_reason,
                     transcript_path,
+                    ..
                 } => (
                     session_id.clone(),
                     "stop",
@@ -515,6 +516,21 @@ fn process_event(
             "dropping hook event: missing cluihud_session_id (env var not propagated through PTY shell?)",
         );
         return;
+    }
+
+    // Capture background tasks / crons (CC v2.1.150+) so the MCP session
+    // descriptor can surface them. Done once here regardless of which Stop arm
+    // runs below; empty payloads (legacy CC) leave no entry.
+    if let HookEvent::Stop {
+        session_id,
+        background_tasks,
+        session_crons,
+        ..
+    } = event
+        && (!background_tasks.is_empty() || !session_crons.is_empty())
+    {
+        let csid = cluihud_session_id.unwrap_or(session_id);
+        agent_state.set_session_background(csid, background_tasks.clone(), session_crons.clone());
     }
 
     // Resolve the owning adapter for this session (cache → DB-fallback path

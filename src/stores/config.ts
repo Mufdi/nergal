@@ -20,4 +20,5 @@ export const configAtom = atom<Config>({
   agent_overrides: {},
   custom_themes: [],
   keymap_overrides: {},
+  mcp_server_enabled: false,
 });

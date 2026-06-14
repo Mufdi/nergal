@@ -6,6 +6,7 @@ pub mod config;
 mod db;
 mod feeds;
 pub mod hooks;
+pub mod mcp;
 mod models;
 pub mod obsidian;
 mod openspec;
@@ -310,6 +311,7 @@ pub fn run() {
             // Config commands
             commands::get_config,
             commands::save_config,
+            mcp::mcp_set_enabled,
             commands::validate_path,
             // Task commands
             commands::get_tasks,
@@ -565,6 +567,43 @@ pub fn run() {
                     start_hook_server(&socket_path, hook_app, hook_db, hook_plan, hook_agents).await
                 {
                     tracing::error!("hook server error: {e}");
+                }
+            });
+
+            // MCP daemon: exposes the live session directory to agents over a
+            // dedicated socket. It binds unconditionally (so a registered shim
+            // always gets a clean connection); `tools/call` is gated by
+            // `mcp_server_enabled` (default off) per request.
+            let mcp_db = db.clone();
+            let mcp_agents = agent_state.clone();
+            tauri::async_runtime::spawn(async move {
+                let path = crate::mcp::socket_path();
+                match crate::mcp::transport::UnixSocketTransport::bind(&path) {
+                    Ok(transport) => {
+                        let app_uid = unsafe { libc::getuid() };
+                        let ctx = crate::mcp::DaemonContext {
+                            db: mcp_db,
+                            agents: mcp_agents,
+                            app_uid,
+                        };
+                        crate::mcp::serve(transport, ctx).await;
+                    }
+                    Err(e) => tracing::error!("mcp daemon bind error: {e}"),
+                }
+            });
+
+            // Sync agent MCP-config registration with the persisted flag on
+            // startup (idempotent): a previously-enabled server re-registers,
+            // disabled removes any orphan entry.
+            tauri::async_runtime::spawn(async move {
+                let enabled = crate::config::Config::load().mcp_server_enabled;
+                let res = if enabled {
+                    crate::mcp::registration::register()
+                } else {
+                    crate::mcp::registration::deregister()
+                };
+                if let Err(e) = res {
+                    tracing::warn!("mcp registration sync failed: {e:#}");
                 }
             });
 

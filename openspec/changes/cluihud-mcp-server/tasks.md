@@ -1,57 +1,70 @@
 # Tasks — cluihud-mcp-server
 
-> Redaction only. Do NOT start implementation until the three-change set is approved. Verify cited symbols against current code before editing.
+> Implementation status (2026-06-14). Core session directory (phases 1-5, CC
+> registration, frontend toggle, unit tests) **landed + verified green**
+> (clippy -D warnings / 484 tests / fmt / tsc / vite build). Two slices are
+> **deferred** with rationale (flagged inline): the opt-in AI summarizer
+> (phase 6 — external LLM API + secret-storage decision, can't be verified
+> headless) and the multi-agent registrars + `claude agents --json` enrichment
+> (phase 4.4 / 7 — config formats need live verification). The manual two-session
+> runtime walk (8.6) requires a running app.
 
 ## 1. Dedicated MCP transport (backend)
 
-- [ ] 1.1 Create `src-tauri/src/mcp/transport.rs`: `trait McpTransport { accept; recv_framed; send_framed }` + `UnixSocketTransport` over a **new** socket `/tmp/cluihud-mcp.sock`, length-framed JSON-RPC (4-byte LE length + payload). Do NOT modify the hook socket (`hooks/server.rs:202` is fire-and-forget, read-only — confirmed `server.rs:205-261`).
-- [ ] 1.2 Create the socket with mode `0600` in a per-user dir; remove stale socket on startup (mirror `server.rs:198`).
-- [ ] 1.3 Create `src-tauri/src/mcp/mod.rs`: JSON-RPC request/response types, `initialize`/`tools/list`/`tools/call` handling, a `ToolRegistry` (daemon owns tool schemas).
-- [ ] 1.4 Setting `mcp_server_enabled` in `config.rs`, **default off**; gate socket acceptance, structured "mcp_disabled" error when off.
+- [x] 1.1 `src-tauri/src/mcp/transport.rs`: framing (4-byte LE length + payload) over a **new** socket `/tmp/cluihud-mcp.sock`; hook socket untouched.
+- [x] 1.2 Socket mode `0600`, stale-socket removal on bind (mirrors `server.rs:198`).
+- [x] 1.3 `src-tauri/src/mcp/mod.rs`: JSON-RPC types, `initialize`/`tools/list`/`tools/call`, tool registry (daemon owns schemas via `tool_definitions`).
+- [x] 1.4 `mcp_server_enabled` in `config.rs`, **default off**; daemon binds always, `tools/call` → `mcp_disabled` when off.
 
 ## 2. stdio shim (CLI)
 
-- [ ] 2.1 `cluihud mcp` subcommand: stdio MCP server, relays to the dedicated socket.
-- [ ] 2.2 Degraded mode: complete `initialize` locally; answer `tools/list` from a vendored static list generated from the daemon registry at build time; structured error on `tools/call`.
-- [ ] 2.3 Validate socket path early (mirror CC v2.1.162 deep-`$TMPDIR` fix); no hang when daemon down.
+- [x] 2.1 `cluihud mcp` subcommand: stdio relay to the dedicated socket.
+- [x] 2.2 Degraded mode: local `initialize` + vendored `tools/list` (same `tool_definitions` source → no drift); structured error on `tools/call`.
+- [x] 2.3 Fast, non-hanging connect; missing/dead socket degrades immediately.
 
 ## 3. Identity + uid boundary (daemon)
 
-- [ ] 3.1 Enforce the uid boundary: socket mode `0600` in a per-user dir + reject connections whose `peer_cred().uid()` differs from the app's. This is the only access boundary. Do NOT implement a `/proc` PPID-walk (TOCTOU-unsound; no uplift vs the env hint against a same-uid process per design Decision 2).
-- [ ] 3.2 Cooperative identity: validate the reported `CLUIHUD_SESSION_ID` / `CLAUDE_CODE_SESSION_ID` against the live session registry; unknown id → unidentified. Maintain the `claude_code_session_id -> cluihud_session_id` side map.
-- [ ] 3.3 Lazy re-validation per tool call (connect-before-register race). Teardown binding + side map on disconnect; align with `forget_session` (`state.rs:81`).
-- [ ] 3.4 `list_sessions`/`get_session` are global-read within the uid (no identity gate) — design Decision 2b; document the cross-workspace exposure in the descriptor schema.
+- [x] 3.1 uid wall: `0600` socket + `peer_cred().uid()` reject of other uids (the only access boundary). No `/proc` pid-walk.
+- [x] 3.2 Cooperative identity: validate the reported `CLUIHUD_SESSION_ID` / CC side map against the live registry; unknown → unidentified.
+- [x] 3.3 Lazy per-call re-resolution (connect-before-register race); side map torn down with `forget_session`.
+- [x] 3.4 `list_sessions`/`get_session` global-read within the uid; cross-workspace exposure documented in the descriptor + Settings disclosure.
 
 ## 4. Descriptor assembly + directory tools
 
-- [ ] 4.1 Snapshot-then-release: the assembly fn takes an owned snapshot under the `AgentRuntimeState` lock (`state.rs:25`, `std::sync::Mutex`), drops the guard, THEN does git (`worktree.rs`, synchronous `std::process::Command`) / fs / subprocess work. Enforcement: `clippy::await_holding_lock` covers the async sub-case; the synchronous-blocking-under-lock case (no `.await`) is prevented structurally + verified in code review (the lint can't see it).
-- [ ] 4.2 Build descriptor (name, workspace, branch, agent, mode/`waitingFor` from `SessionStatus` `models.rs:8`, last-activity, files-touched).
-- [ ] 4.3 `whoami` / `list_sessions(filter?)` (self-exclusion) / `get_session(id)` (not-found error).
-- [ ] 4.4 Out-of-band cache for `claude agents --json` enrichment (timer/hook-driven); never spawned on a read.
+- [x] 4.1 Snapshot-then-release: brief DB lock → owned `Vec<Workspace>` → guard dropped before assembly; branch from the persisted column (no git subprocess on the read path).
+- [x] 4.2 Descriptor (name, workspace, branch, agent, mode from `SessionStatus`, last-activity, bg-tasks/crons; `waiting_for`/`files` null/empty, never fabricated).
+- [x] 4.3 `whoami` / `list_sessions(include_self?)` (self-exclusion) / `get_session(id)` (not-found error).
+- [ ] 4.4 **DEFERRED**: out-of-band `claude agents --json` cache for `waiting_for`/state enrichment (currently null). Lands with the multi-agent registrars; needs live `claude agents --json` shape verification.
 
 ## 5. Background tasks / crons (additive)
 
-- [ ] 5.1 Extend `HookEvent::Stop` / `SubagentStop` (`hooks/events.rs:27`) with `background_tasks: Vec<BackgroundTask>` + `session_crons: Vec<SessionCron>` (`#[serde(default)]`), structs from CC v2.1.150 payload.
-- [ ] 5.2 Capture into session state; surface in `get_session`. Unit test: legacy payload (without fields) still deserializes.
+- [x] 5.1 `HookEvent::Stop` extended with `background_tasks` + `session_crons` (`#[serde(default)]`, pass-through JSON). (SubagentStop is not modeled in cluihud today — additive when it is.)
+- [x] 5.2 Captured into session state (`set_session_background`), surfaced in `get_session`; legacy-payload deserialize unit-tested.
 
-## 6. Opt-in AI summaries (net-new LLM machinery)
+## 6. Opt-in AI summaries — DEFERRED (net-new LLM machinery)
 
-- [ ] 6.1 Settings `ai_summaries_enabled` (global, default off) + per-project override in `config.rs`.
-- [ ] 6.2 Migration `src-tauri/migrations/014_session_summaries.sql` (latest on disk is `013_env_shells`): `session_summaries(session_id TEXT PRIMARY KEY, summary TEXT NOT NULL, model TEXT, token_cost INTEGER, updated_at INTEGER NOT NULL)`; register `include_str!` in `db.rs` migrations array (`db.rs:132`).
-- [ ] 6.3 New inference path `mcp/summary.rs`: cheap model (haiku) invocation via a **dedicated configured API key** (`config.rs` setting) — NOT session agent auth (fragile, conflates billing; round-2 finding). No usable key → summaries stay off with a settings hint. Transcript read + token accounting. No reuse claim — `post_session.rs` has no LLM path.
-- [ ] 6.4 Detached runner; refresh on `Stop` (debounced) + on demand; frequency cap; timestamped. Surface `summary` in descriptor; null when absent; never block a read. No row + no transcript read when disabled.
-- [ ] 6.5 Single entrypoint reusable later by M4's MOC summary.
+> Deferred as a deliberate second increment: it adds an external Anthropic API
+> call (unverifiable headless) and carries a **secret-storage decision** (keyring
+> vs plaintext config for the dedicated key) that warrants explicit sign-off on a
+> security-tier change. The core directory ships without it.
+
+- [x] 6.2 Migration `021_session_summaries.sql` created + registered in `db.rs` (table ready; numbering corrected 014→021 after ClickUp migrations 015-020).
+- [ ] 6.1 Settings `ai_summaries_enabled` (global + per-project) in `config.rs`.
+- [ ] 6.3 `mcp/summary.rs` inference path (cheap model, dedicated key, transcript read, token accounting).
+- [ ] 6.4 Detached/debounced runner on `Stop`; surface `summary` in descriptor; nothing read/stored when disabled.
+- [ ] 6.5 Single entrypoint reusable by M4's MOC summary.
 
 ## 7. Registration + frontend
 
-- [ ] 7.1 Register `cluihud mcp` in spawned agents' MCP config (CC `mcpServers` in `~/.claude.json`; Codex/Pi/OpenCode equivalents) **idempotently**, pinning the installed absolute path `/usr/bin/cluihud` (NOT `$PATH` resolution — avoids the `~/.cargo/bin` shadow per CLAUDE.md). **Best-effort deregistration at disable time** (app running); NO uninstall-time maintainer-script cleanup (multi-user `$HOME` is fragile). Orphaned entry → structured error at agent startup, not hard failure.
-- [ ] 7.2 Settings UI: toggle MCP server (default off) + AI summaries (global + per-project).
+- [x] 7.1 (CC) Idempotent registration of `cluihud mcp` into `~/.claude.json` `mcpServers`, pinned `/usr/bin/cluihud`; best-effort disable-time deregistration; startup sync; pure helper unit-tested.
+- [ ] 7.1b **DEFERRED**: Codex/Pi/OpenCode registrars — each MCP config schema needs verification against a live install before writing (avoid corrupting agent configs by guessing).
+- [x] 7.2 (MCP toggle) Settings → MCP section: enable toggle (default off) + global-read disclosure. AI-summaries UI lands with phase 6.
 
-## 8. Tests (not manual-only)
+## 8. Tests
 
-- [ ] 8.1 Unit: transport framing — fragmented frame (partial read), oversized length field, zero-length payload, short write. (Highest-risk new code.)
-- [ ] 8.2 Unit: JSON-RPC dispatch (`initialize`/`tools/list`/`tools/call`, unknown tool, disabled-daemon error).
-- [ ] 8.3 Unit: identity-validation table — valid env id matching a live session / unknown id → unidentified / connect-before-register → lazy resolve / disconnect teardown. Plus the pure uid-comparison decision fn (accept own uid / reject other uid) — the single enforced boundary must not be manual-only.
-- [ ] 8.4 Unit: descriptor assembly from fixture state. Snapshot-release: `clippy::await_holding_lock` for the async case + code-review gate for the synchronous-blocking-under-lock case (lint-invisible).
-- [ ] 8.5 `cd src-tauri && cargo clippy -- -D warnings && cargo test && cargo fmt --check` + `npx tsc --noEmit`.
-- [ ] 8.6 Manual two-session walk: cross-workspace `list_sessions`; `whoami` (CC + one non-CC); other-uid connection rejected; bg-tasks surfacing; AI-summary on/off (no row + no transcript read when off).
+- [x] 8.1 Transport framing: fragmented/partial, oversized, zero-length, short write, clean-EOF, partial-EOF (7 tests).
+- [x] 8.2 JSON-RPC dispatch: initialize / tools/list / tools/call / unknown method / unknown tool / disabled path / invalid params (8 tests).
+- [x] 8.3 Identity table: registered-id resolve / unknown → unidentified / CC side-map resolve / forget teardown; shim degraded-mode (3 tests).
+- [x] 8.4 Descriptor assembly: empty directory + whoami-unidentified; registration add/idempotent/preserve/remove/missing/non-object (6 tests); Stop legacy + with-fields deserialize (2 tests).
+- [x] 8.5 `cargo clippy -- -D warnings && cargo test && cargo fmt --check` + `npx tsc --noEmit` + `vite build` — all green.
+- [ ] 8.6 **PENDING (runtime, needs running app)**: two-session walk — cross-workspace `list_sessions`; `whoami` (CC + one non-CC); other-uid connection rejected; bg-tasks surfacing.

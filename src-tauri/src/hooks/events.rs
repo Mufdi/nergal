@@ -31,6 +31,14 @@ pub enum HookEvent {
         stop_reason: Option<String>,
         #[serde(default)]
         transcript_path: Option<String>,
+        /// Background tasks still running at Stop (CC v2.1.150+). Pass-through
+        /// JSON, tolerant of CC shape drift; surfaced in the MCP descriptor.
+        /// `#[serde(default)]` keeps legacy payloads (without the field) valid.
+        #[serde(default)]
+        background_tasks: Vec<serde_json::Value>,
+        /// Scheduled crons for the session (CC v2.1.150+). Same contract.
+        #[serde(default)]
+        session_crons: Vec<serde_json::Value>,
     },
     #[serde(rename = "TaskCompleted")]
     TaskCompleted {
@@ -185,6 +193,48 @@ impl HookEvent {
             | Self::PermissionDenied { session_id, .. }
             | Self::StatusLine { session_id, .. }
             | Self::AgentStatus { session_id, .. } => session_id,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_stop_without_bg_fields_still_deserializes() {
+        let json = r#"{"hook_event_name":"Stop","session_id":"s1","stop_reason":"end_turn"}"#;
+        let ev: HookEvent = serde_json::from_str(json).unwrap();
+        match ev {
+            HookEvent::Stop {
+                session_id,
+                background_tasks,
+                session_crons,
+                ..
+            } => {
+                assert_eq!(session_id, "s1");
+                assert!(background_tasks.is_empty());
+                assert!(session_crons.is_empty());
+            }
+            _ => panic!("expected Stop"),
+        }
+    }
+
+    #[test]
+    fn stop_captures_background_tasks_and_crons() {
+        let json = r#"{"hook_event_name":"Stop","session_id":"s1","background_tasks":[{"id":"bg1"}],"session_crons":[{"id":"c1"}]}"#;
+        let ev: HookEvent = serde_json::from_str(json).unwrap();
+        match ev {
+            HookEvent::Stop {
+                background_tasks,
+                session_crons,
+                ..
+            } => {
+                assert_eq!(background_tasks.len(), 1);
+                assert_eq!(session_crons.len(), 1);
+                assert_eq!(background_tasks[0]["id"], "bg1");
+            }
+            _ => panic!("expected Stop"),
         }
     }
 }

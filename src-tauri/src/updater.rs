@@ -402,6 +402,46 @@ pub fn open_log_file() -> Result<(), String> {
     Ok(())
 }
 
+fn read_os_pretty_name() -> Option<String> {
+    let content = std::fs::read_to_string("/etc/os-release").ok()?;
+    content.lines().find_map(|line| {
+        line.strip_prefix("PRETTY_NAME=")
+            .map(|rest| rest.trim_matches('"').to_string())
+    })
+}
+
+fn read_log_tail(n: usize) -> String {
+    let log_path = dirs::cache_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("cluihud")
+        .join("cluihud.log");
+    match std::fs::read_to_string(&log_path) {
+        Ok(content) => {
+            let lines: Vec<&str> = content.lines().collect();
+            let start = lines.len().saturating_sub(n);
+            lines[start..].join("\n")
+        }
+        Err(_) => "(no log file — only written when launched from the app launcher)".to_string(),
+    }
+}
+
+/// Build a diagnostics bundle (version, install source, OS, recent log tail)
+/// the user can paste into a bug report. Best-effort: missing pieces render as
+/// "unknown" rather than failing.
+#[tauri::command]
+pub fn collect_diagnostics() -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    let source = format!("{:?}", detect_install_source()).to_lowercase();
+    let os = read_os_pretty_name().unwrap_or_else(|| "unknown".into());
+    let kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease")
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| "unknown".into());
+    let log_tail = read_log_tail(150);
+    format!(
+        "Nergal diagnostics\nVersion: {version}\nInstall source: {source}\nOS: {os}\nKernel: {kernel}\n\n---- log tail (last 150 lines) ----\n{log_tail}"
+    )
+}
+
 #[tauri::command]
 pub async fn reveal_in_downloads(path: String) -> Result<(), String> {
     let p = PathBuf::from(&path);

@@ -484,6 +484,8 @@ pub fn run() {
             browser::browser_get_listening_ports,
             browser::browser_register_shortcuts,
             browser::browser_unregister_shortcuts,
+            browser::port_process_info,
+            browser::kill_port,
             // Updater (download .deb / AppImage, reveal in file manager)
             updater::get_install_source,
             updater::check_system_health,
@@ -493,6 +495,7 @@ pub fn run() {
             updater::find_downloaded_update,
             updater::reveal_in_downloads,
             updater::open_log_file,
+            updater::collect_diagnostics,
         ])
         .setup(move |app| {
             if let Some(window) = app.get_webview_window("main") {

@@ -12,9 +12,17 @@ import {
   localhostPortsAtom,
 } from "@/stores/browser";
 import { openTabAction, expandRightPanelAtom } from "@/stores/rightPanel";
+import { toastsAtom } from "@/stores/toast";
+import { invoke } from "@/lib/tauri";
 import { Badge } from "@/components/ui/badge";
-import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock, Globe, CalendarRange, Pencil, TriangleAlert, Timer } from "lucide-react";
+import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock, Globe, CalendarRange, Pencil, TriangleAlert, Timer, Bell, X } from "lucide-react";
 import { activeIncidentsAtom } from "@/stores/statusFeed";
+import {
+  notificationHistoryAtom,
+  unreadNotificationsAtom,
+  markNotificationsSeenAtom,
+  clearNotificationsAtom,
+} from "@/stores/notifications";
 import {
   Tooltip,
   TooltipProvider,
@@ -204,6 +212,7 @@ export function StatusBar() {
 
         <LocalhostPortChips />
         <IncidentChips />
+        <NotificationBell />
       </div>
 
       {/* Right: context %, rate limits, model, duration. Progress bars live
@@ -302,6 +311,108 @@ export function StatusBar() {
   );
 }
 
+function formatRelativeTime(ts: number, now: number): string {
+  const s = Math.max(0, Math.floor((now - ts) / 1000));
+  if (s < 10) return "now";
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return new Date(ts).toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+/// Bell chip + upward popover mirroring every toast (the notification center).
+/// Opening marks everything seen so the unread badge clears.
+function NotificationBell() {
+  const history = useAtomValue(notificationHistoryAtom);
+  const unread = useAtomValue(unreadNotificationsAtom);
+  const markSeen = useSetAtom(markNotificationsSeenAtom);
+  const clearAll = useSetAtom(clearNotificationsAtom);
+  const [open, setOpen] = useState(false);
+
+  function toggle() {
+    setOpen((v) => {
+      if (!v) markSeen();
+      return !v;
+    });
+  }
+
+  const now = Date.now();
+
+  return (
+    <div className="relative flex items-center">
+      <Tooltip>
+        <TooltipTrigger
+          onClick={toggle}
+          aria-expanded={open}
+          className={`relative flex items-center gap-1 rounded px-1.5 py-0 text-[10px] transition-colors text-muted-foreground hover:bg-secondary hover:text-foreground ${open ? "bg-secondary text-foreground" : ""}`}
+        >
+          <Bell className="size-3 shrink-0" />
+          {unread > 0 && (
+            <span className="flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-medium tabular-nums text-primary-foreground">
+              {unread > 9 ? "9+" : unread}
+            </span>
+          )}
+        </TooltipTrigger>
+        <TooltipContent>Notifications</TooltipContent>
+      </Tooltip>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute bottom-full right-0 z-50 mb-1.5 max-h-72 w-72 overflow-y-auto rounded-md border border-border bg-card shadow-lg">
+            <div className="sticky top-0 flex items-center justify-between border-b border-border/50 bg-card px-2.5 py-1.5">
+              <span className="text-[10px] font-medium text-foreground">Notifications</span>
+              {history.length > 0 && (
+                <button
+                  onClick={() => clearAll()}
+                  className="text-[9px] text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  Clear all
+                </button>
+              )}
+            </div>
+            {history.length === 0 ? (
+              <div className="px-2.5 py-5 text-center text-[10px] text-muted-foreground/60">
+                No notifications yet
+              </div>
+            ) : (
+              history.map((n) => (
+                <div
+                  key={n.id}
+                  className="flex items-start gap-2 border-b border-border/30 px-2.5 py-1.5 last:border-b-0"
+                >
+                  <span
+                    className={`mt-1 inline-block size-1.5 shrink-0 rounded-full ${
+                      n.type === "error"
+                        ? "bg-red-500"
+                        : n.type === "success"
+                          ? "bg-green-500"
+                          : "bg-sky-400"
+                    }`}
+                    aria-hidden="true"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="truncate text-[10px] font-medium text-foreground">{n.message}</span>
+                      <span className="shrink-0 text-[9px] tabular-nums text-muted-foreground/50">
+                        {formatRelativeTime(n.ts, now)}
+                      </span>
+                    </div>
+                    {n.description && (
+                      <p className="mt-0.5 line-clamp-2 text-[9px] text-muted-foreground">{n.description}</p>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 /// One chip per provider with an active incident (status.claude.com /
 /// status.openai.com, polled by the Rust feed). Hidden while everything is
 /// operational. Click opens the provider's status page in the browser panel.
@@ -369,12 +480,33 @@ function LocalhostPortChips() {
   const setMode = useSetAtom(browserSetModeAction);
   const openTab = useSetAtom(openTabAction);
   const [open, setOpen] = useState(false);
+  const [procInfo, setProcInfo] = useState<Record<number, { pid: number; name: string } | null>>({});
+  const pushToast = useSetAtom(toastsAtom);
   const hasPorts = ports.length > 0;
 
   // The popover must not outlive its content (last dev server dies while open).
   useEffect(() => {
     if (!hasPorts) setOpen(false);
   }, [hasPorts]);
+
+  // Resolve the owning process per port when the popover opens — a cheap /proc
+  // walk, on-demand only so the 3s scanner stays lightweight.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    Promise.all(
+      ports.map((port) =>
+        invoke<{ pid: number; name: string } | null>("port_process_info", { port })
+          .then((info) => [port, info] as const)
+          .catch(() => [port, null] as const),
+      ),
+    ).then((entries) => {
+      if (!cancelled) setProcInfo(Object.fromEntries(entries));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, ports]);
 
   async function openPort(port: number) {
     setOpen(false);
@@ -388,6 +520,15 @@ function LocalhostPortChips() {
     } catch {
       /* validate_url fails on a sane localhost URL only if the user fed us
          garbage — ignore here. */
+    }
+  }
+
+  async function killPort(port: number) {
+    try {
+      await invoke("kill_port", { port });
+      pushToast({ message: "Port freed", description: `Sent SIGTERM to the process on :${port}`, type: "success" });
+    } catch (e) {
+      pushToast({ message: "Couldn't free port", description: String(e), type: "error" });
     }
   }
 
@@ -420,18 +561,34 @@ function LocalhostPortChips() {
         <>
           {/* Outside-click catcher — same pattern as the TopBar/TabBar dropdowns. */}
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full left-1/2 z-50 mb-1.5 max-h-48 w-40 -translate-x-1/2 overflow-y-auto rounded-md border border-border bg-card py-1 shadow-lg">
-            {ports.map((port) => (
-              <button
-                key={port}
-                onClick={() => openPort(port)}
-                disabled={!sessionId}
-                className="flex w-full items-center gap-2 px-2.5 py-1 text-left font-mono text-[10px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-40"
-              >
-                <span className="inline-block size-1.5 shrink-0 rounded-full bg-green-500" aria-hidden="true" />
-                localhost:{port}
-              </button>
-            ))}
+          <div className="absolute bottom-full left-1/2 z-50 mb-1.5 max-h-56 w-64 -translate-x-1/2 overflow-y-auto rounded-md border border-border bg-card py-1 shadow-lg">
+            {ports.map((port) => {
+              const info = procInfo[port];
+              return (
+                <div key={port} className="group flex items-center gap-1 px-2 py-1 text-[10px] transition-colors hover:bg-secondary">
+                  <button
+                    onClick={() => openPort(port)}
+                    disabled={!sessionId}
+                    className="flex min-w-0 flex-1 items-center gap-2 text-left font-mono text-muted-foreground transition-colors group-hover:text-foreground disabled:opacity-40"
+                  >
+                    <span className="inline-block size-1.5 shrink-0 rounded-full bg-green-500" aria-hidden="true" />
+                    <span className="shrink-0">localhost:{port}</span>
+                    {info && (
+                      <span className="truncate text-muted-foreground/45">{info.name}·{info.pid}</span>
+                    )}
+                  </button>
+                  <Tooltip>
+                    <TooltipTrigger
+                      onClick={() => killPort(port)}
+                      className="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground/40 opacity-0 transition-all hover:bg-red-500/15 hover:text-red-400 group-hover:opacity-100"
+                    >
+                      <X className="size-3" />
+                    </TooltipTrigger>
+                    <TooltipContent>Kill the process on this port (SIGTERM)</TooltipContent>
+                  </Tooltip>
+                </div>
+              );
+            })}
           </div>
         </>
       )}

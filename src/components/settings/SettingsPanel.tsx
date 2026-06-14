@@ -19,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Switch } from "@/components/ui/switch";
 import { Select } from "@/components/ui/select";
-import { CheckCircle2, AlertTriangle, XCircle, Info, FolderTree, Bot, Pencil, Palette, Terminal, NotebookText, RefreshCw, Check, ArrowLeft, Trash2, Sliders, Download, ExternalLink, FolderOpen } from "lucide-react";
+import { CheckCircle2, AlertTriangle, XCircle, Info, FolderTree, Bot, Pencil, Palette, Terminal, NotebookText, RefreshCw, Check, ArrowLeft, Trash2, Sliders, Download, ExternalLink, FolderOpen, ClipboardCopy, Bug } from "lucide-react";
 import { ClickUpIcon } from "@/components/icons/ClickUpIcon";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -1819,6 +1819,36 @@ function AboutSection({ appVersion }: { appVersion: string }) {
     openShell(url).catch((err) => console.error("[about] open url failed:", err));
   }
 
+  async function handleCopyDiagnostics() {
+    try {
+      const bundle = await invoke<string>("collect_diagnostics");
+      await invoke("terminal_clipboard_write", { text: bundle });
+      pushToast({ message: "Diagnostics copied", description: "Paste into your bug report's Logs section.", type: "success" });
+    } catch (e) {
+      pushToast({ message: "Copy failed", description: String(e), type: "error" });
+    }
+  }
+
+  function handleReportIssue() {
+    const body = [
+      "**Describe the bug**",
+      "",
+      "",
+      "**Steps to reproduce**",
+      "1. ",
+      "",
+      "**Environment**",
+      `- Nergal: v${appVersion}`,
+      `- Install source: ${sourceLabel}`,
+      "",
+      "**Logs**",
+      "<!-- Click \"Copy diagnostics\" in Settings › About, then paste here -->",
+      "",
+    ].join("\n");
+    const url = `https://github.com/Mufdi/nergal/issues/new?body=${encodeURIComponent(body)}`;
+    openShell(url).catch((err) => console.error("[about] report issue failed:", err));
+  }
+
   const sourceLabel = {
     deb: ".deb (system install)",
     appimage: "AppImage (portable)",
@@ -1890,21 +1920,37 @@ function AboutSection({ appVersion }: { appVersion: string }) {
 
       <div className="grid gap-2">
         <Label>Diagnostics</Label>
-        <button
-          type="button"
-          onClick={async () => {
-            try {
-              await invoke("open_log_file");
-            } catch (e) {
-              pushToast({ message: "No log file", description: String(e), type: "info" });
-            }
-          }}
-          className="inline-flex w-fit items-center gap-1.5 rounded-md border border-border/40 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
-        >
-          <NotebookText size={12} /> Open log file
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={handleReportIssue}
+            className="inline-flex w-fit items-center gap-1.5 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+          >
+            <Bug size={12} /> Report an issue
+          </button>
+          <button
+            type="button"
+            onClick={handleCopyDiagnostics}
+            className="inline-flex w-fit items-center gap-1.5 rounded-md border border-border/40 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
+          >
+            <ClipboardCopy size={12} /> Copy diagnostics
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                await invoke("open_log_file");
+              } catch (e) {
+                pushToast({ message: "No log file", description: String(e), type: "info" });
+              }
+            }}
+            className="inline-flex w-fit items-center gap-1.5 rounded-md border border-border/40 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
+          >
+            <NotebookText size={12} /> Open log file
+          </button>
+        </div>
         <p className="text-[10px] text-muted-foreground/60">
-          Only written when Nergal is launched from the app launcher (not a terminal/dev run).
+          Report an issue opens a prefilled GitHub issue — paste the copied diagnostics into its Logs section. The log file is only written when Nergal is launched from the app launcher (not a terminal/dev run).
         </p>
       </div>
 

@@ -1,5 +1,6 @@
 import { atom } from "jotai";
 import { sileo } from "sileo";
+import { pushNotificationAction } from "./notifications";
 
 export interface Toast {
   message: string;
@@ -9,7 +10,7 @@ export interface Toast {
 
 export const toastsAtom = atom(
   () => [],
-  (_get, _set, toast: Toast) => {
+  (_get, set, toast: Toast) => {
     const opts = {
       title: toast.message,
       description: toast.description,
@@ -26,5 +27,11 @@ export const toastsAtom = atom(
         sileo.info(opts);
         break;
     }
+    // Mirror into the notification center so toasts are re-readable later.
+    set(pushNotificationAction, {
+      message: toast.message,
+      description: toast.description,
+      type: toast.type,
+    });
   },
 );

@@ -16,6 +16,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use url::Url;
@@ -185,6 +186,103 @@ fn read_listening_user_ports() -> Vec<u16> {
     all.dedup();
     all.retain(|&p| (MIN_PORT..=MAX_PORT).contains(&p));
     all
+}
+
+/// Resolve the inode of the LISTEN socket bound to `port` from
+/// /proc/net/tcp{,6}. Column layout (whitespace-split, 0-indexed): 1=local,
+/// 3=state, 9=inode.
+fn listen_inode_for_port(port: u16) -> Option<String> {
+    for path in [PROC_NET_TCP, PROC_NET_TCP6] {
+        let Ok(content) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for line in content.lines().skip(1) {
+            let mut fields = line.split_whitespace();
+            let Some(local) = fields.nth(1) else { continue };
+            let _rem = fields.next();
+            let Some(state) = fields.next() else { continue };
+            if state != TCP_LISTEN {
+                continue;
+            }
+            let Some(port_hex) = local.rsplit(':').next() else {
+                continue;
+            };
+            if u16::from_str_radix(port_hex, 16) != Ok(port) {
+                continue;
+            }
+            // After `state`, advance 5 more columns to reach `inode` (index 9).
+            if let Some(inode) = fields.nth(5) {
+                return Some(inode.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Find the PID owning the socket with `inode` by scanning /proc/<pid>/fd for a
+/// `socket:[<inode>]` symlink. Only the user's own processes are readable —
+/// fine, dev servers run as the user.
+fn pid_for_socket_inode(inode: &str) -> Option<u32> {
+    let target = format!("socket:[{inode}]");
+    for entry in std::fs::read_dir("/proc").ok()?.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|s| s.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let Ok(fds) = std::fs::read_dir(entry.path().join("fd")) else {
+            continue;
+        };
+        for fd in fds.flatten() {
+            if let Ok(link) = std::fs::read_link(fd.path())
+                && link.to_string_lossy() == target
+            {
+                return Some(pid);
+            }
+        }
+    }
+    None
+}
+
+fn process_name(pid: u32) -> Option<String> {
+    std::fs::read_to_string(format!("/proc/{pid}/comm"))
+        .ok()
+        .map(|s| s.trim().to_string())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PortProcess {
+    pub pid: u32,
+    pub name: String,
+}
+
+/// Which process is listening on `port` (PID + comm name), or None when it
+/// can't be attributed (socket owned by another user, or already gone).
+#[tauri::command]
+pub fn port_process_info(port: u16) -> Option<PortProcess> {
+    let inode = listen_inode_for_port(port)?;
+    let pid = pid_for_socket_inode(&inode)?;
+    let name = process_name(pid).unwrap_or_else(|| "unknown".into());
+    Some(PortProcess { pid, name })
+}
+
+/// SIGTERM the process listening on `port` to free it. Resolves the owning PID
+/// the same way `port_process_info` does, then lets the dev server shut down.
+#[tauri::command]
+pub fn kill_port(port: u16) -> Result<(), String> {
+    let inode = listen_inode_for_port(port).ok_or("no listening socket on that port")?;
+    let pid = pid_for_socket_inode(&inode).ok_or("could not resolve the owning process")?;
+    let rc = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+    if rc != 0 {
+        return Err(format!(
+            "kill({pid}) failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
 }
 
 /// Apply hysteresis to a raw scan result against the previous active set.

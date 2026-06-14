@@ -165,13 +165,15 @@ export function ActivityDrawer() {
         }
         if (e.code === "ArrowLeft") {
           e.preventDefault();
-          chips[Math.max(i - 1, 0)]?.focus();
+          if (i === 0) root.querySelector<HTMLInputElement>("input")?.focus();
+          else chips[i - 1]?.focus();
           return;
         }
         return; // Enter/Space toggle the chip natively
       }
 
-      // Search box: ↓ drops to the list; otherwise let typing/caret work.
+      // Search box: ↓ drops to the list, ↑ goes up to the filter chips;
+      // ←/→ stay native (caret).
       if (inField) {
         if (e.code === "ArrowDown") {
           e.preventDefault();
@@ -183,6 +185,9 @@ export function ActivityDrawer() {
             first.setAttribute("data-nav-selected", "true");
             first.scrollIntoView({ block: "nearest" });
           }
+        } else if (e.code === "ArrowUp") {
+          e.preventDefault();
+          root.querySelector<HTMLElement>("[data-header-action]")?.focus();
         }
         return;
       }
@@ -195,8 +200,9 @@ export function ActivityDrawer() {
       if (e.code === "ArrowDown" || e.code === "ArrowUp") {
         e.preventDefault();
         if (e.code === "ArrowUp" && idx === 0) {
+          // Top of the list → the filter row, landing on the search input.
           selected?.removeAttribute("data-nav-selected");
-          root.querySelector<HTMLElement>("[data-header-action]")?.focus();
+          root.querySelector<HTMLInputElement>("input")?.focus();
           return;
         }
         const next = e.code === "ArrowDown"
@@ -424,7 +430,7 @@ export function ActivityDrawer() {
                 type="button"
                 data-header-action
                 onClick={() => toggleType(t)}
-                className={`flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[9px] transition-colors ${
+                className={`flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[9px] outline-none transition-colors focus-visible:ring-1 focus-visible:ring-primary/50 ${
                   active ? "bg-secondary text-foreground" : "text-muted-foreground/50 hover:text-foreground"
                 }`}
               >

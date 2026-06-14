@@ -23,6 +23,36 @@ export const addActivityAtom = atom(
   },
 );
 
+/// Complete the most recent running tool entry for a session (pairs a
+/// PostToolUse with its PreToolUse): stamp duration + mark done. Prefers the
+/// last running entry of the SAME tool; falls back to the last running tool of
+/// any name. Returns whether a match was patched so the caller can fall back to
+/// creating a standalone "done" entry.
+export const completeToolActivityAtom = atom(
+  null,
+  (get, set, payload: { sessionId: string; toolName?: string }): boolean => {
+    const list = get(activityMapAtom)[payload.sessionId];
+    if (!list) return false;
+    let idx = -1;
+    for (let i = list.length - 1; i >= 0; i--) {
+      const e = list[i];
+      if (e.type !== "tool_use" || e.status !== "running") continue;
+      if (payload.toolName && e.toolName === payload.toolName) {
+        idx = i;
+        break;
+      }
+      if (idx === -1) idx = i; // first running tool seen (fallback if no name match)
+    }
+    if (idx === -1) return false;
+    const matched = list[idx];
+    const patched = { ...matched, status: "done" as const, durationMs: Date.now() - matched.timestamp };
+    const next = [...list];
+    next[idx] = patched;
+    set(activityMapAtom, (prev) => ({ ...prev, [payload.sessionId]: next }));
+    return true;
+  },
+);
+
 /// Summary for status bar: last action, total count, and session start time.
 export const activitySummaryAtom = atom((get) => {
   const entries = get(activeActivityAtom);

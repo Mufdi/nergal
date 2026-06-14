@@ -141,6 +141,14 @@ export interface ActivityEntry {
   type: "tool_use" | "file_modified" | "session" | "task" | "plan" | "error";
   message: string;
   detail?: string;
+  /// Tool lifecycle: "running" set on PreToolUse, "done" patched on PostToolUse.
+  status?: "running" | "done";
+  /// Wall-clock pre→post duration, set when the tool completes.
+  durationMs?: number;
+  /// Files touched by the tool, derived from tool_input (Edit/Write/Read…).
+  files?: string[];
+  /// Raw tool name (for pre/post pairing, filtering, grouping).
+  toolName?: string;
 }
 
 export interface DiffLine {

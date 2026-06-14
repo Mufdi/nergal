@@ -8,7 +8,7 @@ import { planStateMapAtom, planDocumentsAtom, registerPlanAtom, planReviewStatus
 import { pendingAsksAtom, pendingAttentionAtom } from "./askUser";
 import { openTabAction, expandRightPanelAtom, activePanelViewAtom } from "./rightPanel";
 import { refreshGitInfoAtom } from "./git";
-import { addActivityAtom } from "./activity";
+import { addActivityAtom, completeToolActivityAtom } from "./activity";
 import { toastsAtom } from "./toast";
 import { localhostPortsAtom } from "./browser";
 import { providerStatusAtom, type ProviderStatus } from "./statusFeed";
@@ -25,6 +25,14 @@ function createActivity(type: ActivityEntry["type"], message: string, detail?: s
     message,
     detail,
   };
+}
+
+/// Extract the file a tool acts on from its tool_input (Edit/Write/Read/…).
+function filesFromToolInput(input: unknown): string[] {
+  if (!input || typeof input !== "object") return [];
+  const obj = input as Record<string, unknown>;
+  const p = obj.file_path ?? obj.path ?? obj.notebook_path;
+  return typeof p === "string" && p ? [p] : [];
 }
 
 function clearKey<T extends Record<string, unknown>>(prev: T, key: string): T {
@@ -48,12 +56,33 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
       switch (event_type) {
         case "pre_tool_use": {
           set(modeMapAtom, (prev) => ({ ...prev, [sid]: tool_name ?? "tool" }));
-          set(addActivityAtom, { sessionId: sid, entry: createActivity("tool_use", `Tool: ${tool_name ?? "unknown"}`) });
+          set(addActivityAtom, {
+            sessionId: sid,
+            entry: {
+              ...createActivity("tool_use", tool_name ?? "tool"),
+              status: "running",
+              toolName: tool_name,
+              files: filesFromToolInput(event.tool_input),
+            },
+          });
           break;
         }
         case "post_tool_use": {
           set(modeMapAtom, (prev) => ({ ...prev, [sid]: "active" }));
-          set(addActivityAtom, { sessionId: sid, entry: createActivity("tool_use", `Tool done: ${tool_name ?? "unknown"}`) });
+          // Pair with the running PreToolUse entry (stamps duration + done).
+          // Fall back to a standalone done entry if the pre was pruned/missing.
+          const paired = set(completeToolActivityAtom, { sessionId: sid, toolName: tool_name });
+          if (!paired) {
+            set(addActivityAtom, {
+              sessionId: sid,
+              entry: {
+                ...createActivity("tool_use", tool_name ?? "tool"),
+                status: "done",
+                toolName: tool_name,
+                files: filesFromToolInput(event.tool_input),
+              },
+            });
+          }
           set(refreshGitInfoAtom, sid);
           set(pendingAttentionAtom, (prev) => clearKey(prev, sid));
           break;

@@ -430,7 +430,7 @@ export function ActivityDrawer() {
                 type="button"
                 data-header-action
                 onClick={() => toggleType(t)}
-                className={`flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[9px] outline-none transition-colors focus-visible:ring-1 focus-visible:ring-primary/50 ${
+                className={`flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[9px] outline-none transition-colors focus:ring-1 focus:ring-inset focus:ring-primary/70 ${
                   active ? "bg-secondary text-foreground" : "text-muted-foreground/50 hover:text-foreground"
                 }`}
               >

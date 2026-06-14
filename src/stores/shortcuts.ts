@@ -17,7 +17,7 @@ import {
   PANEL_CATEGORY_MAP,
   type Tab,
 } from "./rightPanel";
-import { layoutPresetAtom, sessionLayoutPresetAtom, applyPresetSignalAtom, terminalFullscreenAtom, type LayoutPreset } from "./layout";
+import { terminalFullscreenAtom } from "./layout";
 import { activityDrawerOpenAtom } from "./activity";
 import { activeConflictedFilesAtom, refreshGitInfoAtom, renameBranchSignalAtom } from "./git";
 import { activeSessionTasksAtom, clearCompletedTasksAtom } from "./tasks";
@@ -624,15 +624,12 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   }},
 
   // -- Plan review (contextual — only active during pending_review) --
-  { id: "global-comment", label: "Add Global Comment", keys: "ctrl+shift+o", category: "action", keywords: ["comment", "global", "plan", "annotation"], handler: () => {
-    document.dispatchEvent(new CustomEvent("cluihud:toggle-global-comment"));
-  }},
-  { id: "clear-annotations", label: "Clear All Annotations", keys: "ctrl+shift+x", category: "action", keywords: ["clear", "annotations", "plan", "remove"], handler: () => {
-    document.dispatchEvent(new CustomEvent("cluihud:clear-annotations"));
-  }},
-  { id: "approve-plan", label: "Approve Plan", keys: "ctrl+shift+a", category: "action", keywords: ["approve", "plan", "review", "accept"], handler: () => {
-    document.dispatchEvent(new CustomEvent("cluihud:approve-plan"));
-  }},
+  // Approve (A) / global comment (C) / clear annotations (X, swal-confirmed) are
+  // bare-letter verbs scoped to the plan/spec surface (patterns.md §1/§8) —
+  // handled component-locally in PlanPanel/SpecPanel, not here. Entering
+  // annotation mode keeps its modifier (Ctrl+Shift+H) since it's triggered from
+  // outside the engaged state. Ctrl+Shift+R stays global: it's multi-context
+  // (conflict resolve / PR annotations / plan revise), not plan-only.
   { id: "revise-or-resolve", label: "Revise Plan / Resolve Conflict / Apply PR Annotations (contextual)", keys: "ctrl+shift+r", category: "action", keywords: ["revise", "plan", "review", "reject", "feedback", "resolve", "conflict", "apply", "pr", "claude"], handler: () => {
     const s = store();
     const activeTab = s.get(activeTabAtom);
@@ -702,15 +699,6 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     if (panelType === "git") {
       expandGitZen(sessionId);
     }
-  }},
-  { id: "cycle-layout", label: "Cycle Layout Preset", keys: "ctrl+shift+i", category: "navigation", keywords: ["layout", "preset", "cycle", "resize"], handler: () => {
-    const s = store();
-    const presets: LayoutPreset[] = ["terminal-focus", "doc-review", "tool-workspace"];
-    const current = s.get(layoutPresetAtom);
-    const idx = presets.indexOf(current);
-    const next = presets[(idx + 1) % presets.length];
-    s.set(sessionLayoutPresetAtom, next);
-    s.set(applyPresetSignalAtom, (p: number) => p + 1);
   }},
   { id: "fullscreen-terminal", label: "Fullscreen Terminal", keys: "ctrl+enter", category: "navigation", keywords: ["fullscreen", "terminal", "maximize", "zen", "collapse"], handler: () => {
     const s = store();

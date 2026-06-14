@@ -61,9 +61,6 @@ export const sessionLayoutPresetAtom = atom(
   },
 );
 
-/// Signals Workspace to transition. Incremented when preset changes should be applied.
-export const applyPresetSignalAtom = atom(0);
-
 /// Ghostty-style fullscreen: the terminal pane overlays the whole window
 /// (fixed inset-0) without reparenting the canvas or touching the panel
 /// layout underneath.

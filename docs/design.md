@@ -330,15 +330,37 @@ bg-foreground` replaces close button until hover), and middle-click close.
 
 ### 3.7 Tooltips (`@/components/ui/tooltip.tsx`)
 
-`@base-ui/react/tooltip` with `delay={1000}`. Surface uses **raw**
-`bg-[#1c1c1e] text-[#ededef] border border-white/10` instead of semantic
-tokens — this is intentional (the popup needs to stay legible regardless of
+`@base-ui/react/tooltip`. The root `TooltipProvider` in `main.tsx` is
+`delay={0}` → **every** `<Tooltip>` is instant app-wide, no local delay overrides.
+Surface uses **raw** `bg-[#1c1c1e] text-[#ededef] border border-white/10` instead
+of semantic tokens — intentional (the popup must stay legible regardless of
 parent surface). Animations: `fade-in-0 zoom-in-95` open/close.
 
-**Rule**: Every icon-only button gets a tooltip. The tooltip should be the
-source of truth for the action label + shortcut: `Commit (Ctrl+Shift+C)`.
+**Rules**:
+- Every icon-only / action button gets a tooltip. The tooltip is the source of
+  truth for the action label + shortcut: `Commit (Ctrl+Shift+C)`, `Approve (A)`.
+  Never use native `title=` on action buttons (OS-styled, slow); `title=` is fine
+  on info-spans (truncated text, paths) and a11y attributes.
+- For buttons, wrap with the **render-prop** form
+  `<TooltipTrigger render={<button …/>}>{icon}</TooltipTrigger>` — the children
+  form (`<TooltipTrigger><button/></TooltipTrigger>`) makes base-ui render its
+  own `<button>`, nesting buttons (invalid HTML) and dropping the real button's
+  `ml-auto`/`group-hover`/`data-nav-key`. (Legacy children-form call sites still
+  exist, e.g. PlanPanel/SpecPanel — fix to render-prop when you touch them.)
 
 ### 3.8 Modal / Dialog (`@/components/ui/dialog.tsx`)
+
+**Which surface — decide first.** Four overlay families, by intent:
+
+| Surface | When | Modality | Keyboard (patterns.md §1.1) |
+|---------|------|----------|------------------------------|
+| **`Dialog`** | A focused task the user must complete or dismiss (Ship, Merge, AgentPicker, AskUser, settings) | Modal, backdrop, captures focus | Modal capture — global dispatcher bails |
+| **`FloatingPanel`** | A persistent, draggable companion that survives across sessions (scratchpad, ClickUp detail, quick capture) | Non-modal, no backdrop | Surface override — recycles its keys, globals pass |
+| **popover-as-modal** (§3.9) | Jump-*through* the UI without pausing it (command palette, file picker) | Quasi-modal, stronger blur | Own listener while open |
+| **`swal`** (`@/lib/swal`) | A quick yes/no confirm, especially destructive (delete, clear, remove) | Modal, themed, pixel icon | Confirm/Cancel only |
+
+Don't reach for a `Dialog` when a `swal` confirm suffices, and don't hand-roll a
+confirm `Dialog` — `confirm()` from `@/lib/swal` is the canonical yes/no.
 
 Built on `@base-ui/react/dialog`. The canonical surface:
 
@@ -367,6 +389,25 @@ are radio-cards (§3.13).
 
 **Sizing**: Default `sm:max-w-sm`. AskUserModal inherits default (questions
 scroll inside `max-h-[60vh] overflow-y-auto`). SettingsPanel uses `sm:max-w-md`.
+
+**Buttons inside modals**:
+
+- **Roles → variant**: primary action = `Button` default (filled); secondary /
+  Cancel = `variant="outline"`; destructive primary = `variant="destructive"`.
+  One primary per footer.
+- **Order**: footer is right-aligned on `sm:` with the primary action **last**
+  (rightmost), Cancel to its left; column-reverse on mobile so the primary sits
+  on top. Decision-list modals have no footer (the cards are the actions).
+- **Keyboard**: modals own their keyboard (§1.1 modal-capture). Auto-focus the
+  first focusable, walk fields with arrows, `Enter` confirms the primary, `Esc`
+  cancels. A primary that submits text binds `Ctrl+Enter` in the field.
+
+**Destructive confirm (swal)**: any destructive action that can be triggered by a
+low-friction gesture (a bare-letter verb, a hover icon button) routes through
+`confirm()` from `@/lib/swal` with `destructive: true` before acting — e.g.
+clearing plan/spec annotations (`X`). Themed, pixel `warning` icon,
+`reverseButtons` + `focusCancel` so the safe choice is the default. Don't gate
+non-destructive or easily-reversible actions behind a confirm.
 
 ### 3.9 Command palette / file picker (popover-as-modal)
 

@@ -15,6 +15,7 @@ import {
   type AnnotationType,
 } from "@/stores/annotations";
 import { toastsAtom } from "@/stores/toast";
+import { confirm } from "@/lib/swal";
 import { MarkdownView } from "@/components/plan/MarkdownView";
 import { AnnotatableMarkdownView } from "@/components/plan/AnnotatableMarkdownView";
 import { useObsidianMentionPicker } from "@/hooks/useObsidianMentionPicker";
@@ -257,6 +258,47 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditable, specScopeKey, isAnnotatingThis, annotations.length]);
 
+  // Bare-letter verbs scoped to the spec surface (patterns.md §1/§8): while
+  // annotating with the panel zone focused, C/R/X act without a modifier and
+  // bridge to the same custom events as the header buttons. Entering annotation
+  // mode keeps its modifier (Ctrl+Shift+H). X is swal-confirmed — a bare letter
+  // is easy to hit by accident.
+  useEffect(() => {
+    if (!isAnnotatingThis) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      if (!["KeyR", "KeyC", "KeyX"].includes(e.code)) return;
+      const t = e.target as HTMLElement | null;
+      if (
+        t?.tagName === "INPUT" || t?.tagName === "TEXTAREA"
+        || !!t?.closest(".cm-editor") || t?.getAttribute("contenteditable") === "true"
+      ) return;
+      if (!t?.closest("[data-focus-zone='panel']")) return;
+      if (e.code === "KeyC") {
+        e.preventDefault();
+        document.dispatchEvent(new CustomEvent("cluihud:toggle-global-comment"));
+      } else if (e.code === "KeyR") {
+        if (annotations.length === 0) return;
+        e.preventDefault();
+        document.dispatchEvent(new CustomEvent("cluihud:revise-plan"));
+      } else if (e.code === "KeyX") {
+        if (annotations.length === 0) return;
+        e.preventDefault();
+        void confirm({
+          kind: "warning",
+          destructive: true,
+          title: "Clear annotations?",
+          body: `Remove all ${annotations.length} annotation${annotations.length === 1 ? "" : "s"} on this spec?`,
+          confirmLabel: "Clear",
+        }).then((ok) => {
+          if (ok) document.dispatchEvent(new CustomEvent("cluihud:clear-annotations"));
+        });
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isAnnotatingThis, annotations.length]);
+
   function toggleAnnotationMode() {
     if (!isEditable || !specScopeKey) return;
     if (isAnnotatingThis) {
@@ -472,20 +514,28 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
                     </button>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" className="text-[10px]">
-                    Global comment (Ctrl+Shift+O)
+                    Global comment (C)
                   </TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger>
                     <button
-                      onClick={handleClearAnnotations}
+                      onClick={() => {
+                        void confirm({
+                          kind: "warning",
+                          destructive: true,
+                          title: "Clear annotations?",
+                          body: `Remove all ${annotations.length} annotation${annotations.length === 1 ? "" : "s"} on this spec?`,
+                          confirmLabel: "Clear",
+                        }).then((ok) => { if (ok) handleClearAnnotations(); });
+                      }}
                       className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
                     >
                       <Trash2 size={11} />
                     </button>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" className="text-[10px]">
-                    Clear all (Ctrl+Shift+X)
+                    Clear all (X)
                   </TooltipContent>
                 </Tooltip>
                 <Tooltip>
@@ -503,7 +553,7 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
                     </button>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" className="text-[10px]">
-                    Queue feedback for next prompt (Ctrl+Shift+R)
+                    Queue feedback for next prompt (R)
                   </TooltipContent>
                 </Tooltip>
               </>

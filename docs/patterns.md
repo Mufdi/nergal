@@ -13,7 +13,58 @@ silently.
 
 ---
 
-## 1. Navigation tiers
+## 1. Shortcut taxonomy
+
+### 1.1 The scoping principle
+
+**The modifier a shortcut needs is decided by where focus lives.** The terminal
+(the agent PTY) consumes bare keystrokes, so any shortcut that must fire *while
+the terminal is focused* — i.e. a **global** — needs a modifier. A focus zone
+that is NOT the terminal (panel, sidebar, quake, a modal, a floating module)
+does not forward bare letters to the agent, so **bare letters are free there**
+for contextual verbs. This is what lets us recycle the same letter (or even the
+same combo) across surfaces.
+
+That splits every binding into two families and three scoping levels:
+
+| Level | Where it fires | Mechanism | Examples |
+|-------|----------------|-----------|----------|
+| **Global / transversal** | anywhere, incl. terminal focused | `shortcuts.ts` registry (always modified) | session switch, open panels, ship, push |
+| **Modal capture** | while a `Dialog` is mounted | global dispatcher bails (`dialogOpen` guard in `useKeyboardShortcuts.ts`); the modal owns ALL keys | Ship, Merge, AgentPicker, AskUser, confirms |
+| **Surface override** | while a panel / floating module owns focus | component-local handlers (§8) + selective combo recycling; true globals still pass through | ClickUp verbs, plan-review verbs, scratchpad tabs |
+
+The difference between *modal capture* and *surface override*: a `Dialog` is a
+**modal task you must finish or dismiss**, so it captures everything. A panel or
+`FloatingPanel` is a **non-modal companion**, so it overrides only the keys it
+claims and lets the few global/transversal shortcuts keep working.
+
+### 1.2 Family A — global shortcuts (always modified)
+
+Registered in `shortcuts.ts`. Pick the tier by intent:
+
+| Tier | Keys | Meaning | Rule |
+|------|------|---------|------|
+| 0 | `Ctrl+{key}` | Global + OS-mirroring | if the OS / a browser / an editor already binds it, match them (`Ctrl+1..9` sessions, `Ctrl+B` sidebar, `Ctrl+K` palette, `Ctrl+,` settings, `Ctrl+S` save, `Ctrl+W` close, `Ctrl+N` new, `Ctrl+Enter` fullscreen, `Ctrl+Tab` cycle) |
+| 1 | `Ctrl+Shift+{letter}` | **Open / toggle a PANEL** (nouns / surfaces) | default for any panel: plan, files, diff, spec, git, clickup, obsidian, activity, annotations drawer, file-picker |
+| 2 | `Ctrl+Alt+{letter}` | **ACTION verb that mutates state** | push, ship, rename-branch, clear-tasks, complete-merge, quick-capture, vault-search |
+| — | `Ctrl+Shift+{1-9}` · `Ctrl+Alt+{1-9}` | numeric variants | session-in-focused-workspace / jump-to-project |
+
+`Ctrl+Shift+{letter}` is nearly saturated (`u` is reserved by IBus). When a
+panel's natural letter collides, it falls to `Ctrl+Alt+` (browser `Ctrl+Alt+B`,
+scratchpad `Ctrl+Alt+L`) — a documented exception, not a tier violation.
+
+### 1.3 Family B — bare-letter verbs (surface-scoped)
+
+Single letters, no modifier, that act on the focused surface's current item.
+This is §8 — see there for the full guard contract. Used by ClickUp
+(`S/W/P/B/R/C/O/T`), Conflicts (`O/T`), PrViewer (`A`), and plan/spec review
+(`A` approve · `R` revise · `C` comment · `X` clear, swal-confirmed). Bare-letter
+verbs are **NOT** registry entries; their affordance is the tooltip advertising
+the letter (§6). **Entering** an engaged state keeps a modifier (annotation mode
+is `Ctrl+Shift+H`) because it's triggered from *outside* the engaged surface;
+once inside, the verbs go bare.
+
+### 1.4 Navigation tiers
 
 Three movement granularities, consistently bound:
 
@@ -25,6 +76,13 @@ Three movement granularities, consistently bound:
 
 `Ctrl+1..9` jumps to indexed sessions; number keys `1–9` jump to indexed
 items inside decision modals and pickers.
+
+### 1.5 Candidates for bare-letter migration
+
+When you next enter these surfaces for another reason, evaluate moving their
+modified actions to bare letters per §1.3: the **Git panel** (`S` stage, `P`
+push, `X` discard — commit stays modified, it needs a message). Don't do it as
+an isolated change.
 
 ## 2. Chip-strip navigation
 
@@ -234,6 +292,21 @@ Contract:
   mounts inside the clickup zone), the panel's own letter toggles
   (e.g. show-closed) must vacate the letter the verb claims (show-closed moved
   `C → H` to free `C` for close-out).
+
+**Where surface-override handlers live (the §1.1 "surface override" level):** the
+canonical home is a **component-local window handler** in the surface itself —
+ClickUp detail, ConflictsPanel, PlanPanel/SpecPanel all do this, so the keys
+mount/unmount with the surface and the guard reads the live DOM. A non-modal
+`FloatingPanel` follows the same rule: override only the keys it claims (the
+scratchpad recycles `Ctrl+Tab`/`Ctrl+W`/`Ctrl+T` for its tabs) and let global
+shortcuts pass. **Deferred tech-debt**: scratchpad and quake currently host their
+combo overrides as hardcoded blocks *inside* `useKeyboardShortcuts.ts` rather
+than component-local. It behaves correctly (non-modal, selective) but the
+location is inconsistent — migrate to component-local when you next touch those
+components, not as an isolated refactor (keyboard-routing changes carry
+regression risk for zero behavior change). QuickCapture (single textarea) and
+MentionPicker (presentation-only overlay; keys owned by the host field's hook)
+need nothing — they already match the model.
 
 ## 9. Expandable index-cursor trees
 

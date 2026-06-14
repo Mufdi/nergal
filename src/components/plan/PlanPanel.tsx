@@ -6,6 +6,7 @@ import { activeAnnotationsAtom, clearAnnotationsAtom, addAnnotationAtom, seriali
 import { hasCapabilityAtom } from "@/stores/agent";
 import { toastsAtom } from "@/stores/toast";
 import { invoke } from "@/lib/tauri";
+import { confirm } from "@/lib/swal";
 import { AnnotatableMarkdownView } from "./AnnotatableMarkdownView";
 import { useObsidianMentionPicker } from "@/hooks/useObsidianMentionPicker";
 import { MessageSquare, Trash2, Highlighter } from "lucide-react";
@@ -160,6 +161,51 @@ export function PlanPanel({ path }: PlanPanelProps) {
     };
   }, [canAnnotate, annotations.length, backendSessionId, decisionPath]);
 
+  // Bare-letter verbs scoped to the plan surface (patterns.md §1/§8): with the
+  // panel zone focused during review, A/R/C/X act without a modifier — they
+  // bridge to the same custom events as the header buttons. Entering annotation
+  // mode keeps its modifier (Ctrl+Shift+H); it's triggered from outside the
+  // engaged state. X is swal-confirmed because a bare letter is easy to hit by
+  // accident.
+  useEffect(() => {
+    if (!canAnnotate) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      if (!["KeyA", "KeyR", "KeyC", "KeyX"].includes(e.code)) return;
+      const t = e.target as HTMLElement | null;
+      if (
+        t?.tagName === "INPUT" || t?.tagName === "TEXTAREA"
+        || !!t?.closest(".cm-editor") || t?.getAttribute("contenteditable") === "true"
+      ) return;
+      if (!t?.closest("[data-focus-zone='panel']")) return;
+      if (e.code === "KeyA") {
+        e.preventDefault();
+        document.dispatchEvent(new CustomEvent("cluihud:approve-plan"));
+      } else if (e.code === "KeyC") {
+        e.preventDefault();
+        document.dispatchEvent(new CustomEvent("cluihud:toggle-global-comment"));
+      } else if (e.code === "KeyR") {
+        if (annotations.length === 0) return;
+        e.preventDefault();
+        document.dispatchEvent(new CustomEvent("cluihud:revise-plan"));
+      } else if (e.code === "KeyX") {
+        if (annotations.length === 0) return;
+        e.preventDefault();
+        void confirm({
+          kind: "warning",
+          destructive: true,
+          title: "Clear annotations?",
+          body: `Remove all ${annotations.length} annotation${annotations.length === 1 ? "" : "s"} on this plan?`,
+          confirmLabel: "Clear",
+        }).then((ok) => {
+          if (ok) document.dispatchEvent(new CustomEvent("cluihud:clear-annotations"));
+        });
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [canAnnotate, annotations.length]);
+
   if (!hasPlan) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -211,36 +257,58 @@ export function PlanPanel({ path }: PlanPanelProps) {
                     <MessageSquare size={11} />
                   </button>
                 </TooltipTrigger>
-                <TooltipContent side="bottom" className="text-[10px]">Global comment (Ctrl+Shift+O)</TooltipContent>
+                <TooltipContent side="bottom" className="text-[10px]">Global comment (C)</TooltipContent>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger>
                   <button
-                    onClick={() => { clearAnnotations(); addToast({ message: "Cleared", description: "All annotations removed", type: "info" }); }}
+                    onClick={() => {
+                      void confirm({
+                        kind: "warning",
+                        destructive: true,
+                        title: "Clear annotations?",
+                        body: `Remove all ${annotations.length} annotation${annotations.length === 1 ? "" : "s"} on this plan?`,
+                        confirmLabel: "Clear",
+                      }).then((ok) => {
+                        if (!ok) return;
+                        clearAnnotations();
+                        addToast({ message: "Cleared", description: "All annotations removed", type: "info" });
+                      });
+                    }}
                     className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
                   >
                     <Trash2 size={11} />
                   </button>
                 </TooltipTrigger>
-                <TooltipContent side="bottom" className="text-[10px]">Clear all (Ctrl+Shift+X)</TooltipContent>
+                <TooltipContent side="bottom" className="text-[10px]">Clear all (X)</TooltipContent>
               </Tooltip>
-              <button
-                onClick={handleApprove}
-                className="h-5 rounded border border-border px-2 text-[10px] text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-              >
-                Approve
-              </button>
-              <button
-                onClick={handleRevise}
-                disabled={annotations.length === 0}
-                className={`h-5 rounded px-2 text-[10px] font-medium transition-colors ${
-                  annotations.length > 0
-                    ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                    : "bg-secondary text-muted-foreground cursor-not-allowed"
-                }`}
-              >
-                Revise
-              </button>
+              <Tooltip>
+                <TooltipTrigger>
+                  <button
+                    onClick={handleApprove}
+                    className="h-5 rounded border border-border px-2 text-[10px] text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                  >
+                    Approve
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-[10px]">Approve plan (A)</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger>
+                  <button
+                    onClick={handleRevise}
+                    disabled={annotations.length === 0}
+                    className={`h-5 rounded px-2 text-[10px] font-medium transition-colors ${
+                      annotations.length > 0
+                        ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                        : "bg-secondary text-muted-foreground cursor-not-allowed"
+                    }`}
+                  >
+                    Revise
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-[10px]">Revise with annotations (R)</TooltipContent>
+              </Tooltip>
             </>
           )}
         </div>

@@ -345,10 +345,32 @@ async fn show_items_via_dbus(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Open the app log in the user's default text editor for diagnostics. The log
-/// only exists when launched under journald redirect (the GNOME launcher path —
-/// see `redirect_journald_stdio_to_logfile`); a terminal/dev run logs to stderr,
+/// Resolve the default application id for a MIME type via `xdg-mime`, or
+/// `None` when no handler is registered (empty output) / the query fails.
+fn default_app_for_mime(mime: &str) -> Option<String> {
+    let out = std::process::Command::new("xdg-mime")
+        .args(["query", "default", mime])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let app = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!app.is_empty()).then_some(app)
+}
+
+/// Open the app log for diagnostics. The log only exists when launched under
+/// journald redirect (the GNOME launcher path — see
+/// `redirect_journald_stdio_to_logfile`); a terminal/dev run logs to stderr,
 /// so report a clear error instead of opening a non-existent file.
+///
+/// `xdg-open` resolves the handler by EXTENSION: `.log` maps to `text/x-log`,
+/// which has no registered default app on a stock desktop, so it exits 0
+/// without opening anything (the v0.3.0 "0 action, 0 feedback" bug). Launch
+/// the `text/plain` default app directly — the content IS plain text — to
+/// bypass the extension mapping, falling back to revealing the containing
+/// folder (directories always have a file-manager handler) so the log stays
+/// reachable on desktops without `gtk-launch` or a `text/plain` default.
 #[tauri::command]
 pub fn open_log_file() -> Result<(), String> {
     let log_path = dirs::cache_dir()
@@ -361,8 +383,20 @@ pub fn open_log_file() -> Result<(), String> {
             log_path.display()
         ));
     }
+    if let Some(app) = default_app_for_mime("text/plain")
+        && std::process::Command::new("gtk-launch")
+            .arg(&app)
+            .arg(&log_path)
+            .spawn()
+            .is_ok()
+    {
+        return Ok(());
+    }
+    let dir = log_path
+        .parent()
+        .ok_or_else(|| "log path has no parent".to_string())?;
     std::process::Command::new("xdg-open")
-        .arg(&log_path)
+        .arg(dir)
         .spawn()
         .map_err(|e| format!("xdg-open: {e}"))?;
     Ok(())

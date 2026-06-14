@@ -84,6 +84,36 @@ modified actions to bare letters per §1.3: the **Git panel** (`S` stage, `P`
 push, `X` discard — commit stays modified, it needs a message). Don't do it as
 an isolated change.
 
+### 1.6 User keymap overrides (Settings → Keymap)
+
+Family A shortcuts are **remappable per user**. Defaults live in
+`shortcutRegistryAtom`; user overrides live in `config.keymap_overrides`
+(`{ shortcutId → keys }`, persisted in `config.json`). The merge happens once,
+in `resolvedShortcutsAtom` — **every consumer reads the resolved atom, never the
+raw registry**: the dispatcher (`useKeyboardShortcuts`) matches on it and the
+command palette renders it. Add a new shortcut consumer the same way.
+
+- **Locked ids** (`LOCKED_SHORTCUT_IDS` in `lib/keymap.ts`): `command-palette`,
+  `focus-terminal`, `session-1..9`. Structural bindings; overrides are ignored
+  even if hand-edited into `config.json`, and the editor shows a lock.
+- **Capture + validation** (`lib/keymap.ts`): `eventToKeys` turns a live event
+  into a registry keys string (`event.code`, not `key`); `validateCombo`
+  enforces a Ctrl/Alt modifier (bare/Shift-only would swallow terminal typing),
+  rejects OS-reserved combos (IBus `Ctrl+Shift+U`), and blocks collisions
+  against the full effective keymap (locked included). Collision = warn + block,
+  never silent reassign.
+- **Capture guard**: while recording, `keymapCaptureActiveAtom` is set and all
+  global keyboard consumers (the dispatcher + the Settings dialog nav handlers)
+  bail so the keystroke reaches only the recorder. Set it the same way for any
+  future press-to-record surface.
+- **Special-cased shortcuts** keep working: `Ctrl+}` (quake) keeps its
+  layout-dependent dual key/code match **only at its default** — once overridden,
+  the dual-match is skipped and the registry loop resolves the new combo. The
+  context-local terminal-emulator overrides (scratchpad/quake `Ctrl+Tab/W/T`,
+  Tab routing) are **not** registry entries and are out of remap scope.
+
+Out of scope for v1: bare-letter §8 verbs are not remappable.
+
 ## 2. Chip-strip navigation
 
 A horizontal strip of pill chips switches sibling views inside one panel.

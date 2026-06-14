@@ -45,6 +45,7 @@ export interface Config {
   default_agent: string | null;
   agent_overrides: Record<string, string>;
   custom_themes: CustomTheme[];
+  keymap_overrides: Record<string, string>;
 }
 
 export interface CustomThemeFonts {

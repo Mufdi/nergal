@@ -36,6 +36,7 @@ import { searchModalOpenAtom, searchScopeAtom } from "./search";
 import { quakeOpenMapAtom, quakeShellsAtom, addAdHocShell, cycleQuakeShell } from "./quake";
 import { clickupSyncStatusAtom } from "./clickup";
 import { openInObsidian } from "@/lib/obsidian";
+import { LOCKED_SHORTCUT_IDS } from "@/lib/keymap";
 
 /// `quake` is deliberately NOT in the alt+left/right cycle (getVisibleZones)
 /// — it's an overlay, reached only via Ctrl+}.
@@ -827,3 +828,23 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   { id: "command-palette", label: "Command Palette", keys: "ctrl+k", category: "navigation", keywords: ["command", "palette", "search", "find"], handler: () => {} },
   { id: "open-settings", label: "Open Settings", keys: "ctrl+,", category: "navigation", keywords: ["settings", "preferences", "config", "options"], handler: () => store().set(settingsOpenAtom, (prev: boolean) => !prev) },
 ]);
+
+/// True while the Settings → Keymap editor is recording a new combo. Global
+/// keyboard consumers (the dispatcher, the Settings dialog nav handlers) bail
+/// while it's set so the captured keystroke reaches only the recorder.
+export const keymapCaptureActiveAtom = atom(false);
+
+/// User keymap overrides (`shortcutId` → keys string) sourced from config.
+export const keymapOverridesAtom = atom((get) => get(configAtom).keymap_overrides ?? {});
+
+/// The registry with user overrides applied. Locked shortcuts always keep their
+/// default keys (override ignored even if present in config). Both the dispatcher
+/// and the command palette consume this so the effective keymap is uniform.
+export const resolvedShortcutsAtom = atom<ShortcutAction[]>((get) => {
+  const overrides = get(keymapOverridesAtom);
+  return get(shortcutRegistryAtom).map((action) => {
+    if (LOCKED_SHORTCUT_IDS.has(action.id)) return action;
+    const override = overrides[action.id];
+    return override && override !== action.keys ? { ...action, keys: override } : action;
+  });
+});

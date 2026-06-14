@@ -19,4 +19,5 @@ export const configAtom = atom<Config>({
   default_agent: null,
   agent_overrides: {},
   custom_themes: [],
+  keymap_overrides: {},
 });

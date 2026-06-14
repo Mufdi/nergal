@@ -1,10 +1,13 @@
 import { useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import {
-  shortcutRegistryAtom,
+  resolvedShortcutsAtom,
+  keymapOverridesAtom,
+  keymapCaptureActiveAtom,
   commandPaletteOpenAtom,
   toggleQuake,
 } from "@/stores/shortcuts";
+import { parseKeys } from "@/lib/keymap";
 import { zenModeAtom, prZenAtom } from "@/stores/zenMode";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
 import {
@@ -20,50 +23,9 @@ import { activeSessionIdAtom } from "@/stores/workspace";
 import { addAdHocShell, closeActiveQuakeShell } from "@/stores/quake";
 import * as terminalService from "@/components/terminal/terminalService";
 
-const KEY_TO_CODE: Record<string, string> = {
-  a: "KeyA", b: "KeyB", c: "KeyC", d: "KeyD", e: "KeyE",
-  f: "KeyF", g: "KeyG", h: "KeyH", i: "KeyI", j: "KeyJ",
-  k: "KeyK", l: "KeyL", m: "KeyM", n: "KeyN", o: "KeyO",
-  p: "KeyP", q: "KeyQ", r: "KeyR", s: "KeyS", t: "KeyT",
-  u: "KeyU", v: "KeyV", w: "KeyW", x: "KeyX", y: "KeyY",
-  z: "KeyZ",
-  "1": "Digit1", "2": "Digit2", "3": "Digit3",
-  "4": "Digit4", "5": "Digit5", "6": "Digit6",
-  "7": "Digit7", "8": "Digit8", "9": "Digit9",
-  "0": "Digit0",
-  tab: "Tab",
-  enter: "Enter",
-  backspace: "Backspace",
-  arrowleft: "ArrowLeft", arrowright: "ArrowRight",
-  arrowup: "ArrowUp", arrowdown: "ArrowDown",
-  pagedown: "PageDown", pageup: "PageUp",
-  home: "Home", end: "End",
-  ñ: "Semicolon",
-  ",": "Comma", ".": "Period", "/": "Slash",
-};
-
-interface ParsedShortcut {
-  ctrl: boolean;
-  shift: boolean;
-  alt: boolean;
-  code: string;
-}
-
-function parseKeys(keys: string): ParsedShortcut | null {
-  const parts = keys.toLowerCase().split("+");
-  const key = parts[parts.length - 1];
-  const code = KEY_TO_CODE[key];
-  if (!code) return null;
-  return {
-    ctrl: parts.includes("ctrl"),
-    shift: parts.includes("shift"),
-    alt: parts.includes("alt"),
-    code,
-  };
-}
-
 export function useKeyboardShortcuts() {
-  const registry = useAtomValue(shortcutRegistryAtom);
+  const registry = useAtomValue(resolvedShortcutsAtom);
+  const overrides = useAtomValue(keymapOverridesAtom);
   const paletteOpen = useAtomValue(commandPaletteOpenAtom);
   const setPaletteOpen = useSetAtom(commandPaletteOpenAtom);
   const zenState = useAtomValue(zenModeAtom);
@@ -73,6 +35,9 @@ export function useKeyboardShortcuts() {
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      // While the keymap editor is recording, every global shortcut steps
+      // aside so the keystroke reaches only the recorder.
+      if (appStore.get(keymapCaptureActiveAtom)) return;
       // Tab / Shift+Tab routing (single source of truth in capture phase).
       // - Target inside the terminal zone → forward to Claude via the active
       //   PTY directly. We do NOT defer to the textarea's bubble handler
@@ -230,8 +195,11 @@ export function useKeyboardShortcuts() {
       // covers US-physical Shift+BracketRight per the event.code convention.
       // `!e.altKey` keeps layouts where AltGr reports as Ctrl+Alt from
       // toggling on a plain `}` keystroke.
+      // Skip the dual-match when the user has rebound toggle-quake — its
+      // override is a normal combo resolved by the registry loop below.
       if (
-        e.ctrlKey && !e.altKey
+        !overrides["toggle-quake"]
+        && e.ctrlKey && !e.altKey
         && (e.key === "}" || (e.shiftKey && e.code === "BracketRight"))
       ) {
         e.preventDefault();
@@ -261,5 +229,5 @@ export function useKeyboardShortcuts() {
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [registry, paletteOpen, setPaletteOpen, zenOpen]);
+  }, [registry, overrides, paletteOpen, setPaletteOpen, zenOpen]);
 }

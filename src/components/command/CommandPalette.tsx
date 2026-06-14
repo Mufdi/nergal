@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { commandPaletteOpenAtom, shortcutRegistryAtom, focusZoneAtom, type ShortcutAction } from "@/stores/shortcuts";
+import { commandPaletteOpenAtom, resolvedShortcutsAtom, focusZoneAtom, type ShortcutAction } from "@/stores/shortcuts";
+import { formatKeyParts } from "@/lib/keymap";
 import * as terminalService from "@/components/terminal/terminalService";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { obsidianTemplatesAtom, type ObsidianTemplate } from "@/stores/obsidianTemplates";
@@ -11,7 +12,7 @@ import { Search } from "lucide-react";
 export function CommandPalette() {
   const isOpen = useAtomValue(commandPaletteOpenAtom);
   const setOpen = useSetAtom(commandPaletteOpenAtom);
-  const registry = useAtomValue(shortcutRegistryAtom);
+  const registry = useAtomValue(resolvedShortcutsAtom);
   const templates = useAtomValue(obsidianTemplatesAtom);
   const activeSessionId = useAtomValue(activeSessionIdAtom);
   const setToasts = useSetAtom(toastsAtom);
@@ -262,16 +263,7 @@ export function CommandPalette() {
 }
 
 function KeyBadges({ keys }: { keys: string }) {
-  const parts = keys.split("+").map((p) => {
-    if (p === "ctrl") return "Ctrl";
-    if (p === "shift") return "Shift";
-    if (p === "alt") return "Alt";
-    if (p === "tab") return "Tab";
-    if (p === "arrowleft") return "\u2190";
-    if (p === "arrowright") return "\u2192";
-    if (p === "ñ") return "\u00d1";
-    return p.toUpperCase();
-  });
+  const parts = formatKeyParts(keys);
 
   return (
     <div className="flex items-center gap-0.5">

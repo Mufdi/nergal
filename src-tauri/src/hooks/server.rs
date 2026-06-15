@@ -518,19 +518,21 @@ fn process_event(
         return;
     }
 
-    // Capture background tasks / crons (CC v2.1.150+) so the MCP session
-    // descriptor can surface them. Done once here regardless of which Stop arm
-    // runs below; empty payloads (legacy CC) leave no entry.
+    // Capture background tasks / crons + the closing summary (CC v2.1.150+) so
+    // the MCP descriptor can surface them. Every Stop overwrites: empty arrays
+    // must clear a prior snapshot (a finished/killed bg task has to stop showing
+    // as running), so there is deliberately no "skip empty payloads" gate.
     if let HookEvent::Stop {
         session_id,
         background_tasks,
         session_crons,
+        last_assistant_message,
         ..
     } = event
-        && (!background_tasks.is_empty() || !session_crons.is_empty())
     {
         let csid = cluihud_session_id.unwrap_or(session_id);
         agent_state.set_session_background(csid, background_tasks.clone(), session_crons.clone());
+        agent_state.set_session_last_message(csid, last_assistant_message.clone());
     }
 
     // Resolve the owning adapter for this session (cache → DB-fallback path
@@ -546,6 +548,42 @@ fn process_event(
             "hook event for session not in agent cache; assuming claude-code (foundation transitional)"
         );
         agent_state.register_session(csid, AgentId::claude_code());
+    }
+
+    // Mirror the frontend `modeMapAtom` into the runtime side-map so the MCP
+    // descriptor reports live mode + last_activity instead of the frozen DB
+    // row. Telemetry-only events (`mcp_mode` → None) leave the prior state.
+    if let Some(csid) = cluihud_session_id {
+        if let Some(mode) = event.mcp_mode() {
+            agent_state.record_activity(csid, mode, event.waiting_for().as_deref());
+        }
+        // Touched files come from PreToolUse: it is registered unmatched so it
+        // fires for every tool (Read included), whereas the PostToolUse hook is
+        // matcher-filtered to writes — relying on it would miss reads. Carry the
+        // tool name so the descriptor shows how each path was touched.
+        let tool_ctx = match event {
+            HookEvent::PreToolUse {
+                tool_name,
+                tool_input,
+                ..
+            }
+            | HookEvent::PostToolUse {
+                tool_name,
+                tool_input,
+                ..
+            } => Some((tool_name.as_str(), tool_input)),
+            HookEvent::PermissionDenied {
+                tool_name,
+                tool_input,
+                ..
+            } => Some((tool_name.as_deref().unwrap_or("tool"), tool_input)),
+            _ => None,
+        };
+        if let Some((tool, input)) = tool_ctx
+            && let Some(path) = file_path_from_tool_input(input)
+        {
+            agent_state.record_touched_file(csid, path, tool);
+        }
     }
 
     let mut frontend_event = FrontendHookEvent::from_hook(event);
@@ -1067,6 +1105,17 @@ pub(crate) fn emit_agent_status(app: &AppHandle, status: AgentStatusEmit<'_>) {
     );
 }
 
+/// The file a tool's input names, if any. Permissive across the common key
+/// spellings so non-CC agents (Pi, Codex) surface too. Shared by the
+/// writes-only panel emitter and the MCP `recently_touched_files` capture.
+fn file_path_from_tool_input(tool_input: &serde_json::Value) -> Option<&str> {
+    tool_input
+        .get("file_path")
+        .or_else(|| tool_input.get("filePath"))
+        .or_else(|| tool_input.get("path"))
+        .and_then(|v| v.as_str())
+}
+
 /// Extracts file_path from any tool whose input names a file and emits
 /// files:modified. Detection is permissive (presence of `file_path` /
 /// `filePath` / `path` in the input) rather than a hardcoded tool-name
@@ -1086,13 +1135,7 @@ fn process_file_event(
         return;
     }
 
-    let file_path = tool_input
-        .get("file_path")
-        .or_else(|| tool_input.get("filePath"))
-        .or_else(|| tool_input.get("path"))
-        .and_then(|v| v.as_str());
-
-    let Some(path) = file_path else {
+    let Some(path) = file_path_from_tool_input(tool_input) else {
         return;
     };
 

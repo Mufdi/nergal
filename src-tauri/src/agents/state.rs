@@ -24,6 +24,28 @@ use crate::hooks::events::HookEvent;
 /// raw JSON values (pass-through, tolerant of CC shape drift).
 pub type SessionBackground = (Vec<serde_json::Value>, Vec<serde_json::Value>);
 
+/// One recently touched file plus the tool that touched it (`Read`, `Edit`,
+/// `Bash`, …), surfaced in the MCP descriptor so an observer sees *how* the
+/// other agent is using each path, not just which paths.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct TouchedFile {
+    pub path: String,
+    pub tool: String,
+}
+
+/// Live activity snapshot the hook dispatcher keeps per session and the MCP
+/// descriptor reads for freshness. Mirrors the frontend `modeMapAtom` +
+/// attention state; supersedes the frozen DB `Session.status`/`updated_at`.
+#[derive(Clone, Debug)]
+pub struct SessionActivity {
+    /// `running` | `idle` | `needs_attention`.
+    pub mode: String,
+    pub last_activity: u64,
+    /// What the session is blocked on while `needs_attention` (the permission
+    /// prompt, the question, the plan review); `None` otherwise.
+    pub waiting_for: Option<String>,
+}
+
 /// Shared agent runtime state. Cheap to clone the inner `Arc`s.
 #[derive(Clone)]
 pub struct AgentRuntimeState {
@@ -58,6 +80,26 @@ pub struct AgentRuntimeState {
     /// (pass-through, tolerant of CC shape drift) and surfaced in the MCP
     /// session descriptor. Cleared on [`Self::forget_session`].
     session_background: Arc<DashMap<String, SessionBackground>>,
+    /// `cluihud_session_id → (live_mode, last_activity_epoch_secs)`. The hook
+    /// dispatcher records here on every agent-meaningful event; the MCP
+    /// descriptor reads it for freshness. The DB `Session.status`/`updated_at`
+    /// columns only move on lifecycle mutations (creation, rename, branch) and
+    /// never during a turn, so they can't answer "is this session working right
+    /// now". Mirrors the frontend `modeMapAtom`. Cleared on
+    /// [`Self::forget_session`].
+    session_activity: Arc<DashMap<String, SessionActivity>>,
+    /// `cluihud_session_id → recently touched file paths`, most-recent-first,
+    /// deduped, bounded to [`Self::RECENT_FILES_CAP`]. Fed from tool events that
+    /// name a file (reads included — cross-session awareness wants "what is the
+    /// other agent looking at"). Surfaced as the descriptor's
+    /// `recently_touched_files`. Cleared on [`Self::forget_session`].
+    session_files: Arc<DashMap<String, Vec<TouchedFile>>>,
+    /// `cluihud_session_id → last assistant message` (CC's
+    /// `last_assistant_message` from the Stop payload). Surfaced verbatim as the
+    /// descriptor's `last_assistant_message` — NOT the `summary` field, which
+    /// stays reserved for the phase-6 AI recap. Cleared on
+    /// [`Self::forget_session`].
+    session_last_message: Arc<DashMap<String, String>>,
 }
 
 impl AgentRuntimeState {
@@ -78,6 +120,9 @@ impl AgentRuntimeState {
             event_receiver: Arc::new(Mutex::new(Some(rx))),
             cc_session_map: Arc::new(DashMap::new()),
             session_background: Arc::new(DashMap::new()),
+            session_activity: Arc::new(DashMap::new()),
+            session_files: Arc::new(DashMap::new()),
+            session_last_message: Arc::new(DashMap::new()),
         })
     }
 
@@ -102,6 +147,9 @@ impl AgentRuntimeState {
         self.cc_session_map
             .retain(|_cc, csid| csid != cluihud_session_id);
         self.session_background.remove(cluihud_session_id);
+        self.session_activity.remove(cluihud_session_id);
+        self.session_files.remove(cluihud_session_id);
+        self.session_last_message.remove(cluihud_session_id);
     }
 
     /// Snapshot of the live session id set (the directory's liveness source:
@@ -133,6 +181,86 @@ impl AgentRuntimeState {
             .get(cluihud_session_id)
             .map(|r| r.clone())
             .unwrap_or_default()
+    }
+
+    /// Record live activity for a session: set its mode (`running` | `idle` |
+    /// `needs_attention`), the optional `waiting_for` reason, and stamp the
+    /// moment. Called by the hook dispatcher for every agent-meaningful event
+    /// so the MCP descriptor reflects work as it happens rather than the frozen
+    /// DB row.
+    pub fn record_activity(&self, cluihud_session_id: &str, mode: &str, waiting_for: Option<&str>) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.session_activity.insert(
+            cluihud_session_id.to_string(),
+            SessionActivity {
+                mode: mode.to_string(),
+                last_activity: now,
+                waiting_for: waiting_for.map(str::to_string),
+            },
+        );
+    }
+
+    /// Live activity snapshot for a session, or `None` when no event has been
+    /// recorded since the daemon started (the descriptor then falls back to the
+    /// persisted DB row).
+    pub fn session_activity(&self, cluihud_session_id: &str) -> Option<SessionActivity> {
+        self.session_activity
+            .get(cluihud_session_id)
+            .map(|r| r.clone())
+    }
+
+    /// Upper bound on a session's remembered touched files.
+    const RECENT_FILES_CAP: usize = 15;
+
+    /// Record a file a session just touched, with the tool that touched it
+    /// (read or wrote). Moves an existing path to the front (most-recent-first,
+    /// refreshing its tool) and caps the list.
+    pub fn record_touched_file(&self, cluihud_session_id: &str, path: &str, tool: &str) {
+        let mut entry = self
+            .session_files
+            .entry(cluihud_session_id.to_string())
+            .or_default();
+        entry.retain(|f| f.path != path);
+        entry.insert(
+            0,
+            TouchedFile {
+                path: path.to_string(),
+                tool: tool.to_string(),
+            },
+        );
+        entry.truncate(Self::RECENT_FILES_CAP);
+    }
+
+    /// Recently touched files for a session, most-recent-first; empty when none.
+    pub fn session_files(&self, cluihud_session_id: &str) -> Vec<TouchedFile> {
+        self.session_files
+            .get(cluihud_session_id)
+            .map(|r| r.clone())
+            .unwrap_or_default()
+    }
+
+    /// Record (or clear) a session's last assistant message. An empty/absent
+    /// message clears any prior value so a stale line can't linger.
+    pub fn set_session_last_message(&self, cluihud_session_id: &str, message: Option<String>) {
+        match message.filter(|s| !s.trim().is_empty()) {
+            Some(s) => {
+                self.session_last_message
+                    .insert(cluihud_session_id.to_string(), s);
+            }
+            None => {
+                self.session_last_message.remove(cluihud_session_id);
+            }
+        }
+    }
+
+    /// A session's last assistant message, or `None` when none captured.
+    pub fn session_last_message(&self, cluihud_session_id: &str) -> Option<String> {
+        self.session_last_message
+            .get(cluihud_session_id)
+            .map(|r| r.clone())
     }
 
     /// Record a `claude_code_session_id → cluihud_session_id` mapping for MCP
@@ -228,5 +356,77 @@ mod tests {
         state.map_cc_session("cc-abc", "clui-1");
         state.forget_session("clui-1");
         assert!(state.resolve_session_hint("cc-abc").is_none());
+    }
+
+    #[test]
+    fn activity_is_absent_until_recorded_then_reflects_latest() {
+        let state = AgentRuntimeState::bootstrap().unwrap();
+        assert!(state.session_activity("s").is_none());
+        state.record_activity("s", "running", None);
+        let a = state.session_activity("s").unwrap();
+        assert_eq!(a.mode, "running");
+        assert!(a.waiting_for.is_none());
+        state.record_activity("s", "needs_attention", Some("permission prompt"));
+        let a = state.session_activity("s").unwrap();
+        assert_eq!(a.mode, "needs_attention");
+        assert_eq!(a.waiting_for.as_deref(), Some("permission prompt"));
+        // A later non-attention event clears the reason.
+        state.record_activity("s", "idle", None);
+        assert!(state.session_activity("s").unwrap().waiting_for.is_none());
+    }
+
+    #[test]
+    fn forget_clears_activity() {
+        let state = AgentRuntimeState::bootstrap().unwrap();
+        state.record_activity("s", "running", None);
+        state.forget_session("s");
+        assert!(state.session_activity("s").is_none());
+    }
+
+    #[test]
+    fn touched_files_are_most_recent_first_and_deduped_with_tool() {
+        let state = AgentRuntimeState::bootstrap().unwrap();
+        state.record_touched_file("s", "a.rs", "Read");
+        state.record_touched_file("s", "b.rs", "Read");
+        state.record_touched_file("s", "a.rs", "Edit"); // re-touch moves to front + refreshes tool
+        let files = state.session_files("s");
+        let pairs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|f| (f.path.as_str(), f.tool.as_str()))
+            .collect();
+        assert_eq!(pairs, vec![("a.rs", "Edit"), ("b.rs", "Read")]);
+    }
+
+    #[test]
+    fn touched_files_are_capped() {
+        let state = AgentRuntimeState::bootstrap().unwrap();
+        for i in 0..30 {
+            state.record_touched_file("s", &format!("f{i}.rs"), "Read");
+        }
+        let files = state.session_files("s");
+        assert_eq!(files.len(), AgentRuntimeState::RECENT_FILES_CAP);
+        assert_eq!(files[0].path, "f29.rs"); // newest first
+    }
+
+    #[test]
+    fn forget_clears_touched_files() {
+        let state = AgentRuntimeState::bootstrap().unwrap();
+        state.record_touched_file("s", "a.rs", "Read");
+        state.forget_session("s");
+        assert!(state.session_files("s").is_empty());
+    }
+
+    #[test]
+    fn last_message_sets_and_empty_clears() {
+        let state = AgentRuntimeState::bootstrap().unwrap();
+        assert!(state.session_last_message("s").is_none());
+        state.set_session_last_message("s", Some("did the thing".into()));
+        assert_eq!(
+            state.session_last_message("s").as_deref(),
+            Some("did the thing")
+        );
+        // A blank/None message clears the stale value.
+        state.set_session_last_message("s", Some("   ".into()));
+        assert!(state.session_last_message("s").is_none());
     }
 }

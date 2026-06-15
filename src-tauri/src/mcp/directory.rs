@@ -12,11 +12,12 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::DaemonContext;
+use crate::agents::state::TouchedFile;
 
 /// One live session as seen by an agent. Unknown fields are null/empty, never
 /// fabricated (session-directory spec). `waiting_for`, `recently_touched_files`,
-/// `background_tasks`, `session_crons` and `summary` are additive: populated as
-/// the out-of-band cache / Stop-hook capture / summarizer land.
+/// `background_tasks`, `session_crons` and `last_assistant_message` are
+/// additive: populated as the out-of-band cache / Stop-hook capture land.
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionDescriptor {
     pub session_id: String,
@@ -30,9 +31,14 @@ pub struct SessionDescriptor {
     pub mode: String,
     pub waiting_for: Option<String>,
     pub last_activity: u64,
-    pub recently_touched_files: Vec<String>,
+    pub recently_touched_files: Vec<TouchedFile>,
     pub background_tasks: Vec<Value>,
     pub session_crons: Vec<Value>,
+    /// Verbatim last assistant message from the Stop hook — an honest "where it
+    /// left off", NOT a synthesized recap.
+    pub last_assistant_message: Option<String>,
+    /// Reserved for the phase-6 AI recap; always `None` until then so the field
+    /// never misrepresents the raw last message as a summary.
     pub summary: Option<String>,
 }
 
@@ -111,6 +117,14 @@ fn descriptor_from(
     ws_path: &str,
 ) -> SessionDescriptor {
     let (background_tasks, session_crons) = agents.session_background(&s.id);
+    // Live mode + last_activity + waiting_for come from the runtime side-map the
+    // hook dispatcher feeds; the DB row's status/updated_at only move on
+    // lifecycle mutations, so fall back to them only when no event has been seen
+    // for this session since the daemon started.
+    let (mode, last_activity, waiting_for) = match agents.session_activity(&s.id) {
+        Some(a) => (a.mode, a.last_activity, a.waiting_for),
+        None => (s.status.as_str().to_string(), s.updated_at, None),
+    };
     SessionDescriptor {
         session_id: s.id.clone(),
         name: s.name.clone(),
@@ -119,12 +133,13 @@ fn descriptor_from(
         workspace_path: ws_path.to_string(),
         git_branch: s.worktree_branch.clone(),
         agent: s.agent_id.clone(),
-        mode: s.status.as_str().to_string(),
-        waiting_for: None,
-        last_activity: s.updated_at,
-        recently_touched_files: Vec::new(),
+        mode,
+        waiting_for,
+        last_activity,
+        recently_touched_files: agents.session_files(&s.id),
         background_tasks,
         session_crons,
+        last_assistant_message: agents.session_last_message(&s.id),
         summary: None,
     }
 }

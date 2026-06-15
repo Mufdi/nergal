@@ -138,16 +138,6 @@ pub struct SummaryConfig {
     pub disabled_projects: Vec<String>,
 }
 
-impl SummaryConfig {
-    /// The agent command for `AgentCli` mode, defaulting to `claude`.
-    pub fn agent_command_or_default(&self) -> String {
-        self.agent_command
-            .clone()
-            .filter(|c| !c.trim().is_empty())
-            .unwrap_or_else(|| "claude".to_string())
-    }
-}
-
 /// Custom theme — forked from a builtin via Settings → Appearance →
 /// Customize. Inherits surface CSS tokens from `base_id` and overrides
 /// the accent + fonts. See `src/lib/themes.ts` for the apply pipeline.
@@ -346,22 +336,6 @@ mod tests {
             c.effective_summary_backend(other.path()),
             SummaryBackend::AgentCli
         );
-    }
-
-    #[test]
-    fn agent_command_defaults_to_claude() {
-        let s = SummaryConfig::default();
-        assert_eq!(s.agent_command_or_default(), "claude");
-        let s = SummaryConfig {
-            agent_command: Some("  ".into()),
-            ..SummaryConfig::default()
-        };
-        assert_eq!(s.agent_command_or_default(), "claude");
-        let s = SummaryConfig {
-            agent_command: Some("codex".into()),
-            ..SummaryConfig::default()
-        };
-        assert_eq!(s.agent_command_or_default(), "codex");
     }
 
     #[test]

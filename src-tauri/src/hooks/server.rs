@@ -536,7 +536,7 @@ fn process_event(
         agent_state.set_session_last_message(csid, last_assistant_message.clone());
         // Opt-in AI summary (phase 6): no-op unless a backend is enabled for
         // this session's project. Detached + debounced; never blocks the hook.
-        crate::mcp::summary::runner::maybe_spawn(db, csid, transcript_path.as_deref());
+        crate::mcp::summary::runner::maybe_spawn(db, agent_state, csid, transcript_path.as_deref());
     }
 
     // Resolve the owning adapter for this session (cache → DB-fallback path

@@ -20,6 +20,7 @@ use async_trait::async_trait;
 
 pub use secret::{clear_api_key, has_api_key, load_api_key, store_api_key};
 
+use crate::agents::HeadlessPrintCommand;
 use crate::config::{Config, SummaryBackend, SummaryConfig};
 use agent_cli::AgentCliBackend;
 use api_key::ApiKeyBackend;
@@ -57,6 +58,7 @@ trait Summarizer {
 pub async fn summarize_transcript(
     backend: SummaryBackend,
     cfg: &SummaryConfig,
+    agent_cmd: Option<HeadlessPrintCommand>,
     transcript_path: &Path,
 ) -> Result<Summary> {
     let transcript = read_tail(transcript_path, TRANSCRIPT_BUDGET_BYTES)?;
@@ -66,7 +68,22 @@ pub async fn summarize_transcript(
     match backend {
         SummaryBackend::Off => bail!("summaries are disabled for this session"),
         SummaryBackend::AgentCli => {
-            AgentCliBackend::new(cfg.agent_command_or_default())
+            // Explicit per-summary override wins; otherwise the caller passes
+            // the default agent's verified headless command.
+            let cmd = match cfg.agent_command.as_deref().map(str::trim) {
+                Some(bin) if !bin.is_empty() => HeadlessPrintCommand {
+                    binary: bin.to_string(),
+                    args: vec!["-p".to_string()],
+                },
+                _ => agent_cmd.ok_or_else(|| {
+                    anyhow!(
+                        "the default agent has no verified headless summary mode — \
+                         set a summary command, switch the default agent to Claude Code, \
+                         or use API-key mode"
+                    )
+                })?,
+            };
+            AgentCliBackend::new(cmd.binary, cmd.args)
                 .summarize(&transcript)
                 .await
         }
@@ -194,7 +211,7 @@ mod tests {
         let p = dir.path().join("t.jsonl");
         std::fs::write(&p, "some transcript\n").unwrap();
         let cfg = SummaryConfig::default();
-        let err = summarize_transcript(SummaryBackend::Off, &cfg, &p)
+        let err = summarize_transcript(SummaryBackend::Off, &cfg, None, &p)
             .await
             .unwrap_err();
         assert!(err.to_string().contains("disabled"));
@@ -211,7 +228,7 @@ mod tests {
             backend: SummaryBackend::ApiKey,
             ..SummaryConfig::default()
         };
-        let err = summarize_transcript(SummaryBackend::ApiKey, &cfg, &p)
+        let err = summarize_transcript(SummaryBackend::ApiKey, &cfg, None, &p)
             .await
             .unwrap_err();
         let msg = err.to_string();

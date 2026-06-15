@@ -503,6 +503,16 @@ impl From<PlanCapability> for PlanCapabilityWire {
 /// event bus. The runtime owns the receiver; adapters only emit.
 pub type EventSink = tokio::sync::mpsc::UnboundedSender<crate::hooks::events::HookEvent>;
 
+/// A verified non-interactive print invocation for a self-contained prompt,
+/// used by the opt-in summarizer (MCP phase 6). The prompt is appended as the
+/// final argument after [`args`](Self::args).
+#[derive(Debug, Clone)]
+pub struct HeadlessPrintCommand {
+    pub binary: String,
+    /// Flags placed before the single prompt argument.
+    pub args: Vec<String>,
+}
+
 /// Adapter trait. Every supported agent CLI implements this.
 ///
 /// Lifetime: an adapter is a long-lived `Arc<dyn AgentAdapter>` owned by the
@@ -533,6 +543,15 @@ pub trait AgentAdapter: Send + Sync {
     }
 
     fn spawn(&self, ctx: &SpawnContext<'_>) -> Result<SpawnSpec, AdapterError>;
+
+    /// Verified headless print command for the opt-in summarizer, or `None`
+    /// when this agent has no verified non-interactive print mode (the
+    /// summarizer then skips and the user is told to switch the default agent
+    /// or use API-key mode). Default `None` — adapters opt in only once their
+    /// `-p`-equivalent is verified.
+    fn headless_print_command(&self) -> Option<HeadlessPrintCommand> {
+        None
+    }
 
     /// Permission presets this adapter maps to verified native flags in
     /// [`spawn`](Self::spawn). The session-creation UI offers only what's

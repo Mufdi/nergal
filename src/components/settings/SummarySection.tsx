@@ -124,8 +124,9 @@ export function SummarySection() {
         <label htmlFor="summary-agent-cli" className="flex flex-col gap-0.5 cursor-pointer">
           <span className="font-medium">Agent CLI (subscription, no API key)</span>
           <span className="text-xs text-muted-foreground">
-            Runs your installed agent headlessly (<code className="text-[11px]">claude -p</code>) on
-            your existing subscription. Consumes your plan's quota/rate limits.
+            Runs your <strong>default agent</strong> headlessly on its existing subscription — no
+            key. Consumes that plan's quota/rate limits. Only agents with a verified headless mode
+            work (Claude Code today).
           </span>
         </label>
       </div>
@@ -134,14 +135,21 @@ export function SummarySection() {
           <Input
             value={agentCommand}
             onChange={(e) => setAgentCommand(e.target.value)}
-            placeholder="claude"
-            aria-label="Agent command"
-            className="max-w-[220px]"
+            placeholder="Default agent (leave empty)"
+            aria-label="Override summary binary"
+            className="max-w-[260px]"
           />
           <Button variant="outline" size="sm" onClick={saveFields}>
             Save
           </Button>
         </div>
+      )}
+      {backend === "agent_cli" && (
+        <p className="ml-10 -mt-2 text-[11px] text-muted-foreground">
+          Optional: a binary to override the default agent (invoked as{" "}
+          <code className="text-[10px]">&lt;binary&gt; -p</code>). Leave empty to use your Settings
+          default agent.
+        </p>
       )}
 
       {/* API key mode */}

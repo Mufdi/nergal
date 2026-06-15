@@ -96,6 +96,15 @@ impl AgentAdapter for ClaudeCodeAdapter {
         &self.capabilities
     }
 
+    fn headless_print_command(&self) -> Option<crate::agents::HeadlessPrintCommand> {
+        // `claude -p "<prompt>"` authenticates via the user's subscription with
+        // no API key (verified). The prompt is appended by the summarizer.
+        Some(crate::agents::HeadlessPrintCommand {
+            binary: "claude".into(),
+            args: vec!["-p".into()],
+        })
+    }
+
     fn transport(&self) -> Transport {
         let settings_path = dirs::home_dir()
             .unwrap_or_default()

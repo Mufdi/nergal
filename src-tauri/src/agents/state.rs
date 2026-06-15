@@ -161,6 +161,14 @@ impl AgentRuntimeState {
             .collect()
     }
 
+    /// Resolve an agent id to its verified headless print command (for the
+    /// opt-in summarizer). `None` when the id is unregistered or the adapter
+    /// has no verified non-interactive print mode.
+    pub fn headless_print_command(&self, agent_id: &str) -> Option<super::HeadlessPrintCommand> {
+        let id = AgentId::new(agent_id).ok()?;
+        self.registry.get(&id)?.headless_print_command()
+    }
+
     /// Record background tasks + crons captured from a `Stop`/`SubagentStop`
     /// payload for a session (overwrites the previous snapshot).
     pub fn set_session_background(

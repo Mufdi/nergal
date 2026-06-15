@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use dashmap::{DashMap, DashSet};
 
+use crate::agents::state::AgentRuntimeState;
 use crate::config::{Config, SummaryBackend};
 use crate::db::SharedDb;
 
@@ -32,7 +33,12 @@ fn in_flight() -> &'static DashSet<String> {
 /// generation detached. Non-blocking. No-op when: no transcript path, the
 /// backend is `Off` for the session's project, the debounce window is still
 /// open, or a run is already in flight.
-pub fn maybe_spawn(db: &SharedDb, session_id: &str, transcript_path: Option<&str>) {
+pub fn maybe_spawn(
+    db: &SharedDb,
+    agents: &AgentRuntimeState,
+    session_id: &str,
+    transcript_path: Option<&str>,
+) {
     let Some(transcript_path) = transcript_path else {
         return;
     };
@@ -60,6 +66,12 @@ pub fn maybe_spawn(db: &SharedDb, session_id: &str, transcript_path: Option<&str
         return;
     }
 
+    // Resolve the default agent's verified headless command (used only by the
+    // AgentCli backend when no explicit summary command is set). Honors the
+    // agent marked default in Settings; falls back to Claude Code.
+    let default_agent = cfg.default_agent.as_deref().unwrap_or("claude-code");
+    let agent_cmd = agents.headless_print_command(default_agent);
+
     if let Some(prev) = last_run().get(session_id)
         && prev.elapsed() < DEBOUNCE
     {
@@ -73,9 +85,15 @@ pub fn maybe_spawn(db: &SharedDb, session_id: &str, transcript_path: Option<&str
     let db = db.clone();
     let sid = session_id.to_string();
     let summary_cfg = cfg.summary.clone();
+    tracing::info!(session_id = %sid, ?backend, "generating session summary");
     tauri::async_runtime::spawn(async move {
-        let result =
-            crate::mcp::summary::summarize_transcript(backend, &summary_cfg, &transcript).await;
+        let result = crate::mcp::summary::summarize_transcript(
+            backend,
+            &summary_cfg,
+            agent_cmd,
+            &transcript,
+        )
+        .await;
         match result {
             Ok(s) => {
                 if let Ok(guard) = db.lock()
@@ -84,6 +102,7 @@ pub fn maybe_spawn(db: &SharedDb, session_id: &str, transcript_path: Option<&str
                 {
                     tracing::warn!(session_id = %sid, "persisting session summary failed: {e:#}");
                 }
+                tracing::info!(session_id = %sid, "session summary stored");
                 last_run().insert(sid.clone(), Instant::now());
             }
             Err(e) => {

@@ -3,6 +3,7 @@ import { configAtom } from "@/stores/config";
 import { toastsAtom } from "@/stores/toast";
 import { invoke } from "@/lib/tauri";
 import { Switch } from "@/components/ui/switch";
+import { SummarySection } from "./SummarySection";
 
 export function McpSection() {
   const [config, setConfig] = useAtom(configAtom);
@@ -50,6 +51,7 @@ export function McpSection() {
         session's metadata (workspace paths, branch, recently-touched files) across all workspaces.
         The uid is the only access boundary — this is a single-user desktop posture. Off by default.
       </p>
+      <SummarySection />
     </div>
   );
 }

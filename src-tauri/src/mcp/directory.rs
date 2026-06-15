@@ -37,8 +37,9 @@ pub struct SessionDescriptor {
     /// Verbatim last assistant message from the Stop hook — an honest "where it
     /// left off", NOT a synthesized recap.
     pub last_assistant_message: Option<String>,
-    /// Reserved for the phase-6 AI recap; always `None` until then so the field
-    /// never misrepresents the raw last message as a summary.
+    /// Phase-6 AI recap from `session_summaries`. `None` until a backend is
+    /// enabled and a summary has been generated; distinct from the raw
+    /// `last_assistant_message` so the two are never conflated.
     pub summary: Option<String>,
 }
 
@@ -63,13 +64,13 @@ pub fn list_sessions(
     exclude: Option<&str>,
 ) -> anyhow::Result<Vec<SessionDescriptor>> {
     let live = ctx.agents.live_session_ids();
-    // Brief DB lock → owned snapshot → guard dropped here.
-    let workspaces = {
+    // Brief DB lock → owned snapshot (workspaces + summaries) → guard dropped here.
+    let (workspaces, summaries) = {
         let guard = ctx
             .db
             .lock()
             .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
-        guard.get_workspaces()?
+        (guard.get_workspaces()?, guard.get_all_session_summaries()?)
     };
     let mut out = Vec::new();
     for ws in workspaces {
@@ -81,7 +82,14 @@ pub fn list_sessions(
             if Some(s.id.as_str()) == exclude {
                 continue;
             }
-            out.push(descriptor_from(&ctx.agents, &s, &ws.name, &ws_path));
+            let summary = summaries.get(&s.id).map(|r| r.summary.clone());
+            out.push(descriptor_from(
+                &ctx.agents,
+                &s,
+                &ws.name,
+                &ws_path,
+                summary,
+            ));
         }
     }
     Ok(out)
@@ -92,18 +100,25 @@ pub fn get_session(ctx: &DaemonContext, id: &str) -> anyhow::Result<Option<Sessi
     if !ctx.agents.live_session_ids().contains(id) {
         return Ok(None);
     }
-    let workspaces = {
+    let (workspaces, summary) = {
         let guard = ctx
             .db
             .lock()
             .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
-        guard.get_workspaces()?
+        let summary = guard.get_session_summary(id)?.map(|r| r.summary);
+        (guard.get_workspaces()?, summary)
     };
     for ws in workspaces {
         let ws_path = ws.repo_path.to_string_lossy().to_string();
         for s in ws.sessions {
             if s.id == id {
-                return Ok(Some(descriptor_from(&ctx.agents, &s, &ws.name, &ws_path)));
+                return Ok(Some(descriptor_from(
+                    &ctx.agents,
+                    &s,
+                    &ws.name,
+                    &ws_path,
+                    summary,
+                )));
             }
         }
     }
@@ -115,6 +130,7 @@ fn descriptor_from(
     s: &crate::models::Session,
     ws_name: &str,
     ws_path: &str,
+    summary: Option<String>,
 ) -> SessionDescriptor {
     let (background_tasks, session_crons) = agents.session_background(&s.id);
     // Live mode + last_activity + waiting_for come from the runtime side-map the
@@ -140,6 +156,6 @@ fn descriptor_from(
         background_tasks,
         session_crons,
         last_assistant_message: agents.session_last_message(&s.id),
-        summary: None,
+        summary,
     }
 }

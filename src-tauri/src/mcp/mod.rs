@@ -12,6 +12,7 @@
 pub mod directory;
 pub mod registration;
 pub mod shim;
+pub mod summary;
 pub mod transport;
 
 use serde::{Deserialize, Serialize};

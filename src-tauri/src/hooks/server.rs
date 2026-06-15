@@ -527,12 +527,16 @@ fn process_event(
         background_tasks,
         session_crons,
         last_assistant_message,
+        transcript_path,
         ..
     } = event
     {
         let csid = cluihud_session_id.unwrap_or(session_id);
         agent_state.set_session_background(csid, background_tasks.clone(), session_crons.clone());
         agent_state.set_session_last_message(csid, last_assistant_message.clone());
+        // Opt-in AI summary (phase 6): no-op unless a backend is enabled for
+        // this session's project. Detached + debounced; never blocks the hook.
+        crate::mcp::summary::runner::maybe_spawn(db, csid, transcript_path.as_deref());
     }
 
     // Resolve the owning adapter for this session (cache → DB-fallback path

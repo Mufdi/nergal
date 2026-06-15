@@ -1,13 +1,13 @@
 # Tasks — cluihud-mcp-server
 
-> Implementation status (2026-06-14). Core session directory (phases 1-5, CC
-> registration, frontend toggle, unit tests) **landed + verified green**
-> (clippy -D warnings / 484 tests / fmt / tsc / vite build). Two slices are
-> **deferred** with rationale (flagged inline): the opt-in AI summarizer
-> (phase 6 — external LLM API + secret-storage decision, can't be verified
-> headless) and the multi-agent registrars + `claude agents --json` enrichment
-> (phase 4.4 / 7 — config formats need live verification). The manual two-session
-> runtime walk (8.6) requires a running app.
+> Implementation status (2026-06-15). Core session directory (phases 1-5, CC
+> registration, frontend toggle), descriptor liveness (4.2b), AND the opt-in AI
+> summarizer (phase 6 — config + keyring + two backends + debounced runner + UI
+> + tests) **landed + verified green** (clippy -D warnings / 504 tests / fmt /
+> tsc / vite build). Two slices remain **deferred** with rationale (flagged
+> inline): the multi-agent registrars + `claude agents --json` enrichment
+> (phase 4.4 / 7.1b — config formats need live verification). The manual
+> two-session runtime walk (8.6) + a live LLM summary call require a running app.
 
 ## 1. Dedicated MCP transport (backend)
 
@@ -54,13 +54,13 @@
 > `specs/session-summary/spec.md` (revised).
 
 - [x] 6.2 Migration `021_session_summaries.sql` created + registered in `db.rs` (table ready; numbering corrected 014→021 after ClickUp migrations 015-020).
-- [ ] 6.1 Config in `config.rs`: `summary_backend: off | agent_cli | api_key` (enum, default `off`) + per-project override; for `agent_cli`: configurable command (default `claude`); for `api_key`: base URL + model (key NOT here). UI enforces mutual exclusivity.
-- [ ] 6.1b Keyring integration (`keyring` crate) for the `api_key` mode: store/read/delete; never write the key to `config.json`. Tauri commands `set_summary_api_key` / `clear_summary_api_key` / `has_summary_api_key`.
-- [ ] 6.3 `mcp/summary/` module with a `SummaryBackend` trait + two impls: `AgentCliBackend` (spawn `claude -p`, read stdout, `token_cost = None`) and `ApiKeyBackend` (HTTP POST to the configured OpenAI-compatible endpoint, parse usage → `token_cost`). Single `summarize(transcript_path) -> Result<Summary>` entrypoint. Reads + truncates the transcript to a token budget.
-- [ ] 6.4 Detached, debounced runner on `Stop` (reuse the `post_session.rs` detached-runner pattern): gated by `summary_backend != off` for the session's project; writes `session_summaries`; descriptor reads from the table. Nothing read/invoked/stored when off. Read path never blocks on generation.
-- [ ] 6.5 Single entrypoint reusable by M4's post-session MOC summary.
-- [ ] 6.6 Settings → MCP: two mutually-exclusive switches (Agent CLI / API key) + agent-command field (mode A) + base-URL/model/key fields (mode B) + the subscription-quota tradeoff note for mode A.
-- [ ] 6.7 Tests: backend trait dispatch + mutual-exclusivity config invariant + "off → no row/no read" + transcript truncation. (Live LLM call verified manually, not in CI.)
+- [x] 6.1 Config in `config.rs`: `summary: SummaryConfig` with `backend: SummaryBackend` enum (`off | agent_cli | api_key`, default `off`) + `agent_command`/`api_base_url`/`api_model`/`disabled_projects`. Mutual exclusivity is **structural** (single enum value). Per-project opt-out via `effective_summary_backend(path)`. Key NOT in config.
+- [x] 6.1b Keyring integration (`mcp/summary/secret.rs`, `keyring` crate) for `api_key` mode: `store_api_key`/`load_api_key`/`has_api_key`/`clear_api_key`; **no plaintext fallback** (diverges from `clickup/auth.rs` per the user's never-plaintext constraint). Tauri commands `set_summary_api_key`/`clear_summary_api_key`/`has_summary_api_key`.
+- [x] 6.3 `mcp/summary/` module: `Summarizer` trait + `AgentCliBackend` (spawn `<cmd> -p`, transcript on stdin, `token_cost = None`) + `ApiKeyBackend` (POST OpenAI-compatible `/chat/completions`, parse `usage.total_tokens`). `summarize_transcript(backend, cfg, path)` entrypoint reads + tail-truncates the transcript to a 48KB budget (line-aligned).
+- [x] 6.4 Detached, debounced runner (`mcp/summary/runner.rs`): `maybe_spawn` on `Stop`, gated by `effective_summary_backend != Off` for the session's workspace repo; 60s debounce + single-flight guards; in-process `tauri::async_runtime::spawn` (summaries regenerate next Stop, so no detached *process* needed unlike MOCs); writes `session_summaries`; descriptor reads from the table. Read path never blocks.
+- [x] 6.5 Single entrypoint (`summarize_transcript`) reusable by M4's post-session MOC summary.
+- [x] 6.6 Settings → MCP `SummarySection.tsx`: two mutually-exclusive switches (Agent CLI / API key) + agent-command field (mode A) + base-URL/model/password fields with keyring store/clear (mode B) + subscription-quota note.
+- [x] 6.7 Tests: config invariants (off-by-default, per-project opt-out, agent-command default, snake_case serde) + db round-trip/upsert + `summarize_transcript` Off-bails + api_key missing-config fails fast + transcript tail truncation. (Live LLM call verified manually, not in CI.) 504 tests green.
 
 ## 7. Registration + frontend
 

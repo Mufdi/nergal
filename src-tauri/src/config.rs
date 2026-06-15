@@ -88,6 +88,64 @@ pub struct Config {
     /// off, the daemon still binds but `tools/call` returns `mcp_disabled`.
     #[serde(default)]
     pub mcp_server_enabled: bool,
+    /// Opt-in AI session summaries (phase 6). Off by default; see
+    /// [`SummaryConfig`]. The backend is a single enum, so the two active
+    /// modes are structurally mutually exclusive — the Settings UI surfaces
+    /// them as two switches but only one value is ever persisted.
+    #[serde(default)]
+    pub summary: SummaryConfig,
+}
+
+/// Which inference backend produces session summaries. The variants are
+/// mutually exclusive by construction (a single enum value), enforcing the
+/// "never both at once" invariant without any cross-field validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SummaryBackend {
+    /// No transcript read, no model invoked, no summary produced. A fully
+    /// supported steady state, not a degraded one.
+    #[default]
+    Off,
+    /// Headless agent CLI (`<cmd> -p <prompt>`) on the user's subscription —
+    /// no API key. Summarization consumes the user's subscription quota.
+    AgentCli,
+    /// Provider-agnostic OpenAI-compatible HTTP endpoint. The key lives in the
+    /// OS keyring, never in this struct.
+    ApiKey,
+}
+
+/// Configuration for opt-in AI session summaries (phase 6). The API key is
+/// deliberately absent — it is stored in the OS keyring, never serialized
+/// here. Per-project opt-out lets a user enable summaries globally yet exclude
+/// specific repositories.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SummaryConfig {
+    #[serde(default)]
+    pub backend: SummaryBackend,
+    /// Agent-CLI mode: the headless command to invoke (default `claude`, run
+    /// as `<cmd> -p <prompt>`). Lets a non-Claude CLI be substituted.
+    #[serde(default)]
+    pub agent_command: Option<String>,
+    /// API-key mode: provider-agnostic OpenAI-compatible base URL.
+    #[serde(default)]
+    pub api_base_url: Option<String>,
+    /// API-key mode: model id (e.g. `gpt-4o-mini`).
+    #[serde(default)]
+    pub api_model: Option<String>,
+    /// Canonicalized project paths where summaries are disabled even when a
+    /// backend is enabled globally (per-project override).
+    #[serde(default)]
+    pub disabled_projects: Vec<String>,
+}
+
+impl SummaryConfig {
+    /// The agent command for `AgentCli` mode, defaulting to `claude`.
+    pub fn agent_command_or_default(&self) -> String {
+        self.agent_command
+            .clone()
+            .filter(|c| !c.trim().is_empty())
+            .unwrap_or_else(|| "claude".to_string())
+    }
 }
 
 /// Custom theme — forked from a builtin via Settings → Appearance →
@@ -133,6 +191,7 @@ impl Default for Config {
             clickup_poll_interval_secs: None,
             keymap_overrides: HashMap::new(),
             mcp_server_enabled: false,
+            summary: SummaryConfig::default(),
         }
     }
 }
@@ -193,6 +252,20 @@ impl Config {
             .cloned()
             .or_else(|| self.default_agent.clone())
     }
+
+    /// Effective summary backend for a project, applying the per-project
+    /// opt-out: returns [`SummaryBackend::Off`] when the global backend is off
+    /// OR the project is in `summary.disabled_projects`.
+    pub fn effective_summary_backend(&self, project_path: &Path) -> SummaryBackend {
+        if self.summary.backend == SummaryBackend::Off {
+            return SummaryBackend::Off;
+        }
+        let key = Self::canonicalize_project_path(project_path);
+        if self.summary.disabled_projects.contains(&key) {
+            return SummaryBackend::Off;
+        }
+        self.summary.backend
+    }
 }
 
 #[cfg(test)]
@@ -245,6 +318,66 @@ mod tests {
         let phantom = Path::new("/definitely/does/not/exist/and/should/stay/string");
         let s = Config::canonicalize_project_path(phantom);
         assert!(!s.is_empty());
+    }
+
+    #[test]
+    fn summary_off_by_default() {
+        let c = Config::default();
+        assert_eq!(c.summary.backend, SummaryBackend::Off);
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(c.effective_summary_backend(dir.path()), SummaryBackend::Off);
+    }
+
+    #[test]
+    fn summary_per_project_optout_disables() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = Config::canonicalize_project_path(dir.path());
+        let c = Config {
+            summary: SummaryConfig {
+                backend: SummaryBackend::AgentCli,
+                disabled_projects: vec![key],
+                ..SummaryConfig::default()
+            },
+            ..Config::default()
+        };
+        assert_eq!(c.effective_summary_backend(dir.path()), SummaryBackend::Off);
+        let other = tempfile::tempdir().unwrap();
+        assert_eq!(
+            c.effective_summary_backend(other.path()),
+            SummaryBackend::AgentCli
+        );
+    }
+
+    #[test]
+    fn agent_command_defaults_to_claude() {
+        let s = SummaryConfig::default();
+        assert_eq!(s.agent_command_or_default(), "claude");
+        let s = SummaryConfig {
+            agent_command: Some("  ".into()),
+            ..SummaryConfig::default()
+        };
+        assert_eq!(s.agent_command_or_default(), "claude");
+        let s = SummaryConfig {
+            agent_command: Some("codex".into()),
+            ..SummaryConfig::default()
+        };
+        assert_eq!(s.agent_command_or_default(), "codex");
+    }
+
+    #[test]
+    fn summary_backend_serializes_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&SummaryBackend::AgentCli).unwrap(),
+            "\"agent_cli\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SummaryBackend::ApiKey).unwrap(),
+            "\"api_key\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SummaryBackend::Off).unwrap(),
+            "\"off\""
+        );
     }
 
     #[test]

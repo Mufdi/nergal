@@ -9,6 +9,16 @@ use crate::agents::claude_code::cost::CostSummary;
 use crate::models::{Session, SessionStatus, Workspace};
 use crate::tasks::{Task, TaskStatus};
 
+/// Persisted AI session summary (phase 6). A row exists only when summaries
+/// are enabled for the session's project; absence means never-summarized.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SessionSummary {
+    pub summary: String,
+    pub model: Option<String>,
+    pub token_cost: Option<i64>,
+    pub updated_at: u64,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AnnotationRow {
     pub id: String,
@@ -446,6 +456,76 @@ impl Database {
             params![status, now_secs(), id],
         )?;
         Ok(())
+    }
+
+    /// Upsert the AI summary for a session (phase 6). A row exists only when
+    /// summaries are enabled for the session's project.
+    pub fn set_session_summary(
+        &self,
+        session_id: &str,
+        summary: &str,
+        model: Option<&str>,
+        token_cost: Option<i64>,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO session_summaries (session_id, summary, model, token_cost, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(session_id) DO UPDATE SET
+               summary = excluded.summary,
+               model = excluded.model,
+               token_cost = excluded.token_cost,
+               updated_at = excluded.updated_at",
+            params![session_id, summary, model, token_cost, now_secs()],
+        )?;
+        Ok(())
+    }
+
+    /// All session summaries keyed by session id. Used to enrich the MCP
+    /// directory in one query while the brief snapshot lock is held.
+    pub fn get_all_session_summaries(
+        &self,
+    ) -> Result<std::collections::HashMap<String, SessionSummary>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT session_id, summary, model, token_cost, updated_at FROM session_summaries",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                SessionSummary {
+                    summary: row.get(1)?,
+                    model: row.get(2)?,
+                    token_cost: row.get(3)?,
+                    updated_at: row.get(4)?,
+                },
+            ))
+        })?;
+        let mut map = std::collections::HashMap::new();
+        for r in rows {
+            let (id, s) = r?;
+            map.insert(id, s);
+        }
+        Ok(map)
+    }
+
+    /// Read a session's AI summary, or `None` when never summarized.
+    pub fn get_session_summary(&self, session_id: &str) -> Result<Option<SessionSummary>> {
+        let result = self.conn.query_row(
+            "SELECT summary, model, token_cost, updated_at FROM session_summaries WHERE session_id = ?1",
+            [session_id],
+            |row| {
+                Ok(SessionSummary {
+                    summary: row.get(0)?,
+                    model: row.get(1)?,
+                    token_cost: row.get(2)?,
+                    updated_at: row.get(3)?,
+                })
+            },
+        );
+        match result {
+            Ok(s) => Ok(Some(s)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
     }
 
     pub fn rename_session(&self, id: &str, name: &str) -> Result<()> {
@@ -1187,6 +1267,33 @@ mod tests {
                 .unwrap();
             assert_eq!(count, 1, "missing table {table}");
         }
+    }
+
+    #[test]
+    fn session_summary_round_trips_and_upserts() {
+        let db = in_memory();
+        seed_session(&db, "s1");
+        // Absent until written.
+        assert!(db.get_session_summary("s1").unwrap().is_none());
+        assert!(db.get_all_session_summaries().unwrap().is_empty());
+
+        db.set_session_summary("s1", "did the thing", Some("gpt-4o-mini"), Some(123))
+            .unwrap();
+        let got = db.get_session_summary("s1").unwrap().unwrap();
+        assert_eq!(got.summary, "did the thing");
+        assert_eq!(got.model.as_deref(), Some("gpt-4o-mini"));
+        assert_eq!(got.token_cost, Some(123));
+
+        // Upsert overwrites; agent-CLI backend reports no token cost.
+        db.set_session_summary("s1", "did it again", Some("claude"), None)
+            .unwrap();
+        let got = db.get_session_summary("s1").unwrap().unwrap();
+        assert_eq!(got.summary, "did it again");
+        assert_eq!(got.token_cost, None);
+
+        let all = db.get_all_session_summaries().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all.get("s1").unwrap().summary, "did it again");
     }
 
     #[test]

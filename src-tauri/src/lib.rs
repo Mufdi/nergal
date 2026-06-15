@@ -312,6 +312,12 @@ pub fn run() {
             commands::get_config,
             commands::save_config,
             mcp::mcp_set_enabled,
+            mcp::summary::summary_get_settings,
+            mcp::summary::summary_set_settings,
+            mcp::summary::summary_set_project_disabled,
+            mcp::summary::set_summary_api_key,
+            mcp::summary::clear_summary_api_key,
+            mcp::summary::has_summary_api_key,
             commands::validate_path,
             // Task commands
             commands::get_tasks,

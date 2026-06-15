@@ -32,7 +32,8 @@
 ## 4. Descriptor assembly + directory tools
 
 - [x] 4.1 Snapshot-then-release: brief DB lock → owned `Vec<Workspace>` → guard dropped before assembly; branch from the persisted column (no git subprocess on the read path).
-- [x] 4.2 Descriptor (name, workspace, branch, agent, mode from `SessionStatus`, last-activity, bg-tasks/crons; `waiting_for`/`files` null/empty, never fabricated).
+- [x] 4.2 Descriptor (name, workspace, branch, agent, bg-tasks/crons).
+- [x] 4.2b **LIVE (2026-06-15, commits `a3d4f4d`+`968002f`)**: `mode`/`last_activity`/`waiting_for`/`recently_touched_files:[{path,tool}]`/`last_assistant_message` now fed by a runtime activity side-map (`agents/state.rs`) mirroring the frontend `modeMapAtom`, written by `hooks/server.rs::process_event`. Root-cause fix — the DB `status`/`updated_at` columns only move on lifecycle mutations, so they read stale. `summary` stays null (reserved → section 6). Gotcha canon: PostToolUse matcher excludes `Read`, so files are captured from PreToolUse (unmatched). bg-tasks "skip empty" gate removed so an empty Stop clears a finished task.
 - [x] 4.3 `whoami` / `list_sessions(include_self?)` (self-exclusion) / `get_session(id)` (not-found error).
 - [ ] 4.4 **DEFERRED**: out-of-band `claude agents --json` cache for `waiting_for`/state enrichment (currently null). Lands with the multi-agent registrars; needs live `claude agents --json` shape verification.
 
@@ -41,18 +42,25 @@
 - [x] 5.1 `HookEvent::Stop` extended with `background_tasks` + `session_crons` (`#[serde(default)]`, pass-through JSON). (SubagentStop is not modeled in cluihud today — additive when it is.)
 - [x] 5.2 Captured into session state (`set_session_background`), surfaced in `get_session`; legacy-payload deserialize unit-tested.
 
-## 6. Opt-in AI summaries — DEFERRED (net-new LLM machinery)
+## 6. Opt-in AI summaries — NEXT (key-free agent-CLI OR provider-agnostic key)
 
-> Deferred as a deliberate second increment: it adds an external Anthropic API
-> call (unverifiable headless) and carries a **secret-storage decision** (keyring
-> vs plaintext config for the dedicated key) that warrants explicit sign-off on a
-> security-tier change. The core directory ships without it.
+> **Design pivoted 2026-06-15 (user decision).** Backend is **user-selected,
+> off by default, two mutually-exclusive switches** (never both, never auto):
+> (A) **Agent CLI** headless (`claude -p`) on the user's **subscription — NO API
+> key** (verified this session: headless `claude -p` authenticates via Max with
+> no key); (B) **provider-agnostic API key** (OpenAI-compatible base URL + model
+> + key), key in **OS keyring**, never plaintext. Both off → no summary, no
+> error. Supersedes the old "dedicated Anthropic key only" spec. See
+> `specs/session-summary/spec.md` (revised).
 
 - [x] 6.2 Migration `021_session_summaries.sql` created + registered in `db.rs` (table ready; numbering corrected 014→021 after ClickUp migrations 015-020).
-- [ ] 6.1 Settings `ai_summaries_enabled` (global + per-project) in `config.rs`.
-- [ ] 6.3 `mcp/summary.rs` inference path (cheap model, dedicated key, transcript read, token accounting).
-- [ ] 6.4 Detached/debounced runner on `Stop`; surface `summary` in descriptor; nothing read/stored when disabled.
-- [ ] 6.5 Single entrypoint reusable by M4's MOC summary.
+- [ ] 6.1 Config in `config.rs`: `summary_backend: off | agent_cli | api_key` (enum, default `off`) + per-project override; for `agent_cli`: configurable command (default `claude`); for `api_key`: base URL + model (key NOT here). UI enforces mutual exclusivity.
+- [ ] 6.1b Keyring integration (`keyring` crate) for the `api_key` mode: store/read/delete; never write the key to `config.json`. Tauri commands `set_summary_api_key` / `clear_summary_api_key` / `has_summary_api_key`.
+- [ ] 6.3 `mcp/summary/` module with a `SummaryBackend` trait + two impls: `AgentCliBackend` (spawn `claude -p`, read stdout, `token_cost = None`) and `ApiKeyBackend` (HTTP POST to the configured OpenAI-compatible endpoint, parse usage → `token_cost`). Single `summarize(transcript_path) -> Result<Summary>` entrypoint. Reads + truncates the transcript to a token budget.
+- [ ] 6.4 Detached, debounced runner on `Stop` (reuse the `post_session.rs` detached-runner pattern): gated by `summary_backend != off` for the session's project; writes `session_summaries`; descriptor reads from the table. Nothing read/invoked/stored when off. Read path never blocks on generation.
+- [ ] 6.5 Single entrypoint reusable by M4's post-session MOC summary.
+- [ ] 6.6 Settings → MCP: two mutually-exclusive switches (Agent CLI / API key) + agent-command field (mode A) + base-URL/model/key fields (mode B) + the subscription-quota tradeoff note for mode A.
+- [ ] 6.7 Tests: backend trait dispatch + mutual-exclusivity config invariant + "off → no row/no read" + transcript truncation. (Live LLM call verified manually, not in CI.)
 
 ## 7. Registration + frontend
 

@@ -14,23 +14,49 @@ AI summaries SHALL be net-new inference machinery (no LLM-invocation path exists
 - **WHEN** AI summaries are enabled globally but disabled for a specific project
 - **THEN** sessions in that project SHALL NOT be summarized
 
-### Requirement: Inference path with credential resolution and token accounting
+### Requirement: User-selected inference backend (off by default, two mutually-exclusive opt-in modes)
 
-When enabled, the system SHALL invoke a cheap model (e.g. haiku) via a detached runner using a **dedicated configured API key** (a `config.rs` setting) — it SHALL NOT reuse the session's own agent auth (fragile, conflates billing). It reads the session transcript, accounts the token cost, and produces a short rolling summary. There SHALL be a single summarization entrypoint that M4's post-session MOC summary can later reuse.
+The summarizer backend SHALL be one of three user-chosen states, surfaced in settings as two **mutually-exclusive** switches (enabling one disables the other); the default is neither enabled:
+
+- **Off (default).** Neither switch enabled → no transcript read, no model invoked, no summary. This is a fully supported steady state, not a degraded one.
+- **Agent CLI (subscription, key-free).** Invoke the installed agent CLI in headless mode (e.g. `claude -p <prompt>`) using the user's existing **subscription auth** — NO API key required (verified: a headless `claude -p` call authenticates via the Claude Max plan with no key). The runner SHALL use a configurable agent command so a non-Claude CLI can be substituted. Documented tradeoff: summarization consumes the user's subscription quota/rate-limits.
+- **API key (provider-agnostic).** Call a **provider-agnostic** HTTP endpoint (base URL + model + key) — NOT Anthropic-locked (OpenAI-compatible / any provider / local). The key SHALL be stored in the **OS keyring**, never in `config.json` plaintext.
+
+The two modes SHALL NOT be active simultaneously. The runner SHALL NOT silently reuse a session's own per-session agent process (that would conflate the user's active turn). There SHALL be a single summarization entrypoint that M4's post-session MOC summary can later reuse.
+
+#### Scenario: Both switches off is a no-op
+
+- **WHEN** neither summarizer switch is enabled
+- **THEN** no transcript SHALL be read, no model invoked, the descriptor's `summary` SHALL be null, and this SHALL NOT be treated as an error
+
+#### Scenario: Switches are mutually exclusive
+
+- **WHEN** the user enables one summarizer mode while the other is already enabled
+- **THEN** the previously-enabled mode SHALL be disabled so only one backend is ever active
+
+#### Scenario: Agent CLI mode works on subscription with no API key
+
+- **WHEN** the Agent CLI mode is enabled and no API key is configured
+- **THEN** the runner SHALL summarize via the agent CLI headless path using the subscription, producing a non-empty summary without any key
+
+#### Scenario: API key mode is keyring-stored
+
+- **WHEN** the user enables the API key mode and configures a key
+- **THEN** the key SHALL be persisted in the OS keyring (not `config.json`), and the runner SHALL use the configured endpoint/model
 
 #### Scenario: Summary appears within a refresh cycle
 
-- **WHEN** AI summaries are enabled and a session produces transcript activity
+- **WHEN** a backend is enabled and a session produces transcript activity
 - **THEN** a non-empty summary SHALL appear in the session descriptor within one refresh cycle
 
-#### Scenario: Token cost recorded
+#### Scenario: Token cost recorded when available
 
-- **WHEN** a summary is generated
-- **THEN** its token cost SHALL be recorded alongside the summary
+- **WHEN** a summary is generated and the backend reports usage
+- **THEN** its token cost SHALL be recorded alongside the summary; when the backend does not report usage (e.g. headless CLI), `token_cost` MAY be null
 
-#### Scenario: Missing credentials handled
+#### Scenario: Backend unavailable handled
 
-- **WHEN** AI summaries are enabled but no usable credentials resolve
+- **WHEN** a backend is enabled but it cannot run (agent CLI missing/unauthenticated, or key/endpoint unreachable)
 - **THEN** the runner SHALL fail gracefully (no summary, logged), without blocking directory reads
 
 ### Requirement: SQLite-backed summary storage via migration

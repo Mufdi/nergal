@@ -247,8 +247,12 @@ fn drain(dir: &Path, lock_path: &Path, process: &dyn Fn(&Path) -> Result<()>) ->
             }
             Err(e) => {
                 // Leave the marker for the next runner to retry; stderr is nulled
-                // in the detached process, so failures go to the log file.
-                log_line(&format!("ERROR marker {}: {e:#}", path.display()));
+                // in the detached process, so failures go to the log file. Log
+                // beside the lock so tests stay isolated from the real log.
+                log_line_at(
+                    &drain_log_path(lock_path),
+                    &format!("ERROR marker {}: {e:#}", path.display()),
+                );
             }
         }
     }
@@ -357,19 +361,41 @@ fn rotate_runner_log(path: &Path) {
     let _ = fs::rename(path, gen_path(path, 1));
 }
 
-/// Append-only runner log. The detached process has nulled stdio, so this is the
-/// only place its failures surface (the app tails it on next launch).
-fn log_line(msg: &str) {
-    let dir = config_dir().join("logs");
-    if fs::create_dir_all(&dir).is_err() {
+/// Append-only runner log at an explicit path. The detached process has nulled
+/// stdio, so this is the only place its failures surface (the app tails it on
+/// next launch).
+fn log_line_at(log_path: &Path, msg: &str) {
+    if let Some(dir) = log_path.parent()
+        && fs::create_dir_all(dir).is_err()
+    {
         return;
     }
-    let path = dir.join("post-session.log");
-    rotate_runner_log(&path);
-    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&path) {
+    rotate_runner_log(log_path);
+    if let Ok(mut f) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+    {
         use std::io::Write;
         let _ = writeln!(f, "{} {msg}", now_ms());
     }
+}
+
+/// Production runner log (the global config-dir path the app tails on launch).
+fn log_line(msg: &str) {
+    log_line_at(&log_file_path(), msg);
+}
+
+/// The runner log a `drain` writes to: derived from the lock's directory so a
+/// test driving `drain` against a tempdir lock can't pollute the real
+/// config-dir log (which `last_run_failed` reads → false "snapshot failed"
+/// toast). In production the lock lives in `config_dir()`, so this resolves to
+/// the same path as [`log_file_path`].
+fn drain_log_path(lock_path: &Path) -> PathBuf {
+    lock_path
+        .parent()
+        .map(|p| p.join("logs").join("post-session.log"))
+        .unwrap_or_else(log_file_path)
 }
 
 /// True if the runner log's last non-empty line is an ERROR — a previous drain
@@ -435,6 +461,11 @@ mod tests {
         // Failed marker survives for retry; succeeded one is gone.
         assert!(pending.join("bad.json").exists());
         assert!(!pending.join("ok.json").exists());
+        // The failure must log beside the lock (tempdir), NOT to the real
+        // config-dir log — otherwise tests trip the "snapshot failed" toast.
+        let local_log = dir.path().join("logs").join("post-session.log");
+        assert!(local_log.exists());
+        assert!(fs::read_to_string(&local_log).unwrap().contains("ERROR"));
     }
 
     #[test]

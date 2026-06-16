@@ -1,0 +1,39 @@
+{
+  "tier": "XL",
+  "tier_source": "user-stated (deep change; mirrors clickup-sync, the first of three sequential Linear changes)",
+  "ceremony": "deep (implementation.md mandatory per openspec/config.yaml)",
+  "risk_tier": "critical",
+  "files_estimate": 22,
+  "tags": ["migration", "security", "feature"],
+  "visibility": "private",
+  "spec_target": "linear-mirror, linear-task-panel",
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "discovery_note": "Discovery done in-conversation; staging + auth + approach confirmed via AskUserQuestion 2026-06-16.",
+    "iprev_rounds": 5,
+    "iprev_evaluator": "claude",
+    "iprev_persona": "skeptic",
+    "iprev_verdict": "APPROVED",
+    "reviewer_mode": "iterative-plan-review (pre-build); single-sequential + security escalation planned for build",
+    "gates_phases_planned": ["compile", "test", "lint", "security", "scope"],
+    "per_phase_models": {
+      "design": "claude-opus (this session)",
+      "implementation": "claude-opus (this session, autonomous /loop)",
+      "exploration": "Explore agents (ClickUp mapping this session)"
+    }
+  },
+  "interview_answers": {
+    "staging": "3 sequential changes (linear-mirror, linear-agent-integration, linear-writeback); start with #1",
+    "auth": "Personal API key now; OAuth deferred but auth layer designed extensible (AuthMode seam)",
+    "arranque": "spec-first with checkpoint, then implement in /loop"
+  },
+  "events": [
+    { "type": "iprev-round", "n": 1, "result": "REVISE", "note": "20 issues (2 critical: truncated-fetch false-tombstone, parent_id FK abort)" },
+    { "type": "iprev-round", "n": 2, "result": "REVISE", "note": "all 20 fixed; 9 new on set-3 (re-verify-mine) consequences" },
+    { "type": "iprev-round", "n": 3, "result": "REVISE", "note": "all r2 fixed; 6 new: viewer-resolve-on-failure wipe, set-3 absence semantics, by-id pagination" },
+    { "type": "iprev-round", "n": 4, "result": "REVISE", "note": "all r3 fixed; 5 new: account-swap race, dead viewer backstop, set-3 4th outcome + label-strip, team-selection reset" },
+    { "type": "iprev-round", "n": 5, "result": "APPROVED", "note": "key-generation epoch closes swap race structurally; residuals LOW (BEGIN IMMEDIATE note, notify-after-commit)" }
+  ],
+  "status": "plan-approved; implementation IN PROGRESS (autonomous /loop)",
+  "implementation_order": 1
+}

@@ -94,14 +94,18 @@ pub fn get_config() -> Result<Config, String> {
     Ok(Config::load())
 }
 
-/// Persist the settings the frontend manages. The frontend `Config` atom is a
-/// **subset** of the Rust `Config` (it omits backend-only fields like `summary`
-/// and `clickup_poll_interval_secs`, which are written by dedicated commands).
-/// A naive `config.save()` of the frontend payload would deserialize those
-/// absent fields to their serde defaults and clobber them — e.g. resetting the
-/// summary backend to `Off`. So we merge the incoming (partial) object over the
-/// on-disk config at the JSON level: any key the frontend doesn't send is
-/// preserved. This keeps the backend the source of truth for fields it owns.
+/// Fields the backend owns exclusively, written only via dedicated commands
+/// (`summary_set_settings`, the ClickUp poller). The frontend `configAtom` is
+/// hydrated from `get_config`, so it carries a **stale** copy of these — if
+/// `save_config` applied them, a general settings save would roll the value
+/// back (e.g. flip the AI-summary backend to `Off`). They are dropped from the
+/// frontend payload so the on-disk value always wins.
+const BACKEND_OWNED_CONFIG_KEYS: &[&str] = &["summary", "clickup_poll_interval_secs"];
+
+/// Persist the settings the frontend manages. The frontend payload is merged
+/// over the on-disk config at the JSON level, and [backend-owned
+/// keys](BACKEND_OWNED_CONFIG_KEYS) in the payload are ignored so dedicated
+/// commands remain the single source of truth for them.
 #[tauri::command]
 pub fn save_config(config: serde_json::Value) -> Result<(), String> {
     merge_config_over(Config::load(), &config)?
@@ -109,14 +113,17 @@ pub fn save_config(config: serde_json::Value) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// Overlay a partial frontend config object onto `base`, preserving any field
-/// the frontend doesn't send. Pure (no I/O) so the preserve-backend-fields
-/// invariant is unit-tested.
+/// Overlay a frontend config object onto `base`, skipping backend-owned keys so
+/// a stale frontend copy of them can't clobber the authoritative on-disk value.
+/// Pure (no I/O) so the invariant is unit-tested.
 fn merge_config_over(base: Config, overlay: &serde_json::Value) -> Result<Config, String> {
     let mut merged = serde_json::to_value(base).map_err(|e| e.to_string())?;
     match (merged.as_object_mut(), overlay.as_object()) {
         (Some(base), Some(overlay)) => {
             for (k, v) in overlay {
+                if BACKEND_OWNED_CONFIG_KEYS.contains(&k.as_str()) {
+                    continue;
+                }
                 base.insert(k.clone(), v.clone());
             }
         }
@@ -3804,8 +3811,8 @@ mod config_merge_tests {
     use crate::config::{Config, SummaryBackend, SummaryConfig};
 
     #[test]
-    fn frontend_save_preserves_backend_only_summary() {
-        // The on-disk config has summaries enabled (set via summary_set_settings).
+    fn frontend_save_ignores_stale_backend_owned_fields() {
+        // On-disk has summaries enabled (set via summary_set_settings).
         let on_disk = Config {
             summary: SummaryConfig {
                 backend: SummaryBackend::AgentCli,
@@ -3814,18 +3821,21 @@ mod config_merge_tests {
             clickup_poll_interval_secs: Some(30),
             ..Config::default()
         };
-        // The frontend sends its subset — no `summary`, no clickup interval —
-        // toggling an unrelated field.
+        // The frontend (hydrated from get_config at startup) carries a STALE
+        // copy of the backend-owned fields plus a real change to a field it owns.
         let frontend = serde_json::json!({
-            "claude_binary": "claude",
             "theme_mode": "v1-light",
             "mcp_server_enabled": true,
+            "summary": { "backend": "off", "agent_command": null,
+                         "api_base_url": null, "api_model": null,
+                         "disabled_projects": [] },
+            "clickup_poll_interval_secs": null,
         });
         let merged = merge_config_over(on_disk, &frontend).unwrap();
-        // Frontend field applied…
+        // Frontend-owned field applied…
         assert_eq!(merged.theme_mode, "v1-light");
         assert!(merged.mcp_server_enabled);
-        // …backend-only fields preserved, not reset to defaults.
+        // …stale backend-owned fields IGNORED — disk value wins.
         assert_eq!(merged.summary.backend, SummaryBackend::AgentCli);
         assert_eq!(merged.clickup_poll_interval_secs, Some(30));
     }

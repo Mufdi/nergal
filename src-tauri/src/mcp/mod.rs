@@ -133,6 +133,28 @@ pub fn initialize_result() -> Value {
         "protocolVersion": MCP_PROTOCOL_VERSION,
         "capabilities": { "tools": {} },
         "serverInfo": { "name": "cluihud", "version": env!("CARGO_PKG_VERSION") },
+        // Server-level guidance (MCP `instructions`): teach the pull workflow so
+        // the agent uses the directory autonomously without asking the user.
+        "instructions": "cluihud session directory — observe the user's other agent \
+    sessions running in this app (cross-workspace, same machine). Workflow:\n\
+    - `whoami` returns your own session id; pass it as `exclude`-equivalent via \
+    `list_sessions`'s `include_self=false` (default) to skip yourself.\n\
+    - `list_sessions` is the cheap discovery view: it returns every live session \
+    PLUS recently-ended ones (last ~7 days), each with `is_live` (running vs \
+    recalled) and a cached `summary`. It NEVER regenerates summaries, so a \
+    `summary` here may be stale — check `summary_stale`.\n\
+    - `get_session(id)` is the drill-in: use it to inspect one session in detail. \
+    It is the ONLY call that refreshes a summary — when the session is dirty \
+    (no summary yet, or `summary_stale=true`) it triggers regeneration in the \
+    background and returns immediately with the current (stale/empty) value. \
+    Re-call `get_session(id)` a moment later to read the refreshed summary.\n\
+    - To read a session worked earlier today/this week, call `get_session(id)` with \
+    its id even though it is not live (`is_live=false`); the recap is regenerated \
+    from its transcript on demand.\n\
+    - Field notes: `summary` is an AI recap of what the session did; \
+    `last_assistant_message` is the verbatim final message (not a recap); for a \
+    non-live session the live activity fields (mode, recently_touched_files, \
+    background_tasks) are empty — only `summary` and `git_branch` are meaningful.",
     })
 }
 
@@ -147,7 +169,7 @@ pub fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "list_sessions",
-            "description": "List all live cluihud sessions across every workspace (excludes the caller's own session unless include_self).",
+            "description": "Discovery view: list cluihud sessions across every workspace — live sessions plus recently-ended ones (last ~7 days), each with `is_live` and a cached `summary`. Cheap and never regenerates: a `summary` may be stale (see `summary_stale`); use `get_session` to refresh one. Excludes the caller's own session unless include_self.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "include_self": { "type": "boolean", "description": "Include the caller's own session (default false)." } },
@@ -156,10 +178,10 @@ pub fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "get_session",
-            "description": "Full descriptor for one live cluihud session by id.",
+            "description": "Drill-in: full descriptor for one cluihud session by id — live OR recently-ended (is_live=false). The ONLY call that refreshes a summary: when the session is dirty (no summary, or summary_stale=true) it regenerates in the background and returns the current value immediately; re-call to read the refreshed summary. Works for a session worked earlier this week (regenerated from its transcript on demand).",
             "inputSchema": {
                 "type": "object",
-                "properties": { "session_id": { "type": "string" } },
+                "properties": { "session_id": { "type": "string", "description": "The cluihud session id (from list_sessions or whoami)." } },
                 "required": ["session_id"],
                 "additionalProperties": false,
             },

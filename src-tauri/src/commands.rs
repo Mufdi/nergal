@@ -100,7 +100,12 @@ pub fn get_config() -> Result<Config, String> {
 /// `save_config` applied them, a general settings save would roll the value
 /// back (e.g. flip the AI-summary backend to `Off`). They are dropped from the
 /// frontend payload so the on-disk value always wins.
-const BACKEND_OWNED_CONFIG_KEYS: &[&str] = &["summary", "clickup_poll_interval_secs"];
+const BACKEND_OWNED_CONFIG_KEYS: &[&str] = &[
+    "summary",
+    "clickup_poll_interval_secs",
+    "linear_poll_interval_secs",
+    "linear_active_window_days",
+];
 
 /// Persist the settings the frontend manages. The frontend payload is merged
 /// over the on-disk config at the JSON level, and [backend-owned

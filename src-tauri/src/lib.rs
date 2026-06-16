@@ -6,6 +6,7 @@ pub mod config;
 mod db;
 mod feeds;
 pub mod hooks;
+pub mod linear;
 pub mod mcp;
 mod models;
 pub mod obsidian;
@@ -288,6 +289,7 @@ pub fn run() {
         .manage(crate::obsidian::templates_watcher::TemplatesWatcherState::new())
         .manage(crate::obsidian::pinned_notes_watcher::PinnedNotesWatcherState::new())
         .manage(clickup::poller::ClickUpSyncState::default())
+        .manage(linear::LinearSyncState::default())
         .manage(clickup::writeback::WritebackRegistry::default())
         .manage(clickup::closure::ClosureTokenStore::default())
         .manage(PendingDeepLinks::default())
@@ -487,6 +489,15 @@ pub fn run() {
             clickup::clickup_send_task_as_prompt,
             clickup::clickup_reinject_task,
             clickup::clickup_spawn_worktree_with_task,
+            // Linear (linear-mirror): key, sync lifecycle, mirror reads
+            linear::linear_set_key,
+            linear::linear_clear_key,
+            linear::linear_validate_key,
+            linear::linear_sync_status,
+            linear::linear_select_teams,
+            linear::linear_read_issues,
+            linear::linear_read_teams,
+            linear::linear_issue_comments,
             // Live preview browser
             browser::browser_validate_url,
             browser::browser_get_listening_ports,
@@ -644,6 +655,11 @@ pub fn run() {
             // ClickUp mirror poller. The loop parks itself when no token is
             // configured; token set/clear and team selection restart it.
             clickup::poller::restart(&app_handle);
+
+            // Linear mirror poller (linear-mirror). Same lifecycle: parks itself
+            // when no key is configured; key set/clear and team selection
+            // restart it.
+            linear::restart(&app_handle);
 
             // Plan watcher is dynamic: one notify::Watcher whose watch set
             // grows as sessions land in cwds the boot-time scan did not see

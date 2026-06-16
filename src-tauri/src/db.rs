@@ -209,6 +209,7 @@ impl Database {
             include_str!("../migrations/020_clickup_status_type.sql"),
             include_str!("../migrations/021_session_summaries.sql"),
             include_str!("../migrations/022_session_transcripts.sql"),
+            include_str!("../migrations/023_linear_mirror.sql"),
         ];
 
         for (i, sql) in migrations.iter().enumerate() {

@@ -74,6 +74,15 @@ pub struct Config {
     /// poller floors it at 10s to protect the API rate budget.
     #[serde(default)]
     pub clickup_poll_interval_secs: Option<u64>,
+    /// Linear mirror poll cadence in seconds. `None` → 45s default; floored at
+    /// 10s. Backend-owned (see commands::BACKEND_OWNED_CONFIG_KEYS).
+    #[serde(default)]
+    pub linear_poll_interval_secs: Option<u64>,
+    /// Linear bounded-poll window in days. `None` → 30. Issues updated within
+    /// this window (∪ the viewer's own) are synced; older non-mine issues age
+    /// out. Backend-owned.
+    #[serde(default)]
+    pub linear_active_window_days: Option<u64>,
     /// User keymap overrides, keyed by `ShortcutAction.id` (e.g. "new-session")
     /// → keys string in the registry format (e.g. "ctrl+alt+n"). The frontend
     /// dispatcher resolves override-over-default; the command palette renders
@@ -201,6 +210,8 @@ impl Default for Config {
             agent_overrides: HashMap::new(),
             custom_themes: Vec::new(),
             clickup_poll_interval_secs: None,
+            linear_poll_interval_secs: None,
+            linear_active_window_days: None,
             keymap_overrides: HashMap::new(),
             mcp_server_enabled: false,
             summary: SummaryConfig::default(),

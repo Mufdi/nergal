@@ -94,9 +94,36 @@ pub fn get_config() -> Result<Config, String> {
     Ok(Config::load())
 }
 
+/// Persist the settings the frontend manages. The frontend `Config` atom is a
+/// **subset** of the Rust `Config` (it omits backend-only fields like `summary`
+/// and `clickup_poll_interval_secs`, which are written by dedicated commands).
+/// A naive `config.save()` of the frontend payload would deserialize those
+/// absent fields to their serde defaults and clobber them — e.g. resetting the
+/// summary backend to `Off`. So we merge the incoming (partial) object over the
+/// on-disk config at the JSON level: any key the frontend doesn't send is
+/// preserved. This keeps the backend the source of truth for fields it owns.
 #[tauri::command]
-pub fn save_config(config: Config) -> Result<(), String> {
-    config.save().map_err(|e| e.to_string())
+pub fn save_config(config: serde_json::Value) -> Result<(), String> {
+    merge_config_over(Config::load(), &config)?
+        .save()
+        .map_err(|e| e.to_string())
+}
+
+/// Overlay a partial frontend config object onto `base`, preserving any field
+/// the frontend doesn't send. Pure (no I/O) so the preserve-backend-fields
+/// invariant is unit-tested.
+fn merge_config_over(base: Config, overlay: &serde_json::Value) -> Result<Config, String> {
+    let mut merged = serde_json::to_value(base).map_err(|e| e.to_string())?;
+    match (merged.as_object_mut(), overlay.as_object()) {
+        (Some(base), Some(overlay)) => {
+            for (k, v) in overlay {
+                base.insert(k.clone(), v.clone());
+            }
+        }
+        // Non-object payload is malformed; reject rather than overwrite.
+        _ => return Err("save_config expects a config object".into()),
+    }
+    serde_json::from_value(merged).map_err(|e| e.to_string())
 }
 
 /// Validate that a configured path resolves to something usable.
@@ -3768,5 +3795,43 @@ mod vault_read_tests {
         let dir = tempfile::tempdir().unwrap();
         write_note(dir.path(), "Note.md", "x");
         assert!(resolve_note_in_vault(dir.path(), "Nonexistent").is_none());
+    }
+}
+
+#[cfg(test)]
+mod config_merge_tests {
+    use super::merge_config_over;
+    use crate::config::{Config, SummaryBackend, SummaryConfig};
+
+    #[test]
+    fn frontend_save_preserves_backend_only_summary() {
+        // The on-disk config has summaries enabled (set via summary_set_settings).
+        let on_disk = Config {
+            summary: SummaryConfig {
+                backend: SummaryBackend::AgentCli,
+                ..SummaryConfig::default()
+            },
+            clickup_poll_interval_secs: Some(30),
+            ..Config::default()
+        };
+        // The frontend sends its subset — no `summary`, no clickup interval —
+        // toggling an unrelated field.
+        let frontend = serde_json::json!({
+            "claude_binary": "claude",
+            "theme_mode": "v1-light",
+            "mcp_server_enabled": true,
+        });
+        let merged = merge_config_over(on_disk, &frontend).unwrap();
+        // Frontend field applied…
+        assert_eq!(merged.theme_mode, "v1-light");
+        assert!(merged.mcp_server_enabled);
+        // …backend-only fields preserved, not reset to defaults.
+        assert_eq!(merged.summary.backend, SummaryBackend::AgentCli);
+        assert_eq!(merged.clickup_poll_interval_secs, Some(30));
+    }
+
+    #[test]
+    fn non_object_payload_is_rejected() {
+        assert!(merge_config_over(Config::default(), &serde_json::json!("nope")).is_err());
     }
 }

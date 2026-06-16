@@ -20,7 +20,7 @@ use async_trait::async_trait;
 
 pub use secret::{clear_api_key, has_api_key, load_api_key, store_api_key};
 
-use crate::agents::HeadlessPrintCommand;
+use crate::agents::{HeadlessOutput, HeadlessPrintCommand};
 use crate::config::{Config, SummaryBackend, SummaryConfig};
 use agent_cli::AgentCliBackend;
 use api_key::ApiKeyBackend;
@@ -74,18 +74,17 @@ pub async fn summarize_transcript(
                 Some(bin) if !bin.is_empty() => HeadlessPrintCommand {
                     binary: bin.to_string(),
                     args: vec!["-p".to_string()],
+                    output: HeadlessOutput::Stdout,
                 },
                 _ => agent_cmd.ok_or_else(|| {
                     anyhow!(
                         "the default agent has no verified headless summary mode — \
-                         set a summary command, switch the default agent to Claude Code, \
+                         set a summary command, switch the default agent, \
                          or use API-key mode"
                     )
                 })?,
             };
-            AgentCliBackend::new(cmd.binary, cmd.args)
-                .summarize(&transcript)
-                .await
+            AgentCliBackend::new(cmd).summarize(&transcript).await
         }
         SummaryBackend::ApiKey => {
             // Validate cheap config before the keyring lookup so missing

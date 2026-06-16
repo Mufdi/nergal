@@ -117,6 +117,16 @@ impl AgentAdapter for OpenCodeAdapter {
         &self.capabilities
     }
 
+    fn headless_print_command(&self) -> Option<crate::agents::HeadlessPrintCommand> {
+        // `opencode run` prints a banner on stdout; `--format json` emits clean
+        // JSONL the summarizer parses for the text parts (+ token totals).
+        Some(crate::agents::HeadlessPrintCommand {
+            binary: "opencode".into(),
+            args: vec!["run".into(), "--format".into(), "json".into()],
+            output: crate::agents::HeadlessOutput::OpencodeJsonl,
+        })
+    }
+
     fn transport(&self) -> Transport {
         Transport::HttpSse {
             base_url_template: "http://127.0.0.1::port".into(),

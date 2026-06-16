@@ -84,6 +84,16 @@ impl AgentAdapter for PiAdapter {
         &self.capabilities
     }
 
+    fn headless_print_command(&self) -> Option<crate::agents::HeadlessPrintCommand> {
+        // `pi -p "<prompt>"` is non-interactive and prints a clean answer to
+        // stdout (verified).
+        Some(crate::agents::HeadlessPrintCommand {
+            binary: "pi".into(),
+            args: vec!["-p".into()],
+            output: crate::agents::HeadlessOutput::Stdout,
+        })
+    }
+
     fn transport(&self) -> Transport {
         Transport::JsonlTail {
             sessions_dir: self.state_dir.join("sessions"),

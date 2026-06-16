@@ -73,6 +73,18 @@ impl AgentAdapter for CodexAdapter {
         &self.capabilities
     }
 
+    fn headless_print_command(&self) -> Option<crate::agents::HeadlessPrintCommand> {
+        // `codex exec` runs non-interactively; stdout carries a banner, so the
+        // final message is read from the `--output-last-message` file instead.
+        Some(crate::agents::HeadlessPrintCommand {
+            binary: "codex".into(),
+            args: vec!["exec".into()],
+            output: crate::agents::HeadlessOutput::LastMessageFile {
+                flag: "--output-last-message".into(),
+            },
+        })
+    }
+
     fn transport(&self) -> Transport {
         let settings_path = dirs::home_dir()
             .unwrap_or_default()

@@ -98,10 +98,11 @@ impl AgentAdapter for ClaudeCodeAdapter {
 
     fn headless_print_command(&self) -> Option<crate::agents::HeadlessPrintCommand> {
         // `claude -p "<prompt>"` authenticates via the user's subscription with
-        // no API key (verified). The prompt is appended by the summarizer.
+        // no API key (verified). stdout is the clean answer.
         Some(crate::agents::HeadlessPrintCommand {
             binary: "claude".into(),
             args: vec!["-p".into()],
+            output: crate::agents::HeadlessOutput::Stdout,
         })
     }
 

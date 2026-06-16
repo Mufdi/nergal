@@ -125,8 +125,8 @@ export function SummarySection() {
           <span className="font-medium">Agent CLI (subscription, no API key)</span>
           <span className="text-xs text-muted-foreground">
             Runs your <strong>default agent</strong> headlessly on its existing subscription — no
-            key. Consumes that plan's quota/rate limits. Only agents with a verified headless mode
-            work (Claude Code today).
+            key. Consumes that plan's quota/rate limits. Verified for all four agents (Claude Code,
+            Codex, OpenCode, Pi).
           </span>
         </label>
       </div>

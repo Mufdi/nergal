@@ -505,12 +505,30 @@ pub type EventSink = tokio::sync::mpsc::UnboundedSender<crate::hooks::events::Ho
 
 /// A verified non-interactive print invocation for a self-contained prompt,
 /// used by the opt-in summarizer (MCP phase 6). The prompt is appended as the
-/// final argument after [`args`](Self::args).
+/// final argument after [`args`](Self::args); [`output`](Self::output) says
+/// how to recover the agent's answer from the run.
 #[derive(Debug, Clone)]
 pub struct HeadlessPrintCommand {
     pub binary: String,
     /// Flags placed before the single prompt argument.
     pub args: Vec<String>,
+    pub output: HeadlessOutput,
+}
+
+/// How the summarizer recovers the agent's answer — agents differ in whether
+/// stdout is clean or carries a banner/event stream.
+#[derive(Debug, Clone)]
+pub enum HeadlessOutput {
+    /// Trimmed stdout is the answer (clean). Claude Code, Pi.
+    Stdout,
+    /// The agent writes only its final message to a file named by appending
+    /// `<flag> <tmp_path>` to the args; the summarizer reads that file and
+    /// ignores the banner on stdout. Codex (`--output-last-message`).
+    LastMessageFile { flag: String },
+    /// stdout is JSONL: concatenate `part.text` of every `{"type":"text"}`
+    /// event, and sum `part.tokens.total` from any `step_finish`. OpenCode
+    /// (`run --format json`).
+    OpencodeJsonl,
 }
 
 /// Adapter trait. Every supported agent CLI implements this.

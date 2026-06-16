@@ -261,37 +261,64 @@ fn strip_script_ext(s: &str) -> &str {
     s
 }
 
+const INTERPRETERS: &[&str] = &[
+    "node", "python", "python3", "python2", "ruby", "deno", "bun", "php", "sh", "bash",
+];
+
+/// Pure label resolution from a process's parts, so the heuristic is testable
+/// without a live `/proc`. `exe_base` is the basename of `/proc/<pid>/exe`'s
+/// readlink target; `comm` is the (truncated) kernel name. Returns `None` only
+/// when there is no arg0 to work from.
+fn resolve_label(args: &[String], exe_base: Option<&str>, comm: Option<&str>) -> Option<String> {
+    let arg0 = args.first()?;
+    let base = basename(arg0);
+    if INTERPRETERS.contains(&base) {
+        // Skip flags and `-m`; the first plain arg is the script/module.
+        for a in args.iter().skip(1) {
+            if a.starts_with('-') {
+                continue;
+            }
+            return Some(strip_script_ext(basename(a)).to_string());
+        }
+    }
+    // Chromium/Electron apps (Discord, Slack, VSCode, Chrome) re-exec through
+    // their sandbox helper with arg0 = `/proc/self/exe`, whose basename is the
+    // literal "exe". Resolve the real binary via `/proc/<pid>/exe`, then `comm`.
+    if base == "exe" {
+        if let Some(e) = exe_base.filter(|e| !e.is_empty() && *e != "exe") {
+            return Some(strip_script_ext(e).to_string());
+        }
+        if let Some(c) = comm.filter(|c| !c.is_empty()) {
+            return Some(c.to_string());
+        }
+    }
+    Some(strip_script_ext(base).to_string())
+}
+
 /// A human label for a process from its full cmdline (not the 15-char,
 /// thread-name-leaking `comm`). For an interpreter (node/python/…) the label is
 /// the script/module it runs (`node …/vite` → `vite`), otherwise arg0's
 /// basename. Falls back to `comm`.
 fn process_label(pid: u32) -> String {
-    const INTERPRETERS: &[&str] = &[
-        "node", "python", "python3", "python2", "ruby", "deno", "bun", "php", "sh", "bash",
-    ];
+    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm"))
+        .ok()
+        .map(|s| s.trim().to_string());
     if let Ok(raw) = std::fs::read(format!("/proc/{pid}/cmdline")) {
         let args: Vec<String> = raw
             .split(|&b| b == 0)
             .filter(|s| !s.is_empty())
             .map(|s| String::from_utf8_lossy(s).into_owned())
             .collect();
-        if let Some(arg0) = args.first() {
-            let base = basename(arg0);
-            if INTERPRETERS.contains(&base) {
-                // Skip flags and `-m`; the first plain arg is the script/module.
-                for a in args.iter().skip(1) {
-                    if a.starts_with('-') {
-                        continue;
-                    }
-                    return strip_script_ext(basename(a)).to_string();
-                }
-            }
-            return strip_script_ext(base).to_string();
+        let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok();
+        let exe_base = exe
+            .as_deref()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str());
+        if let Some(label) = resolve_label(&args, exe_base, comm.as_deref()) {
+            return label;
         }
     }
-    std::fs::read_to_string(format!("/proc/{pid}/comm"))
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|_| "unknown".into())
+    comm.unwrap_or_else(|| "unknown".into())
 }
 
 /// The working-directory basename of a process — usually the project folder.
@@ -540,6 +567,55 @@ mod tests {
         let out3 = apply_hysteresis(&[], &out2, &mut streaks);
         assert!(out3.is_empty());
         assert!(streaks.is_empty());
+    }
+
+    fn argv(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn label_uses_arg0_basename_for_plain_binary() {
+        let args = argv(&["/usr/bin/postgres", "-D", "/var/lib/pg"]);
+        assert_eq!(
+            resolve_label(&args, None, None).as_deref(),
+            Some("postgres")
+        );
+    }
+
+    #[test]
+    fn label_resolves_interpreter_script() {
+        let args = argv(&["/usr/bin/node", "/app/node_modules/.bin/vite.js"]);
+        assert_eq!(resolve_label(&args, None, None).as_deref(), Some("vite"));
+    }
+
+    #[test]
+    fn label_resolves_chromium_exe_via_readlink() {
+        // Discord/Electron: arg0 = /proc/self/exe → basename "exe".
+        let args = argv(&["/proc/self/exe", "--type=renderer"]);
+        let exe_base = Some("Discord");
+        assert_eq!(
+            resolve_label(&args, exe_base, Some("Discord")).as_deref(),
+            Some("Discord")
+        );
+    }
+
+    #[test]
+    fn label_falls_back_to_comm_when_exe_unresolvable() {
+        // exe readlink failed (None) or itself reads "exe" — use comm.
+        let args = argv(&["/proc/self/exe", "--type=gpu-process"]);
+        assert_eq!(
+            resolve_label(&args, None, Some("slack")).as_deref(),
+            Some("slack")
+        );
+        assert_eq!(
+            resolve_label(&args, Some("exe"), Some("slack")).as_deref(),
+            Some("slack")
+        );
+    }
+
+    #[test]
+    fn label_none_without_arg0() {
+        assert_eq!(resolve_label(&[], Some("x"), Some("y")), None);
     }
 
     #[test]

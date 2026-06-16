@@ -114,3 +114,85 @@ CC injects `CLAUDE_CODE_SESSION_ID` + `CLAUDECODE=1` into stdio MCP server env (
 **[Risk] AI summary cost/privacy** → Off by default, per-project override, cheap model, dedicated configured key (no agent-auth reuse), SQLite row only when enabled, nothing read/invoked when disabled.
 
 **[Trace] Tests** → JSON-RPC dispatch, transport framing (fragmented/oversized/zero-length), the identity-validation table (valid env id matching a live session / invalid id → unidentified / connect-before-register → lazy resolve), the disabled-daemon error path, and descriptor assembly are pure or near-pure and MUST have unit tests (not manual-only). See tasks §8.
+
+## Revision 1: lazy summary generation (pull), historical read, FK cleanup (2026-06-16)
+
+**What revealed the gap**: with phase 6 live (commits `7f32021`→`b19c956`), the `Stop`-triggered runner (Decision 5 §Refresh) generates a summary on **every** turn whose `Stop` clears the 60s debounce — i.e. one LLM call per normal turn, regardless of whether any observer ever reads it. That is speculative spend on the user's subscription quota and contradicts this change's own thesis that **MCP resolves the pull, not the push**. The original `session-summary` intent (opt-in AI recaps surfaced in the directory) is **unchanged**; only the *refresh trigger* and *storage cleanup* are corrected, so this is an in-place revision per the `config.yaml` Mid-implementation-revision rule, not a new change.
+
+### Decision R1.1 — Generation is pull-based (on read), not push-based (on Stop)
+
+**Decision**: `Stop` no longer invokes the summarizer. It performs a **cheap, LLM-free upsert** of `(transcript_path, last_stop_at)` into a durable marker table. Generation is triggered from the **read path**, and only by `get_session` (the intentional single-session drill-in) — never by `list_sessions`. A read serves the last persisted summary immediately (stale-while-revalidate); if the session is *dirty* (`last_stop_at > session_summaries.updated_at`, or no row) and no run is in flight, the read spawns generation detached and returns the current value (stale or null) without blocking.
+
+**Dirty definition**: `dirty := no summary row OR last_stop_at > summary.updated_at`. This subsumes the "skip if transcript unchanged" guard — an unchanged session is never dirty.
+
+**Single-flight ordering (iprev round 1, #7)**: two concurrent `get_session`s on the same dirty session both pass the outer dirty test, so correctness rests entirely on the runner's gate ordering. The runner SHALL **insert into the in-flight set first** (the authoritative `insert()`-returns-false gate, `runner.rs:81`), then re-read dirty *under that guard*, and bail if not dirty or already in flight. Outer dirty checks in the read path are an optimization only; the in-flight insert is the sole correctness gate.
+
+**Debounce arms on spawn, not only on success (iprev round 1, critical #3)**: phase 6 stamped `last_run` only in the `Ok` arm (`runner.rs:106`). Under the old Stop trigger that was bounded by turn rate; under pull the trigger is caller-controlled, so a `get_session` poll on a dead session whose generation *always fails* (rotated/missing 7-day-old transcript) would re-spawn an LLM call on every read — single-flight only serializes, the semaphore only caps concurrency, neither caps **rate**. The debounce SHALL be stamped **at spawn time** (before the await), independent of success/failure, so a failing session is rate-limited identically to a succeeding one.
+
+**Gate ordering pins the rate-cap for always-dirty sessions (iprev round 2, #2)**: a summaries-disabled project never gets a `session_summaries` row, so `dirty := no row` is permanently true for all its sessions; likewise a perpetually-failing transcript. If the debounce were checked only *after* the async prelude (`Config::load()` + locks), a `get_session` loop over such sessions would churn that prelude every read. The runner SHALL therefore order the gates: **(1) debounce check first** — a cheap `last_run` DashMap read; bail without spawning if inside the window — **(2) in-flight `insert()`** (the sole correctness gate, bail if already present), **(3) stamp `last_run`**, **(4) spawn detached**, **(5) inside the task: load config, resolve backend/project, re-read dirty; if Off or clean, drop**. Steps 1-3 are cheap and synchronous-but-lock-light (DashMap only, no `Config::load`, no DB lock); the expensive prelude lives in step 5 inside the spawn. This caps *both* the disabled-project path and the failing-transcript path to one attempt per debounce window.
+
+**Consumed-timestamp stamping closes a mid-generation-Stop gap (iprev round 2, #1)**: phase 6 stamps `summary.updated_at = now` on completion. With `dirty := last_stop_at > updated_at`, a Stop that lands *while generation is running* is lost: Stop@T1 → read spawns gen → Stop@T2.5 (marker `last_stop_at=T2.5`) → gen finishes@T3 stamping `updated_at=T3`; now `T2.5 < T3` ⇒ not dirty, and if the session then dies the T2.5 turn is never summarized while `summary_stale=false` *lies*. Fix: the runner SHALL capture the marker's `last_stop_at` **at generation start** (the "consumed" value) and stamp `summary.updated_at` to **that consumed value**, not wall-clock `now`. Then a Stop arriving mid-generation advances `last_stop_at` beyond the consumed value ⇒ `last_stop_at > updated_at` stays true ⇒ still dirty ⇒ the next read regenerates and picks up the final turn. This requires `set_session_summary` to take the consumed timestamp instead of computing `now_secs()` internally.
+
+**Why `get_session` only, never `list_sessions`**: `list_sessions` returns every session; triggering generation for each dirty one would re-create the push burst under another name (a directory poll → N LLM calls). `list_sessions` therefore serves **cache only**. Bounding generation to explicit single-session reads caps cost to "one LLM call per session a caller actually drills into, max once per debounce window."
+
+**Alternatives considered**:
+- *(a) Keep push, add a rate-cap (1 per N min / every K turns)*. Rejected: still speculative — generates for sessions no one reads. A band-aid on the wrong trigger.
+- *(b) Generate only when a future `cross-session-messaging` send occurs*. Not an alternative but a **subset**: a `send_to_session` is just one more reader that trips the same lazy path. Folding it in now would couple this fix to an unbuilt change; the lazy mechanism already covers it for free.
+- *(c) On-read synchronous generation (block the read until fresh)*. Rejected: violates the existing "directory read never blocks on summarization" requirement. SWR keeps reads cheap.
+
+**Trade-off**: the first `get_session` after each turn returns a stale-or-null summary while regeneration runs in the background. Accepted — the entire premise of cross-session summaries is that reads are rare relative to turns, so the amortized cost collapses toward zero in a solo workflow (no cross-reads → no generation).
+
+### Decision R1.2 — Historical read of recent dead sessions (read-contract widening)
+
+**Decision**: `get_session` / `list_sessions` surface not only live sessions but also **recently-dead** ones (a session with a `last_stop_at` inside a recency window, default 7 days, configurable). The descriptor gains `is_live: bool` so a caller can tell a running session from a recalled one, and `summary_stale: bool` so it knows whether the served summary predates the latest activity. For a dead session, `get_session` can still trigger lazy generation because the transcript JSONL persists on disk and its path is the durable marker from R1.1.
+
+**Why**: the highest-value summary case is *"I need context from a session I worked yesterday and is not running now"*. Under the live-only gate that session is invisible even though its transcript (and possibly its summary) exists. Pure-lazy makes this worse — a session that died unread never got summarized — so the durable transcript pointer (R1.3) is what lets a first read generate from disk on demand.
+
+**Security note (why this rides the iprev + security review)**: widening the read surface stays **within the same uid trust boundary** (Decision 2 + 2b — the 0600 socket + uid check are unchanged; all sessions belong to one user). It does **not** cross a boundary, but it does enlarge the *data* a same-uid caller can pull (historical transcripts get summarized on read) and it makes a read carry a **side effect** (spawn an LLM). Amplification is capped structurally: per-session debounce + single-flight (carried over) + a **global generation semaphore** (max ~2 concurrent) + the `get_session`-only rule. A scripted `get_session` loop over N dead sessions is bounded by these, not unbounded.
+
+**Degraded descriptor for restarted dead sessions (iprev round 1, #6)**: `descriptor_from` pulls `mode`/`last_activity`/`waiting_for`/`recently_touched_files`/`background_tasks`/`last_assistant_message` from the in-memory `AgentRuntimeState` side-maps, which are **empty** for a session not seen since daemon start (falls back to the frozen DB row, `directory.rs:142`). So a yesterday-session after an app restart returns `is_live:false`, a stale DB `mode`, empty activity fields, and only `summary` (regenerated from transcript) + `git_branch` (persisted column) carry meaning. This is acceptable degradation but SHALL be **documented** in the descriptor contract (session-directory spec) so callers don't read empty fields as "nothing happened."
+
+**Marker is unconditional, summaries stay opt-in (iprev round 1, #9)**: the `session_transcripts` upsert on `Stop` is LLM-free and runs for **every** session regardless of the summary opt-in, so a transcript path is persisted even for projects with summaries disabled. This does **not** contradict the "No row when disabled" requirement (which constrains `session_summaries`, not the marker) — but it is called out so a reviewer doesn't read it as a contradiction. The marker is a cheap pointer (path + timestamp), not transcript content.
+
+**Snapshot-then-release on the read path (iprev round 1, critical #5)**: the runner's synchronous prelude — `Config::load()` (a filesystem read, `runner.rs:63`) plus `db.lock()` for `find_session`/`workspace_repo_path` — must NOT run on the MCP read path before returning, or it violates the existing "Snapshot-then-release assembly (no reactor stalls)" requirement (Decision 3). The pull entrypoint SHALL return the cached summary first and do **all** FS/lock work (config load, project resolution, dirty re-check) **inside the detached `async move`**, not before the spawn. `list_sessions`'s `last_stop_at` inclusion + `summary_stale` data SHALL come from a **bulk** `get_all_session_transcripts()` read folded into the existing owned snapshot (parallel to `get_all_session_summaries()`, `directory.rs:73`), never an N+1 per-row query under the lock.
+
+**Alternatives considered**:
+- *Keep live-only (Scope A)*. Rejected by the user: leaves the yesterday-session case unsolved, which is the motivating scenario.
+- *Surface all dead sessions, unbounded*. Rejected: a recency window keeps the directory legible and bounds how far back a read can reach to summarize.
+
+### Decision R1.3 — Durable dirty marker + FK-cascade cleanup (corrects a phase-6 leak)
+
+**Decision**: persist the marker in a new table `session_transcripts(session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE, transcript_path TEXT NOT NULL, last_stop_at INTEGER NOT NULL)` (migration 022). The marker must be **durable** (SQLite, not the in-memory `AgentRuntimeState` side-map) precisely so a dead session can still be located and summarized after the app restarts. The same migration **rebuilds `session_summaries` to add the FK it shipped without** — phase 6's `021` created `session_summaries(session_id PK, …)` with **no** `REFERENCES sessions(id)`, so `delete_session` (`DELETE FROM sessions`) orphans the summary row forever. SQLite has no `ALTER TABLE ADD CONSTRAINT`, so 022 recreates the table with the FK. `PRAGMA foreign_keys=ON` is already set on every connection (`db.rs:135,152,1212`), so cascade fires.
+
+**Migration mechanics (iprev round 1, critical #1 + #2)** — the rebuild must survive the dev's own already-orphaned DB and a partial-failure re-run:
+
+1. **Atomic + idempotent.** The migration runner (`db.rs:200`) calls `execute_batch(sql)` with **no enclosing transaction** and only bumps `schema_version` after `Ok`. A multi-statement rebuild that partially applies would leave `session_summaries_new` behind and re-running from `schema_version=21` would hit "table already exists" → permanent boot failure. So 022 SHALL: open with `DROP TABLE IF EXISTS session_summaries_new;` at the head, and wrap the rebuild in `BEGIN; … COMMIT;` (SQLite DDL is transactional). Renaming a child table under `foreign_keys=ON` is safe here because nothing references `session_summaries`, so no `PRAGMA foreign_keys=OFF` dance is needed — but atomicity is mandatory.
+2. **Filter orphans in the copy.** The leak this revision fixes already produced orphan rows (every `delete_session` since `7f32021`). With immediate (non-deferred) FK enforcement, a blind `INSERT … SELECT *` of an orphan row → `FOREIGN KEY constraint failed` → the migration that fixes orphans chokes on them. The copy SHALL be `INSERT INTO session_summaries_new SELECT * FROM session_summaries WHERE session_id IN (SELECT id FROM sessions)` — orphans are dropped (harmless: summaries are regenerable under R1.1).
+
+**Explicit columns in the copy, not `SELECT *` (iprev round 2, #3)**: a table rebuild that copies via `SELECT *` maps by column *position*; if the new `CREATE TABLE` ever lists columns in a different order than the old (easy when hand-adding the FK line), values land in the wrong columns with no error. The copy SHALL name columns on both sides.
+
+**Self-managed transaction, commented (iprev round 2, #5)**: `execute_batch` runs with no enclosing transaction and SQLite does not auto-rollback a mid-batch statement error, so 022 manages its own `BEGIN…COMMIT`. A leading comment in the `.sql` SHALL state this, to guard against a future change wrapping the migration runner in its own transaction (which would make the embedded `BEGIN` fail with "cannot start a transaction within a transaction"). Recovery on partial failure relies on next-boot `DROP TABLE IF EXISTS session_summaries_new`.
+
+Final shape:
+```sql
+-- 022 manages its own transaction (the migration runner uses execute_batch with no enclosing txn).
+DROP TABLE IF EXISTS session_summaries_new;
+BEGIN;
+CREATE TABLE session_summaries_new(
+  session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+  summary TEXT NOT NULL, model TEXT, token_cost INTEGER, updated_at INTEGER NOT NULL);
+INSERT INTO session_summaries_new (session_id, summary, model, token_cost, updated_at)
+  SELECT session_id, summary, model, token_cost, updated_at FROM session_summaries
+  WHERE session_id IN (SELECT id FROM sessions);
+DROP TABLE session_summaries;
+ALTER TABLE session_summaries_new RENAME TO session_summaries;
+COMMIT;
+```
+
+**Why FK over a manual `DELETE`**: the codebase's established pattern is `REFERENCES … ON DELETE CASCADE` (annotations `003`, obsidian `008`, clickup `015`). A declarative FK cleans up on **both** delete paths for free — direct `delete_session` and workspace deletion cascading `workspaces → sessions → {summaries, transcripts}`. An imperative `DELETE FROM session_summaries WHERE session_id=?` inside `delete_session` would be a patch that (a) diverges from the pattern and (b) misses the workspace-cascade path. Root-cause over patch.
+
+**Write-after-delete (iprev round 1, #8)**: under R1.2 a generation can be in flight for a recently-dead session the user then deletes; the spawned `set_session_summary` then hits the FK and errors. This is **intended** — it is caught and logged best-effort (`runner.rs:102`), converting the old *silent orphan* into a *silent logged FK error*, no crash. Covered by a test (task 9.8).
+
+**Alternatives considered**:
+- *Add columns to `sessions` instead of a new table*. Rejected: `last_stop_at`/`transcript_path` are summary-subsystem state, not core session identity; a dedicated table keeps the concern isolated and its FK self-documenting. (Reversible if it later proves chatty.)
+- *Keep the marker in the runtime side-map only*. Rejected: dies on app restart, so a dead session could never be summarized after a restart — defeats R1.2.

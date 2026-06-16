@@ -11,12 +11,25 @@ use crate::tasks::{Task, TaskStatus};
 
 /// Persisted AI session summary (phase 6). A row exists only when summaries
 /// are enabled for the session's project; absence means never-summarized.
+///
+/// `updated_at` denotes the **activity covered through** (the consumed
+/// `last_stop_at`), not the generation wall-clock — so the dirty check
+/// (`last_stop_at > updated_at`) stays correct when a Stop lands mid-generation.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SessionSummary {
     pub summary: String,
     pub model: Option<String>,
     pub token_cost: Option<i64>,
     pub updated_at: u64,
+}
+
+/// Durable pull-marker for lazy summary generation (Revision 1). Written cheaply
+/// (no LLM) on every `Stop`; lets the read path locate a session's transcript
+/// (live or recently-dead) and decide dirtiness.
+#[derive(Debug, Clone)]
+pub struct SessionTranscript {
+    pub transcript_path: String,
+    pub last_stop_at: u64,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -195,6 +208,7 @@ impl Database {
             include_str!("../migrations/019_clickup_closed_out.sql"),
             include_str!("../migrations/020_clickup_status_type.sql"),
             include_str!("../migrations/021_session_summaries.sql"),
+            include_str!("../migrations/022_session_transcripts.sql"),
         ];
 
         for (i, sql) in migrations.iter().enumerate() {
@@ -460,12 +474,18 @@ impl Database {
 
     /// Upsert the AI summary for a session (phase 6). A row exists only when
     /// summaries are enabled for the session's project.
+    ///
+    /// `updated_at` is the **consumed** activity timestamp (the marker's
+    /// `last_stop_at` at generation start), NOT wall-clock now — passed in by
+    /// the runner so a Stop that lands mid-generation keeps the session dirty
+    /// (`last_stop_at > updated_at`) and the final turn is not lost.
     pub fn set_session_summary(
         &self,
         session_id: &str,
         summary: &str,
         model: Option<&str>,
         token_cost: Option<i64>,
+        updated_at: u64,
     ) -> Result<()> {
         self.conn.execute(
             "INSERT INTO session_summaries (session_id, summary, model, token_cost, updated_at)
@@ -475,9 +495,73 @@ impl Database {
                model = excluded.model,
                token_cost = excluded.token_cost,
                updated_at = excluded.updated_at",
-            params![session_id, summary, model, token_cost, now_secs()],
+            params![session_id, summary, model, token_cost, updated_at],
         )?;
         Ok(())
+    }
+
+    /// Upsert the durable pull-marker for a session (Revision 1). Cheap, LLM-free,
+    /// written on every `Stop` regardless of the summary opt-in.
+    pub fn set_session_transcript(
+        &self,
+        session_id: &str,
+        transcript_path: &str,
+        last_stop_at: u64,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO session_transcripts (session_id, transcript_path, last_stop_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(session_id) DO UPDATE SET
+               transcript_path = excluded.transcript_path,
+               last_stop_at = excluded.last_stop_at",
+            params![session_id, transcript_path, last_stop_at],
+        )?;
+        Ok(())
+    }
+
+    /// Read a session's pull-marker, or `None` when it never produced a `Stop`.
+    pub fn get_session_transcript(&self, session_id: &str) -> Result<Option<SessionTranscript>> {
+        let result = self.conn.query_row(
+            "SELECT transcript_path, last_stop_at FROM session_transcripts WHERE session_id = ?1",
+            [session_id],
+            |row| {
+                Ok(SessionTranscript {
+                    transcript_path: row.get(0)?,
+                    last_stop_at: row.get(1)?,
+                })
+            },
+        );
+        match result {
+            Ok(t) => Ok(Some(t)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// All pull-markers keyed by session id. Folded into the MCP directory
+    /// snapshot (parallel to `get_all_session_summaries`) so `list_sessions`
+    /// resolves every session's `last_stop_at` in one query under the brief lock.
+    pub fn get_all_session_transcripts(
+        &self,
+    ) -> Result<std::collections::HashMap<String, SessionTranscript>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT session_id, transcript_path, last_stop_at FROM session_transcripts")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                SessionTranscript {
+                    transcript_path: row.get(1)?,
+                    last_stop_at: row.get(2)?,
+                },
+            ))
+        })?;
+        let mut map = std::collections::HashMap::new();
+        for r in rows {
+            let (id, t) = r?;
+            map.insert(id, t);
+        }
+        Ok(map)
     }
 
     /// All session summaries keyed by session id. Used to enrich the MCP
@@ -1277,23 +1361,123 @@ mod tests {
         assert!(db.get_session_summary("s1").unwrap().is_none());
         assert!(db.get_all_session_summaries().unwrap().is_empty());
 
-        db.set_session_summary("s1", "did the thing", Some("gpt-4o-mini"), Some(123))
+        db.set_session_summary("s1", "did the thing", Some("gpt-4o-mini"), Some(123), 100)
             .unwrap();
         let got = db.get_session_summary("s1").unwrap().unwrap();
         assert_eq!(got.summary, "did the thing");
         assert_eq!(got.model.as_deref(), Some("gpt-4o-mini"));
         assert_eq!(got.token_cost, Some(123));
+        assert_eq!(got.updated_at, 100, "consumed timestamp stored verbatim");
 
         // Upsert overwrites; agent-CLI backend reports no token cost.
-        db.set_session_summary("s1", "did it again", Some("claude"), None)
+        db.set_session_summary("s1", "did it again", Some("claude"), None, 200)
             .unwrap();
         let got = db.get_session_summary("s1").unwrap().unwrap();
         assert_eq!(got.summary, "did it again");
         assert_eq!(got.token_cost, None);
+        assert_eq!(got.updated_at, 200);
 
         let all = db.get_all_session_summaries().unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all.get("s1").unwrap().summary, "did it again");
+    }
+
+    #[test]
+    fn session_transcript_round_trips_and_upserts() {
+        let db = in_memory();
+        seed_session(&db, "s1");
+        assert!(db.get_session_transcript("s1").unwrap().is_none());
+        assert!(db.get_all_session_transcripts().unwrap().is_empty());
+
+        db.set_session_transcript("s1", "/tmp/a.jsonl", 50).unwrap();
+        let got = db.get_session_transcript("s1").unwrap().unwrap();
+        assert_eq!(got.transcript_path, "/tmp/a.jsonl");
+        assert_eq!(got.last_stop_at, 50);
+
+        // Upsert advances the marker.
+        db.set_session_transcript("s1", "/tmp/a.jsonl", 75).unwrap();
+        assert_eq!(
+            db.get_session_transcript("s1")
+                .unwrap()
+                .unwrap()
+                .last_stop_at,
+            75
+        );
+        assert_eq!(db.get_all_session_transcripts().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn deleting_session_cascades_summary_and_transcript() {
+        let db = in_memory();
+        seed_session(&db, "s1");
+        db.set_session_summary("s1", "recap", None, None, 10)
+            .unwrap();
+        db.set_session_transcript("s1", "/tmp/s1.jsonl", 10)
+            .unwrap();
+
+        db.delete_session("s1").unwrap();
+
+        // FK ON DELETE CASCADE removes both companion rows — no orphans.
+        assert!(db.get_session_summary("s1").unwrap().is_none());
+        assert!(db.get_session_transcript("s1").unwrap().is_none());
+    }
+
+    #[test]
+    fn migration_022_drops_orphan_summaries_on_rebuild() {
+        // Simulate the 021 leak on a pre-022 DB: a summary row whose session was
+        // deleted while 021 had no FK. 022's orphan-filtered copy must complete
+        // and drop it (a blind SELECT * would FK-violate and abort).
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        let db = Database { conn };
+        // Apply only the prefix needed (001 creates sessions; 021 the FK-less
+        // session_summaries), then inject an orphan as the 021 leak would.
+        db.conn
+            .execute_batch(include_str!("../migrations/001_initial.sql"))
+            .unwrap();
+        db.conn
+            .execute_batch(include_str!("../migrations/021_session_summaries.sql"))
+            .unwrap();
+        // Orphan: summary with no matching session row.
+        db.conn
+            .execute(
+                "INSERT INTO session_summaries (session_id, summary, model, token_cost, updated_at)
+                 VALUES ('ghost', 'orphan recap', NULL, NULL, 1)",
+                [],
+            )
+            .unwrap();
+        // Now run 022.
+        db.conn
+            .execute_batch(include_str!("../migrations/022_session_transcripts.sql"))
+            .unwrap();
+        // The orphan is gone and the table now carries the FK.
+        let count: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM session_summaries WHERE session_id = 'ghost'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "orphan summary dropped by 022 copy filter");
+    }
+
+    #[test]
+    fn migration_022_is_idempotent_after_partial_apply() {
+        // Simulate a partial 022 apply: a leftover session_summaries_new from a
+        // crash mid-rebuild. The DROP IF EXISTS at the head must let 022 re-run.
+        let db = in_memory(); // already at 022
+        db.conn
+            .execute_batch("CREATE TABLE session_summaries_new (x INTEGER)")
+            .unwrap();
+        // Re-running 022 must not error ("table already exists").
+        db.conn
+            .execute_batch(include_str!("../migrations/022_session_transcripts.sql"))
+            .unwrap();
+        // session_summaries still usable after the re-run.
+        seed_session(&db, "s1");
+        db.set_session_summary("s1", "ok", None, None, 5).unwrap();
+        assert_eq!(db.get_session_summary("s1").unwrap().unwrap().summary, "ok");
     }
 
     #[test]

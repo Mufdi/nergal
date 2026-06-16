@@ -118,7 +118,7 @@ pub enum SummaryBackend {
 /// deliberately absent — it is stored in the OS keyring, never serialized
 /// here. Per-project opt-out lets a user enable summaries globally yet exclude
 /// specific repositories.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SummaryConfig {
     #[serde(default)]
     pub backend: SummaryBackend,
@@ -136,6 +136,28 @@ pub struct SummaryConfig {
     /// backend is enabled globally (per-project override).
     #[serde(default)]
     pub disabled_projects: Vec<String>,
+    /// Days a non-live session stays visible in the MCP directory and remains
+    /// summarizable on demand (Revision 1). `0` means live-only. Backend-owned
+    /// (inside `summary`, discarded from the frontend save payload).
+    #[serde(default = "default_history_window_days")]
+    pub history_window_days: u64,
+}
+
+fn default_history_window_days() -> u64 {
+    7
+}
+
+impl Default for SummaryConfig {
+    fn default() -> Self {
+        Self {
+            backend: SummaryBackend::default(),
+            agent_command: None,
+            api_base_url: None,
+            api_model: None,
+            disabled_projects: Vec::new(),
+            history_window_days: default_history_window_days(),
+        }
+    }
 }
 
 /// Custom theme — forked from a builtin via Settings → Appearance →

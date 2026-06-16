@@ -534,9 +534,30 @@ fn process_event(
         let csid = cluihud_session_id.unwrap_or(session_id);
         agent_state.set_session_background(csid, background_tasks.clone(), session_crons.clone());
         agent_state.set_session_last_message(csid, last_assistant_message.clone());
-        // Opt-in AI summary (phase 6): no-op unless a backend is enabled for
-        // this session's project. Detached + debounced; never blocks the hook.
-        crate::mcp::summary::runner::maybe_spawn(db, agent_state, csid, transcript_path.as_deref());
+        // Pull-based summaries (Revision 1): `Stop` only writes the cheap,
+        // LLM-free pull-marker (transcript path + activity timestamp). Actual
+        // generation is triggered lazily by `get_session` on the read path.
+        // Written unconditionally (independent of the summary opt-in) since the
+        // marker is just a pointer; `get_session` gates on the backend.
+        //
+        // Guard the path: the marker drives an on-demand file read fed to an LLM
+        // backend, so reject anything that is not a `.jsonl` transcript. All four
+        // adapters write `.jsonl` transcripts, so this never rejects a real one;
+        // it blocks a crafted same-uid hook payload from steering the summarizer
+        // at an arbitrary file (e.g. a secret) for exfiltration.
+        if let Some(path) = transcript_path.as_deref()
+            && path.ends_with(".jsonl")
+        {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            if let Ok(guard) = db.lock()
+                && let Err(e) = guard.set_session_transcript(csid, path, now)
+            {
+                tracing::warn!(session_id = %csid, "persisting pull-marker failed: {e:#}");
+            }
+        }
     }
 
     // Resolve the owning adapter for this session (cache → DB-fallback path

@@ -59,9 +59,11 @@ The two modes SHALL NOT be active simultaneously. The runner SHALL NOT silently 
 - **WHEN** a backend is enabled but it cannot run (agent CLI missing/unauthenticated, or key/endpoint unreachable)
 - **THEN** the runner SHALL fail gracefully (no summary, logged), without blocking directory reads
 
-### Requirement: SQLite-backed summary storage via migration
+### Requirement: SQLite-backed summary storage via migration, FK-cascaded
 
-Summaries SHALL be persisted in SQLite via a migration under `src-tauri/migrations/` (registered in `db.rs`), in a table `session_summaries(session_id TEXT PRIMARY KEY, summary TEXT NOT NULL, model TEXT, token_cost INTEGER, updated_at INTEGER NOT NULL)`. A summary row SHALL exist only when summaries are enabled for that session's project.
+Summaries SHALL be persisted in SQLite via a migration under `src-tauri/migrations/` (registered in `db.rs`), in a table `session_summaries(session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE, summary TEXT NOT NULL, model TEXT, token_cost INTEGER, updated_at INTEGER NOT NULL)`. The `session_id` column SHALL carry a foreign key to `sessions(id)` with `ON DELETE CASCADE` so a deleted session leaves no orphan summary row. A summary row SHALL exist only when summaries are enabled for that session's project.
+
+The durable pull-marker that drives lazy generation (see "Pull-based refresh, historical read, non-blocking") SHALL live in a companion table `session_transcripts(session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE, transcript_path TEXT NOT NULL, last_stop_at INTEGER NOT NULL)`, also FK-cascaded. Both tables SHALL be cleaned up by foreign-key cascade — directly on session deletion and transitively on workspace deletion (`workspaces → sessions → {summaries, transcripts}`) — never by an imperative `DELETE` in the deletion path.
 
 #### Scenario: Summary persisted across restart
 
@@ -73,16 +75,47 @@ Summaries SHALL be persisted in SQLite via a migration under `src-tauri/migratio
 - **WHEN** AI summaries are disabled for a project
 - **THEN** no `session_summaries` row SHALL be written for its sessions
 
-### Requirement: Refresh policy and non-blocking reads
+#### Scenario: Deleting a session removes its summary and marker
 
-The system SHALL refresh summaries on the `Stop` hook (debounced to avoid mid-turn summarization) and on demand, SHALL cap refresh frequency, and SHALL timestamp each summary. A directory read SHALL never wait on summarization; if no summary exists yet, `summary` SHALL be null.
+- **WHEN** a session is deleted (directly or via its workspace deletion)
+- **THEN** the foreign-key cascade SHALL remove its `session_summaries` and `session_transcripts` rows, leaving no orphaned data
 
-#### Scenario: Debounced on Stop
+### Requirement: Pull-based refresh, historical read, non-blocking
 
-- **WHEN** multiple `Stop` events arrive in quick succession for a session
-- **THEN** the summarizer SHALL run at most once per debounce window
+Summary generation SHALL be **pull-based**: triggered lazily by the read path, not eagerly on every `Stop`. The `Stop` hook SHALL NOT invoke the summarizer; it SHALL only perform a cheap, LLM-free upsert of the session's `(transcript_path, last_stop_at)` into the `session_transcripts` marker table. A session is **dirty** when it has no summary row, or when its `last_stop_at` is newer than its summary's `updated_at`.
+
+Lazy generation SHALL be triggered **only** by `get_session` (the intentional single-session read), never by `list_sessions` (which serves cached summaries only, to avoid a directory poll fanning out into one LLM call per session). When `get_session` resolves a dirty session that is not already being summarized, it SHALL spawn generation detached and return the currently-stored summary (stale or null) — stale-while-revalidate. A read SHALL never wait on summarization.
+
+Because the marker is durable, a **recently-dead** session (one whose `last_stop_at` is within the configured recency window) SHALL also be summarizable on demand: `get_session` SHALL generate from the persisted transcript path on disk even when the session is no longer live.
+
+Concurrency SHALL be bounded so a read with a side effect cannot amplify cost: a per-session debounce window, a per-session single-flight guard, and a process-wide generation semaphore (small fixed cap) SHALL all apply. Each summary SHALL be timestamped.
+
+#### Scenario: Stop does not generate, only marks
+
+- **WHEN** a `Stop` event arrives for a session with a backend enabled
+- **THEN** no model SHALL be invoked on the `Stop`; only the `session_transcripts` marker (`transcript_path`, `last_stop_at`) SHALL be upserted
+
+#### Scenario: get_session triggers lazy generation for a dirty session
+
+- **WHEN** `get_session` resolves a dirty session and no generation is in flight
+- **THEN** it SHALL spawn generation detached, return the current (stale or null) summary without blocking, and a subsequent read SHALL observe the refreshed summary
+
+#### Scenario: list_sessions never generates
+
+- **WHEN** `list_sessions` is called with one or more dirty sessions in the result
+- **THEN** it SHALL return their last-persisted (stale or null) summaries without triggering any generation
+
+#### Scenario: Recently-dead session summarized on demand
+
+- **WHEN** `get_session` resolves a non-live session whose `last_stop_at` is within the recency window and which is dirty
+- **THEN** it SHALL generate from the persisted transcript path on disk, the same as for a live session
+
+#### Scenario: Concurrent reads do not stampede
+
+- **WHEN** multiple reads target the same dirty session in quick succession
+- **THEN** the single-flight guard SHALL ensure at most one generation runs, and the debounce window SHALL cap how often a session re-summarizes
 
 #### Scenario: Read never blocks on summarization
 
-- **WHEN** a directory read occurs while a newer summary is still being generated
+- **WHEN** a read occurs while a newer summary is still being generated
 - **THEN** the read SHALL return the last persisted summary (or null) with its timestamp, without blocking

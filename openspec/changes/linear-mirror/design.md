@@ -165,6 +165,16 @@ Issue descriptions and comments are multi-writer untrusted input rendered in a W
 
 `linear:sync-status`, `linear:changed`, `linear:assigned` — the read-surface subset of the ClickUp event set (`linear:write-conflict` is reserved for `linear-writeback`).
 
+## Revision 2: live-feedback fixes + Linear-specific panel features (2026-06-16)
+
+Shipped after the user's live walk of the read-only panel. Backend on `main`, default-off, NOT released. Beyond the original spec:
+
+- **Poll scope default = all selected-team issues** (the 30-day window under-delivered; team selection already bounds volume — matches ClickUp's all-per-space). `linear_active_window_days` unset/0 = no window; a positive value re-enables the bounded scope for very large teams. Achieved by `window_start = 0` (the reconcile/eviction logic is unchanged; the window simply spans all time).
+- **In-app assign toast**: the daemon now emits the `linear:assigned` event (it previously only fired the OS `notify-send`).
+- **GraphQL fixes found via the live walk**: vocabulary fetched as 3 flat top-level queries (teams/workflowStates/issueLabels) — the nested `teams{states,labels}` query blew the 10k complexity cap (product of nested `first`s); `ISSUE_FIELDS` placeholder is now expanded before sending (was sent raw); assigned-to-me uses `assignee:{id:{eq:$viewerId}}` (confirmed pattern) not `isMe`; `paginate` surfaces fetch errors to the sync status instead of swallowing them into a silent empty list.
+- **UX parity with ClickUp**: sort (updated/created/priority/due, none/no-due last), copy identifier (Ctrl+C), expand/collapse-all (`E`), sub-issue index-cursor tree (chevron+Space) + detail back/forward (Ctrl+←/→), custom `Select` component, header-action keyboard nav.
+- **Linear-specific surface**: state groups ordered by workflow (type rank + position); estimate / due chip / assignee avatar / N-of-M sub-issue progress; floating-detail **attachments** (validated-URL chips) + typed **relations** (open related issue in history) via a new lazy `linear_issue_detail` command; **group-by cycle** (4th axis); **filter by labels** (multi-select popover). IssueView gained `estimate`/`statePosition`/`assigneeAvatarUrl`/`cycleName`/`createdAt`/`dueDate`/`description`.
+
 ## Out of scope (later changes)
 
 - Writes (status move, comments, assignee, description) → `linear-writeback`.

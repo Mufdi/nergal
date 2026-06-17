@@ -34,11 +34,15 @@
     { "type": "iprev-round", "n": 4, "result": "REVISE", "note": "all r3 fixed; 5 new: account-swap race, dead viewer backstop, set-3 4th outcome + label-strip, team-selection reset" },
     { "type": "iprev-round", "n": 5, "result": "APPROVED", "note": "key-generation epoch closes swap race structurally; residuals LOW (BEGIN IMMEDIATE note, notify-after-commit)" }
   ],
-  "status": "IMPLEMENTED (backend+frontend on main, default-off, NOT released); pending live walk (task 6.4, needs user key + running GUI) + build/install",
+  "status": "FEATURE-COMPLETE (backend+frontend on main, default-off, NOT released): read-only mirror + ClickUp UX parity + Linear-specific extras. PENDING live walk (needs user key + running GUI) + build/install. Changes #2/#3 NOT started.",
   "implementation_order": 1,
   "commits": [
     "149120c docs(openspec): plan (iprev-approved)",
     "07b64b7 feat(linear): mirror backend",
-    "3a4189c feat(linear): read-only panel + detail + settings"
+    "3a4189c feat(linear): read-only panel + detail + settings",
+    "b230f3c/59c2077/e6f5be3 fix: live-walk GraphQL fixes (complexity cap, ISSUE_FIELDS expand, assignee filter, error surfacing)",
+    "15d0407 fix: full team scope + in-app toast + Select + due sort",
+    "03cf4c8 feat: UX parity (sort/copy/expand-all/subtree/back-forward)",
+    "6fb0191 feat: Linear extras (state order, estimate/due/avatar/progress, attachments/relations, cycle group-by, label filter)"
   ]
 }

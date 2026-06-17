@@ -4,6 +4,7 @@ import {
   AlignLeft,
   ArrowDown,
   ArrowUp,
+  CalendarClock,
   CalendarPlus,
   ChevronsDownUp,
   ChevronsUpDown,
@@ -12,7 +13,6 @@ import {
   Clock,
   Flag,
   RotateCcw,
-  Type,
   UserCheck,
 } from "lucide-react";
 import { focusIfPanelZone } from "@/lib/panelFocus";
@@ -23,6 +23,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ProgressBar } from "@/components/ui/ProgressBar";
+import { Select } from "@/components/ui/select";
 import { StatusIcon } from "@/components/clickup/StatusIcon";
 import { PriorityIcon } from "@/components/clickup/PriorityIcon";
 import { zenModeAtom } from "@/stores/zenMode";
@@ -87,34 +88,31 @@ function sortKey(i: IssueView, field: LinearSortField): number {
     case "priority":
       // 0=none must sort last when ascending (urgent first); map 0 → 5.
       return i.priority === 0 ? 5 : i.priority;
-    case "title":
-      // Title sorts lexicographically — not numeric, handled in comparator.
-      return 0;
+    case "due":
+      // No due date sorts last when ascending (soonest first).
+      return i.dueDate ?? Number.MAX_SAFE_INTEGER;
   }
 }
 
-/// Sort picker buttons. Priority ascending = urgent first (asc on 1…4, none last).
+/// Sort picker buttons. Priority ascending = urgent first (asc on 1…4, none
+/// last); due ascending = soonest first (no-due last).
 const SORT_FIELDS: { field: LinearSortField; label: string; Icon: typeof Clock }[] = [
   { field: "updated", label: "Updated", Icon: Clock },
   { field: "created", label: "Created", Icon: CalendarPlus },
   { field: "priority", label: "Priority", Icon: Flag },
-  { field: "title", label: "Title", Icon: Type },
+  { field: "due", label: "Due date", Icon: CalendarClock },
 ];
 
 function defaultDirFor(field: LinearSortField): "asc" | "desc" {
-  // Priority ascending = urgent first; title ascending = A→Z; dates descending = newest first.
-  return field === "priority" || field === "title" ? "asc" : "desc";
+  // Priority ascending = urgent first; due ascending = soonest first; other
+  // dates descending = newest first.
+  return field === "priority" || field === "due" ? "asc" : "desc";
 }
 
 function compareIssues(a: IssueView, b: IssueView, field: LinearSortField, dir: "asc" | "desc"): number {
-  let base: number;
-  if (field === "title") {
-    base = a.title.localeCompare(b.title);
-  } else {
-    const ka = sortKey(a, field);
-    const kb = sortKey(b, field);
-    base = ka < kb ? -1 : ka > kb ? 1 : 0;
-  }
+  const ka = sortKey(a, field);
+  const kb = sortKey(b, field);
+  const base = ka < kb ? -1 : ka > kb ? 1 : 0;
   return dir === "asc" ? base : -base;
 }
 
@@ -432,7 +430,7 @@ export function LinearPanel() {
       const root = rootRef.current;
       const target = e.target as HTMLElement | null;
       if (!root || !target) return;
-      const sel = root.querySelector<HTMLElement>("select");
+      const sel = root.querySelector<HTMLElement>("[role='combobox'], select");
       if (!sel || target !== sel) return;
       e.preventDefault();
       e.stopPropagation();
@@ -462,7 +460,7 @@ export function LinearPanel() {
       const root = rootRef.current;
       const target = e.target as HTMLElement | null;
       if (!root || !target) return;
-      const sel = root.querySelector<HTMLElement>("select");
+      const sel = root.querySelector<HTMLElement>("[role='combobox'], select");
       const onSelect = target === sel;
       const headerBtn = target.closest<HTMLElement>("[data-header-action]");
       if (!onSelect && !headerBtn) return;
@@ -506,16 +504,12 @@ export function LinearPanel() {
 
         {/* Header: team selector + sort pickers + filter toggles */}
         <div className="flex shrink-0 items-center gap-1.5 border-b border-border/50 px-2 py-1.5">
-          <select
+          <Select
             value={teamFilter ?? ""}
-            onChange={(e) => setTeamFilter(e.target.value === "" ? null : e.target.value)}
-            className="h-6 flex-1 min-w-0 rounded border border-input bg-secondary/40 px-1.5 text-[11px] text-foreground/80 outline-none focus:ring-1 focus:ring-ring/50"
-          >
-            <option value="">Todos</option>
-            {teams.map((t) => (
-              <option key={t.id} value={t.id}>{t.name}</option>
-            ))}
-          </select>
+            onValueChange={(v) => setTeamFilter(v === "" ? null : v)}
+            options={[{ value: "", label: "Todos" }, ...teams.map((t) => ({ value: t.id, label: t.name }))]}
+            className="h-6 w-auto min-w-28 flex-1 px-2 py-0 text-[11px]"
+          />
 
           {/* Sort: one icon per field (click active field to flip dir) + reset-to-default */}
           {SORT_FIELDS.map(({ field, label, Icon }) => {

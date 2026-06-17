@@ -78,7 +78,7 @@ export const GROUP_BY_ORDER: LinearGroupBy[] = ["state", "project", "assignee"];
 /// Sort applied to issues within each group (and to nested sub-issue siblings).
 /// Linear priority int: 0=none,1=urgent,2=high,3=medium,4=low — "priority
 /// ascending" means urgent first, none last (mirrors ClickUp's sortKey null-last).
-export type LinearSortField = "updated" | "created" | "priority" | "title";
+export type LinearSortField = "updated" | "created" | "priority" | "due";
 export interface LinearSort {
   field: LinearSortField;
   dir: "asc" | "desc";

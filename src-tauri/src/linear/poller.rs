@@ -369,10 +369,19 @@ pub async fn run_cycle(
     }
 
     let cycle_now = now_secs();
+    // window_days unset or 0 = NO window: poll ALL issues in the selected teams
+    // (team selection already bounds the volume, and this matches ClickUp's
+    // "all tasks per space" expectation). A positive value bounds the scope for
+    // a workspace with very large teams. window_start = 0 (epoch) makes the
+    // `updatedAt > x` filter match everything and disables age-out eviction.
     let window_days = crate::config::Config::load()
         .linear_active_window_days
-        .unwrap_or(30);
-    let window_start = cycle_now - (window_days as i64) * 86_400;
+        .unwrap_or(0);
+    let window_start = if window_days == 0 {
+        0
+    } else {
+        cycle_now - (window_days as i64) * 86_400
+    };
     let updated_after = epoch_to_iso8601(window_start);
 
     // Vocabularies, fetched flat (separate top-level queries to stay under the

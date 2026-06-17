@@ -397,8 +397,9 @@ fn err_status(message: String) -> SyncStatus {
     }
 }
 
-/// Coalesced desktop notification for newly-assigned issues (post-baseline).
-fn notify_assignments(_app: &AppHandle, db: &crate::db::SharedDb, ids: &[String]) {
+/// Coalesced notification for newly-assigned issues (post-baseline): emits the
+/// in-app `linear:assigned` event (panel toast) AND an OS desktop notification.
+fn notify_assignments(app: &AppHandle, db: &crate::db::SharedDb, ids: &[String]) {
     if ids.is_empty() {
         return;
     }
@@ -418,6 +419,9 @@ fn notify_assignments(_app: &AppHandle, db: &crate::db::SharedDb, ids: &[String]
                 .collect()
         })
         .unwrap_or_default();
+    // In-app toast (the frontend listens for this; without it only the OS
+    // notification fires, matching ClickUp's `clickup:assigned`).
+    let _ = app.emit("linear:assigned", &titles);
     let body = if titles.len() == 1 {
         titles[0].clone()
     } else {

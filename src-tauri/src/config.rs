@@ -78,9 +78,11 @@ pub struct Config {
     /// 10s. Backend-owned (see commands::BACKEND_OWNED_CONFIG_KEYS).
     #[serde(default)]
     pub linear_poll_interval_secs: Option<u64>,
-    /// Linear bounded-poll window in days. `None` → 30. Issues updated within
-    /// this window (∪ the viewer's own) are synced; older non-mine issues age
-    /// out. Backend-owned.
+    /// Linear poll window in days. `None`/0 → no window: sync ALL issues in the
+    /// selected teams (team selection bounds the volume; matches ClickUp's
+    /// "all per space"). A positive value bounds the scope to issues updated
+    /// within the window (∪ the viewer's own), aging out older non-mine issues —
+    /// for a workspace with very large teams. Backend-owned.
     #[serde(default)]
     pub linear_active_window_days: Option<u64>,
     /// User keymap overrides, keyed by `ShortcutAction.id` (e.g. "new-session")

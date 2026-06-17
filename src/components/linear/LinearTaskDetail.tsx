@@ -18,7 +18,7 @@ import {
 const DETAIL_PANEL_ID = "linear-issue-detail";
 const DEFAULT_GEOMETRY: FloatingGeometry = { x: 200, y: 90, width: 780, height: 660 };
 const MIN_WIDTH = 680;
-const MIN_HEIGHT = 580;
+const MIN_HEIGHT = 600;
 
 export function LinearTaskDetail() {
   const [issueId, setIssueId] = useAtom(linearDetailIssueIdAtom);

@@ -247,10 +247,13 @@ impl LinearClient {
         Ok(d.issues)
     }
 
-    /// One page of issues assigned to the viewer within the given teams.
+    /// One page of issues assigned to the viewer within the given teams. Uses
+    /// the resolved viewer id (`assignee: { id: { eq } }`) — the confirmed
+    /// comparator pattern — rather than `isMe`.
     pub async fn viewer_assigned_issues(
         &self,
         team_ids: &[String],
+        viewer_id: &str,
         after: Option<String>,
     ) -> Result<Connection<Issue>> {
         #[derive(Deserialize)]
@@ -259,6 +262,7 @@ impl LinearClient {
         }
         let vars = json!({
             "teamIds": team_ids,
+            "viewerId": viewer_id,
             "after": after,
             "first": ISSUES_PAGE_SIZE,
             "labelsFirst": LABELS_INNER_SIZE,
@@ -469,10 +473,10 @@ const ISSUES_WINDOW_QUERY: &str = "query Win($teamIds: [ID!], $updatedAfter: Dat
 }";
 
 const ISSUES_ASSIGNED_QUERY: &str =
-    "query Assigned($teamIds: [ID!], $after: String, $first: Int!, $labelsFirst: Int!) {
+    "query Assigned($teamIds: [ID!], $viewerId: ID!, $after: String, $first: Int!, $labelsFirst: Int!) {
   issues(
     first: $first, after: $after,
-    filter: { team: { id: { in: $teamIds } }, assignee: { isMe: { eq: true } } }
+    filter: { team: { id: { in: $teamIds } }, assignee: { id: { eq: $viewerId } } }
   ) {
     nodes {ISSUE_FIELDS}
     pageInfo { hasNextPage endCursor }

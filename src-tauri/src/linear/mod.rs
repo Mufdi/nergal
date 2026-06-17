@@ -352,7 +352,12 @@ async fn run_loop(app: AppHandle) {
                         .ok()
                         .and_then(|g| mirror::get_sync_state(g.conn()).ok())
                 };
-                let state_label = if selected.is_empty() {
+                // A fetch error (e.g. a rejected issues query) surfaces even
+                // though the reconcile committed what it got — otherwise the
+                // panel reads as a silent empty list.
+                let state_label = if outcome.fetch_error.is_some() {
+                    "error"
+                } else if selected.is_empty() {
                     "needs_team"
                 } else {
                     "ok"
@@ -370,7 +375,7 @@ async fn run_loop(app: AppHandle) {
                         last_sync: st.as_ref().and_then(|s| s.last_full_sync),
                         baseline_done: st.as_ref().map(|s| s.baseline_done).unwrap_or(false),
                         key_on_disk,
-                        error: None,
+                        error: outcome.fetch_error.clone(),
                     },
                 );
             }

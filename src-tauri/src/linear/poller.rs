@@ -53,6 +53,10 @@ pub struct ReconcileOutcome {
     /// Ids newly assigned to the viewer this cycle (post-baseline → notify).
     pub newly_assigned: Vec<String>,
     pub baseline_set: bool,
+    /// First error surfaced by a fetch branch (so the daemon shows the real
+    /// cause instead of a silent empty list). Data fetched before the error is
+    /// still committed.
+    pub fetch_error: Option<String>,
 }
 
 /// What to do with a set-3 delta id given the re-fetch result + completeness.
@@ -278,9 +282,11 @@ pub fn id_chunks(ids: &[String]) -> Vec<Vec<String>> {
 }
 
 /// Paginate a connection-returning fetch to exhaustion. Returns the collected
-/// issues and whether it completed (`hasNextPage == false` reached). An error
-/// mid-pagination yields `complete = false` so the caller skips tombstoning.
-pub async fn paginate<F, Fut>(mut fetch: F) -> (Vec<Issue>, bool)
+/// issues, whether it completed (`hasNextPage == false` reached), and the first
+/// error string if a page failed. An error yields `complete = false` so the
+/// caller skips tombstoning, and the surfaced error lets the daemon show the
+/// real cause rather than a silent empty list.
+pub async fn paginate<F, Fut>(mut fetch: F) -> (Vec<Issue>, bool, Option<String>)
 where
     F: FnMut(Option<String>) -> Fut,
     Fut: std::future::Future<Output = Result<super::model::Connection<Issue>>>,
@@ -294,13 +300,13 @@ where
                 if conn.page_info.has_next_page {
                     match conn.page_info.end_cursor {
                         Some(c) => cursor = Some(c),
-                        None => return (out, false), // hasNext but no cursor: incomplete
+                        None => return (out, false, None), // hasNext but no cursor
                     }
                 } else {
-                    return (out, true);
+                    return (out, true, None);
                 }
             }
-            Err(_) => return (out, false),
+            Err(e) => return (out, false, Some(format!("{e:#}"))),
         }
     }
 }
@@ -375,16 +381,25 @@ pub async fn run_cycle(
     let states = client.all_workflow_states().await?;
     let labels = client.all_labels().await?;
 
+    let mut fetch_error: Option<String> = None;
+
     // Set 1: window. Set 2: viewer-assigned. Both scoped to selected teams.
     let (win_issues, win_complete) = if selected_team_ids.is_empty() {
         (Vec::new(), true)
     } else {
-        paginate(|after| client.issues_page(&selected_team_ids, &updated_after, after)).await
+        let (v, c, e) =
+            paginate(|after| client.issues_page(&selected_team_ids, &updated_after, after)).await;
+        fetch_error = fetch_error.or(e);
+        (v, c)
     };
     let (assigned_issues, assigned_complete) = if selected_team_ids.is_empty() {
         (Vec::new(), true)
     } else {
-        paginate(|after| client.viewer_assigned_issues(&selected_team_ids, after)).await
+        let (v, c, e) =
+            paginate(|after| client.viewer_assigned_issues(&selected_team_ids, &viewer.id, after))
+                .await;
+        fetch_error = fetch_error.or(e);
+        (v, c)
     };
 
     // Merge + dedup sets 1 + 2.
@@ -406,9 +421,10 @@ pub async fn run_cycle(
     let mut set3_results = Vec::new();
     let mut set3_complete = true;
     for chunk in id_chunks(&delta) {
-        let (issues, c) = paginate(|after| client.issues_by_id(&chunk, after)).await;
+        let (issues, c, e) = paginate(|after| client.issues_by_id(&chunk, after)).await;
         set3_results.extend(issues);
         set3_complete &= c;
+        fetch_error = fetch_error.or(e);
     }
 
     let complete = win_complete && assigned_complete && set3_complete;
@@ -427,10 +443,11 @@ pub async fn run_cycle(
         viewer_id: viewer.id,
     };
 
-    let outcome = {
+    let mut outcome = {
         let guard = conn_lock.lock().map_err(|_| anyhow!("db lock poisoned"))?;
         reconcile(guard.conn(), &fetched, captured_gen)?
     };
+    outcome.fetch_error = fetch_error;
     Ok(Some(outcome))
 }
 

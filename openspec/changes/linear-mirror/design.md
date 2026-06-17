@@ -82,6 +82,10 @@ Indices: `idx_linear_issues_team(team_id)`, `idx_linear_issues_parent(parent_id)
 - **`synthetic` flag** (iprev #17): placeholder state/team rows synthesized for an unknown FK are marked `synthetic=1` and **excluded from absence-tombstoning** (a placeholder is by definition never in Linear's fetch); they are re-resolved (synthetic→real) when the genuine row arrives in a later fetch.
 - **`was_viewer_assigned`** (iprev #3): the mirror records whether it currently believes an issue is the viewer's, so the poll can re-verify exactly those issues by id each cycle (robust un-assignment detection independent of `updatedAt` semantics — see D4).
 
+**Implementation refinements (shipped — the migration `023_linear_mirror.sql` is authoritative over the table sketch above):**
+- **`synthetic` lives on the FK-target tables (`linear_teams`, `linear_workflow_states`), not on `linear_issues`.** Only issues are tombstoned/evicted; teams/states/labels/projects/cycles are upsert-only and GC'd when unreferenced. A placeholder team/state row (`synthetic=1`) therefore can never oscillate (its table isn't absence-tombstoned), strengthening iprev #17. Issues carry no `synthetic` (they are never synthesized). `linear_projects`/`linear_cycles` dropped their `stale` columns for the same reason (upsert-only).
+- **`linear_issues.description`** is selected into the panel `IssueView` so the floating detail renders the body from the same atom (Linear bodies are modest; no separate detail fetch needed for the description — only comments are lazy).
+
 **Alternatives considered.**
 - *Denormalize labels as `labels_json` (ClickUp tags parity).* Rejected — labels are a group-by axis with stable ids+colors; a join table makes group-by/filter a query, not a JSON parse, and matches how `linear_workflow_states` is first-class. The extra join table is cheap.
 - *Keep the `parent_id` self-FK with deferred constraints (`DEFERRABLE INITIALLY DEFERRED`).* Solves intra-batch ordering but still fails at COMMIT for a genuinely out-of-scope parent. A plain column with an app-built tolerant tree is simpler and strictly more robust.

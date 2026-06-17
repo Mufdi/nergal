@@ -34,6 +34,11 @@
     { "type": "iprev-round", "n": 4, "result": "REVISE", "note": "all r3 fixed; 5 new: account-swap race, dead viewer backstop, set-3 4th outcome + label-strip, team-selection reset" },
     { "type": "iprev-round", "n": 5, "result": "APPROVED", "note": "key-generation epoch closes swap race structurally; residuals LOW (BEGIN IMMEDIATE note, notify-after-commit)" }
   ],
-  "status": "plan-approved; implementation IN PROGRESS (autonomous /loop)",
-  "implementation_order": 1
+  "status": "IMPLEMENTED (backend+frontend on main, default-off, NOT released); pending live walk (task 6.4, needs user key + running GUI) + build/install",
+  "implementation_order": 1,
+  "commits": [
+    "149120c docs(openspec): plan (iprev-approved)",
+    "07b64b7 feat(linear): mirror backend",
+    "3a4189c feat(linear): read-only panel + detail + settings"
+  ]
 }

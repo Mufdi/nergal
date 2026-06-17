@@ -1,13 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { useAtomValue } from "jotai";
 import { open as openShell } from "@tauri-apps/plugin-shell";
-import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ExternalLink, GitBranch, Paperclip } from "lucide-react";
 import { invoke } from "@/lib/tauri";
 import { MarkdownView } from "@/components/plan/MarkdownView";
 import { StatusIcon } from "@/components/clickup/StatusIcon";
 import { PriorityIcon } from "@/components/clickup/PriorityIcon";
 import { ProgressBar } from "@/components/ui/ProgressBar";
-import { linearIssuesAtom, type IssueView, type LinearComment } from "@/stores/linear";
+import {
+  linearIssuesAtom,
+  type IssueView,
+  type LinearAttachment,
+  type LinearComment,
+  type LinearIssueDetail,
+  type LinearRelation,
+} from "@/stores/linear";
 
 // ── Shared helpers ──
 
@@ -59,6 +66,8 @@ async function openValidatedUrl(url: string | undefined): Promise<void> {
 interface LinearDetailData {
   issue: IssueView | null;
   comments: LinearComment[];
+  attachments: LinearAttachment[];
+  relations: LinearRelation[];
 }
 
 /// SWR cache for fetched detail payloads. Module-level so it survives a
@@ -78,6 +87,9 @@ export function useLinearIssueController({
   const [detail, setDetail] = useState<LinearDetailData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Keep setIssueId stable for the detail's relation click handler
+  const setIssueIdRef = useRef(setIssueId);
+  setIssueIdRef.current = setIssueId;
   const contentRef = useRef<HTMLDivElement | null>(null);
   const mainRef = useRef<HTMLDivElement | null>(null);
 
@@ -145,12 +157,17 @@ export function useLinearIssueController({
 
     Promise.all([
       invoke<IssueView[]>("linear_read_issues", { includeStale: true }),
-      invoke<LinearComment[]>("linear_issue_comments", { issueId }),
+      invoke<LinearIssueDetail>("linear_issue_detail", { issueId }),
     ])
-      .then(([issueList, comments]) => {
+      .then(([issueList, detailPayload]) => {
         if (cancelled) return;
         const issue = issueList.find((i) => i.id === issueId) ?? null;
-        const data: LinearDetailData = { issue, comments };
+        const data: LinearDetailData = {
+          issue,
+          comments: detailPayload.comments,
+          attachments: detailPayload.attachments,
+          relations: detailPayload.relations,
+        };
         setDetail(data);
         detailCache.set(issueId, data);
       })
@@ -167,6 +184,8 @@ export function useLinearIssueController({
   const mirrorIssue = issueId ? issues.find((i) => i.id === issueId) ?? null : null;
   const issue = detail?.issue ?? mirrorIssue;
   const comments = detail?.comments ?? [];
+  const attachments = detail?.attachments ?? [];
+  const relations = detail?.relations ?? [];
 
   // Sub-issues from the mirror (parentId === issueId)
   const subIssues = issueId ? issues.filter((i) => i.parentId === issueId) : [];
@@ -189,6 +208,8 @@ export function useLinearIssueController({
     error,
     issue,
     comments,
+    attachments,
+    relations,
     subIssues,
     childMap,
     contentRef,
@@ -299,6 +320,49 @@ function SubIssueNode({
   );
 }
 
+// ── Body helpers ──
+
+/// Renders a small round avatar: img when `avatarUrl` is present and loads,
+/// falls back to initials from `name`. Size is in pixels.
+function AssigneeAvatar({ name, avatarUrl, size = 16 }: { name: string; avatarUrl?: string; size?: number }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const initials = name.slice(0, 2).toUpperCase();
+
+  if (avatarUrl && !imgFailed) {
+    return (
+      <img
+        src={avatarUrl}
+        alt={name}
+        width={size}
+        height={size}
+        onError={() => setImgFailed(true)}
+        className="shrink-0 rounded-full object-cover"
+        style={{ width: size, height: size }}
+      />
+    );
+  }
+  return (
+    <span
+      className="flex shrink-0 items-center justify-center rounded-full bg-secondary text-foreground/70"
+      style={{ width: size, height: size, fontSize: Math.max(8, size * 0.5) }}
+    >
+      {initials}
+    </span>
+  );
+}
+
+/// Maps raw Linear relation types to user-facing labels.
+function friendlyRelationType(type: string): string {
+  switch (type) {
+    case "blocks": return "blocks";
+    case "blocked_by": return "blocked by";
+    case "duplicate_of": return "duplicate of";
+    case "duplicated_by": return "duplicated by";
+    case "related": return "related to";
+    default: return type.replace(/_/g, " ");
+  }
+}
+
 // ── Body (shared by modal + future tab) ──
 
 function SectionCaps({ label }: { label: string }) {
@@ -317,7 +381,7 @@ export function LinearIssueBody({
   layout: "modal" | "tab";
 }) {
   const isTab = layout === "tab";
-  const { detail, issue, loading, error, comments, subIssues, childMap } = c;
+  const { detail, issue, loading, error, comments, attachments, relations, subIssues, childMap } = c;
 
   const setOuterRef = (el: HTMLDivElement | null) => {
     c.contentRef.current = el;
@@ -351,6 +415,8 @@ export function LinearIssueBody({
   const iconType = linearStateToIconType(issue.stateType);
   const priorityStr = linearPriorityStr(issue.priority);
 
+  const now = Date.now();
+
   const propertiesEl = (
     <div className="flex flex-col gap-2">
       <SectionCaps label="Properties" />
@@ -369,10 +435,31 @@ export function LinearIssueBody({
         )}
         {issue.assigneeName && (
           <div className="flex items-center gap-1.5">
-            <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-secondary text-[8px] font-medium text-foreground/70">
-              {issue.assigneeName.slice(0, 2).toUpperCase()}
-            </span>
+            <AssigneeAvatar name={issue.assigneeName} avatarUrl={issue.assigneeAvatarUrl} size={16} />
             <span className="truncate text-foreground/80">{issue.assigneeName}</span>
+          </div>
+        )}
+        {issue.estimate != null && (
+          <div className="flex items-center gap-1.5 text-foreground/80">
+            <span className="flex size-4 shrink-0 items-center justify-center rounded bg-secondary text-[9px] font-semibold tabular-nums">
+              {issue.estimate}
+            </span>
+            <span className="text-muted-foreground">points</span>
+          </div>
+        )}
+        {issue.dueDate != null && (
+          <div className="flex items-center gap-1.5">
+            <span
+              className={`text-[10px] tabular-nums ${issue.dueDate < now ? "text-red-400" : "text-foreground/80"}`}
+            >
+              Due {formatDate(issue.dueDate)}
+            </span>
+          </div>
+        )}
+        {issue.cycleName && (
+          <div className="flex items-center gap-1.5 text-foreground/80">
+            <GitBranch size={12} className="shrink-0 text-muted-foreground" />
+            <span className="truncate">{issue.cycleName}</span>
           </div>
         )}
         {issue.projectName && (
@@ -484,6 +571,54 @@ export function LinearIssueBody({
     </>
   );
 
+  const attachmentsEl = attachments.length > 0 ? (
+    <>
+      <SectionCaps label={`Attachments · ${attachments.length}`} />
+      <div className="flex flex-wrap gap-1.5">
+        {attachments.map((att) => (
+          <button
+            key={att.id}
+            type="button"
+            onClick={() => void openValidatedUrl(att.url)}
+            className="flex items-center gap-1 rounded border border-border/60 bg-secondary/30 px-1.5 py-0.5 text-[10px] text-foreground/80 transition-colors hover:bg-secondary/60 hover:text-foreground"
+          >
+            <Paperclip size={9} className="shrink-0 text-muted-foreground" />
+            <span className="max-w-32 truncate">{att.title ?? att.subtitle ?? att.url}</span>
+            <ExternalLink size={9} className="shrink-0 text-muted-foreground/60" />
+          </button>
+        ))}
+      </div>
+    </>
+  ) : null;
+
+  const relationsEl = relations.length > 0 ? (
+    <>
+      <SectionCaps label={`Relations · ${relations.length}`} />
+      <div className="flex flex-col gap-1">
+        {relations.map((rel) => (
+          <button
+            key={`${rel.relationType}:${rel.relatedId}`}
+            type="button"
+            onClick={() => c.setIssueId(rel.relatedId)}
+            className="flex items-center gap-1.5 rounded px-1 py-0.5 text-left text-[11px] transition-colors hover:bg-secondary/40"
+          >
+            <span className="shrink-0 text-[10px] capitalize text-muted-foreground">
+              {friendlyRelationType(rel.relationType)}
+            </span>
+            {rel.relatedIdentifier && (
+              <span className="shrink-0 font-mono text-[10px] text-muted-foreground/60">
+                {rel.relatedIdentifier}
+              </span>
+            )}
+            <span className="min-w-0 truncate text-foreground/80">
+              {rel.relatedTitle ?? rel.relatedId}
+            </span>
+          </button>
+        ))}
+      </div>
+    </>
+  ) : null;
+
   if (isTab) {
     return (
       <div
@@ -496,6 +631,8 @@ export function LinearIssueBody({
           <div className="border-t border-border" />
           {descEl}
           {subIssuesEl}
+          {attachmentsEl}
+          {relationsEl}
           {commentsEl}
         </div>
       </div>
@@ -511,6 +648,8 @@ export function LinearIssueBody({
       <main ref={c.mainRef} className="order-1 flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-2">
         {descEl}
         {subIssuesEl}
+        {attachmentsEl}
+        {relationsEl}
         {commentsEl}
       </main>
     </div>

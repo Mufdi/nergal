@@ -13,7 +13,9 @@ import {
   Clock,
   Flag,
   RotateCcw,
+  Tag,
   UserCheck,
+  X,
 } from "lucide-react";
 import { focusIfPanelZone } from "@/lib/panelFocus";
 import {
@@ -34,6 +36,7 @@ import {
   linearDetailIssueIdAtom,
   linearGroupByAtom,
   linearIssuesAtom,
+  linearLabelFilterAtom,
   linearShowCompletedAtom,
   linearSortAtom,
   linearSyncStatusAtom,
@@ -124,6 +127,7 @@ const VIEW_LABEL: Record<LinearView, string> = {
   state: "State",
   project: "Project",
   assignee: "Assignee",
+  cycle: "Cycle",
 };
 
 interface IssueGroup {
@@ -132,35 +136,103 @@ interface IssueGroup {
   stateType: string | null;
   color: string | null;
   issues: IssueView[];
+  // Used for ordering state groups by workflow position.
+  _stateRank?: number;
+  _statePosition?: number;
 }
 
 function isTerminal(stateType: string | undefined): boolean {
   return stateType === "completed" || stateType === "cancelled" || stateType === "canceled";
 }
 
+/// Rank for state groups: workflow order triage→backlog→unstarted→started→completed→cancelled.
+/// "No state" always sorts last.
+const STATE_TYPE_RANK: Record<string, number> = {
+  triage: 0,
+  backlog: 1,
+  unstarted: 2,
+  started: 3,
+  completed: 4,
+  cancelled: 5,
+  canceled: 5,
+};
+
 function groupIssues(issues: IssueView[], groupBy: LinearGroupBy): IssueGroup[] {
   const groups = new Map<string, IssueGroup>();
-  const push = (key: string, label: string, stateType: string | null, color: string | null, issue: IssueView) => {
+
+  const push = (
+    key: string,
+    label: string,
+    stateType: string | null,
+    color: string | null,
+    issue: IssueView,
+    stateRank?: number,
+    statePosition?: number,
+  ) => {
     let g = groups.get(key);
     if (!g) {
-      g = { key, label, stateType, color, issues: [] };
+      g = { key, label, stateType, color, issues: [], _stateRank: stateRank, _statePosition: statePosition };
       groups.set(key, g);
     }
     g.issues.push(issue);
   };
+
   for (const issue of issues) {
     if (groupBy === "state") {
       const label = issue.stateName ?? "No state";
-      push(`state:${label}`, label, issue.stateType ?? null, issue.stateColor ?? null, issue);
+      const rank = issue.stateType != null ? (STATE_TYPE_RANK[issue.stateType] ?? 6) : 7;
+      push(`state:${issue.stateId ?? label}`, label, issue.stateType ?? null, issue.stateColor ?? null, issue, rank, issue.statePosition);
     } else if (groupBy === "project") {
       const label = issue.projectName ?? "No project";
       push(`project:${issue.projectId ?? "none"}`, label, null, null, issue);
+    } else if (groupBy === "cycle") {
+      const label = issue.cycleName ?? "No cycle";
+      push(`cycle:${issue.cycleId ?? "none"}`, label, null, null, issue);
     } else {
       const label = issue.assigneeName ?? "Unassigned";
       push(`assignee:${issue.assigneeId ?? "none"}`, label, null, null, issue);
     }
   }
-  return [...groups.values()];
+
+  const result = [...groups.values()];
+
+  if (groupBy === "state") {
+    // Order by workflow rank, then statePosition within the same type.
+    result.sort((a, b) => {
+      const ra = a._stateRank ?? 7;
+      const rb = b._stateRank ?? 7;
+      if (ra !== rb) return ra - rb;
+      const pa = a._statePosition ?? 0;
+      const pb = b._statePosition ?? 0;
+      return pa - pb;
+    });
+  } else if (groupBy === "project") {
+    // Alphabetical, "No project" last.
+    result.sort((a, b) => {
+      const aIsNone = a.key === "project:none";
+      const bIsNone = b.key === "project:none";
+      if (aIsNone !== bIsNone) return aIsNone ? 1 : -1;
+      return a.label.localeCompare(b.label);
+    });
+  } else if (groupBy === "assignee") {
+    // Alphabetical, "Unassigned" last.
+    result.sort((a, b) => {
+      const aIsNone = a.key === "assignee:none";
+      const bIsNone = b.key === "assignee:none";
+      if (aIsNone !== bIsNone) return aIsNone ? 1 : -1;
+      return a.label.localeCompare(b.label);
+    });
+  } else if (groupBy === "cycle") {
+    // Alphabetical, "No cycle" last.
+    result.sort((a, b) => {
+      const aIsNone = a.key === "cycle:none";
+      const bIsNone = b.key === "cycle:none";
+      if (aIsNone !== bIsNone) return aIsNone ? 1 : -1;
+      return a.label.localeCompare(b.label);
+    });
+  }
+
+  return result;
 }
 
 export function LinearPanel() {
@@ -172,6 +244,7 @@ export function LinearPanel() {
   const [assignedToMe, setAssignedToMe] = useAtom(linearAssignedToMeAtom);
   const [showCompleted, setShowCompleted] = useAtom(linearShowCompletedAtom);
   const [sort, setSort] = useAtom(linearSortAtom);
+  const [labelFilter, setLabelFilter] = useAtom(linearLabelFilterAtom);
   const setDetailIssueId = useSetAtom(linearDetailIssueIdAtom);
   const copyIssue = useSetAtom(copyLinearIssueAction);
   const zenOpen = useAtomValue(zenModeAtom).open;
@@ -179,6 +252,8 @@ export function LinearPanel() {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   // Per-issue sub-issue expansion. Default collapsed (absent = closed).
   const [expandedIssueIds, setExpandedIssueIds] = useState<ReadonlySet<string>>(new Set());
+  const [labelPopoverOpen, setLabelPopoverOpen] = useState(false);
+  const labelPopoverRef = useRef<HTMLDivElement>(null);
 
   const activeView: LinearView = assignedToMe && groupBy === "state" ? "mine" : groupBy;
 
@@ -238,7 +313,7 @@ export function LinearPanel() {
   // Latest parent-id set for the expand/collapse-all shortcut.
   const allParentIdsRef = useRef<ReadonlySet<string>>(new Set());
 
-  const { groups, visibleCount, childMap } = useMemo(() => {
+  const { groups, visibleCount, childMap, allLabels } = useMemo(() => {
     const teamScoped = teamFilter
       ? issues.filter((i) => i.teamId === teamFilter)
       : issues;
@@ -251,6 +326,12 @@ export function LinearPanel() {
     const withCompleted = showCompleted
       ? viewerFiltered
       : viewerFiltered.filter((i) => !isTerminal(i.stateType));
+
+    // Apply label filter: keep issues that have at least one selected label.
+    const labelFiltered =
+      labelFilter.size > 0
+        ? withCompleted.filter((i) => i.labels.some((l) => labelFilter.has(l.id)))
+        : withCompleted;
 
     // Build global parent→children map over the full (unfiltered) pool so a
     // visible parent shows ALL its sub-issues regardless of filter (§9 canon).
@@ -267,17 +348,28 @@ export function LinearPanel() {
     for (const arr of childMap.values()) arr.sort(compare);
 
     // Top-level rows: visible issues whose parent is not also visible.
-    const visibleIds = new Set(withCompleted.map((i) => i.id));
-    const topLevel = withCompleted
+    const visibleIds = new Set(labelFiltered.map((i) => i.id));
+    const topLevel = labelFiltered
       .filter((i) => !i.parentId || !visibleIds.has(i.parentId))
       .sort(compare);
+
+    // Collect all unique labels present in the team-scoped+completed-scoped pool
+    // (not the label-filtered one) so the filter popover always shows all options.
+    const labelsMap = new Map<string, { id: string; name: string; color?: string }>();
+    for (const i of withCompleted) {
+      for (const l of i.labels) {
+        if (!labelsMap.has(l.id)) labelsMap.set(l.id, l);
+      }
+    }
+    const allLabels = [...labelsMap.values()].sort((a, b) => a.name.localeCompare(b.name));
 
     return {
       groups: groupIssues(topLevel, groupBy),
       visibleCount: topLevel.length,
       childMap,
+      allLabels,
     };
-  }, [issues, teamFilter, assignedToMe, showCompleted, groupBy, syncStatus?.viewerId, sort]);
+  }, [issues, teamFilter, assignedToMe, showCompleted, groupBy, syncStatus?.viewerId, sort, labelFilter]);
 
   allParentIdsRef.current = new Set(childMap.keys());
 
@@ -306,6 +398,27 @@ export function LinearPanel() {
       return next;
     });
   }
+
+  function toggleLabelFilter(labelId: string) {
+    setLabelFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(labelId)) next.delete(labelId);
+      else next.add(labelId);
+      return next;
+    });
+  }
+
+  // Close label popover on outside click.
+  useEffect(() => {
+    if (!labelPopoverOpen) return;
+    function onPointerDown(e: PointerEvent) {
+      if (labelPopoverRef.current && !labelPopoverRef.current.contains(e.target as Node)) {
+        setLabelPopoverOpen(false);
+      }
+    }
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [labelPopoverOpen]);
 
   // Plain ↑/↓ moves the data-nav-selected cursor. Enter opens. Space toggles
   // sub-issues. E expands/collapses all. A toggles assigned-to-me. H toggles
@@ -645,6 +758,89 @@ export function LinearPanel() {
             </TooltipTrigger>
             <TooltipContent side="bottom">Show completed / canceled (H)</TooltipContent>
           </Tooltip>
+
+          {/* Label filter: popover button + inline clear */}
+          <div className="relative" ref={labelPopoverRef}>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    data-header-action
+                    onClick={() => setLabelPopoverOpen((prev) => !prev)}
+                    aria-label="Filter by label"
+                    aria-pressed={labelFilter.size > 0}
+                    className={`flex size-6 shrink-0 items-center justify-center rounded transition-colors ${
+                      labelFilter.size > 0
+                        ? "bg-primary/10 text-primary"
+                        : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+                    }`}
+                  />
+                }
+              >
+                <Tag size={13} />
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {labelFilter.size > 0 ? `Filter: ${labelFilter.size} label${labelFilter.size === 1 ? "" : "s"}` : "Filter by label"}
+              </TooltipContent>
+            </Tooltip>
+
+            {labelFilter.size > 0 && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      data-header-action
+                      onClick={() => setLabelFilter(new Set())}
+                      aria-label="Clear label filter"
+                      className="absolute -right-1 -top-1 flex size-3 items-center justify-center rounded-full bg-primary text-[7px] text-primary-foreground"
+                    />
+                  }
+                >
+                  <X size={6} />
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Clear label filter</TooltipContent>
+              </Tooltip>
+            )}
+
+            {labelPopoverOpen && allLabels.length > 0 && (
+              <div className="absolute right-0 top-full z-50 mt-1 min-w-40 max-w-56 rounded-md border border-border bg-popover shadow-md">
+                <div className="flex items-center justify-between border-b border-border/50 px-2 py-1">
+                  <span className="text-[10px] font-medium text-muted-foreground">Labels</span>
+                  {labelFilter.size > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setLabelFilter(new Set())}
+                      className="text-[10px] text-muted-foreground hover:text-foreground"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <div className="max-h-48 overflow-y-auto py-0.5">
+                  {allLabels.map((label) => {
+                    const active = labelFilter.has(label.id);
+                    return (
+                      <button
+                        key={label.id}
+                        type="button"
+                        onClick={() => toggleLabelFilter(label.id)}
+                        className={`flex w-full items-center gap-2 px-2 py-1 text-left text-[11px] transition-colors hover:bg-secondary/50 ${active ? "text-foreground" : "text-muted-foreground"}`}
+                      >
+                        <span
+                          className="size-2 shrink-0 rounded-full"
+                          style={{ background: label.color ?? "var(--color-muted-foreground)" }}
+                        />
+                        <span className="flex-1 truncate">{label.name}</span>
+                        {active && <span className="shrink-0 text-[9px] text-primary">✓</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* View chip strip */}
@@ -702,6 +898,7 @@ export function LinearPanel() {
                 childMap={childMap}
                 onOpen={(id) => setDetailIssueId(id)}
                 copyIssue={copyIssue}
+                allIssues={issues}
               />
             ))
           )}
@@ -720,6 +917,7 @@ function LinearGroupSection({
   childMap,
   onOpen,
   copyIssue,
+  allIssues,
 }: {
   group: IssueGroup;
   expanded: boolean;
@@ -729,6 +927,7 @@ function LinearGroupSection({
   childMap: ReadonlyMap<string, IssueView[]>;
   onOpen: (issueId: string) => void;
   copyIssue: (identifier: string) => void;
+  allIssues: readonly IssueView[];
 }) {
   const iconType = group.stateType ? linearStateToIconType(group.stateType) : null;
 
@@ -749,6 +948,7 @@ function LinearGroupSection({
           onToggleExpand={() => onToggleIssue(issue.id)}
           onOpen={onOpen}
           copyIssue={copyIssue}
+          allIssues={allIssues}
         />
         {hasChildren && issueExpanded && children.map((c) => renderNode(c, depth + 1, nextSeen))}
       </div>
@@ -782,6 +982,31 @@ function LinearGroupSection({
   );
 }
 
+function AssigneeAvatarSmall({ name, avatarUrl }: { name: string; avatarUrl?: string }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  if (avatarUrl && !imgFailed) {
+    return (
+      <img
+        src={avatarUrl}
+        alt={name}
+        width={14}
+        height={14}
+        onError={() => setImgFailed(true)}
+        title={name}
+        className="size-3.5 shrink-0 rounded-full object-cover"
+      />
+    );
+  }
+  return (
+    <span
+      title={name}
+      className="flex size-3.5 shrink-0 items-center justify-center rounded-full bg-secondary text-[7px] font-medium text-foreground/70"
+    >
+      {name.slice(0, 2).toUpperCase()}
+    </span>
+  );
+}
+
 function LinearIssueRow({
   issue,
   depth = 0,
@@ -790,6 +1015,7 @@ function LinearIssueRow({
   onToggleExpand,
   onOpen,
   copyIssue,
+  allIssues,
 }: {
   issue: IssueView;
   depth?: number;
@@ -798,9 +1024,16 @@ function LinearIssueRow({
   onToggleExpand?: () => void;
   onOpen: (issueId: string) => void;
   copyIssue: (identifier: string) => void;
+  allIssues: readonly IssueView[];
 }) {
   const iconType = linearStateToIconType(issue.stateType);
   const priorityStr = linearPriorityStr(issue.priority);
+  const now = Date.now();
+  const overdue = issue.dueDate != null && issue.dueDate < now && !isTerminal(issue.stateType);
+
+  // Sub-issue progress: count children from the full pool (not filtered).
+  const subIssueTotal = allIssues.filter((i) => i.parentId === issue.id).length;
+  const subIssueDone = allIssues.filter((i) => i.parentId === issue.id && isTerminal(i.stateType)).length;
 
   return (
     <button
@@ -867,19 +1100,70 @@ function LinearIssueRow({
         {issue.title}
       </span>
 
-      {/* Label chips */}
-      {issue.labels.slice(0, 2).map((label) => (
-        <span
-          key={label.id}
-          className="max-w-16 shrink-0 truncate rounded-full px-1.5 text-[9px] leading-4"
-          style={{
-            background: label.color ? `${label.color}33` : "var(--color-secondary)",
-            color: label.color ?? "var(--color-secondary-foreground)",
-          }}
-        >
-          {label.name}
-        </span>
-      ))}
+      {/* Trailing meta: sub-issue progress, labels, estimate, due, assignee avatar */}
+      <span className="flex shrink-0 items-center gap-1">
+        {/* Sub-issue progress: N/M when this issue has children */}
+        {subIssueTotal > 0 && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span className="shrink-0 text-[9px] tabular-nums text-muted-foreground/60" />
+              }
+            >
+              {subIssueDone}/{subIssueTotal}
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">
+              {subIssueDone} of {subIssueTotal} sub-issues done
+            </TooltipContent>
+          </Tooltip>
+        )}
+
+        {/* Label chips (up to 2) */}
+        {issue.labels.slice(0, 2).map((label) => (
+          <span
+            key={label.id}
+            className="max-w-16 shrink-0 truncate rounded-full px-1.5 text-[9px] leading-4"
+            style={{
+              background: label.color ? `${label.color}33` : "var(--color-secondary)",
+              color: label.color ?? "var(--color-secondary-foreground)",
+            }}
+          >
+            {label.name}
+          </span>
+        ))}
+
+        {/* Estimate chip */}
+        {issue.estimate != null && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span className="flex size-3.5 shrink-0 items-center justify-center rounded bg-secondary text-[9px] font-semibold tabular-nums text-muted-foreground" />
+              }
+            >
+              {issue.estimate}
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">{issue.estimate} points</TooltipContent>
+          </Tooltip>
+        )}
+
+        {/* Due date */}
+        {issue.dueDate != null && (
+          <span
+            className={`shrink-0 text-[9px] tabular-nums ${overdue ? "text-red-400" : "text-muted-foreground/60"}`}
+          >
+            {formatDueDate(issue.dueDate)}
+          </span>
+        )}
+
+        {/* Assignee avatar */}
+        {issue.assigneeName && (
+          <AssigneeAvatarSmall name={issue.assigneeName} avatarUrl={issue.assigneeAvatarUrl} />
+        )}
+      </span>
     </button>
   );
+}
+
+function formatDueDate(ms: number): string {
+  return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }

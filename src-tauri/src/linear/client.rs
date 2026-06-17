@@ -292,20 +292,37 @@ impl LinearClient {
         Ok(d.issues)
     }
 
-    /// Comments for an issue (lazy, on detail-open / updatedAt advance).
-    pub async fn issue_comments(&self, issue_id: &str) -> Result<Vec<Comment>> {
+    /// Comments + attachments + relations for an issue (lazy, on detail-open).
+    /// Not persisted — fetched fresh each open, like comments.
+    pub async fn issue_detail(
+        &self,
+        issue_id: &str,
+    ) -> Result<(
+        Vec<Comment>,
+        Vec<super::model::Attachment>,
+        Vec<super::model::Relation>,
+    )> {
         #[derive(Deserialize)]
         struct Data {
-            issue: IssueComments,
+            issue: IssueDetail,
         }
         #[derive(Deserialize)]
-        struct IssueComments {
+        struct IssueDetail {
+            #[serde(default)]
             comments: Connection<Comment>,
+            #[serde(default)]
+            attachments: Connection<super::model::Attachment>,
+            #[serde(default)]
+            relations: Connection<super::model::Relation>,
         }
         let d: Data = self
-            .execute(ISSUE_COMMENTS_QUERY, json!({ "id": issue_id }))
+            .execute(ISSUE_DETAIL_QUERY, json!({ "id": issue_id }))
             .await?;
-        Ok(d.issue.comments.nodes)
+        Ok((
+            d.issue.comments.nodes,
+            d.issue.attachments.nodes,
+            d.issue.relations.nodes,
+        ))
     }
 }
 
@@ -491,9 +508,11 @@ const ISSUES_BY_ID_QUERY: &str =
   }
 }";
 
-const ISSUE_COMMENTS_QUERY: &str = "query Comments($id: String!) {
+const ISSUE_DETAIL_QUERY: &str = "query Detail($id: String!) {
   issue(id: $id) {
     comments(first: 100) { nodes { id body createdAt user { id name displayName email avatarUrl } } }
+    attachments(first: 50) { nodes { id title subtitle url } }
+    relations(first: 50) { nodes { type relatedIssue { id identifier title } } }
   }
 }";
 

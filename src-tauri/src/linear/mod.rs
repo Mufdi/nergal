@@ -200,29 +200,59 @@ pub fn linear_read_teams(
     mirror::read_teams(guard.conn()).map_err(|e| format!("{e:#}"))
 }
 
-/// Lazily fetch an issue's comments (detail-open). Network call; not from the
-/// mirror.
+/// Lazily fetch an issue's detail (comments + attachments + relations) on
+/// detail-open. Network call; not from the mirror.
 #[tauri::command]
-pub async fn linear_issue_comments(issue_id: String) -> Result<Vec<LinearComment>, String> {
+pub async fn linear_issue_detail(issue_id: String) -> Result<LinearIssueDetail, String> {
     let stored = tauri::async_runtime::spawn_blocking(auth::load_key)
         .await
         .map_err(|e| format!("join: {e}"))?
         .map_err(|e| format!("{e:#}"))?
         .ok_or_else(|| "no Linear key configured".to_string())?;
     let client = build_client(stored.key);
-    let comments = client
-        .issue_comments(&issue_id)
+    let (comments, attachments, relations) = client
+        .issue_detail(&issue_id)
         .await
         .map_err(|e| format!("{e:#}"))?;
-    Ok(comments
-        .into_iter()
-        .map(|c| LinearComment {
-            id: c.id,
-            body: c.body,
-            created_at: c.created_at.as_deref().and_then(model::iso8601_to_epoch),
-            author: c.user.and_then(|u| u.display_name.or(u.name)),
-        })
-        .collect())
+    Ok(LinearIssueDetail {
+        comments: comments
+            .into_iter()
+            .map(|c| LinearComment {
+                id: c.id,
+                body: c.body,
+                created_at: c.created_at.as_deref().and_then(model::iso8601_to_epoch),
+                author: c.user.and_then(|u| u.display_name.or(u.name)),
+            })
+            .collect(),
+        attachments: attachments
+            .into_iter()
+            .map(|a| LinearAttachment {
+                id: a.id,
+                title: a.title,
+                subtitle: a.subtitle,
+                url: a.url,
+            })
+            .collect(),
+        relations: relations
+            .into_iter()
+            .filter_map(|r| {
+                r.related_issue.map(|ri| LinearRelation {
+                    relation_type: r.relation_type,
+                    related_id: ri.id,
+                    related_identifier: ri.identifier,
+                    related_title: ri.title,
+                })
+            })
+            .collect(),
+    })
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinearIssueDetail {
+    pub comments: Vec<LinearComment>,
+    pub attachments: Vec<LinearAttachment>,
+    pub relations: Vec<LinearRelation>,
 }
 
 #[derive(Debug, Serialize)]
@@ -232,6 +262,24 @@ pub struct LinearComment {
     pub body: Option<String>,
     pub created_at: Option<i64>,
     pub author: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinearAttachment {
+    pub id: String,
+    pub title: Option<String>,
+    pub subtitle: Option<String>,
+    pub url: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinearRelation {
+    pub relation_type: String,
+    pub related_id: String,
+    pub related_identifier: Option<String>,
+    pub related_title: Option<String>,
 }
 
 // ── Poller lifecycle ──

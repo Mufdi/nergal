@@ -451,15 +451,20 @@ pub struct IssueView {
     /// list view so the detail reads from the same atom; Linear bodies are modest.
     pub description: Option<String>,
     pub priority: i64,
+    pub estimate: Option<f64>,
     pub state_id: Option<String>,
     pub state_name: Option<String>,
     pub state_type: Option<String>,
     pub state_color: Option<String>,
+    /// Workflow position — orders state groups within their type.
+    pub state_position: Option<f64>,
     pub assignee_id: Option<String>,
     pub assignee_name: Option<String>,
+    pub assignee_avatar_url: Option<String>,
     pub project_id: Option<String>,
     pub project_name: Option<String>,
     pub cycle_id: Option<String>,
+    pub cycle_name: Option<String>,
     pub parent_id: Option<String>,
     pub created_at: Option<i64>,
     pub updated_at: Option<i64>,
@@ -479,15 +484,16 @@ pub struct IssueFilter {
 /// labels). One query for issues, one for labels, stitched in Rust.
 pub fn read_issues(conn: &Connection, filter: &IssueFilter) -> Result<Vec<IssueView>> {
     let mut sql = String::from(
-        "SELECT i.id, i.identifier, i.team_id, i.title, i.description, i.priority, \
-                i.state_id, s.name, s.type, s.color, \
-                i.assignee_id, COALESCE(u.display_name, u.name), \
-                i.project_id, p.name, i.cycle_id, i.parent_id, \
+        "SELECT i.id, i.identifier, i.team_id, i.title, i.description, i.estimate, i.priority, \
+                i.state_id, s.name, s.type, s.color, s.position, \
+                i.assignee_id, COALESCE(u.display_name, u.name), u.avatar_url, \
+                i.project_id, p.name, i.cycle_id, c.name, i.parent_id, \
                 i.created_at, i.updated_at, i.due_date, i.url, i.stale \
          FROM linear_issues i \
          LEFT JOIN linear_workflow_states s ON s.id = i.state_id \
          LEFT JOIN linear_users u ON u.id = i.assignee_id \
          LEFT JOIN linear_projects p ON p.id = i.project_id \
+         LEFT JOIN linear_cycles c ON c.id = i.cycle_id \
          WHERE 1=1",
     );
     let mut binds: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -510,22 +516,26 @@ pub fn read_issues(conn: &Connection, filter: &IssueFilter) -> Result<Vec<IssueV
                 team_id: row.get(2)?,
                 title: row.get(3)?,
                 description: row.get(4)?,
-                priority: row.get(5)?,
-                state_id: row.get(6)?,
-                state_name: row.get(7)?,
-                state_type: row.get(8)?,
-                state_color: row.get(9)?,
-                assignee_id: row.get(10)?,
-                assignee_name: row.get(11)?,
-                project_id: row.get(12)?,
-                project_name: row.get(13)?,
-                cycle_id: row.get(14)?,
-                parent_id: row.get(15)?,
-                created_at: row.get(16)?,
-                updated_at: row.get(17)?,
-                due_date: row.get(18)?,
-                url: row.get(19)?,
-                stale: row.get::<_, i64>(20)? != 0,
+                estimate: row.get(5)?,
+                priority: row.get(6)?,
+                state_id: row.get(7)?,
+                state_name: row.get(8)?,
+                state_type: row.get(9)?,
+                state_color: row.get(10)?,
+                state_position: row.get(11)?,
+                assignee_id: row.get(12)?,
+                assignee_name: row.get(13)?,
+                assignee_avatar_url: row.get(14)?,
+                project_id: row.get(15)?,
+                project_name: row.get(16)?,
+                cycle_id: row.get(17)?,
+                cycle_name: row.get(18)?,
+                parent_id: row.get(19)?,
+                created_at: row.get(20)?,
+                updated_at: row.get(21)?,
+                due_date: row.get(22)?,
+                url: row.get(23)?,
+                stale: row.get::<_, i64>(24)? != 0,
                 labels: Vec::new(),
             })
         })?

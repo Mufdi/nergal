@@ -18,18 +18,42 @@ export interface IssueView {
   stateName?: string;
   stateType?: string;
   stateColor?: string;
+  statePosition?: number;
   assigneeId?: string;
   assigneeName?: string;
+  assigneeAvatarUrl?: string;
   projectId?: string;
   projectName?: string;
   cycleId?: string;
+  cycleName?: string;
   parentId?: string;
   updatedAt?: number;
   createdAt?: number;
   dueDate?: number;
   url?: string;
+  estimate?: number;
   stale: boolean;
   labels: { id: string; name: string; color?: string }[];
+}
+
+export interface LinearAttachment {
+  id: string;
+  title?: string;
+  subtitle?: string;
+  url: string;
+}
+
+export interface LinearRelation {
+  relationType: string;
+  relatedId: string;
+  relatedIdentifier?: string;
+  relatedTitle?: string;
+}
+
+export interface LinearIssueDetail {
+  comments: LinearComment[];
+  attachments: LinearAttachment[];
+  relations: LinearRelation[];
 }
 
 export interface TeamView {
@@ -72,8 +96,8 @@ export const linearKeyOnDiskAtom = atom(false);
 
 // ── UI prefs ──
 
-export type LinearGroupBy = "state" | "project" | "assignee";
-export const GROUP_BY_ORDER: LinearGroupBy[] = ["state", "project", "assignee"];
+export type LinearGroupBy = "state" | "project" | "assignee" | "cycle";
+export const GROUP_BY_ORDER: LinearGroupBy[] = ["state", "project", "assignee", "cycle"];
 
 /// Sort applied to issues within each group (and to nested sub-issue siblings).
 /// Linear priority int: 0=none,1=urgent,2=high,3=medium,4=low — "priority
@@ -95,6 +119,9 @@ export const linearShowCompletedAtom = atom(false);
 
 /// Issue currently open in the floating detail module (null = closed).
 export const linearDetailIssueIdAtom = atom<string | null>(null);
+
+/// Active label filter: set of label ids. Empty set = no filter.
+export const linearLabelFilterAtom = atom<ReadonlySet<string>>(new Set<string>());
 
 /// Copy an issue identifier to the OS clipboard + toast. Routes through the
 /// robust terminal_clipboard_write (Wayland plugin stalls async) matching

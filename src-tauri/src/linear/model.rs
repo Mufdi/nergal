@@ -187,6 +187,38 @@ pub struct Comment {
     pub user: Option<User>,
 }
 
+/// Issue attachment (link, file ref) — fetched lazily on detail-open, not
+/// persisted (like comments).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Attachment {
+    pub id: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub subtitle: Option<String>,
+    pub url: String,
+}
+
+/// A typed relation from this issue to another (blocks/related/duplicate/…).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Relation {
+    #[serde(rename = "type")]
+    pub relation_type: String,
+    #[serde(default)]
+    pub related_issue: Option<RelatedIssue>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RelatedIssue {
+    pub id: String,
+    #[serde(default)]
+    pub identifier: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
 /// Parse a Linear ISO8601 `DateTime` (`YYYY-MM-DDTHH:MM:SS[.fff]Z`, UTC) into
 /// epoch seconds. Returns `None` for a shape we can't read rather than guessing.
 /// Dependency-free: uses Howard Hinnant's days-from-civil algorithm.

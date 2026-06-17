@@ -1,6 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import {
+  AlignLeft,
+  ArrowDown,
+  ArrowUp,
+  CalendarPlus,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  Flag,
+  RotateCcw,
+  Type,
+  UserCheck,
+} from "lucide-react";
 import { focusIfPanelZone } from "@/lib/panelFocus";
 import {
   Tooltip,
@@ -14,21 +28,24 @@ import { PriorityIcon } from "@/components/clickup/PriorityIcon";
 import { zenModeAtom } from "@/stores/zenMode";
 import {
   GROUP_BY_ORDER,
+  copyLinearIssueAction,
   linearAssignedToMeAtom,
   linearDetailIssueIdAtom,
   linearGroupByAtom,
   linearIssuesAtom,
   linearShowCompletedAtom,
+  linearSortAtom,
   linearSyncStatusAtom,
   linearTeamFilterAtom,
   linearTeamsAtom,
   type IssueView,
   type LinearGroupBy,
+  type LinearSortField,
 } from "@/stores/linear";
 
 // ── Priority mapping: Linear int → PriorityIcon string ──
 // 0=none, 1=urgent, 2=high, 3=medium, 4=low
-function linearPriorityStr(p: number): string | null {
+export function linearPriorityStr(p: number): string | null {
   switch (p) {
     case 1: return "urgent";
     case 2: return "high";
@@ -39,7 +56,7 @@ function linearPriorityStr(p: number): string | null {
 }
 
 // ── State-type mapping: Linear stateType → StatusIcon type ──
-function linearStateToIconType(stateType: string | undefined): string | null {
+export function linearStateToIconType(stateType: string | undefined): string | null {
   switch (stateType) {
     case "triage":
     case "backlog":
@@ -55,6 +72,50 @@ function linearStateToIconType(stateType: string | undefined): string | null {
     default:
       return null;
   }
+}
+
+// ── Sort ──
+
+/// Numeric sort key per field. Nulls (0/undefined) sort last.
+/// Linear priority: 1=urgent(highest)…4=low, 0=none → treat 0 as 5 (last).
+function sortKey(i: IssueView, field: LinearSortField): number {
+  switch (field) {
+    case "updated":
+      return i.updatedAt ?? 0;
+    case "created":
+      return i.createdAt ?? 0;
+    case "priority":
+      // 0=none must sort last when ascending (urgent first); map 0 → 5.
+      return i.priority === 0 ? 5 : i.priority;
+    case "title":
+      // Title sorts lexicographically — not numeric, handled in comparator.
+      return 0;
+  }
+}
+
+/// Sort picker buttons. Priority ascending = urgent first (asc on 1…4, none last).
+const SORT_FIELDS: { field: LinearSortField; label: string; Icon: typeof Clock }[] = [
+  { field: "updated", label: "Updated", Icon: Clock },
+  { field: "created", label: "Created", Icon: CalendarPlus },
+  { field: "priority", label: "Priority", Icon: Flag },
+  { field: "title", label: "Title", Icon: Type },
+];
+
+function defaultDirFor(field: LinearSortField): "asc" | "desc" {
+  // Priority ascending = urgent first; title ascending = A→Z; dates descending = newest first.
+  return field === "priority" || field === "title" ? "asc" : "desc";
+}
+
+function compareIssues(a: IssueView, b: IssueView, field: LinearSortField, dir: "asc" | "desc"): number {
+  let base: number;
+  if (field === "title") {
+    base = a.title.localeCompare(b.title);
+  } else {
+    const ka = sortKey(a, field);
+    const kb = sortKey(b, field);
+    base = ka < kb ? -1 : ka > kb ? 1 : 0;
+  }
+  return dir === "asc" ? base : -base;
 }
 
 // ── View chip strip ──
@@ -112,12 +173,15 @@ export function LinearPanel() {
   const [groupBy, setGroupBy] = useAtom(linearGroupByAtom);
   const [assignedToMe, setAssignedToMe] = useAtom(linearAssignedToMeAtom);
   const [showCompleted, setShowCompleted] = useAtom(linearShowCompletedAtom);
+  const [sort, setSort] = useAtom(linearSortAtom);
   const setDetailIssueId = useSetAtom(linearDetailIssueIdAtom);
+  const copyIssue = useSetAtom(copyLinearIssueAction);
   const zenOpen = useAtomValue(zenModeAtom).open;
   const rootRef = useRef<HTMLDivElement>(null);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  // Per-issue sub-issue expansion. Default collapsed (absent = closed).
+  const [expandedIssueIds, setExpandedIssueIds] = useState<ReadonlySet<string>>(new Set());
 
-  // Derived active view chip
   const activeView: LinearView = assignedToMe && groupBy === "state" ? "mine" : groupBy;
 
   function selectView(view: LinearView) {
@@ -152,6 +216,7 @@ export function LinearPanel() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  // selectView is stable (captures atoms, not state), but activeView changes — dep on activeView only.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeView]);
 
@@ -167,68 +232,15 @@ export function LinearPanel() {
     return () => clearTimeout(timer);
   }, []);
 
-  const listenerActive = !zenOpen;
+  // detailOpen gates the key listeners so the panel's bare letters don't fire
+  // while the floating detail is handling its own navigation.
+  const detailOpen = useAtomValue(linearDetailIssueIdAtom) !== null;
+  const keyListenerActive = !zenOpen && !detailOpen;
 
-  // Alt+↑/↓ list navigation (patterns.md §1.4: within-list nav)
-  useEffect(() => {
-    if (!listenerActive) return;
-    function onKey(e: KeyboardEvent) {
-      if (!e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
-      if (e.code !== "ArrowUp" && e.code !== "ArrowDown") return;
-      const target = e.target as HTMLElement | null;
-      const inField =
-        target?.tagName === "INPUT" ||
-        target?.tagName === "TEXTAREA" ||
-        !!target?.closest(".cm-editor") ||
-        target?.getAttribute("contenteditable") === "true";
-      if (inField) return;
-      const root = rootRef.current;
-      if (!root) return;
-      const items = Array.from(root.querySelectorAll<HTMLElement>("[data-nav-item]"));
-      if (items.length === 0) return;
-      const selected = root.querySelector<HTMLElement>("[data-nav-selected='true']");
-      const idx = selected ? items.indexOf(selected) : -1;
-      e.preventDefault();
-      const next =
-        e.code === "ArrowDown"
-          ? idx === -1 ? 0 : (idx + 1) % items.length
-          : idx === -1 ? items.length - 1 : (idx - 1 + items.length) % items.length;
-      for (const item of items) item.removeAttribute("data-nav-selected");
-      items[next].setAttribute("data-nav-selected", "true");
-      items[next].scrollIntoView({ block: "nearest" });
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [listenerActive]);
+  // Latest parent-id set for the expand/collapse-all shortcut.
+  const allParentIdsRef = useRef<ReadonlySet<string>>(new Set());
 
-  // Enter opens selected issue
-  useEffect(() => {
-    if (!listenerActive) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
-      if (e.code !== "Enter") return;
-      const target = e.target as HTMLElement | null;
-      const inField =
-        target?.tagName === "INPUT" ||
-        target?.tagName === "TEXTAREA" ||
-        !!target?.closest(".cm-editor") ||
-        target?.getAttribute("contenteditable") === "true";
-      if (inField) return;
-      const root = rootRef.current;
-      if (!root) return;
-      const selected = root.querySelector<HTMLElement>(
-        "[data-nav-selected='true'][data-issue-id]",
-      );
-      if (selected?.dataset.issueId) {
-        e.preventDefault();
-        setDetailIssueId(selected.dataset.issueId);
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [listenerActive, setDetailIssueId]);
-
-  const { groups, visibleCount } = useMemo(() => {
+  const { groups, visibleCount, childMap } = useMemo(() => {
     const teamScoped = teamFilter
       ? issues.filter((i) => i.teamId === teamFilter)
       : issues;
@@ -242,14 +254,42 @@ export function LinearPanel() {
       ? viewerFiltered
       : viewerFiltered.filter((i) => !isTerminal(i.stateType));
 
-    // Sub-issues (parentId set) show under parent rows — only top-level here
-    const topLevel = withCompleted.filter((i) => !i.parentId);
+    // Build global parent→children map over the full (unfiltered) pool so a
+    // visible parent shows ALL its sub-issues regardless of filter (§9 canon).
+    const fullPool = showCompleted ? teamScoped : teamScoped.filter((i) => !isTerminal(i.stateType));
+    const childMap = new Map<string, IssueView[]>();
+    for (const i of fullPool) {
+      if (i.parentId) {
+        const arr = childMap.get(i.parentId);
+        if (arr) arr.push(i);
+        else childMap.set(i.parentId, [i]);
+      }
+    }
+    const compare = (a: IssueView, b: IssueView) => compareIssues(a, b, sort.field, sort.dir);
+    for (const arr of childMap.values()) arr.sort(compare);
+
+    // Top-level rows: visible issues whose parent is not also visible.
+    const visibleIds = new Set(withCompleted.map((i) => i.id));
+    const topLevel = withCompleted
+      .filter((i) => !i.parentId || !visibleIds.has(i.parentId))
+      .sort(compare);
 
     return {
       groups: groupIssues(topLevel, groupBy),
       visibleCount: topLevel.length,
+      childMap,
     };
-  }, [issues, teamFilter, assignedToMe, showCompleted, groupBy, syncStatus?.viewerId]);
+  }, [issues, teamFilter, assignedToMe, showCompleted, groupBy, syncStatus?.viewerId, sort]);
+
+  allParentIdsRef.current = new Set(childMap.keys());
+
+  const allExpanded = expandedIssueIds.size > 0;
+  const isDefaultSort = sort.field === "updated" && sort.dir === "desc";
+
+  function toggleExpandAll() {
+    setExpandedIssueIds(allExpanded ? new Set() : new Set(childMap.keys()));
+    rootRef.current?.focus({ preventScroll: true });
+  }
 
   function toggleGroup(key: string) {
     setCollapsed((prev) => {
@@ -260,8 +300,195 @@ export function LinearPanel() {
     });
   }
 
-  const isLoading =
-    syncStatus?.state === "syncing" && !syncStatus.baselineDone;
+  function toggleIssueExpand(id: string) {
+    setExpandedIssueIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  // Plain ↑/↓ moves the data-nav-selected cursor. Enter opens. Space toggles
+  // sub-issues. E expands/collapses all. A toggles assigned-to-me. H toggles
+  // show-completed. Ctrl+C copies the identifier of the cursor row.
+  // header-action buttons own their own ←/→ (capture handler below).
+  useEffect(() => {
+    if (!keyListenerActive) return;
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      const inField =
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        !!target?.closest(".cm-editor") ||
+        target?.getAttribute("contenteditable") === "true";
+
+      // Ctrl+C over the keyboard-cursor issue copies its identifier.
+      if (e.code === "KeyC" && e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+        if (inField) return;
+        if (!target?.closest("[data-focus-zone='linear']")) return;
+        const sel = rootRef.current?.querySelector<HTMLElement>(
+          "[data-nav-selected='true'][data-issue-copy-id]",
+        );
+        if (sel?.dataset.issueCopyId) {
+          e.preventDefault();
+          copyIssue(sel.dataset.issueCopyId);
+        }
+        return;
+      }
+
+      if (e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
+      if (inField) return;
+      if (
+        target?.closest("[data-focus-zone='sidebar']") ||
+        target?.closest("[role='dialog']") ||
+        target?.closest("[role='listbox']")
+      ) return;
+      const root = rootRef.current;
+      if (!root) return;
+      if (target?.closest("[data-header-action]")) return;
+
+      if (e.code === "KeyA" || e.code === "KeyH" || e.code === "KeyE") {
+        if (!target?.closest("[data-focus-zone='linear']")) return;
+        if (e.code === "KeyA") {
+          if (assignedToMe && groupBy === "state") return;
+          e.preventDefault();
+          setAssignedToMe((prev) => !prev);
+        } else if (e.code === "KeyH") {
+          e.preventDefault();
+          setShowCompleted((prev) => !prev);
+        } else {
+          e.preventDefault();
+          setExpandedIssueIds((prev) =>
+            prev.size > 0 ? new Set() : new Set(allParentIdsRef.current),
+          );
+          root.focus({ preventScroll: true });
+        }
+        return;
+      }
+
+      const items = Array.from(root.querySelectorAll<HTMLElement>("[data-nav-item]"));
+      if (items.length === 0) return;
+      const selected = root.querySelector<HTMLElement>("[data-nav-selected='true']");
+      const idx = selected ? items.indexOf(selected) : -1;
+
+      if (e.code === "Space") {
+        const id = selected?.dataset.issueId;
+        if (id && selected?.dataset.hasSubtree !== undefined) {
+          e.preventDefault();
+          setExpandedIssueIds((prev) => {
+            const nextSet = new Set(prev);
+            if (nextSet.has(id)) nextSet.delete(id);
+            else nextSet.add(id);
+            return nextSet;
+          });
+        }
+        return;
+      }
+
+      if (e.code === "ArrowUp" || e.code === "ArrowDown") {
+        e.preventDefault();
+        if (e.code === "ArrowUp" && idx === 0) {
+          selected?.removeAttribute("data-nav-selected");
+          root.querySelector<HTMLElement>("[role='combobox'], select")?.focus();
+          return;
+        }
+        const next = e.code === "ArrowDown"
+          ? (idx === -1 ? 0 : (idx + 1) % items.length)
+          : (idx === -1 ? items.length - 1 : (idx - 1 + items.length) % items.length);
+        for (const item of items) item.removeAttribute("data-nav-selected");
+        items[next].setAttribute("data-nav-selected", "true");
+        items[next].scrollIntoView({ block: "nearest" });
+        return;
+      }
+
+      if (e.code === "Enter") {
+        if (idx === -1) return;
+        e.preventDefault();
+        items[idx].click();
+        return;
+      }
+
+      if (e.code !== "ArrowLeft" && e.code !== "ArrowRight") return;
+      if (!selected || selected.dataset.navExpanded === undefined) return;
+      const key = selected.dataset.groupKey;
+      if (!key) return;
+      e.preventDefault();
+      const expanded = selected.dataset.navExpanded === "true";
+      if (e.code === "ArrowLeft" && expanded) toggleGroup(key);
+      if (e.code === "ArrowRight" && !expanded) toggleGroup(key);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [keyListenerActive, assignedToMe, groupBy, setAssignedToMe, setShowCompleted, copyIssue]);
+
+  // ↓ from the focused team select hands control back to the list cursor
+  // (mirrors ClickUpPanel's Select handler).
+  useEffect(() => {
+    if (!keyListenerActive) return;
+    function onSelectKey(e: KeyboardEvent) {
+      if (e.code !== "ArrowDown" && e.code !== "ArrowUp") return;
+      if (e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
+      const root = rootRef.current;
+      const target = e.target as HTMLElement | null;
+      if (!root || !target) return;
+      const sel = root.querySelector<HTMLElement>("select");
+      if (!sel || target !== sel) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.code !== "ArrowDown") return;
+      target.blur();
+      focusIfPanelZone(root);
+      const first = root.querySelector<HTMLElement>("[data-nav-item]");
+      if (!first) return;
+      for (const item of root.querySelectorAll("[data-nav-selected]")) {
+        item.removeAttribute("data-nav-selected");
+      }
+      first.setAttribute("data-nav-selected", "true");
+      first.scrollIntoView({ block: "nearest" });
+    }
+    window.addEventListener("keydown", onSelectKey, true);
+    return () => window.removeEventListener("keydown", onSelectKey, true);
+  }, [keyListenerActive]);
+
+  // Header-action row keyboard nav: → from the team select enters the header
+  // buttons; ←/→ move along them; ← from the first returns to the select.
+  // Mirrors ClickUpPanel's header-nav capture handler (§10).
+  useEffect(() => {
+    if (!keyListenerActive) return;
+    function onHeaderNav(e: KeyboardEvent) {
+      if (e.code !== "ArrowLeft" && e.code !== "ArrowRight") return;
+      if (e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
+      const root = rootRef.current;
+      const target = e.target as HTMLElement | null;
+      if (!root || !target) return;
+      const sel = root.querySelector<HTMLElement>("select");
+      const onSelect = target === sel;
+      const headerBtn = target.closest<HTMLElement>("[data-header-action]");
+      if (!onSelect && !headerBtn) return;
+      const btns = Array.from(
+        root.querySelectorAll<HTMLElement>("[data-header-action]:not([disabled])"),
+      );
+      if (btns.length === 0) return;
+      if (onSelect) {
+        if (e.code !== "ArrowRight") return;
+        e.preventDefault();
+        e.stopPropagation();
+        btns[0].focus();
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      const i = btns.indexOf(headerBtn!);
+      if (e.code === "ArrowRight") btns[Math.min(i + 1, btns.length - 1)]?.focus();
+      else if (i <= 0) sel?.focus();
+      else btns[i - 1]?.focus();
+    }
+    window.addEventListener("keydown", onHeaderNav, true);
+    return () => window.removeEventListener("keydown", onHeaderNav, true);
+  }, [keyListenerActive]);
+
+  const isLoading = syncStatus?.state === "syncing" && !syncStatus.baselineDone;
 
   if (syncStatus?.state === "needs_team") {
     return (
@@ -277,7 +504,7 @@ export function LinearPanel() {
     <TooltipProvider delay={0}>
       <div ref={rootRef} tabIndex={-1} className="flex h-full flex-col outline-none" data-focus-zone="linear">
 
-        {/* Header: team selector + filter toggles */}
+        {/* Header: team selector + sort pickers + filter toggles */}
         <div className="flex shrink-0 items-center gap-1.5 border-b border-border/50 px-2 py-1.5">
           <select
             value={teamFilter ?? ""}
@@ -289,6 +516,91 @@ export function LinearPanel() {
               <option key={t.id} value={t.id}>{t.name}</option>
             ))}
           </select>
+
+          {/* Sort: one icon per field (click active field to flip dir) + reset-to-default */}
+          {SORT_FIELDS.map(({ field, label, Icon }) => {
+            const active = sort.field === field;
+            return (
+              <Tooltip key={field}>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      data-header-action
+                      aria-label={`Sort by ${label}`}
+                      aria-pressed={active}
+                      onClick={() =>
+                        setSort(
+                          active
+                            ? { field, dir: sort.dir === "asc" ? "desc" : "asc" }
+                            : { field, dir: defaultDirFor(field) },
+                        )
+                      }
+                      className={`flex size-6 shrink-0 items-center justify-center rounded transition-colors ${
+                        active
+                          ? "bg-primary/10 text-primary"
+                          : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+                      }`}
+                    />
+                  }
+                >
+                  {active ? (
+                    <span className="flex items-center gap-px">
+                      <Icon size={12} />
+                      {sort.dir === "asc" ? <ArrowUp size={9} /> : <ArrowDown size={9} />}
+                    </span>
+                  ) : (
+                    <Icon size={13} />
+                  )}
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  {`Sort by ${label.toLowerCase()}${active ? (sort.dir === "asc" ? " · asc" : " · desc") : ""}`}
+                </TooltipContent>
+              </Tooltip>
+            );
+          })}
+
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  data-header-action
+                  onClick={() => {
+                    setSort({ field: "updated", dir: "desc" });
+                    rootRef.current?.focus({ preventScroll: true });
+                  }}
+                  disabled={isDefaultSort}
+                  aria-label="Reset sort to default"
+                  className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+                />
+              }
+            >
+              <RotateCcw size={12} />
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Reset sort (Updated · desc)</TooltipContent>
+          </Tooltip>
+
+          <span className="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden />
+
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  data-header-action
+                  onClick={toggleExpandAll}
+                  aria-label={allExpanded ? "Collapse all sub-issues" : "Expand all sub-issues"}
+                  className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
+                />
+              }
+            >
+              {allExpanded ? <ChevronsDownUp size={13} /> : <ChevronsUpDown size={13} />}
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {allExpanded ? "Collapse all sub-issues (E)" : "Expand all sub-issues (E)"}
+            </TooltipContent>
+          </Tooltip>
 
           <Tooltip>
             <TooltipTrigger
@@ -303,7 +615,7 @@ export function LinearPanel() {
                   disabled={activeView === "mine"}
                   aria-label="Assigned to me"
                   aria-pressed={assignedToMe}
-                  className={`flex size-6 shrink-0 items-center justify-center rounded text-[10px] font-medium transition-colors disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent ${
+                  className={`flex size-6 shrink-0 items-center justify-center rounded transition-colors disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent ${
                     assignedToMe
                       ? "bg-primary/10 text-primary"
                       : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
@@ -311,10 +623,10 @@ export function LinearPanel() {
                 />
               }
             >
-              Me
+              <UserCheck size={13} />
             </TooltipTrigger>
             <TooltipContent side="bottom">
-              {activeView === "mine" ? "Assigned to me — locked in My issues" : "Assigned to me"}
+              {activeView === "mine" ? "Assigned to me — locked in My issues" : "Assigned to me (A)"}
             </TooltipContent>
           </Tooltip>
 
@@ -325,7 +637,7 @@ export function LinearPanel() {
                   type="button"
                   data-header-action
                   onClick={() => setShowCompleted((prev) => !prev)}
-                  aria-label="Show completed"
+                  aria-label="Show completed / canceled"
                   aria-pressed={showCompleted}
                   className={`flex size-6 shrink-0 items-center justify-center rounded text-[10px] font-medium transition-colors ${
                     showCompleted
@@ -335,9 +647,9 @@ export function LinearPanel() {
                 />
               }
             >
-              ✓
+              <AlignLeft size={13} />
             </TooltipTrigger>
-            <TooltipContent side="bottom">Show completed / canceled</TooltipContent>
+            <TooltipContent side="bottom">Show completed / canceled (H)</TooltipContent>
           </Tooltip>
         </div>
 
@@ -391,8 +703,11 @@ export function LinearPanel() {
                 group={group}
                 expanded={!collapsed.has(group.key)}
                 onToggle={() => toggleGroup(group.key)}
-                issues={issues}
+                expandedIssueIds={expandedIssueIds}
+                onToggleIssue={toggleIssueExpand}
+                childMap={childMap}
                 onOpen={(id) => setDetailIssueId(id)}
+                copyIssue={copyIssue}
               />
             ))
           )}
@@ -406,16 +721,45 @@ function LinearGroupSection({
   group,
   expanded,
   onToggle,
-  issues,
+  expandedIssueIds,
+  onToggleIssue,
+  childMap,
   onOpen,
+  copyIssue,
 }: {
   group: IssueGroup;
   expanded: boolean;
   onToggle: () => void;
-  issues: IssueView[];
+  expandedIssueIds: ReadonlySet<string>;
+  onToggleIssue: (issueId: string) => void;
+  childMap: ReadonlyMap<string, IssueView[]>;
   onOpen: (issueId: string) => void;
+  copyIssue: (identifier: string) => void;
 }) {
   const iconType = group.stateType ? linearStateToIconType(group.stateType) : null;
+
+  // Render an issue and (when expanded) its full sub-issue tree, recursively.
+  // `seen` guards malformed parent cycles (§9 canon).
+  function renderNode(issue: IssueView, depth: number, seen: ReadonlySet<string>): React.ReactNode {
+    const children = seen.has(issue.id) ? [] : (childMap.get(issue.id) ?? []);
+    const hasChildren = children.length > 0;
+    const issueExpanded = expandedIssueIds.has(issue.id);
+    const nextSeen = hasChildren ? new Set([...seen, issue.id]) : seen;
+    return (
+      <div key={issue.id}>
+        <LinearIssueRow
+          issue={issue}
+          depth={depth}
+          hasChildren={hasChildren}
+          expanded={issueExpanded}
+          onToggleExpand={() => onToggleIssue(issue.id)}
+          onOpen={onOpen}
+          copyIssue={copyIssue}
+        />
+        {hasChildren && issueExpanded && children.map((c) => renderNode(c, depth + 1, nextSeen))}
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -439,103 +783,109 @@ function LinearGroupSection({
         <span className="truncate">{group.label}</span>
         <span className="tabular-nums text-muted-foreground/50">{group.issues.length}</span>
       </button>
-      {expanded && group.issues.map((issue) => (
-        <LinearIssueRow
-          key={issue.id}
-          issue={issue}
-          subIssues={issues.filter((i) => i.parentId === issue.id)}
-          onOpen={onOpen}
-        />
-      ))}
+      {expanded && group.issues.map((issue) => renderNode(issue, 0, new Set<string>()))}
     </div>
   );
 }
 
 function LinearIssueRow({
   issue,
-  subIssues,
-  onOpen,
   depth = 0,
+  hasChildren = false,
+  expanded = false,
+  onToggleExpand,
+  onOpen,
+  copyIssue,
 }: {
   issue: IssueView;
-  subIssues: IssueView[];
-  onOpen: (issueId: string) => void;
   depth?: number;
+  hasChildren?: boolean;
+  expanded?: boolean;
+  onToggleExpand?: () => void;
+  onOpen: (issueId: string) => void;
+  copyIssue: (identifier: string) => void;
 }) {
-  const [subExpanded, setSubExpanded] = useState(false);
-  const hasChildren = subIssues.length > 0;
   const iconType = linearStateToIconType(issue.stateType);
   const priorityStr = linearPriorityStr(issue.priority);
 
   return (
-    <div>
-      <button
-        type="button"
-        data-nav-item
-        data-issue-id={issue.id}
-        onClick={() => onOpen(issue.id)}
-        style={{ paddingLeft: 12 + depth * 16 }}
-        className="group flex w-full items-center gap-1.5 py-1 pr-3 text-left transition-colors hover:bg-secondary/40"
-      >
-        {hasChildren ? (
-          <span
-            role="button"
-            tabIndex={-1}
-            aria-label={subExpanded ? "Collapse sub-issues" : "Expand sub-issues"}
-            onClick={(e) => {
-              e.stopPropagation();
-              setSubExpanded((p) => !p);
-            }}
-            className="flex size-3.5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
-          >
-            {subExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-          </span>
-        ) : (
-          <span className="w-3.5 shrink-0" aria-hidden />
-        )}
-
-        <PriorityIcon priority={priorityStr} size={12} className="shrink-0" />
-        <StatusIcon
-          type={iconType}
-          color={issue.stateColor ?? null}
-          size={13}
-          className="shrink-0"
-          title={issue.stateName}
-        />
-
-        {issue.identifier && (
-          <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/60">
-            {issue.identifier}
-          </span>
-        )}
-
-        <span className="min-w-0 flex-1 truncate text-[11px] text-foreground/80">
-          {issue.title}
+    <button
+      type="button"
+      data-nav-item
+      data-issue-id={issue.id}
+      data-issue-copy-id={issue.identifier ?? issue.id}
+      data-has-subtree={hasChildren ? "true" : undefined}
+      onClick={() => onOpen(issue.id)}
+      style={{ paddingLeft: 12 + depth * 16 }}
+      className="group flex w-full items-center gap-1.5 py-1 pr-3 text-left transition-colors hover:bg-secondary/40"
+    >
+      {/* Chevron slot: same-width spacer keeps columns aligned (§9) */}
+      {hasChildren ? (
+        <span
+          role="button"
+          tabIndex={-1}
+          aria-label={expanded ? "Collapse sub-issues" : "Expand sub-issues"}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleExpand?.();
+          }}
+          className="flex size-3.5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+        >
+          {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
         </span>
+      ) : (
+        <span className="w-3.5 shrink-0" aria-hidden />
+      )}
 
-        {/* Label chips */}
-        {issue.labels.slice(0, 2).map((label) => (
-          <span
-            key={label.id}
-            className="max-w-16 shrink-0 truncate rounded-full px-1.5 text-[9px] leading-4"
-            style={{
-              background: label.color ? `${label.color}33` : "var(--color-secondary)",
-              color: label.color ?? "var(--color-secondary-foreground)",
-            }}
+      <PriorityIcon priority={priorityStr} size={12} className="shrink-0" />
+      <StatusIcon
+        type={iconType}
+        color={issue.stateColor ?? null}
+        size={13}
+        className="shrink-0"
+        title={issue.stateName}
+      />
+
+      {/* Copyable identifier — click copies (§12); Ctrl+C on the cursor row also copies */}
+      {(issue.identifier ?? issue.id) && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                role="button"
+                tabIndex={-1}
+                aria-label="Copy issue ID"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  copyIssue(issue.identifier ?? issue.id);
+                }}
+                className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/60 transition-colors hover:text-foreground"
+              />
+            }
           >
-            {label.name}
-          </span>
-        ))}
-      </button>
-      {hasChildren && subExpanded && subIssues.map((sub) => (
-        <LinearIssueRow
-          key={sub.id}
-          issue={sub}
-          subIssues={[]}
-          onOpen={onOpen}
-          depth={depth + 1}
-        />
+            {issue.identifier ?? issue.id}
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-[10px]">Copy issue ID</TooltipContent>
+        </Tooltip>
+      )}
+
+      <span className="min-w-0 flex-1 truncate text-[11px] text-foreground/80">
+        {issue.title}
+      </span>
+
+      {/* Label chips */}
+      {issue.labels.slice(0, 2).map((label) => (
+        <span
+          key={label.id}
+          className="max-w-16 shrink-0 truncate rounded-full px-1.5 text-[9px] leading-4"
+          style={{
+            background: label.color ? `${label.color}33` : "var(--color-secondary)",
+            color: label.color ?? "var(--color-secondary-foreground)",
+          }}
+        >
+          {label.name}
+        </span>
       ))}
-    </div>
+    </button>
   );
 }

@@ -461,7 +461,9 @@ pub struct IssueView {
     pub project_name: Option<String>,
     pub cycle_id: Option<String>,
     pub parent_id: Option<String>,
+    pub created_at: Option<i64>,
     pub updated_at: Option<i64>,
+    pub due_date: Option<i64>,
     pub url: Option<String>,
     pub stale: bool,
     pub labels: Vec<LabelView>,
@@ -480,7 +482,8 @@ pub fn read_issues(conn: &Connection, filter: &IssueFilter) -> Result<Vec<IssueV
         "SELECT i.id, i.identifier, i.team_id, i.title, i.description, i.priority, \
                 i.state_id, s.name, s.type, s.color, \
                 i.assignee_id, COALESCE(u.display_name, u.name), \
-                i.project_id, p.name, i.cycle_id, i.parent_id, i.updated_at, i.url, i.stale \
+                i.project_id, p.name, i.cycle_id, i.parent_id, \
+                i.created_at, i.updated_at, i.due_date, i.url, i.stale \
          FROM linear_issues i \
          LEFT JOIN linear_workflow_states s ON s.id = i.state_id \
          LEFT JOIN linear_users u ON u.id = i.assignee_id \
@@ -518,9 +521,11 @@ pub fn read_issues(conn: &Connection, filter: &IssueFilter) -> Result<Vec<IssueV
                 project_name: row.get(13)?,
                 cycle_id: row.get(14)?,
                 parent_id: row.get(15)?,
-                updated_at: row.get(16)?,
-                url: row.get(17)?,
-                stale: row.get::<_, i64>(18)? != 0,
+                created_at: row.get(16)?,
+                updated_at: row.get(17)?,
+                due_date: row.get(18)?,
+                url: row.get(19)?,
+                stale: row.get::<_, i64>(20)? != 0,
                 labels: Vec::new(),
             })
         })?

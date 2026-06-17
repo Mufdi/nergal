@@ -25,6 +25,8 @@ export interface IssueView {
   cycleId?: string;
   parentId?: string;
   updatedAt?: number;
+  createdAt?: number;
+  dueDate?: number;
   url?: string;
   stale: boolean;
   labels: { id: string; name: string; color?: string }[];
@@ -73,6 +75,16 @@ export const linearKeyOnDiskAtom = atom(false);
 export type LinearGroupBy = "state" | "project" | "assignee";
 export const GROUP_BY_ORDER: LinearGroupBy[] = ["state", "project", "assignee"];
 
+/// Sort applied to issues within each group (and to nested sub-issue siblings).
+/// Linear priority int: 0=none,1=urgent,2=high,3=medium,4=low — "priority
+/// ascending" means urgent first, none last (mirrors ClickUp's sortKey null-last).
+export type LinearSortField = "updated" | "created" | "priority" | "title";
+export interface LinearSort {
+  field: LinearSortField;
+  dir: "asc" | "desc";
+}
+export const linearSortAtom = atom<LinearSort>({ field: "updated", dir: "desc" });
+
 /// null = "Todos" (all teams).
 export const linearTeamFilterAtom = atom<string | null>(null);
 export const linearGroupByAtom = atom<LinearGroupBy>("state");
@@ -83,6 +95,19 @@ export const linearShowCompletedAtom = atom(false);
 
 /// Issue currently open in the floating detail module (null = closed).
 export const linearDetailIssueIdAtom = atom<string | null>(null);
+
+/// Copy an issue identifier to the OS clipboard + toast. Routes through the
+/// robust terminal_clipboard_write (Wayland plugin stalls async) matching
+/// copyTaskIdAction in clickup.ts.
+export const copyLinearIssueAction = atom(null, (_get, set, identifier: string) => {
+  void invoke("terminal_clipboard_write", { text: identifier })
+    .then(() =>
+      set(toastsAtom, { message: "Issue ID copied", description: identifier, type: "success" }),
+    )
+    .catch((err) =>
+      set(toastsAtom, { message: "Copy failed", description: String(err), type: "error" }),
+    );
+});
 
 // ── Refresh + bootstrap ──
 

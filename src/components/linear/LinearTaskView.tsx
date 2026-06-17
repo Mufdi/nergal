@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAtomValue } from "jotai";
 import { open as openShell } from "@tauri-apps/plugin-shell";
+import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { invoke } from "@/lib/tauri";
 import { MarkdownView } from "@/components/plan/MarkdownView";
 import { StatusIcon } from "@/components/clickup/StatusIcon";
@@ -43,7 +44,6 @@ function formatDate(ms: number): string {
 }
 
 /// Validates a URL through the backend (browser_validate_url) before opening.
-/// The backend strips tracking params and rejects non-http(s) schemes.
 async function openValidatedUrl(url: string | undefined): Promise<void> {
   if (!url) return;
   try {
@@ -61,9 +61,8 @@ interface LinearDetailData {
   comments: LinearComment[];
 }
 
-/// SWR cache for fetched detail payloads (issue + comments). Module-level so
-/// it survives a modal/tab unmount — revisiting an issue renders instantly
-/// from cache while a background revalidation keeps it fresh.
+/// SWR cache for fetched detail payloads. Module-level so it survives a
+/// modal/tab unmount — revisiting an issue renders instantly from cache.
 const detailCache = new Map<string, LinearDetailData>();
 
 export type LinearIssueController = ReturnType<typeof useLinearIssueController>;
@@ -82,12 +81,50 @@ export function useLinearIssueController({
   const contentRef = useRef<HTMLDivElement | null>(null);
   const mainRef = useRef<HTMLDivElement | null>(null);
 
+  // Drill-in history: opening a sub-issue pushes onto the stack; ←/→ navigate.
+  // Mirrors useClickUpTaskController's histNav pattern exactly.
+  const detailHistory = useRef<{ stack: string[]; index: number }>({ stack: [], index: -1 });
+  const navInternal = useRef(false);
+  const [histNav, setHistNav] = useState({ canBack: false, canFwd: false });
+
   // Reset + grab focus when issue opens
   useEffect(() => {
     if (issueId === null) return;
     const t = setTimeout(() => contentRef.current?.focus({ preventScroll: true }), 60);
     return () => clearTimeout(t);
   }, [issueId]);
+
+  // Maintain drill-in history stack
+  useEffect(() => {
+    const h = detailHistory.current;
+    if (issueId === null) {
+      detailHistory.current = { stack: [], index: -1 };
+      setHistNav({ canBack: false, canFwd: false });
+      return;
+    }
+    if (navInternal.current) {
+      navInternal.current = false;
+    } else if (h.index >= 0 && h.stack[h.index] === issueId) {
+      // already current — no-op
+    } else if (h.index === -1) {
+      h.stack = [issueId];
+      h.index = 0;
+    } else {
+      h.stack = [...h.stack.slice(0, h.index + 1), issueId];
+      h.index = h.stack.length - 1;
+    }
+    setHistNav({ canBack: h.index > 0, canFwd: h.index < h.stack.length - 1 });
+  }, [issueId]);
+
+  function stepHistory(delta: number) {
+    const h = detailHistory.current;
+    const next = h.index + delta;
+    if (next < 0 || next >= h.stack.length) return;
+    h.index = next;
+    navInternal.current = true;
+    setIssueId(h.stack[next]);
+    setHistNav({ canBack: next > 0, canFwd: next < h.stack.length - 1 });
+  }
 
   useEffect(() => {
     if (!issueId) {
@@ -106,7 +143,6 @@ export function useLinearIssueController({
     }
     setError(null);
 
-    // Fetch issue view from mirror + comments lazily
     Promise.all([
       invoke<IssueView[]>("linear_read_issues", { includeStale: true }),
       invoke<LinearComment[]>("linear_issue_comments", { issueId }),
@@ -119,7 +155,6 @@ export function useLinearIssueController({
         detailCache.set(issueId, data);
       })
       .catch((err) => {
-        if (cancelled && !detailCache.has(issueId)) setError(String(err));
         if (!cancelled && !detailCache.has(issueId)) setError(String(err));
       })
       .finally(() => {
@@ -129,13 +164,22 @@ export function useLinearIssueController({
     return () => { cancelled = true; };
   }, [issueId]);
 
-  // Mirror atom is the fast path for the issue snapshot (no extra fetch)
   const mirrorIssue = issueId ? issues.find((i) => i.id === issueId) ?? null : null;
   const issue = detail?.issue ?? mirrorIssue;
   const comments = detail?.comments ?? [];
 
   // Sub-issues from the mirror (parentId === issueId)
   const subIssues = issueId ? issues.filter((i) => i.parentId === issueId) : [];
+
+  // Build a full parent→children map for recursive sub-issue tree (§9 canon).
+  const childMap = new Map<string, IssueView[]>();
+  for (const i of issues) {
+    if (i.parentId) {
+      const arr = childMap.get(i.parentId);
+      if (arr) arr.push(i);
+      else childMap.set(i.parentId, [i]);
+    }
+  }
 
   return {
     issueId,
@@ -146,9 +190,113 @@ export function useLinearIssueController({
     issue,
     comments,
     subIssues,
+    childMap,
     contentRef,
     mainRef,
+    histNav,
+    stepHistory,
   };
+}
+
+// ── Sub-issue tree (expandable, default expanded in modal) ──
+
+function SubIssueTree({
+  parentId,
+  childMap,
+  depth,
+  seen,
+  onOpen,
+}: {
+  parentId: string;
+  childMap: ReadonlyMap<string, IssueView[]>;
+  depth: number;
+  seen: ReadonlySet<string>;
+  onOpen: (id: string) => void;
+}) {
+  const children = seen.has(parentId) ? [] : (childMap.get(parentId) ?? []);
+  if (children.length === 0) return null;
+
+  return (
+    <>
+      {children.map((sub) => (
+        <SubIssueNode
+          key={sub.id}
+          issue={sub}
+          childMap={childMap}
+          depth={depth}
+          seen={new Set([...seen, parentId])}
+          onOpen={onOpen}
+        />
+      ))}
+    </>
+  );
+}
+
+function SubIssueNode({
+  issue,
+  childMap,
+  depth,
+  seen,
+  onOpen,
+}: {
+  issue: IssueView;
+  childMap: ReadonlyMap<string, IssueView[]>;
+  depth: number;
+  seen: ReadonlySet<string>;
+  onOpen: (id: string) => void;
+}) {
+  const hasChildren = !seen.has(issue.id) && (childMap.get(issue.id)?.length ?? 0) > 0;
+  // Default expanded in the detail modal (contrast with the panel which defaults collapsed).
+  const [expanded, setExpanded] = useState(true);
+  const iconType = linearStateToIconType(issue.stateType);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => onOpen(issue.id)}
+        style={{ paddingLeft: 4 + depth * 16 }}
+        className="flex w-full items-center gap-1.5 rounded py-0.5 pr-1 text-left text-[11px] text-foreground/80 transition-colors hover:bg-secondary/40"
+      >
+        {/* Chevron slot (§9) */}
+        {hasChildren ? (
+          <span
+            role="button"
+            tabIndex={-1}
+            aria-label={expanded ? "Collapse" : "Expand"}
+            onClick={(e) => {
+              e.stopPropagation();
+              setExpanded((p) => !p);
+            }}
+            className="flex size-3.5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+          >
+            {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+          </span>
+        ) : (
+          <span className="w-3.5 shrink-0" aria-hidden />
+        )}
+        <StatusIcon
+          type={iconType}
+          color={issue.stateColor ?? null}
+          size={12}
+          className="shrink-0"
+        />
+        {issue.identifier && (
+          <span className="shrink-0 font-mono text-[10px] text-muted-foreground/60">{issue.identifier}</span>
+        )}
+        <span className="truncate">{issue.title}</span>
+      </button>
+      {hasChildren && expanded && (
+        <SubIssueTree
+          parentId={issue.id}
+          childMap={childMap}
+          depth={depth + 1}
+          seen={new Set([...seen, issue.id])}
+          onOpen={onOpen}
+        />
+      )}
+    </div>
+  );
 }
 
 // ── Body (shared by modal + future tab) ──
@@ -169,7 +317,7 @@ export function LinearIssueBody({
   layout: "modal" | "tab";
 }) {
   const isTab = layout === "tab";
-  const { detail, issue, loading, error, comments, subIssues } = c;
+  const { detail, issue, loading, error, comments, subIssues, childMap } = c;
 
   const setOuterRef = (el: HTMLDivElement | null) => {
     c.contentRef.current = el;
@@ -274,8 +422,6 @@ export function LinearIssueBody({
     </div>
   );
 
-  // Description from Linear issue is untrusted markdown — gate remote images
-  // to prevent tracking pixels / SSRF per the spec security requirement.
   const descEl = (
     <>
       <SectionCaps label="Description" />
@@ -289,28 +435,20 @@ export function LinearIssueBody({
     </>
   );
 
+  // Sub-issues with full recursive tree (default expanded in modal, §9).
   const subIssuesEl = subIssues.length > 0 ? (
     <>
       <SectionCaps label={`Sub-issues · ${subIssues.length}`} />
       <div className="flex flex-col gap-0.5">
         {subIssues.map((sub) => (
-          <button
+          <SubIssueNode
             key={sub.id}
-            type="button"
-            onClick={() => c.setIssueId(sub.id)}
-            className="flex items-center gap-1.5 rounded py-0.5 text-left text-[11px] text-foreground/80 transition-colors hover:bg-secondary/40"
-          >
-            <StatusIcon
-              type={linearStateToIconType(sub.stateType)}
-              color={sub.stateColor ?? null}
-              size={12}
-              className="shrink-0"
-            />
-            {sub.identifier && (
-              <span className="shrink-0 font-mono text-[10px] text-muted-foreground/60">{sub.identifier}</span>
-            )}
-            <span className="truncate">{sub.title}</span>
-          </button>
+            issue={sub}
+            childMap={childMap}
+            depth={0}
+            seen={new Set<string>([issue.id])}
+            onOpen={(id) => c.setIssueId(id)}
+          />
         ))}
       </div>
     </>
@@ -337,7 +475,6 @@ export function LinearIssueBody({
                 )}
               </div>
               <div className="-my-1.5">
-                {/* Comments are also untrusted — gate images */}
                 <MarkdownView content={comment.body ?? ""} gateRemoteImages />
               </div>
             </div>
@@ -377,6 +514,34 @@ export function LinearIssueBody({
         {commentsEl}
       </main>
     </div>
+  );
+}
+
+/// Drill-in history chevrons for the floating modal title bar (mirrors TaskHistoryNav).
+export function LinearIssueHistoryNav({ c }: { c: LinearIssueController }) {
+  return (
+    <>
+      <button
+        type="button"
+        aria-label="Back"
+        disabled={!c.histNav.canBack}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={() => c.stepHistory(-1)}
+        className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground disabled:opacity-25 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+      >
+        <ChevronLeft size={14} />
+      </button>
+      <button
+        type="button"
+        aria-label="Forward"
+        disabled={!c.histNav.canFwd}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={() => c.stepHistory(1)}
+        className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground disabled:opacity-25 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+      >
+        <ChevronRight size={14} />
+      </button>
+    </>
   );
 }
 

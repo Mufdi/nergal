@@ -10,6 +10,7 @@ import { clampGeometryToViewport, type FloatingGeometry } from "@/stores/scratch
 import { linearDetailIssueIdAtom } from "@/stores/linear";
 import {
   LinearIssueBody,
+  LinearIssueHistoryNav,
   LinearIssueTitleContent,
   useLinearIssueController,
 } from "@/components/linear/LinearTaskView";
@@ -70,6 +71,24 @@ export function LinearTaskDetail() {
       .catch(() => {});
   }, []);
 
+  // Ctrl+←/→ steps drill-in history (mirrors ClickUpTaskDetail; no collision in shortcuts.ts).
+  // Editable fields keep their own word-nav.
+  useEffect(() => {
+    if (issueId === null) return;
+    function onKey(e: KeyboardEvent) {
+      if (!e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      if (e.code !== "ArrowLeft" && e.code !== "ArrowRight") return;
+      const t = e.target as HTMLElement | null;
+      if (t?.tagName === "TEXTAREA" || t?.tagName === "INPUT") return;
+      e.preventDefault();
+      c.stepHistory(e.code === "ArrowLeft" ? -1 : 1);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // c.stepHistory is stable across renders (ref-backed); issueId is the real dep.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [issueId]);
+
   function handleGeometryChange(next: FloatingGeometry) {
     setGeometry(next);
     invoke("scratchpad_set_geometry", {
@@ -95,6 +114,7 @@ export function LinearTaskDetail() {
         autoFocus
         title={
           <TooltipProvider delay={0}>
+            <LinearIssueHistoryNav c={c} />
             <LinearIssueTitleContent c={c} />
           </TooltipProvider>
         }

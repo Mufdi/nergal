@@ -68,6 +68,11 @@ pub struct WorkflowState {
     pub color: Option<String>,
     #[serde(default)]
     pub position: Option<f64>,
+    /// Owning team — present when fetched from the top-level `workflowStates`
+    /// query (states are queried flat, not nested under teams, to stay under the
+    /// per-query complexity cap).
+    #[serde(default)]
+    pub team: Option<IdRef>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -271,6 +276,14 @@ mod tests {
         assert!(issue.assignee.is_none());
         assert!(issue.project.is_none());
         assert!(issue.labels.nodes.is_empty());
+    }
+
+    #[test]
+    fn workflow_state_parses_flat_with_team() {
+        let json = r##"{ "id":"s1","name":"In Progress","type":"started","color":"#fff","team":{"id":"t1"} }"##;
+        let s: WorkflowState = serde_json::from_str(json).unwrap();
+        assert_eq!(s.state_type, "started");
+        assert_eq!(s.team.unwrap().id, "t1");
     }
 
     #[test]

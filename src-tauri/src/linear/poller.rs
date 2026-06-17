@@ -25,6 +25,10 @@ use super::model::Issue;
 /// `reconcile` with fixtures and no network.
 pub struct FetchedCycle {
     pub teams: Vec<super::model::Team>,
+    /// Workflow states fetched flat (each carries `team`); see client docs.
+    pub states: Vec<super::model::WorkflowState>,
+    /// Labels fetched flat (each carries `team`, null for workspace labels).
+    pub labels: Vec<super::model::Label>,
     /// Sets 1 + 2 merged and deduped by id (window + viewer-assigned).
     pub scope_issues: Vec<Issue>,
     /// Set-3 by-id results: the delta of currently-mine issues re-fetched.
@@ -168,15 +172,21 @@ pub fn reconcile(
 
     let mut out = ReconcileOutcome::default();
 
-    // Vocabularies first (FK targets), all from the teams fetch.
+    // Vocabularies first (FK targets), fetched flat. Teams → states (each names
+    // its team) → labels.
     for team in &cycle.teams {
         mirror::upsert_team(&tx, &team.id, &team.name, &team.key, cycle.cycle_now)?;
-        for s in &team.states.nodes {
-            mirror::upsert_workflow_state(&tx, s, &team.id)?;
+    }
+    for s in &cycle.states {
+        if let Some(t) = &s.team {
+            // A state for an unfetched team (paging skew) still resolves via a
+            // stub team rather than an FK abort.
+            mirror::ensure_team_placeholder(&tx, &t.id, cycle.cycle_now)?;
+            mirror::upsert_workflow_state(&tx, s, &t.id)?;
         }
-        for l in &team.labels.nodes {
-            mirror::upsert_label(&tx, l)?;
-        }
+    }
+    for l in &cycle.labels {
+        mirror::upsert_label(&tx, l)?;
     }
 
     // Scope issues (sets 1 + 2). Track the global fetched-id set for the
@@ -359,8 +369,11 @@ pub async fn run_cycle(
     let window_start = cycle_now - (window_days as i64) * 86_400;
     let updated_after = epoch_to_iso8601(window_start);
 
-    // Teams (with states + labels).
-    let teams = client.get_teams().await?;
+    // Vocabularies, fetched flat (separate top-level queries to stay under the
+    // per-query complexity cap).
+    let teams = client.all_teams().await?;
+    let states = client.all_workflow_states().await?;
+    let labels = client.all_labels().await?;
 
     // Set 1: window. Set 2: viewer-assigned. Both scoped to selected teams.
     let (win_issues, win_complete) = if selected_team_ids.is_empty() {
@@ -402,6 +415,8 @@ pub async fn run_cycle(
 
     let fetched = FetchedCycle {
         teams,
+        states,
+        labels,
         scope_issues,
         set3_results,
         mine_before,
@@ -461,6 +476,8 @@ mod tests {
     fn base_cycle(viewer: &str) -> FetchedCycle {
         FetchedCycle {
             teams: vec![team("t1")],
+            states: vec![],
+            labels: vec![],
             scope_issues: vec![],
             set3_results: vec![],
             mine_before: vec![],

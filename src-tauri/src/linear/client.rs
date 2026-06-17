@@ -33,6 +33,9 @@ pub const ISSUES_PAGE_SIZE: u32 = 25;
 const LABELS_INNER_SIZE: u32 = 10;
 /// Set-3 by-id batch size; matches the page size.
 pub const BY_ID_CHUNK: usize = 25;
+/// Flat vocabulary page size (teams/states/labels). Each flat query costs
+/// ~first × (a few scalars), well under the 10k cap; pagination handles volume.
+const VOCAB_PAGE_SIZE: u32 = 100;
 
 pub struct LinearClient {
     http: reqwest::Client,
@@ -132,15 +135,93 @@ impl LinearClient {
         Ok(d.viewer)
     }
 
-    /// All teams with their workflow states + labels inline. States/labels per
-    /// team are small vocabularies (first:250, no pagination).
-    pub async fn get_teams(&self) -> Result<Vec<Team>> {
+    /// Teams (bare). States and labels are fetched flat via separate top-level
+    /// queries (`all_workflow_states`/`all_labels`) — nesting them under teams
+    /// would multiply the per-query complexity past Linear's 10k cap. Paginated.
+    pub async fn all_teams(&self) -> Result<Vec<Team>> {
         #[derive(Deserialize)]
         struct Data {
             teams: Connection<Team>,
         }
-        let d: Data = self.execute(TEAMS_QUERY, json!({})).await?;
-        Ok(d.teams.nodes)
+        let mut out = Vec::new();
+        let mut after: Option<String> = None;
+        loop {
+            let d: Data = self
+                .execute(
+                    TEAMS_QUERY,
+                    json!({ "after": after, "first": VOCAB_PAGE_SIZE }),
+                )
+                .await?;
+            out.extend(d.teams.nodes);
+            if d.teams.page_info.has_next_page {
+                match d.teams.page_info.end_cursor {
+                    Some(c) => after = Some(c),
+                    None => break,
+                }
+            } else {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    /// All workflow states across teams (each carries `team { id }`). Paginated.
+    pub async fn all_workflow_states(&self) -> Result<Vec<super::model::WorkflowState>> {
+        #[derive(Deserialize)]
+        struct Data {
+            #[serde(rename = "workflowStates")]
+            workflow_states: Connection<super::model::WorkflowState>,
+        }
+        let mut out = Vec::new();
+        let mut after: Option<String> = None;
+        loop {
+            let d: Data = self
+                .execute(
+                    WORKFLOW_STATES_QUERY,
+                    json!({ "after": after, "first": VOCAB_PAGE_SIZE }),
+                )
+                .await?;
+            out.extend(d.workflow_states.nodes);
+            if d.workflow_states.page_info.has_next_page {
+                match d.workflow_states.page_info.end_cursor {
+                    Some(c) => after = Some(c),
+                    None => break,
+                }
+            } else {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    /// All issue labels (each carries `team { id }`, null for workspace labels).
+    /// Paginated.
+    pub async fn all_labels(&self) -> Result<Vec<super::model::Label>> {
+        #[derive(Deserialize)]
+        struct Data {
+            #[serde(rename = "issueLabels")]
+            issue_labels: Connection<super::model::Label>,
+        }
+        let mut out = Vec::new();
+        let mut after: Option<String> = None;
+        loop {
+            let d: Data = self
+                .execute(
+                    LABELS_QUERY,
+                    json!({ "after": after, "first": VOCAB_PAGE_SIZE }),
+                )
+                .await?;
+            out.extend(d.issue_labels.nodes);
+            if d.issue_labels.page_info.has_next_page {
+                match d.issue_labels.page_info.end_cursor {
+                    Some(c) => after = Some(c),
+                    None => break,
+                }
+            } else {
+                break;
+            }
+        }
+        Ok(out)
     }
 
     /// One page of issues updated after `updated_after` (ISO8601) for the given
@@ -336,13 +417,28 @@ fn backoff_wait(headers: &HashMap<String, String>, now_ms: u128) -> Duration {
 
 const VIEWER_QUERY: &str = "query { viewer { id name email } }";
 
-const TEAMS_QUERY: &str = "query {
-  teams(first: 250) {
-    nodes {
-      id name key
-      states(first: 250) { nodes { id name type color position } }
-      labels(first: 250) { nodes { id name color team { id } } }
-    }
+// Vocabularies (teams/states/labels) are fetched FLAT, not nested, because
+// Linear bills complexity as the PRODUCT of nested `first` values — a
+// teams(250){ states(250) labels(250) } query is ~125k complexity, far past the
+// 10k per-query cap. Flat top-level queries are each independently small.
+const TEAMS_QUERY: &str = "query Teams($first: Int!, $after: String) {
+  teams(first: $first, after: $after) {
+    nodes { id name key }
+    pageInfo { hasNextPage endCursor }
+  }
+}";
+
+const WORKFLOW_STATES_QUERY: &str = "query States($first: Int!, $after: String) {
+  workflowStates(first: $first, after: $after) {
+    nodes { id name type color position team { id } }
+    pageInfo { hasNextPage endCursor }
+  }
+}";
+
+const LABELS_QUERY: &str = "query Labels($first: Int!, $after: String) {
+  issueLabels(first: $first, after: $after) {
+    nodes { id name color team { id } }
+    pageInfo { hasNextPage endCursor }
   }
 }";
 

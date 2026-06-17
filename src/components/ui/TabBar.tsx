@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { ObsidianIcon } from "@/components/icons/ObsidianIcon";
 import { ClickUpIcon } from "@/components/icons/ClickUpIcon";
+import { LinearIcon } from "@/components/icons/LinearIcon";
 import { activeSessionPinnedNotesAtom } from "@/stores/pinnedNotes";
 import type { ComponentType } from "react";
 
@@ -42,6 +43,8 @@ const TAB_ICONS: Record<TabType, ComponentType<{ size?: number | string; classNa
   obsidiannote: ObsidianIcon,
   clickup: ClickUpIcon,
   "clickup-task": ClickUpIcon,
+  linear: LinearIcon,
+  "linear-issue": LinearIcon,
 };
 
 export function TabBar() {

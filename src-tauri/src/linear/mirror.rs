@@ -447,6 +447,9 @@ pub struct IssueView {
     pub identifier: Option<String>,
     pub team_id: String,
     pub title: String,
+    /// Full markdown body — the floating detail renders it (gated). Kept on the
+    /// list view so the detail reads from the same atom; Linear bodies are modest.
+    pub description: Option<String>,
     pub priority: i64,
     pub state_id: Option<String>,
     pub state_name: Option<String>,
@@ -474,7 +477,7 @@ pub struct IssueFilter {
 /// labels). One query for issues, one for labels, stitched in Rust.
 pub fn read_issues(conn: &Connection, filter: &IssueFilter) -> Result<Vec<IssueView>> {
     let mut sql = String::from(
-        "SELECT i.id, i.identifier, i.team_id, i.title, i.priority, \
+        "SELECT i.id, i.identifier, i.team_id, i.title, i.description, i.priority, \
                 i.state_id, s.name, s.type, s.color, \
                 i.assignee_id, COALESCE(u.display_name, u.name), \
                 i.project_id, p.name, i.cycle_id, i.parent_id, i.updated_at, i.url, i.stale \
@@ -503,20 +506,21 @@ pub fn read_issues(conn: &Connection, filter: &IssueFilter) -> Result<Vec<IssueV
                 identifier: row.get(1)?,
                 team_id: row.get(2)?,
                 title: row.get(3)?,
-                priority: row.get(4)?,
-                state_id: row.get(5)?,
-                state_name: row.get(6)?,
-                state_type: row.get(7)?,
-                state_color: row.get(8)?,
-                assignee_id: row.get(9)?,
-                assignee_name: row.get(10)?,
-                project_id: row.get(11)?,
-                project_name: row.get(12)?,
-                cycle_id: row.get(13)?,
-                parent_id: row.get(14)?,
-                updated_at: row.get(15)?,
-                url: row.get(16)?,
-                stale: row.get::<_, i64>(17)? != 0,
+                description: row.get(4)?,
+                priority: row.get(5)?,
+                state_id: row.get(6)?,
+                state_name: row.get(7)?,
+                state_type: row.get(8)?,
+                state_color: row.get(9)?,
+                assignee_id: row.get(10)?,
+                assignee_name: row.get(11)?,
+                project_id: row.get(12)?,
+                project_name: row.get(13)?,
+                cycle_id: row.get(14)?,
+                parent_id: row.get(15)?,
+                updated_at: row.get(16)?,
+                url: row.get(17)?,
+                stale: row.get::<_, i64>(18)? != 0,
                 labels: Vec::new(),
             })
         })?

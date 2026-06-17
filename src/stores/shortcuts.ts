@@ -35,6 +35,7 @@ import { quickCaptureOpenAtom } from "./quickCapture";
 import { searchModalOpenAtom, searchScopeAtom } from "./search";
 import { quakeOpenMapAtom, quakeShellsAtom, addAdHocShell, cycleQuakeShell } from "./quake";
 import { clickupSyncStatusAtom } from "./clickup";
+import { linearSyncStatusAtom } from "./linear";
 import { openInObsidian } from "@/lib/obsidian";
 import { LOCKED_SHORTCUT_IDS } from "@/lib/keymap";
 
@@ -535,6 +536,18 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     document.dispatchEvent(new CustomEvent("cluihud:toggle-file-picker"));
   }},
   { id: "toggle-activity", label: "Toggle Activity Drawer", keys: "ctrl+shift+l", category: "panel", keywords: ["activity", "log", "timeline", "drawer"], handler: () => store().set(activityDrawerOpenAtom, (prev: boolean) => !prev) },
+  { id: "open-linear", label: "Open Linear Panel", keys: "ctrl+shift+i", category: "panel", keywords: ["linear", "issues", "tracker", "panel"], handler: () => {
+    const s = store();
+    if (s.get(linearSyncStatusAtom)?.state === "no_key") {
+      s.set(toastsAtom, {
+        message: "Linear panel",
+        description: "No API key configured — set it in Settings → Linear.",
+        type: "info",
+      });
+      return;
+    }
+    togglePanel("linear", "Linear");
+  }},
   { id: "toggle-scratchpad", label: "Toggle Scratchpad", keys: "ctrl+alt+l", category: "panel", keywords: ["scratchpad", "notes", "scratch", "buffer"], handler: () => store().set(scratchpadOpenAtom, (prev: boolean) => !prev) },
   { id: "obsidian-quick-capture", label: "Quick Capture to Obsidian", keys: "ctrl+alt+q", category: "action", keywords: ["obsidian", "vault", "capture", "inbox", "note"], handler: () => {
     const s = store();

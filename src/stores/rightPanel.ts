@@ -5,7 +5,7 @@ import { closedTabsStackAtom } from "./shortcuts";
 import { pinnedNotesMapAtom } from "./pinnedNotes";
 import { toastsAtom } from "./toast";
 
-export type TabType = "plan" | "diff" | "spec" | "tasks" | "git" | "transcript" | "file" | "browser" | "obsidiannote" | "clickup" | "clickup-task";
+export type TabType = "plan" | "diff" | "spec" | "tasks" | "git" | "transcript" | "file" | "browser" | "obsidiannote" | "clickup" | "clickup-task" | "linear" | "linear-issue";
 
 export type PanelCategory = "document" | "tool";
 
@@ -24,6 +24,8 @@ export function viewPanelLabel(view: TabType): string {
     obsidiannote: "Obsidian",
     clickup: "ClickUp",
     "clickup-task": "Task",
+    linear: "Linear",
+    "linear-issue": "Issue",
   };
   return labels[view];
 }
@@ -41,6 +43,9 @@ export const PANEL_CATEGORY_MAP: Record<TabType, PanelCategory> = {
   clickup: "tool",
   // A single task opened as a tab — content document, not a launcher/tool view.
   "clickup-task": "document",
+  linear: "tool",
+  // A single issue opened as a tab — document, mirrors clickup-task.
+  "linear-issue": "document",
 };
 
 export interface Tab {
@@ -59,7 +64,7 @@ export interface TabState {
   previewTabId: string | null;
 }
 
-const SINGLETON_TYPES: TabType[] = ["tasks", "git", "browser", "clickup"];
+const SINGLETON_TYPES: TabType[] = ["tasks", "git", "browser", "clickup", "linear"];
 const defaultTabState: TabState = { tabs: [], activeTabId: null, previewTabId: null };
 
 export const expandRightPanelAtom = atom(0);

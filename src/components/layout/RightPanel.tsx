@@ -32,6 +32,7 @@ import { FileBrowser } from "@/components/files/FileBrowser";
 import { ObsidianNoteView } from "@/components/obsidian/ObsidianNoteView";
 import { ClickUpPanel } from "@/components/clickup/ClickUpPanel";
 import { ClickUpTaskTab } from "@/components/clickup/ClickUpTaskTab";
+import { LinearPanel } from "@/components/linear/LinearPanel";
 import { VaultNoteFinder } from "@/components/obsidian/VaultNoteFinder";
 import * as terminalService from "@/components/terminal/terminalService";
 import { CodeEditor } from "@/components/editor/CodeEditor";
@@ -437,6 +438,8 @@ function ViewPanelContent({ view }: { view: TabType }) {
       return <BrowserDockSlot />;
     case "clickup":
       return <ClickUpPanel />;
+    case "linear":
+      return <LinearPanel />;
     default:
       return null;
   }
@@ -486,6 +489,10 @@ function DocumentContent({ tab }: { tab: Tab }) {
         ? <ClickUpTaskTab key={tab.id} taskId={taskId} />
         : <PlaceholderView label="Select a task" />;
     }
+    case "linear":
+      return <LinearPanel />;
+    case "linear-issue":
+      return <PlaceholderView label="Linear issue" />;
     case "obsidiannote": {
       const notePath = tab.data?.path as string | undefined;
       return notePath

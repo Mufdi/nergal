@@ -6,6 +6,7 @@ import { setupAgentListeners } from "./stores/agent";
 import { setupHookListeners } from "./stores/hooks";
 import { setupObsidianListeners } from "./stores/obsidian";
 import { setupClickUpListeners } from "./stores/clickup";
+import { setupLinearListeners } from "./stores/linear";
 import { configAtom } from "./stores/config";
 import { toastsAtom } from "./stores/toast";
 import { invoke, listen } from "./lib/tauri";
@@ -117,6 +118,7 @@ export function App() {
     const unlistenAgents = setupAgentListeners();
     const unlistenObsidian = setupObsidianListeners(store);
     const unlistenClickUp = setupClickUpListeners(store);
+    const unlistenLinear = setupLinearListeners(store);
     const unlistenDeepLink = listen<string>("deeplink:received", (url) => {
       dispatchDeepLink(url);
     });
@@ -132,6 +134,9 @@ export function App() {
         for (const fn of fns) fn();
       });
       unlistenClickUp.then((fns) => {
+        for (const fn of fns) fn();
+      });
+      unlistenLinear.then((fns) => {
         for (const fn of fns) fn();
       });
       unlistenDeepLink.then((fn) => fn());

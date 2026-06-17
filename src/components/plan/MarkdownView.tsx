@@ -1,6 +1,7 @@
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ComponentPropsWithoutRef } from "react";
+import { useState } from "react";
 import { useObsidianRemarkPlugin, isObsidianHref, openObsidianHref, obsidianUrlTransform } from "@/lib/markdown/obsidianMarkdown";
 
 interface MarkdownViewProps {
@@ -9,9 +10,32 @@ interface MarkdownViewProps {
   /// (unless Ctrl/Cmd is held → open in Obsidian). Other consumers omit it and
   /// keep the default open-in-Obsidian behavior.
   onWikilinkNavigate?: (href: string) => void;
+  /// When true, remote <img> tags are replaced with a click-to-load placeholder.
+  /// Prevents tracking pixels and SSRF from untrusted multi-writer content (e.g.
+  /// Linear issue descriptions and comments). Default false.
+  gateRemoteImages?: boolean;
 }
 
-export function MarkdownView({ content, onWikilinkNavigate }: MarkdownViewProps) {
+/// Lazy image placeholder shown when gateRemoteImages=true. Loads the real src
+/// only on explicit user click — no auto-fetch on render.
+function GatedImage({ src, alt }: { src?: string; alt?: string }) {
+  const [revealed, setRevealed] = useState(false);
+  if (revealed && src) {
+    return <img src={src} alt={alt} className="max-w-full rounded" />;
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => setRevealed(true)}
+      className="inline-flex items-center gap-1 rounded border border-border/50 bg-secondary/40 px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-secondary/70 hover:text-foreground transition-colors"
+      title={src ?? "image"}
+    >
+      [image{alt ? `: ${alt}` : ""} — click to load]
+    </button>
+  );
+}
+
+export function MarkdownView({ content, onWikilinkNavigate, gateRemoteImages = false }: MarkdownViewProps) {
   const obsidianPlugin = useObsidianRemarkPlugin();
   return (
     <div className="prose-invert max-w-none px-4 py-3 text-[12px] text-text">
@@ -96,6 +120,13 @@ export function MarkdownView({ content, onWikilinkNavigate }: MarkdownViewProps)
           td: (props: ComponentPropsWithoutRef<"td">) => (
             <td className="border border-border px-2 py-1" {...props} />
           ),
+          ...(gateRemoteImages
+            ? {
+                img: ({ src, alt }: ComponentPropsWithoutRef<"img">) => (
+                  <GatedImage src={src} alt={alt} />
+                ),
+              }
+            : {}),
         }}
       >
         {content}

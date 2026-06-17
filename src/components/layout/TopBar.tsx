@@ -37,6 +37,7 @@ import {
   clickupTasksAtom,
   resolveActiveClickUpTask,
 } from "@/stores/clickup";
+import { linearConfiguredAtom } from "@/stores/linear";
 import { toastsAtom } from "@/stores/toast";
 import { configAtom } from "@/stores/config";
 import { activePlanCapabilityAtom, fetchPlanCapabilityAction } from "@/stores/plan";
@@ -64,6 +65,7 @@ import {
 } from "lucide-react";
 import { ObsidianIcon } from "@/components/icons/ObsidianIcon";
 import { ClickUpIcon } from "@/components/icons/ClickUpIcon";
+import { LinearIcon } from "@/components/icons/LinearIcon";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Tooltip,
@@ -181,6 +183,7 @@ const PANEL_BUTTONS: {
   { type: "browser", label: "Browser", shortcut: "Ctrl+Alt+B", icon: Globe },
   { type: "obsidiannote", label: "Obsidian", shortcut: "Ctrl+Shift+Q", icon: ObsidianIcon },
   { type: "clickup", label: "ClickUp", shortcut: "Ctrl+Shift+M", icon: ClickUpIcon },
+  { type: "linear", label: "Linear", shortcut: "Ctrl+Shift+I", icon: LinearIcon },
 ];
 
 
@@ -203,6 +206,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   const planAvailable = planCapability?.kind !== "NotApplicable";
   const obsidianEnabled = useAtomValue(obsidianEnabledAtom);
   const clickupConfigured = useAtomValue(clickupConfiguredAtom);
+  const linearConfigured = useAtomValue(linearConfiguredAtom);
   const clickupBindingMap = useAtomValue(clickupBindingMapAtom);
   const clickupPinsMap = useAtomValue(clickupPinsMapAtom);
   const clickupTasks = useAtomValue(clickupTasksAtom);
@@ -210,6 +214,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
     if (b.type === "plan" && !planAvailable) return false;
     if (b.type === "obsidiannote" && !obsidianEnabled) return false;
     if (b.type === "clickup" && !clickupConfigured) return false;
+    if (b.type === "linear" && !linearConfigured) return false;
     return true;
   });
 

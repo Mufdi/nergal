@@ -21,6 +21,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select } from "@/components/ui/select";
 import { CheckCircle2, AlertTriangle, XCircle, Info, FolderTree, Bot, Pencil, Palette, Terminal, NotebookText, RefreshCw, Check, ArrowLeft, Trash2, Sliders, Download, ExternalLink, FolderOpen, ClipboardCopy, Bug, Keyboard, Network } from "lucide-react";
 import { ClickUpIcon } from "@/components/icons/ClickUpIcon";
+import { LinearIcon } from "@/components/icons/LinearIcon";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { open as openShell } from "@tauri-apps/plugin-shell";
@@ -45,6 +46,13 @@ import {
   clickupTokenOnDiskAtom,
   type ClickUpSyncStatus,
 } from "@/stores/clickup";
+import {
+  linearSyncStatusAtom,
+  linearKeyOnDiskAtom,
+  linearTeamsAtom,
+  refreshLinearMirror,
+  type SyncStatus as LinearSyncStatus,
+} from "@/stores/linear";
 import { appStore } from "@/stores/jotaiStore";
 import type { ResolvedObsidianConfig } from "@/lib/types";
 import { ObsidianIcon } from "@/components/icons/ObsidianIcon";
@@ -912,6 +920,198 @@ function ClickUpSection() {
   );
 }
 
+function linearSyncStateLabel(s: LinearSyncStatus): string {
+  switch (s.state) {
+    case "idle": return "Idle";
+    case "no_key": return "No API key";
+    case "needs_team": return "Select teams in team picker";
+    case "syncing": return s.baselineDone ? "Syncing…" : "Baseline sync in progress…";
+    case "ok": return s.lastSync ? `OK — last sync ${new Date(s.lastSync * 1000).toLocaleTimeString()}` : "OK";
+    case "error": return "Error";
+    default: return "Idle";
+  }
+}
+
+function LinearSection() {
+  const [syncStatus, setSyncStatus] = useAtom(linearSyncStatusAtom);
+  const [keyOnDisk, setKeyOnDisk] = useAtom(linearKeyOnDiskAtom);
+  const pushToast = useSetAtom(toastsAtom);
+  const [keyInput, setKeyInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [resolvedViewer, setResolvedViewer] = useState<{ name?: string; email?: string } | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const teams = useAtomValue(linearTeamsAtom);
+  const selectedTeamIds = syncStatus?.selectedTeamIds ?? [];
+
+  const configured = syncStatus !== null && syncStatus.state !== "no_key";
+
+  async function refreshStatus() {
+    try {
+      setSyncStatus(await invoke<LinearSyncStatus>("linear_sync_status"));
+    } catch {
+      // poller also pushes linear:sync-status; a missed pull is fine
+    }
+  }
+
+  async function handleSetKey() {
+    if (keyInput.trim().length === 0 || busy) return;
+    setBusy(true);
+    setValidationError(null);
+    try {
+      const result = await invoke<{ keyOnDisk: boolean }>("linear_set_key", { key: keyInput.trim() });
+      setKeyOnDisk(result.keyOnDisk);
+      setKeyInput("");
+      await handleValidate();
+      await refreshStatus();
+      await refreshLinearMirror(appStore);
+    } catch (err) {
+      setValidationError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleValidate() {
+    setValidationError(null);
+    try {
+      const viewer = await invoke<{ id: string; name?: string; email?: string }>("linear_validate_key");
+      setResolvedViewer({ name: viewer.name, email: viewer.email });
+    } catch (err) {
+      setResolvedViewer(null);
+      setValidationError(String(err));
+    }
+  }
+
+  async function handleClearKey() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await invoke("linear_clear_key");
+      setResolvedViewer(null);
+      setValidationError(null);
+      setKeyOnDisk(false);
+      await refreshStatus();
+      pushToast({ message: "Linear", description: "API key cleared", type: "info" });
+    } catch (err) {
+      pushToast({ message: "Linear", description: String(err), type: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleToggleTeam(teamId: string, checked: boolean) {
+    const next = checked
+      ? [...selectedTeamIds.filter((id) => id !== teamId), teamId]
+      : selectedTeamIds.filter((id) => id !== teamId);
+    try {
+      await invoke("linear_select_teams", { teamIds: next });
+      await refreshStatus();
+      await refreshLinearMirror(appStore);
+    } catch (err) {
+      pushToast({ message: "Linear", description: String(err), type: "error" });
+    }
+  }
+
+  return (
+    <div className="grid gap-4">
+      <p className="text-xs text-muted-foreground">
+        Read-only mirror of your Linear workspace. Paste a Personal API key
+        (Linear → Settings → API) to enable the panel.
+      </p>
+
+      <div className="grid gap-1.5">
+        <Label htmlFor="linear-key">Personal API key</Label>
+        <div className="flex items-center gap-2">
+          <Input
+            id="linear-key"
+            type="password"
+            value={keyInput}
+            onChange={(e) => setKeyInput(e.target.value)}
+            placeholder={configured ? "Key configured — paste to replace" : "lin_api_…"}
+            autoComplete="off"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void handleSetKey()}
+            disabled={busy || keyInput.trim().length === 0}
+          >
+            {busy ? "Saving…" : "Set key"}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Stored in the OS keyring when available. The key never leaves this machine.
+        </p>
+      </div>
+
+      {configured && (
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => void handleValidate()} disabled={busy}>
+            Validate key
+          </Button>
+          <Button variant="destructive" size="sm" onClick={() => void handleClearKey()} disabled={busy}>
+            Clear key
+          </Button>
+        </div>
+      )}
+
+      {resolvedViewer && (
+        <p className="flex items-center gap-1.5 text-xs text-green-500">
+          <CheckCircle2 size={13} />
+          Key valid
+          {resolvedViewer.name ? ` — ${resolvedViewer.name}` : ""}
+          {resolvedViewer.email ? ` (${resolvedViewer.email})` : ""}
+        </p>
+      )}
+      {validationError && (
+        <p className="flex items-center gap-1.5 text-xs text-red-400">
+          <XCircle size={13} className="shrink-0" />
+          <span className="min-w-0 truncate" title={validationError}>{validationError}</span>
+        </p>
+      )}
+
+      {keyOnDisk && (
+        <p className="flex items-start gap-1.5 rounded-md border border-yellow-500/30 bg-yellow-500/10 px-2 py-1.5 text-xs text-yellow-400">
+          <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+          No OS keyring available — the key was written to
+          ~/.config/cluihud/linear.toml (mode 0600). Any process running as
+          your user can read it.
+        </p>
+      )}
+
+      {teams.length > 0 && (
+        <div className="grid gap-1.5">
+          <Label>Teams to sync</Label>
+          <div className="flex flex-col gap-1.5">
+            {teams.map((team) => (
+              <label key={team.id} className="flex items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={selectedTeamIds.includes(team.id)}
+                  onChange={(e) => void handleToggleTeam(team.id, e.target.checked)}
+                  className="rounded border border-border"
+                />
+                <span className="font-mono text-foreground/70">{team.key}</span>
+                <span>{team.name}</span>
+              </label>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Only issues from selected teams are mirrored.
+          </p>
+        </div>
+      )}
+
+      {syncStatus && (
+        <p className="text-xs text-muted-foreground">
+          Status: {linearSyncStateLabel(syncStatus)}
+          {syncStatus.state === "error" && syncStatus.error ? ` — ${syncStatus.error}` : ""}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function DetectedAgentsList({ onRescan, rescanning }: { onRescan: () => void; rescanning: boolean }) {
   const agents = useAtomValue(availableAgentsAtom);
   return (
@@ -1664,7 +1864,7 @@ function AppearanceSection({
   );
 }
 
-type SectionId = "paths" | "agents" | "editor" | "appearance" | "terminal" | "keymap" | "mcp" | "scratchpad" | "obsidian" | "clickup" | "about";
+type SectionId = "paths" | "agents" | "editor" | "appearance" | "terminal" | "keymap" | "mcp" | "scratchpad" | "obsidian" | "clickup" | "linear" | "about";
 
 const SECTIONS: { id: SectionId; label: string; icon: typeof FolderTree }[] = [
   { id: "paths", label: "Paths", icon: FolderTree },
@@ -1677,6 +1877,7 @@ const SECTIONS: { id: SectionId; label: string; icon: typeof FolderTree }[] = [
   { id: "scratchpad", label: "Scratchpad", icon: NotebookText },
   { id: "obsidian", label: "Obsidian", icon: ObsidianIcon },
   { id: "clickup", label: "ClickUp", icon: ClickUpIcon },
+  { id: "linear", label: "Linear", icon: LinearIcon },
   { id: "about", label: "About", icon: Info },
 ];
 
@@ -2776,6 +2977,8 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
             {activeSection === "obsidian" && <ObsidianSection />}
 
             {activeSection === "clickup" && <ClickUpSection />}
+
+            {activeSection === "linear" && <LinearSection />}
 
             {activeSection === "about" && <AboutSection appVersion={appVersion} />}
           </div>

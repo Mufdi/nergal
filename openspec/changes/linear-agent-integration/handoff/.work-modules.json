@@ -1,0 +1,36 @@
+{
+  "tier": "L",
+  "tier_source": "user-stated (change #2 of 3 sequential Linear changes; near-1:1 mirror of the archived clickup-task-integration)",
+  "ceremony": "deep (implementation.md mandatory per openspec/config.yaml; mirrors clickup-task-integration)",
+  "risk_tier": "critical",
+  "files_estimate": 12,
+  "tags": ["migration", "security", "feature"],
+  "visibility": "private",
+  "spec_target": "linear-agent-integration",
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "discovery_note": "Discovery done in-conversation; the design is inherited from the iprev-APPROVED (5 rounds) clickup-task-integration. /work cleared every material ambiguity via the ClickUp template before scoping.",
+    "iprev_rounds": 2,
+    "iprev_evaluator": "claude",
+    "iprev_persona": "skeptic",
+    "iprev_verdict": "APPROVED",
+    "reviewer_mode": "iterative-plan-review (pre-build, scoped to Linear-specific deltas); single-sequential + security escalation for build",
+    "gates_phases_planned": ["compile", "test", "lint", "security", "scope"],
+    "per_phase_models": {
+      "design": "claude-opus (this session)",
+      "implementation": "claude-opus (this session, autonomous /loop)",
+      "exploration": "this session (ClickUp template mapping)"
+    }
+  },
+  "interview_answers": {
+    "staging": "change #2 of 3 (linear-mirror done; linear-agent-integration now; linear-writeback next)",
+    "approach": "mirror the archived ClickUp clickup-task-integration change as the template",
+    "scope": "issue->prompt injection, bind/pin to session, spawn-worktree-from-issue; stay in dev (no release/build/install)"
+  },
+  "events": [
+    { "type": "iprev-round", "n": 1, "result": "REVISE", "note": "2 HIGH (priority labels mismatch real linearPriorityStr 3=normal not Medium; verb-keys file ref) + 3 MEDIUM (Session struct literals compile ripple; user_json blob parse; comment scenario seeded-only) + 2 LOW (sentinel test on description; inline-url note)" },
+    { "type": "iprev-round", "n": 2, "result": "APPROVED", "note": "all 6 verified fixed against real code; 2 LOW precision notes folded (data-issue-id attr; single data-focus-zone='linear' id-resolution)" }
+  ],
+  "status": "BUILT (backend+frontend, default-off, NOT released). Full check green: clippy -D / 580 tests / fmt / tsc / vite build. PENDING manual dev walk (needs user key + GUI). | SPEC-FIRST APPROVED (iprev 2 rounds). Mirrors clickup-task-integration: 3 task->agent verbs (send/spawn/attach) + 1:1 active binding + N pinned context + assembler extension. Linear deltas: no checklists/custom-fields/mirrored-attachments; comments table exists but unpopulated in #1 (forward-compatible read).",
+  "implementation_order": 2
+}

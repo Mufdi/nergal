@@ -1,15 +1,38 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { open as openShell } from "@tauri-apps/plugin-shell";
-import { ChevronDown, ChevronLeft, ChevronRight, ExternalLink, GitBranch, Paperclip } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  GitBranch,
+  GitBranchPlus,
+  Link2,
+  Paperclip,
+  Pin,
+  PinOff,
+  RefreshCw,
+  Send,
+  Unlink,
+} from "lucide-react";
 import { invoke } from "@/lib/tauri";
 import { MarkdownView } from "@/components/plan/MarkdownView";
 import { StatusIcon } from "@/components/clickup/StatusIcon";
 import { PriorityIcon } from "@/components/clickup/PriorityIcon";
 import { ProgressBar } from "@/components/ui/ProgressBar";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
+  activeSessionLinearIssueAtom,
+  activeSessionLinearPinsAtom,
   copyLinearIssueAction,
+  LINEAR_ACTION_LABELS,
   linearIssuesAtom,
+  reinjectIssueAction,
+  requestBindIssueAction,
+  requestSendIssueAction,
+  spawnWorktreeWithIssueAction,
+  togglePinIssueAction,
   type IssueView,
   type LinearAttachment,
   type LinearComment,
@@ -807,6 +830,88 @@ export function LinearIssueTitleContent({ c }: { c: LinearIssueController }) {
       <span className="truncate text-sm font-medium text-foreground">
         {c.issue?.title ?? "Linear issue"}
       </span>
+    </>
+  );
+}
+
+/// A single toolbar verb button with a tooltip (mirrors ClickUp's ToolbarAction).
+export function ToolbarAction({
+  label,
+  onClick,
+  active = false,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  active?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={label}
+            onClick={onClick}
+            className={`flex size-5 items-center justify-center rounded transition-colors ${
+              active
+                ? "text-primary hover:bg-secondary/60"
+                : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+            }`}
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/// Issue → agent verbs for the floating-detail toolbar: send / spawn / pin /
+/// bind, plus an explicit re-inject when the issue is bound or pinned. Closure
+/// (writeback) and open-in-Linear (already a body nav key) are intentionally
+/// absent here — this change is read-only outward.
+export function LinearVerbToolbar({ issueId }: { issueId: string }) {
+  const boundIssueId = useAtomValue(activeSessionLinearIssueAtom);
+  const pinnedIssueIds = useAtomValue(activeSessionLinearPinsAtom);
+  const requestSend = useSetAtom(requestSendIssueAction);
+  const spawnWorktree = useSetAtom(spawnWorktreeWithIssueAction);
+  const togglePin = useSetAtom(togglePinIssueAction);
+  const requestBind = useSetAtom(requestBindIssueAction);
+  const reinject = useSetAtom(reinjectIssueAction);
+
+  const isPinned = pinnedIssueIds.includes(issueId);
+  const isBound = issueId === boundIssueId;
+
+  return (
+    <>
+      <ToolbarAction label={LINEAR_ACTION_LABELS.send} onClick={() => requestSend(issueId)}>
+        <Send size={12} />
+      </ToolbarAction>
+      <ToolbarAction label={LINEAR_ACTION_LABELS.spawn} onClick={() => void spawnWorktree(issueId)}>
+        <GitBranchPlus size={12} />
+      </ToolbarAction>
+      <ToolbarAction
+        label={isPinned ? LINEAR_ACTION_LABELS.unpin : LINEAR_ACTION_LABELS.pin}
+        onClick={() => void togglePin(issueId)}
+        active={isPinned}
+      >
+        {isPinned ? <PinOff size={12} /> : <Pin size={12} />}
+      </ToolbarAction>
+      <ToolbarAction
+        label={isBound ? LINEAR_ACTION_LABELS.unbind : LINEAR_ACTION_LABELS.bind}
+        onClick={() => void requestBind(issueId)}
+        active={isBound}
+      >
+        {isBound ? <Unlink size={12} /> : <Link2 size={12} />}
+      </ToolbarAction>
+      {(isBound || isPinned) && (
+        <ToolbarAction label={LINEAR_ACTION_LABELS.reinject} onClick={() => void reinject(issueId)}>
+          <RefreshCw size={12} />
+        </ToolbarAction>
+      )}
     </>
   );
 }

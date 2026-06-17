@@ -132,6 +132,21 @@ fn parse_pinned_clickup_task_ids(raw: Option<String>) -> Vec<String> {
     }
 }
 
+/// Parse the nullable `pinned_linear_issue_ids` JSON-array column into a `Vec`.
+/// NULL, empty, or malformed → empty vec (mirrors `parse_pinned_clickup_task_ids`).
+fn parse_pinned_linear_issue_ids(raw: Option<String>) -> Vec<String> {
+    let Some(s) = raw.filter(|s| !s.trim().is_empty()) else {
+        return Vec::new();
+    };
+    match serde_json::from_str(&s) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "malformed pinned_linear_issue_ids JSON; treating as empty");
+            Vec::new()
+        }
+    }
+}
+
 impl Database {
     /// Raw connection access for the ClickUp reconcile: the `clickup::mirror`
     /// helpers take `&Connection` so a whole poll cycle can commit in one
@@ -210,6 +225,7 @@ impl Database {
             include_str!("../migrations/021_session_summaries.sql"),
             include_str!("../migrations/022_session_transcripts.sql"),
             include_str!("../migrations/023_linear_mirror.sql"),
+            include_str!("../migrations/024_linear_session_binding.sql"),
         ];
 
         for (i, sql) in migrations.iter().enumerate() {
@@ -313,7 +329,7 @@ impl Database {
         )?;
         let mut sess_stmt = self
             .conn
-            .prepare("SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, pinned_note_paths, launch_options, env_shells, active_clickup_task_id, pinned_clickup_task_ids FROM sessions WHERE workspace_id = ?1 ORDER BY created_at")?;
+            .prepare("SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, pinned_note_paths, launch_options, env_shells, active_clickup_task_id, pinned_clickup_task_ids, active_linear_issue_id, pinned_linear_issue_ids FROM sessions WHERE workspace_id = ?1 ORDER BY created_at")?;
 
         let workspaces = ws_stmt.query_map([], |row| {
             Ok((
@@ -350,6 +366,8 @@ impl Database {
                         env_shells: parse_env_shells(row.get(13)?),
                         active_clickup_task_id: row.get(14)?,
                         pinned_clickup_task_ids: parse_pinned_clickup_task_ids(row.get(15)?),
+                        active_linear_issue_id: row.get(16)?,
+                        pinned_linear_issue_ids: parse_pinned_linear_issue_ids(row.get(17)?),
                     })
                 })?
                 .filter_map(|r| r.ok())
@@ -392,7 +410,7 @@ impl Database {
 
     pub fn create_session(&self, session: &Session) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO sessions (id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, launch_options, env_shells, active_clickup_task_id, pinned_clickup_task_ids) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            "INSERT INTO sessions (id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, launch_options, env_shells, active_clickup_task_id, pinned_clickup_task_ids, active_linear_issue_id, pinned_linear_issue_ids) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 session.id,
                 session.workspace_id,
@@ -420,6 +438,12 @@ impl Database {
                 } else {
                     serde_json::to_string(&session.pinned_clickup_task_ids).ok()
                 },
+                session.active_linear_issue_id.as_deref(),
+                if session.pinned_linear_issue_ids.is_empty() {
+                    None
+                } else {
+                    serde_json::to_string(&session.pinned_linear_issue_ids).ok()
+                },
             ],
         )?;
         Ok(())
@@ -427,7 +451,7 @@ impl Database {
 
     pub fn find_session(&self, id: &str) -> Result<Option<Session>> {
         let result = self.conn.query_row(
-            "SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, pinned_note_paths, launch_options, env_shells, active_clickup_task_id, pinned_clickup_task_ids FROM sessions WHERE id = ?1",
+            "SELECT id, workspace_id, name, worktree_path, worktree_branch, merge_target, status, created_at, updated_at, agent_id, agent_internal_session_id, pinned_note_paths, launch_options, env_shells, active_clickup_task_id, pinned_clickup_task_ids, active_linear_issue_id, pinned_linear_issue_ids FROM sessions WHERE id = ?1",
             [id],
             |row| Ok(Session {
                 id: row.get(0)?,
@@ -447,6 +471,8 @@ impl Database {
                 env_shells: parse_env_shells(row.get(13)?),
                 active_clickup_task_id: row.get(14)?,
                 pinned_clickup_task_ids: parse_pinned_clickup_task_ids(row.get(15)?),
+                active_linear_issue_id: row.get(16)?,
+                pinned_linear_issue_ids: parse_pinned_linear_issue_ids(row.get(17)?),
             }),
         );
         match result {
@@ -813,6 +839,57 @@ impl Database {
         let json = serde_json::to_string(ids).unwrap_or_else(|_| "[]".to_string());
         self.conn.execute(
             "UPDATE sessions SET pinned_clickup_task_ids = ?1, updated_at = ?2 WHERE id = ?3",
+            params![json, now_secs(), session_id],
+        )?;
+        Ok(())
+    }
+
+    /// Set (or clear with `None`) the session's single active Linear issue —
+    /// the write-back target. Binding over an existing issue replaces it; the
+    /// UI confirms the replacement upstream. (Mirrors `set_active_clickup_task`.)
+    pub fn set_active_linear_issue(&self, session_id: &str, issue_id: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE sessions SET active_linear_issue_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![issue_id, now_secs(), session_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_pinned_linear_issues(&self, session_id: &str) -> Result<Vec<String>> {
+        let raw: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT pinned_linear_issue_ids FROM sessions WHERE id = ?1",
+                [session_id],
+                |r| r.get(0),
+            )
+            .ok()
+            .flatten();
+        Ok(parse_pinned_linear_issue_ids(raw))
+    }
+
+    /// Append `issue_id` to a session's pinned Linear issues. Idempotent: an
+    /// already-pinned id is a no-op so order stays stable (mirrors
+    /// `add_pinned_clickup_task`).
+    pub fn add_pinned_linear_issue(&self, session_id: &str, issue_id: &str) -> Result<()> {
+        let mut ids = self.get_pinned_linear_issues(session_id)?;
+        if ids.iter().any(|t| t == issue_id) {
+            return Ok(());
+        }
+        ids.push(issue_id.to_string());
+        self.write_pinned_linear_issues(session_id, &ids)
+    }
+
+    pub fn remove_pinned_linear_issue(&self, session_id: &str, issue_id: &str) -> Result<()> {
+        let mut ids = self.get_pinned_linear_issues(session_id)?;
+        ids.retain(|t| t != issue_id);
+        self.write_pinned_linear_issues(session_id, &ids)
+    }
+
+    fn write_pinned_linear_issues(&self, session_id: &str, ids: &[String]) -> Result<()> {
+        let json = serde_json::to_string(ids).unwrap_or_else(|_| "[]".to_string());
+        self.conn.execute(
+            "UPDATE sessions SET pinned_linear_issue_ids = ?1, updated_at = ?2 WHERE id = ?3",
             params![json, now_secs(), session_id],
         )?;
         Ok(())
@@ -1320,6 +1397,8 @@ mod tests {
             env_shells: Vec::new(),
             active_clickup_task_id: None,
             pinned_clickup_task_ids: Vec::new(),
+            active_linear_issue_id: None,
+            pinned_linear_issue_ids: Vec::new(),
         };
         db.create_session(&s).unwrap();
     }
@@ -1516,6 +1595,8 @@ mod tests {
             env_shells: defs.clone(),
             active_clickup_task_id: None,
             pinned_clickup_task_ids: Vec::new(),
+            active_linear_issue_id: None,
+            pinned_linear_issue_ids: Vec::new(),
         };
         db.create_session(&s).unwrap();
         let loaded = db.find_session("s-env").unwrap().unwrap();
@@ -1603,6 +1684,8 @@ mod tests {
             env_shells: Vec::new(),
             active_clickup_task_id: None,
             pinned_clickup_task_ids: Vec::new(),
+            active_linear_issue_id: None,
+            pinned_linear_issue_ids: Vec::new(),
         };
         db.create_session(&s).unwrap();
         let loaded = db.find_session("s-lo").unwrap().unwrap();
@@ -1727,6 +1810,8 @@ mod tests {
             env_shells: Vec::new(),
             active_clickup_task_id: Some("task-42".into()),
             pinned_clickup_task_ids: vec!["task-7".into(), "task-99".into()],
+            active_linear_issue_id: Some("iss-42".into()),
+            pinned_linear_issue_ids: vec!["iss-7".into(), "iss-99".into()],
         };
         db.create_session(&session).unwrap();
         let loaded = db.find_session("s-cu").unwrap().unwrap();
@@ -1734,6 +1819,81 @@ mod tests {
         assert_eq!(
             loaded.pinned_clickup_task_ids,
             vec!["task-7".to_string(), "task-99".to_string()]
+        );
+        assert_eq!(loaded.active_linear_issue_id.as_deref(), Some("iss-42"));
+        assert_eq!(
+            loaded.pinned_linear_issue_ids,
+            vec!["iss-7".to_string(), "iss-99".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_pinned_linear_issue_ids_handles_null_and_garbage() {
+        assert!(parse_pinned_linear_issue_ids(None).is_empty());
+        assert!(parse_pinned_linear_issue_ids(Some("".into())).is_empty());
+        assert!(parse_pinned_linear_issue_ids(Some("not json".into())).is_empty());
+        assert_eq!(
+            parse_pinned_linear_issue_ids(Some(r#"["i1","i2"]"#.into())),
+            vec!["i1".to_string(), "i2".to_string()]
+        );
+    }
+
+    #[test]
+    fn linear_issue_binding_helpers_roundtrip() {
+        let db = in_memory();
+        db.create_workspace("ws1", "ws", "/tmp").unwrap();
+        let session = Session {
+            id: "s-li".into(),
+            name: "li".into(),
+            workspace_id: "ws1".into(),
+            worktree_path: None,
+            worktree_branch: None,
+            merge_target: None,
+            status: SessionStatus::Idle,
+            created_at: 0,
+            updated_at: 0,
+            agent_id: "claude-code".into(),
+            agent_internal_session_id: None,
+            agent_capabilities: Vec::new(),
+            pinned_note_paths: Vec::new(),
+            launch_options: None,
+            env_shells: Vec::new(),
+            active_clickup_task_id: None,
+            pinned_clickup_task_ids: Vec::new(),
+            active_linear_issue_id: None,
+            pinned_linear_issue_ids: Vec::new(),
+        };
+        db.create_session(&session).unwrap();
+
+        db.set_active_linear_issue("s-li", Some("ENG-1")).unwrap();
+        assert_eq!(
+            db.find_session("s-li")
+                .unwrap()
+                .unwrap()
+                .active_linear_issue_id
+                .as_deref(),
+            Some("ENG-1")
+        );
+        db.set_active_linear_issue("s-li", None).unwrap();
+        assert!(
+            db.find_session("s-li")
+                .unwrap()
+                .unwrap()
+                .active_linear_issue_id
+                .is_none()
+        );
+
+        db.add_pinned_linear_issue("s-li", "ENG-2").unwrap();
+        db.add_pinned_linear_issue("s-li", "ENG-3").unwrap();
+        db.add_pinned_linear_issue("s-li", "ENG-2").unwrap(); // idempotent
+        assert_eq!(
+            db.get_pinned_linear_issues("s-li").unwrap(),
+            vec!["ENG-2".to_string(), "ENG-3".to_string()]
+        );
+        db.remove_pinned_linear_issue("s-li", "ENG-2").unwrap();
+        assert_eq!(
+            db.get_pinned_linear_issues("s-li").unwrap(),
+            vec!["ENG-3".to_string()]
         );
     }
 }

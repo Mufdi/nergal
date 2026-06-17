@@ -499,6 +499,15 @@ pub fn run() {
             linear::linear_read_teams,
             linear::linear_issue_detail,
             linear::linear_fetch_image,
+            // Linear issue → agent integration (linear-agent-integration)
+            linear::linear_bind_issue,
+            linear::linear_unbind_issue,
+            linear::linear_pin_issue,
+            linear::linear_unpin_issue,
+            linear::linear_compose_issue_prompt,
+            linear::linear_send_issue_as_prompt,
+            linear::linear_reinject_issue,
+            linear::linear_spawn_worktree_with_issue,
             // Live preview browser
             browser::browser_validate_url,
             browser::browser_get_listening_ports,

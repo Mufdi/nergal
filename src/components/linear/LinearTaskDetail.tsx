@@ -7,11 +7,21 @@ import * as terminalService from "@/components/terminal/terminalService";
 import { focusZoneAtom } from "@/stores/shortcuts";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { clampGeometryToViewport, type FloatingGeometry } from "@/stores/scratchpad";
-import { linearDetailIssueIdAtom } from "@/stores/linear";
+import {
+  activeSessionLinearIssueAtom,
+  activeSessionLinearPinsAtom,
+  linearDetailIssueIdAtom,
+  reinjectIssueAction,
+  requestBindIssueAction,
+  requestSendIssueAction,
+  spawnWorktreeWithIssueAction,
+  togglePinIssueAction,
+} from "@/stores/linear";
 import {
   LinearIssueBody,
   LinearIssueHistoryNav,
   LinearIssueTitleContent,
+  LinearVerbToolbar,
   useLinearIssueController,
 } from "@/components/linear/LinearTaskView";
 
@@ -24,10 +34,65 @@ export function LinearTaskDetail() {
   const [issueId, setIssueId] = useAtom(linearDetailIssueIdAtom);
   const activeSessionId = useAtomValue(activeSessionIdAtom);
   const setFocusZone = useSetAtom(focusZoneAtom);
+  const boundIssueId = useAtomValue(activeSessionLinearIssueAtom);
+  const pinnedIssueIds = useAtomValue(activeSessionLinearPinsAtom);
+  const requestSend = useSetAtom(requestSendIssueAction);
+  const spawnWorktree = useSetAtom(spawnWorktreeWithIssueAction);
+  const togglePin = useSetAtom(togglePinIssueAction);
+  const requestBind = useSetAtom(requestBindIssueAction);
+  const reinject = useSetAtom(reinjectIssueAction);
   const [geometry, setGeometry] = useState<FloatingGeometry>(DEFAULT_GEOMETRY);
   const wasOpenRef = useRef(false);
 
   const c = useLinearIssueController({ issueId, setIssueId });
+
+  // Contextual issue verbs: bare letters scoped to the Linear zone. The open
+  // detail issue wins; otherwise the panel's data-nav-selected row (rows expose
+  // data-issue-id). Linear uses a single data-focus-zone='linear' for both the
+  // detail and the panel, so there is no clickup/panel split — resolve by which
+  // surface owns the target id. (Open-in-Linear is a body nav key, not a verb
+  // here; closure is writeback, out of scope for this change.)
+  useEffect(() => {
+    const VERB_KEYS = ["KeyS", "KeyW", "KeyP", "KeyB", "KeyR"];
+    function onKey(e: KeyboardEvent) {
+      if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      if (!VERB_KEYS.includes(e.code)) return;
+      const target = e.target as HTMLElement | null;
+      const inField =
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        !!target?.closest(".cm-editor") ||
+        target?.getAttribute("contenteditable") === "true";
+      if (inField) return;
+      if (!target?.closest("[data-focus-zone='linear']")) return;
+      const selectedRow = document.querySelector<HTMLElement>(
+        "[data-focus-zone='linear'] [data-nav-selected='true'][data-issue-id]",
+      );
+      const id = issueId ?? selectedRow?.dataset.issueId ?? null;
+      if (!id) return;
+      if (e.code === "KeyS") {
+        e.preventDefault();
+        requestSend(id);
+      } else if (e.code === "KeyW") {
+        e.preventDefault();
+        void spawnWorktree(id);
+      } else if (e.code === "KeyP") {
+        e.preventDefault();
+        void togglePin(id);
+      } else if (e.code === "KeyB") {
+        e.preventDefault();
+        void requestBind(id);
+      } else if (e.code === "KeyR") {
+        // Re-inject only acts on an issue already bound or pinned to this session.
+        if (id === boundIssueId || pinnedIssueIds.includes(id)) {
+          e.preventDefault();
+          void reinject(id);
+        }
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [issueId, requestSend, spawnWorktree, togglePin, requestBind, reinject, boundIssueId, pinnedIssueIds]);
 
   // Restore focus when the modal closes (mirrors ClickUpTaskDetail)
   useEffect(() => {
@@ -116,6 +181,11 @@ export function LinearTaskDetail() {
           <TooltipProvider delay={0}>
             <LinearIssueHistoryNav c={c} />
             <LinearIssueTitleContent c={c} />
+          </TooltipProvider>
+        }
+        toolbar={
+          <TooltipProvider delay={0}>
+            {issueId && <LinearVerbToolbar issueId={issueId} />}
           </TooltipProvider>
         }
       >

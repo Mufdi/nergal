@@ -86,6 +86,15 @@ pub struct Session {
     /// (migration `018`), same pattern as `pinned_note_paths`.
     #[serde(default)]
     pub pinned_clickup_task_ids: Vec<String>,
+    /// The single bound Linear issue: the write-back target and session-tab
+    /// indicator. Persisted as a nullable column (migration `024`).
+    #[serde(default)]
+    pub active_linear_issue_id: Option<String>,
+    /// Linear issues pinned as context-only (injected alongside the active
+    /// issue, never the write-back subject). Persisted as a JSON array column
+    /// (migration `024`), same pattern as `pinned_clickup_task_ids`.
+    #[serde(default)]
+    pub pinned_linear_issue_ids: Vec<String>,
 }
 
 /// One environment shell: a long-running command (`pnpm dev`, `docker

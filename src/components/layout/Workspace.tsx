@@ -31,6 +31,7 @@ import { BrowserFloating } from "@/components/browser/BrowserFloating";
 import { BrowserHost } from "@/components/browser/BrowserHost";
 import { ClickUpTaskDetail } from "@/components/clickup/ClickUpTaskDetail";
 import { ClickUpSendConfirmDialog } from "@/components/clickup/ClickUpConfirmDialogs";
+import { LinearSendConfirmDialog } from "@/components/linear/LinearConfirmDialogs";
 import { ClickUpClosureDialog } from "@/components/clickup/ClickUpClosureDialog";
 import { LinearTaskDetail } from "@/components/linear/LinearTaskDetail";
 import { activeConflictedFilesAtom, gitChipModeAtom } from "@/stores/git";
@@ -435,6 +436,7 @@ export function Workspace() {
       <ClickUpSendConfirmDialog />
       <ClickUpClosureDialog />
       <LinearTaskDetail />
+      <LinearSendConfirmDialog />
     </div>
   );
 }

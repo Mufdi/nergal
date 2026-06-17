@@ -880,6 +880,8 @@ pub fn clickup_spawn_worktree_with_task(
             env_shells: Vec::new(),
             active_clickup_task_id: Some(task_id.clone()),
             pinned_clickup_task_ids: Vec::new(),
+            active_linear_issue_id: None,
+            pinned_linear_issue_ids: Vec::new(),
         };
         guard
             .create_session(&session)

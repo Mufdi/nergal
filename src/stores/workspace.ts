@@ -58,6 +58,12 @@ export interface Session {
   /// ClickUp tasks pinned as context-only. Seeds the initial value; runtime
   /// mutations live in `clickupPinsMapAtom`.
   pinned_clickup_task_ids?: string[];
+  /// The single bound Linear issue (write-back target + session-tab chip).
+  /// Seeds the initial value; runtime mutations live in `linearBindingMapAtom`.
+  active_linear_issue_id?: string | null;
+  /// Linear issues pinned as context-only. Seeds the initial value; runtime
+  /// mutations live in `linearPinsMapAtom`.
+  pinned_linear_issue_ids?: string[];
 }
 
 export interface Workspace {

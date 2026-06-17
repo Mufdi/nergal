@@ -7,6 +7,7 @@
 
 pub mod auth;
 pub mod client;
+pub mod integration;
 pub mod mirror;
 pub mod model;
 pub mod poller;
@@ -198,6 +199,230 @@ pub fn linear_read_teams(
 ) -> Result<Vec<mirror::TeamView>, String> {
     let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
     mirror::read_teams(guard.conn()).map_err(|e| format!("{e:#}"))
+}
+
+// ── Session binding + issue-to-agent verbs (linear-agent-integration) ──
+
+/// Bind `issue_id` as the session's single active issue (the write-back target
+/// and session-tab indicator). Replaces an existing active issue — the UI
+/// confirms the replacement upstream. Affects future spawns/resumes only.
+#[tauri::command]
+pub fn linear_bind_issue(
+    session_id: String,
+    issue_id: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<(), String> {
+    let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+    guard
+        .set_active_linear_issue(&session_id, Some(&issue_id))
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Clear the active issue. Future spawns/resumes only — context already in a
+/// running agent's window is not retracted (design Decision 7).
+#[tauri::command]
+pub fn linear_unbind_issue(
+    session_id: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<(), String> {
+    let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+    guard
+        .set_active_linear_issue(&session_id, None)
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Pin an issue as context-only. Ordered, idempotent JSON-array edit (mirrors
+/// `clickup_pin_task`); returns the updated pin list.
+#[tauri::command]
+pub fn linear_pin_issue(
+    session_id: String,
+    issue_id: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<Vec<String>, String> {
+    let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+    guard
+        .add_pinned_linear_issue(&session_id, &issue_id)
+        .map_err(|e| format!("{e:#}"))?;
+    guard
+        .get_pinned_linear_issues(&session_id)
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn linear_unpin_issue(
+    session_id: String,
+    issue_id: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<Vec<String>, String> {
+    let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+    guard
+        .remove_pinned_linear_issue(&session_id, &issue_id)
+        .map_err(|e| format!("{e:#}"))?;
+    guard
+        .get_pinned_linear_issues(&session_id)
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Compose an issue from the mirror, sanitized for PTY delivery (a crafted
+/// comment/description must not smuggle escape sequences that could close the
+/// bracketed paste early or drive the terminal).
+fn compose_issue_for_delivery(
+    db: &tauri::State<'_, crate::db::SharedDb>,
+    issue_id: &str,
+) -> Result<String, String> {
+    let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+    let composed = integration::compose_issue_markdown(guard.conn(), issue_id)
+        .map_err(|e| format!("{e:#}"))?
+        .ok_or_else(|| "issue not found in the local mirror".to_string())?;
+    Ok(crate::pty::sanitize_for_pty(&composed))
+}
+
+/// Compose-for-confirm step of send-as-prompt: the frontend shows this exact
+/// block before any submit (the send auto-submits a turn, so the user must see
+/// WHAT will be submitted first).
+#[tauri::command]
+pub fn linear_compose_issue_prompt(
+    issue_id: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<String, String> {
+    compose_issue_for_delivery(&db, &issue_id)
+}
+
+/// Send an issue as a prompt to a live session, after the frontend confirmed
+/// the composed block. Re-composes (fresh mirror read), then delivers via
+/// bracketed paste + `\r`. A send while the agent is mid-turn relies on the
+/// agent's own prompt queueing (CC queues natively). One-shot: no binding.
+#[tauri::command]
+pub fn linear_send_issue_as_prompt(
+    session_id: String,
+    issue_id: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+    pty: tauri::State<'_, crate::pty::PtyManager>,
+) -> Result<(), String> {
+    let text = compose_issue_for_delivery(&db, &issue_id)?;
+    crate::pty::paste_to_session(&pty, &session_id, &text, true)
+        .map_err(|e| format!("pty write failed: {e}"))
+}
+
+/// Deliver an issue's composed block to a live session via bracketed paste.
+/// Two callers, two stances on `submit`: pin / explicit refresh paste WITHOUT
+/// submit (context the user folds into their next turn); bind submits as a turn
+/// (the deliberate "work on this" act).
+#[tauri::command]
+pub fn linear_reinject_issue(
+    session_id: String,
+    issue_id: String,
+    submit: Option<bool>,
+    db: tauri::State<'_, crate::db::SharedDb>,
+    pty: tauri::State<'_, crate::pty::PtyManager>,
+) -> Result<(), String> {
+    let text = compose_issue_for_delivery(&db, &issue_id)?;
+    crate::pty::paste_to_session(&pty, &session_id, &text, submit.unwrap_or(false))
+        .map_err(|e| format!("pty write failed: {e}"))
+}
+
+/// Spawn a new worktree session seeded with the issue: derive the slug from the
+/// issue title (existing convention: diacritics stripped + timestamp), create
+/// the worktree, stash the composed block as the initial prompt
+/// (`pending_prompts`, consumed at PTY spawn), and bind the issue as the new
+/// session's active issue — the loop-closure this verb exists for. The returned
+/// session is activated by the frontend through the normal session-start flow.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command surface — collapsing to a struct breaks the JS call shape.
+pub fn linear_spawn_worktree_with_issue(
+    workspace_id: String,
+    issue_id: String,
+    slug: Option<String>,
+    db: tauri::State<'_, crate::db::SharedDb>,
+    agents: tauri::State<'_, crate::agents::state::AgentRuntimeState>,
+    plan_watcher: tauri::State<'_, crate::agents::claude_code::plan::SharedPlanWatcher>,
+    pty: tauri::State<'_, crate::pty::PtyManager>,
+) -> Result<crate::models::Session, String> {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let (session, text) = {
+        let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+        let repo_path = guard
+            .workspace_repo_path(&workspace_id)
+            .map_err(|e| format!("{e:#}"))?
+            .ok_or("workspace not found")?;
+        if !crate::worktree::is_git_repo(&repo_path) {
+            return Err("workspace is not a git repository".into());
+        }
+
+        let composed = integration::compose_issue_markdown(guard.conn(), &issue_id)
+            .map_err(|e| format!("{e:#}"))?
+            .ok_or_else(|| "issue not found in the local mirror".to_string())?;
+        let text = crate::pty::sanitize_for_pty(&composed);
+
+        use rusqlite::OptionalExtension;
+        let issue_title: String = guard
+            .conn()
+            .query_row(
+                "SELECT title FROM linear_issues WHERE id = ?1",
+                [&issue_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| format!("{e:#}"))?
+            .ok_or_else(|| "issue not found in the local mirror".to_string())?;
+
+        let base = slug.as_deref().unwrap_or(&issue_title);
+        let slug = crate::commands::derive_worktree_slug(base, ts);
+        let worktree_dir = repo_path.join(".worktrees").join("cluihud").join(&slug);
+        if worktree_dir.exists() {
+            return Err(format!("a worktree already exists for slug '{slug}'"));
+        }
+        let wt_path =
+            crate::worktree::create_worktree(&repo_path, &slug).map_err(|e| e.to_string())?;
+
+        let agent_id = {
+            let cfg = crate::config::Config::load();
+            cfg.resolve_agent_for_project(&repo_path)
+                .as_deref()
+                .and_then(|s| crate::agents::AgentId::new(s).ok())
+                .unwrap_or_else(crate::agents::AgentId::claude_code)
+        };
+        let session = crate::models::Session {
+            // char-safe truncation: a byte slice panics mid-codepoint.
+            id: format!("{}-{ts}", workspace_id.chars().take(6).collect::<String>()),
+            name: issue_title,
+            workspace_id: workspace_id.clone(),
+            worktree_path: Some(wt_path),
+            worktree_branch: Some(format!("cluihud/{slug}")),
+            merge_target: None,
+            status: crate::models::SessionStatus::Idle,
+            created_at: ts,
+            updated_at: ts,
+            agent_id: agent_id.as_str().to_string(),
+            agent_internal_session_id: None,
+            agent_capabilities: Vec::new(),
+            pinned_note_paths: Vec::new(),
+            launch_options: None,
+            env_shells: Vec::new(),
+            active_clickup_task_id: None,
+            pinned_clickup_task_ids: Vec::new(),
+            active_linear_issue_id: Some(issue_id.clone()),
+            pinned_linear_issue_ids: Vec::new(),
+        };
+        guard
+            .create_session(&session)
+            .map_err(|e| format!("{e:#}"))?;
+        agents.register_session(&session.id, agent_id);
+        crate::commands::extend_plan_watcher_for_session(
+            &agents,
+            &plan_watcher,
+            &session,
+            &repo_path,
+        );
+        (session, text)
+    };
+
+    crate::pty::queue_session_prompt(pty, session.id.clone(), text)?;
+    Ok(session)
 }
 
 /// Proxy an `uploads.linear.app` image with the Linear auth header attached and

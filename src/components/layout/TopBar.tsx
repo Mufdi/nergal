@@ -37,7 +37,13 @@ import {
   clickupTasksAtom,
   resolveActiveClickUpTask,
 } from "@/stores/clickup";
-import { linearConfiguredAtom } from "@/stores/linear";
+import {
+  linearBindingMapAtom,
+  linearConfiguredAtom,
+  linearDetailIssueIdAtom,
+  linearIssuesAtom,
+  resolveActiveLinearIssue,
+} from "@/stores/linear";
 import { toastsAtom } from "@/stores/toast";
 import { configAtom } from "@/stores/config";
 import { activePlanCapabilityAtom, fetchPlanCapabilityAction } from "@/stores/plan";
@@ -156,6 +162,16 @@ function clickupChipTooltip(
   return `Active ClickUp task: ${taskName}${unsupported} — click to open it in the panel`;
 }
 
+function linearChipTooltip(
+  issueName: string,
+  tier: ContextInjectionTier | undefined,
+  agentId: string | undefined,
+): string {
+  const unsupported =
+    tier === "unsupported" ? ` · injection unsupported for ${agentId ?? "this agent"}` : "";
+  return `Active Linear issue: ${issueName}${unsupported} — click to open its detail`;
+}
+
 /// Pinned ClickUp tasks ride the same injection channel as pinned notes —
 /// same tier honesty as pinnedChipTooltip.
 function clickupPinsChipTooltip(
@@ -208,6 +224,8 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   const clickupConfigured = useAtomValue(clickupConfiguredAtom);
   const linearConfigured = useAtomValue(linearConfiguredAtom);
   const clickupBindingMap = useAtomValue(clickupBindingMapAtom);
+  const linearBindingMap = useAtomValue(linearBindingMapAtom);
+  const linearIssues = useAtomValue(linearIssuesAtom);
   const clickupPinsMap = useAtomValue(clickupPinsMapAtom);
   const clickupTasks = useAtomValue(clickupTasksAtom);
   const visiblePanelButtons = PANEL_BUTTONS.filter((b) => {
@@ -348,6 +366,12 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   /// Workspace layer) — never drag the right panel along with it.
   function handleFocusClickUpTask(taskId: string) {
     appStore.set(clickupDetailTaskIdAtom, taskId);
+  }
+
+  /// Active-issue chip click: open the floating Linear detail (mounted at the
+  /// Workspace layer), mirroring handleFocusClickUpTask.
+  function handleFocusLinearIssue(issueId: string) {
+    appStore.set(linearDetailIssueIdAtom, issueId);
   }
 
   function handleCloseTab(id: string, e: React.MouseEvent) {
@@ -529,6 +553,38 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
                     </TooltipTrigger>
                     <TooltipContent side="bottom">
                       {clickupChipTooltip(taskName, injectionTierMap[tabId], entry.session.agent_id)}
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              })()}
+
+              {/* Active Linear issue chip — click opens its floating detail.
+                  Sibling to the ClickUp chip; same min-w-0 yield behavior. */}
+              {(() => {
+                const boundId = resolveActiveLinearIssue(linearBindingMap, entry.session);
+                if (!boundId) return null;
+                const issue = linearIssues.find((i) => i.id === boundId);
+                const issueName = issue?.identifier ?? issue?.title ?? boundId;
+                return (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span
+                          role="button"
+                          tabIndex={-1}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleFocusLinearIssue(boundId);
+                          }}
+                          className="flex min-w-0 max-w-24 items-center gap-1 text-[10px] text-muted-foreground/70 hover:text-foreground transition-colors"
+                        />
+                      }
+                    >
+                      <LinearIcon size={9} className="shrink-0" />
+                      <span className="truncate">{issueName}</span>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      {linearChipTooltip(issueName, injectionTierMap[tabId], entry.session.agent_id)}
                     </TooltipContent>
                   </Tooltip>
                 );

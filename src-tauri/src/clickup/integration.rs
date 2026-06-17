@@ -479,6 +479,8 @@ mod tests {
             env_shells: Vec::new(),
             active_clickup_task_id: active.map(str::to_string),
             pinned_clickup_task_ids: pinned.iter().map(|s| s.to_string()).collect(),
+            active_linear_issue_id: None,
+            pinned_linear_issue_ids: Vec::new(),
         }
     }
 

@@ -309,6 +309,8 @@ mod tests {
             env_shells: Vec::new(),
             active_clickup_task_id: None,
             pinned_clickup_task_ids: Vec::new(),
+            active_linear_issue_id: None,
+            pinned_linear_issue_ids: Vec::new(),
         };
         ctx.db.lock().unwrap().create_session(&s).unwrap();
     }

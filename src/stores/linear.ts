@@ -1,7 +1,16 @@
 import { atom, type getDefaultStore } from "jotai";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { invoke, listen } from "@/lib/tauri";
+import { confirm as swalConfirm } from "@/lib/swal";
 import { toastsAtom } from "./toast";
+import {
+  activeSessionIdAtom,
+  activeWorkspaceAtom,
+  expandedWorkspaceIdsAtom,
+  freshSessionsAtom,
+  workspacesAtom,
+  type Session,
+} from "./workspace";
 
 type Store = ReturnType<typeof getDefaultStore>;
 
@@ -134,6 +143,282 @@ export const copyLinearIssueAction = atom(null, (_get, set, identifier: string) 
     .catch((err) =>
       set(toastsAtom, { message: "Copy failed", description: String(err), type: "error" }),
     );
+});
+
+// ── Session ↔ issue binding + issue-to-agent verbs (linear-agent-integration) ──
+
+/// session_id → active issue id (command results are authoritative; absent key
+/// falls back to the Session row). Mirrors `clickupBindingMapAtom`.
+export const linearBindingMapAtom = atom<Record<string, string | null>>({});
+
+/// session_id → pinned issue ids (command results are authoritative; absent key
+/// falls back to the Session row).
+export const linearPinsMapAtom = atom<Record<string, string[]>>({});
+
+/// Pending send-as-prompt confirmation (the send auto-submits a turn, so the
+/// user reviews the composed block first). null = dialog closed.
+export const linearSendConfirmAtom = atom<{ sessionId: string; issueId: string } | null>(null);
+
+/// Shared binding resolution for surfaces that render per-session rows (session
+/// tabs): runtime map wins, Session row seeds.
+export function resolveActiveLinearIssue(
+  map: Record<string, string | null>,
+  session: Pick<Session, "id" | "active_linear_issue_id">,
+): string | null {
+  const runtime = map[session.id];
+  return runtime !== undefined ? runtime : (session.active_linear_issue_id ?? null);
+}
+
+function findSession(workspaces: { sessions: Session[] }[], sessionId: string): Session | null {
+  for (const ws of workspaces) {
+    for (const s of ws.sessions) {
+      if (s.id === sessionId) return s;
+    }
+  }
+  return null;
+}
+
+export const activeSessionLinearIssueAtom = atom<string | null>((get) => {
+  const id = get(activeSessionIdAtom);
+  if (!id) return null;
+  const runtime = get(linearBindingMapAtom)[id];
+  if (runtime !== undefined) return runtime;
+  return findSession(get(workspacesAtom), id)?.active_linear_issue_id ?? null;
+});
+
+export const activeSessionLinearPinsAtom = atom<string[]>((get) => {
+  const id = get(activeSessionIdAtom);
+  if (!id) return [];
+  const runtime = get(linearPinsMapAtom)[id];
+  if (runtime !== undefined) return runtime;
+  return findSession(get(workspacesAtom), id)?.pinned_linear_issue_ids ?? [];
+});
+
+/// Unbind/unpin affect future spawns/resumes only — context already in a
+/// running agent's window is not retracted (design Decision 7).
+export const FUTURE_SPAWNS_HINT =
+  "Affects future spawns/resumes — the live window keeps its context.";
+
+/// Issue verbs shared by the panel rows, the floating-detail toolbar and the
+/// contextual keys (S/W/P/B/R inside the linear zone).
+export interface LinearIssueActions {
+  send: (issueId: string) => void;
+  spawn: (issueId: string) => void;
+  togglePin: (issueId: string) => void;
+  toggleBind: (issueId: string) => void;
+  reinject: (issueId: string) => void;
+}
+
+/// Action labels advertise the contextual key (tooltip-as-source-of-truth).
+export const LINEAR_ACTION_LABELS = {
+  send: "Send as prompt (S)",
+  spawn: "Spawn worktree session (W)",
+  pin: "Attach as context (P)",
+  unpin: `Unpin (P) — ${FUTURE_SPAWNS_HINT.toLowerCase()}`,
+  bind: "Bind as active issue (B)",
+  unbind: `Unbind (B) — ${FUTURE_SPAWNS_HINT.toLowerCase()}`,
+  reinject: "Re-inject into the live session (R)",
+} as const;
+
+/// Linear issue titles are multi-writer input and swal bodies render as HTML.
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/// Human label for an issue: identifier (ENG-123) when present, else the title.
+function issueDisplay(get: Store["get"], issueId: string): string {
+  const issue = get(linearIssuesAtom).find((i) => i.id === issueId);
+  if (!issue) return issueId;
+  return issue.identifier ?? issue.title;
+}
+
+export const requestSendIssueAction = atom(null, (get, set, issueId: string) => {
+  const sessionId = get(activeSessionIdAtom);
+  if (!sessionId) {
+    set(toastsAtom, {
+      message: "Send as prompt",
+      description: "No active session to send to.",
+      type: "info",
+    });
+    return;
+  }
+  set(linearSendConfirmAtom, { sessionId, issueId });
+});
+
+export const togglePinIssueAction = atom(null, async (get, set, issueId: string) => {
+  const sessionId = get(activeSessionIdAtom);
+  if (!sessionId) {
+    set(toastsAtom, {
+      message: "Attach as context",
+      description: "No active session to attach to.",
+      type: "info",
+    });
+    return;
+  }
+  const pinned = get(activeSessionLinearPinsAtom).includes(issueId);
+  try {
+    const ids = await invoke<string[]>(pinned ? "linear_unpin_issue" : "linear_pin_issue", {
+      sessionId,
+      issueId,
+    });
+    set(linearPinsMapAtom, (prev) => ({ ...prev, [sessionId]: ids }));
+    if (!pinned) {
+      // Deliver to the live agent now (mirrors the ClickUp pin); the persisted
+      // pin still seeds the next spawn/resume. No-op without a live PTY.
+      void invoke("linear_reinject_issue", { sessionId, issueId }).catch(() => {});
+    }
+    set(
+      toastsAtom,
+      pinned
+        ? { message: "Issue unpinned", description: FUTURE_SPAWNS_HINT, type: "info" }
+        : {
+            message: "Issue attached as context",
+            description:
+              "Attached + injected into the live session — also persists for future restarts.",
+            type: "success",
+          },
+    );
+  } catch (err) {
+    set(toastsAtom, {
+      message: pinned ? "Unpin failed" : "Pin failed",
+      description: String(err),
+      type: "error",
+    });
+  }
+});
+
+export const performBindIssueAction = atom(
+  null,
+  async (_get, set, args: { sessionId: string; issueId: string }) => {
+    try {
+      await invoke("linear_bind_issue", args);
+      set(linearBindingMapAtom, (prev) => ({ ...prev, [args.sessionId]: args.issueId }));
+      // Deliver the brief to the live agent now, SUBMITTED as a turn (binding is
+      // the deliberate "work on this" act). Still seeds future spawns/resumes.
+      // No-op without a live PTY.
+      void invoke("linear_reinject_issue", { ...args, submit: true }).catch(() => {});
+      set(toastsAtom, {
+        message: "Bound as active issue",
+        description:
+          "Write-back target for this session (shown in the tab chip) — brief submitted to the live session; also persists for future spawns/resumes.",
+        type: "success",
+      });
+    } catch (err) {
+      set(toastsAtom, { message: "Bind failed", description: String(err), type: "error" });
+    }
+  },
+);
+
+export const unbindIssueAction = atom(null, async (get, set) => {
+  const sessionId = get(activeSessionIdAtom);
+  if (!sessionId) return;
+  try {
+    await invoke("linear_unbind_issue", { sessionId });
+    set(linearBindingMapAtom, (prev) => ({ ...prev, [sessionId]: null }));
+    set(toastsAtom, { message: "Issue unbound", description: FUTURE_SPAWNS_HINT, type: "info" });
+  } catch (err) {
+    set(toastsAtom, { message: "Unbind failed", description: String(err), type: "error" });
+  }
+});
+
+/// Bind toggle: same issue → unbind; different active issue → confirm the
+/// replacement (Decision 2 rebind rule); no active issue → bind directly.
+export const requestBindIssueAction = atom(null, async (get, set, issueId: string) => {
+  const sessionId = get(activeSessionIdAtom);
+  if (!sessionId) {
+    set(toastsAtom, {
+      message: "Bind issue",
+      description: "No active session to bind to.",
+      type: "info",
+    });
+    return;
+  }
+  const current = get(activeSessionLinearIssueAtom);
+  if (current === issueId) {
+    await set(unbindIssueAction);
+    return;
+  }
+  if (current) {
+    const confirmed = await swalConfirm({
+      title: "Replace active issue?",
+      body: `This session is bound to "${escapeHtml(issueDisplay(get, current))}". Binding "${escapeHtml(issueDisplay(get, issueId))}" replaces it as the write-back target. The replaced issue stays in Linear.`,
+      confirmLabel: "Replace",
+      kind: "question",
+    });
+    if (!confirmed) return;
+  }
+  await set(performBindIssueAction, { sessionId, issueId });
+});
+
+export const spawnWorktreeWithIssueAction = atom(null, async (get, set, issueId: string) => {
+  const workspace = get(activeWorkspaceAtom);
+  if (!workspace) {
+    set(toastsAtom, {
+      message: "Spawn worktree",
+      description: "No active workspace — open a session first.",
+      type: "info",
+    });
+    return;
+  }
+  if (!workspace.is_git) {
+    set(toastsAtom, {
+      message: "Spawn worktree",
+      description: "Not a git workspace — worktrees need a git repository.",
+      type: "info",
+    });
+    return;
+  }
+  try {
+    const session = await invoke<Session>("linear_spawn_worktree_with_issue", {
+      workspaceId: workspace.id,
+      issueId,
+    });
+    set(workspacesAtom, (prev) =>
+      prev.map((w) => (w.id === workspace.id ? { ...w, sessions: [...w.sessions, session] } : w)),
+    );
+    set(freshSessionsAtom, (prev) => new Set([...prev, session.id]));
+    set(expandedWorkspaceIdsAtom, (prev) => new Set([...(prev ?? []), workspace.id]));
+    // Activation spawns the PTY, which consumes the backend-queued initial
+    // prompt — same flow as the ClickUp worktree verb.
+    set(activeSessionIdAtom, session.id);
+    set(toastsAtom, {
+      message: `Worktree session: ${session.name}`,
+      description: "Issue bound and queued as the initial prompt.",
+      type: "success",
+    });
+  } catch (err) {
+    set(toastsAtom, { message: "Spawn worktree failed", description: String(err), type: "error" });
+  }
+});
+
+/// Explicit refresh of a live session's issue context (the "stale injected
+/// context" risk, mirroring the Obsidian hot-reload rule): recompose +
+/// bracketed paste into the live PTY, never automatic, never submits.
+export const reinjectIssueAction = atom(null, async (get, set, issueId: string) => {
+  const sessionId = get(activeSessionIdAtom);
+  if (!sessionId) {
+    set(toastsAtom, {
+      message: "Reinject context",
+      description: "No active session to reinject into.",
+      type: "info",
+    });
+    return;
+  }
+  try {
+    await invoke("linear_reinject_issue", { sessionId, issueId });
+    set(toastsAtom, {
+      message: "Context re-injected into session",
+      description: "Seeded as context, not submitted.",
+      type: "success",
+    });
+  } catch (err) {
+    set(toastsAtom, { message: "Reinject failed", description: String(err), type: "error" });
+  }
 });
 
 // ── Refresh + bootstrap ──

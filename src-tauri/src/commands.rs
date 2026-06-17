@@ -935,6 +935,8 @@ pub fn create_session(
             .collect(),
         active_clickup_task_id: None,
         pinned_clickup_task_ids: Vec::new(),
+        active_linear_issue_id: None,
+        pinned_linear_issue_ids: Vec::new(),
     };
 
     db.create_session(&session).map_err(|e| e.to_string())?;

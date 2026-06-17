@@ -620,17 +620,24 @@ pub(crate) fn assemble_injected_context(
         )
     };
     let clickup_block = crate::clickup::integration::assemble_clickup_context(g.conn(), &session);
-    concat_context_blocks(vault_block, clickup_block)
+    let linear_block = crate::linear::integration::assemble_linear_context(g.conn(), &session);
+    concat_context_blocks(vault_block, clickup_block, linear_block)
 }
 
-/// ClickUp rides AFTER the vault block in the same `injected_context` string
-/// (design Decision 4: one assembled string, every adapter unchanged).
-fn concat_context_blocks(vault: Option<String>, clickup: Option<String>) -> Option<String> {
-    match (vault, clickup) {
-        (None, None) => None,
-        (Some(v), None) => Some(v),
-        (None, Some(c)) => Some(c),
-        (Some(v), Some(c)) => Some(format!("{v}\n{c}")),
+/// Tracker blocks ride AFTER the vault block in the same `injected_context`
+/// string (design Decision 4: one assembled string, every adapter unchanged).
+/// `None` only when every source is empty, so a session with no pins/bindings
+/// of any source spawns byte-identically.
+fn concat_context_blocks(
+    vault: Option<String>,
+    clickup: Option<String>,
+    linear: Option<String>,
+) -> Option<String> {
+    let parts: Vec<String> = [vault, clickup, linear].into_iter().flatten().collect();
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n"))
     }
 }
 
@@ -1487,31 +1494,49 @@ mod tests {
         assert!(err.contains("agent sessions only"));
     }
 
-    // ── Injected-context assembly (vault + ClickUp concatenation) ──
+    // ── Injected-context assembly (vault + ClickUp + Linear concatenation) ──
 
     #[test]
-    fn concat_preserves_none_when_both_sources_empty() {
-        assert!(concat_context_blocks(None, None).is_none());
+    fn concat_preserves_none_when_all_sources_empty() {
+        assert!(concat_context_blocks(None, None, None).is_none());
     }
 
     #[test]
     fn concat_passes_single_sources_through_unchanged() {
-        // Byte-identical to the pre-ClickUp behavior when only vault exists.
+        // Byte-identical to the pre-tracker behavior when only vault exists.
         assert_eq!(
-            concat_context_blocks(Some("vault".into()), None).as_deref(),
+            concat_context_blocks(Some("vault".into()), None, None).as_deref(),
             Some("vault")
         );
         assert_eq!(
-            concat_context_blocks(None, Some("clickup".into())).as_deref(),
+            concat_context_blocks(None, Some("clickup".into()), None).as_deref(),
             Some("clickup")
+        );
+        assert_eq!(
+            concat_context_blocks(None, None, Some("linear".into())).as_deref(),
+            Some("linear")
         );
     }
 
     #[test]
-    fn concat_appends_clickup_after_vault() {
+    fn concat_appends_trackers_after_vault_in_order() {
         assert_eq!(
-            concat_context_blocks(Some("vault".into()), Some("clickup".into())).as_deref(),
+            concat_context_blocks(Some("vault".into()), Some("clickup".into()), None).as_deref(),
             Some("vault\nclickup")
+        );
+        assert_eq!(
+            concat_context_blocks(
+                Some("vault".into()),
+                Some("clickup".into()),
+                Some("linear".into())
+            )
+            .as_deref(),
+            Some("vault\nclickup\nlinear")
+        );
+        // Vault absent, both trackers present: clickup before linear, no leading sep.
+        assert_eq!(
+            concat_context_blocks(None, Some("clickup".into()), Some("linear".into())).as_deref(),
+            Some("clickup\nlinear")
         );
     }
 
@@ -1536,6 +1561,8 @@ mod tests {
             env_shells: Vec::new(),
             active_clickup_task_id: None,
             pinned_clickup_task_ids: Vec::new(),
+            active_linear_issue_id: None,
+            pinned_linear_issue_ids: Vec::new(),
         })
         .unwrap();
         if let Some(task) = active_task {

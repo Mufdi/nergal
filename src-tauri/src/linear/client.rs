@@ -243,7 +243,7 @@ impl LinearClient {
             "first": ISSUES_PAGE_SIZE,
             "labelsFirst": LABELS_INNER_SIZE,
         });
-        let d: Data = self.execute(ISSUES_WINDOW_QUERY, vars).await?;
+        let d: Data = self.execute(&issues_window_query(), vars).await?;
         Ok(d.issues)
     }
 
@@ -267,7 +267,7 @@ impl LinearClient {
             "first": ISSUES_PAGE_SIZE,
             "labelsFirst": LABELS_INNER_SIZE,
         });
-        let d: Data = self.execute(ISSUES_ASSIGNED_QUERY, vars).await?;
+        let d: Data = self.execute(&issues_assigned_query(), vars).await?;
         Ok(d.issues)
     }
 
@@ -288,7 +288,7 @@ impl LinearClient {
             "first": ISSUES_PAGE_SIZE,
             "labelsFirst": LABELS_INNER_SIZE,
         });
-        let d: Data = self.execute(ISSUES_BY_ID_QUERY, vars).await?;
+        let d: Data = self.execute(&issues_by_id_query(), vars).await?;
         Ok(d.issues)
     }
 

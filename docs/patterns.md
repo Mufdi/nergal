@@ -367,7 +367,36 @@ window handler (beats the Select's own keys + the list-cursor nav) drives it and
 early-returns when focus sits on a `data-header-action` button so native
 Enter/Space activate it. A button that disables itself on click (e.g. a
 reset-to-default) must refocus the panel root so the zone keeps its shortcuts.
-Canonical: `ClickUpPanel.tsx`.
+Canonical: `ClickUpPanel.tsx` + `LinearPanel.tsx`.
+
+**Focus must stay visible during this nav.** The buttons are advanced by
+programmatic `.focus()`, and WebKitGTK draws the native focus outline as a
+**rectangle that ignores `border-radius`** — illegible on a 24px rounded icon
+button, so the keyboard cursor looks "lost". The fix is global, not per-button:
+`[data-header-action]:focus` in `globals.css` pins the same box-shadow ring as
+`.cluihud-focus-ring`. Any new toolbar button gets it for free by carrying the
+`data-header-action` marker — don't rely on the native outline.
+
+### 10.1 Keyboard-navigable multi-select popover (label/tag filter)
+
+A header-action button that opens a **multi-select** popover (Linear's label
+filter) must be fully operable from the keyboard, mirroring the `Select`
+mechanics (§3.8) the user already knows from the ClickUp status picker:
+
+- The trigger is reachable via the §10 row; **↓ on the trigger opens** the
+  popover, and an effect moves focus to the first option on open.
+- The popup is `role="listbox"` (`aria-multiselectable`); options are
+  `role="option"` `aria-selected` with **`tabIndex={-1}`** (roving focus driven
+  by `.focus()`, not Tab order).
+- A keydown handler on the listbox: **↑/↓** move the focused option (clamped at
+  the ends), **Space/Enter** toggle it via the option's native `onClick` (no
+  close — it's multi-select), **Esc** closes and returns focus to the trigger.
+- Options highlight on `:focus` with `focus:bg-accent` (matches the `Select`
+  popup's `data-highlighted`), NOT the rounded-button ring.
+- The panel's list-nav and §10 ←/→ handlers already early-return when focus sits
+  inside `[role='listbox']`, so they don't fight the popover.
+
+Canonical: the label filter in `LinearPanel.tsx`.
 
 ## 11. View panels join the right-panel tab cycle
 
@@ -406,6 +435,19 @@ same `data-nav-key` cursor elements in DOM order (properties lead so the cursor
 starts at status/due) — two columns for `layout="modal"`, one column for
 `layout="tab"`. Canonical: `ClickUpTaskView.tsx` (controller + body + shared
 header pieces) + `ClickUpTaskTab.tsx` + `ClickUpTaskDetail.tsx`.
+
+**The state-driven index cursor.** Actionable elements carry `data-nav-key`
+(`status`/`due`/`sub:<id>`/`att:<id>`/`rel:<id>`/`copyid`/`open`/…) and highlight
+via `data-nav-selected` (styled globally under any `[data-focus-zone]`). The
+container (focused, `tabIndex={0}`) owns `onKeyDown` (↑/↓ walk `navKeysInOrder()`
+= visible `[data-nav-key]` in DOM order; Enter/Space → `activateNav`) and
+`onClick` (move cursor to the clicked element + refocus the container, since
+WebKitGTK doesn't focus buttons on click). The cursor is **state, not DOM
+focus** — buttons never steal focus during arrow-nav, so Enter doesn't
+double-fire. `LinearTaskView.tsx` mirrors this exactly (read-only: nav keys are
+`copyid`/`open`/`sub:`/`att:`/`rel:`, no status/due editing). To make a new
+element reachable, give it a `data-nav-key` + `data-nav-selected` and a branch in
+`activateNav` — nothing else.
 
 Contract:
 

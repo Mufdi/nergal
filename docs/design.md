@@ -362,6 +362,19 @@ parent surface). Animations: `fade-in-0 zoom-in-95` open/close.
 Don't reach for a `Dialog` when a `swal` confirm suffices, and don't hand-roll a
 confirm `Dialog` — `confirm()` from `@/lib/swal` is the canonical yes/no.
 
+> ⚠️ **`FloatingPanel` size gotcha — persisted geometry overrides `DEFAULT_GEOMETRY`.**
+> Each `FloatingPanel` persists its `{x,y,width,height}` per `panelId` in the
+> `floating_panel_geometry` SQLite table, written on **every drag/resize** (a
+> move freezes the *current* size too). On mount the persisted row wins over the
+> component's `DEFAULT_GEOMETRY` constant — so **changing `DEFAULT_GEOMETRY` in
+> code has NO visible effect for any user who has already opened that panel.**
+> To actually change an existing panel's size you must ALSO clear/reset its
+> persisted row (`DELETE`/`UPDATE … WHERE panel_id='<id>'` in
+> `~/.config/cluihud/cluihud.db`). Sibling panels that should match (e.g. the
+> ClickUp and Linear detail modals) drift purely from independent user resizes,
+> not code — their `DEFAULT_GEOMETRY`/`MIN_*` constants are already identical.
+> `[error] modal size change "didn't apply". Fix: reset the persisted row in floating_panel_geometry, don't only edit DEFAULT_GEOMETRY.`
+
 Built on `@base-ui/react/dialog`. The canonical surface:
 
 | Layer | Class |

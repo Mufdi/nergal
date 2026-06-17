@@ -24,6 +24,10 @@ use super::model::{Comment, Connection, Issue, Team, Viewer};
 
 const ENDPOINT: &str = "https://api.linear.app/graphql";
 const USER_AGENT: &str = "nergal-linear-sync";
+/// Inline-image proxy: the only host the authenticated fetcher will touch.
+const UPLOADS_HOST: &str = "uploads.linear.app";
+/// Cap on a single proxied image (data URLs round-trip over IPC; keep it sane).
+const MAX_IMAGE_BYTES: usize = 25 * 1024 * 1024;
 const MAX_RETRIES: u32 = 4;
 const BACKOFF_FLOOR: Duration = Duration::from_secs(1);
 const BACKOFF_CAP: Duration = Duration::from_secs(60);
@@ -324,6 +328,62 @@ impl LinearClient {
             d.issue.relations.nodes,
         ))
     }
+
+    /// Fetch an `uploads.linear.app` asset with the Linear auth header attached.
+    /// The webview can't send that header itself (a bare `<img src>` to the CDN
+    /// 401s), so the panel routes inline issue images through here. Host-pinned
+    /// to `uploads.linear.app` (SSRF-safe) and `image/*`-only so it can't be
+    /// repurposed as a generic authenticated fetcher. Returns `(content_type,
+    /// bytes)`.
+    pub async fn fetch_image(&self, url: &str) -> Result<(String, Vec<u8>)> {
+        if !is_uploads_url(url) {
+            bail!("linear image url not allowed");
+        }
+        let auth = authorization_header_value(self.mode, &self.key);
+        let resp = self
+            .http
+            .get(url)
+            .header("Authorization", &auth)
+            .header("User-Agent", USER_AGENT)
+            .send()
+            .await
+            .map_err(|e| anyhow!("linear image request: {}", redact(&e.to_string())))?;
+        if !resp.status().is_success() {
+            bail!("linear image fetch: HTTP {}", resp.status().as_u16());
+        }
+        if let Some(len) = resp.content_length()
+            && len as usize > MAX_IMAGE_BYTES
+        {
+            bail!("linear image too large");
+        }
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("application/octet-stream")
+            .to_string();
+        if !content_type.starts_with("image/") {
+            bail!("linear image fetch: unexpected content-type");
+        }
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| anyhow!("linear image body: {}", redact(&e.to_string())))?;
+        if bytes.len() > MAX_IMAGE_BYTES {
+            bail!("linear image too large");
+        }
+        Ok((content_type, bytes.to_vec()))
+    }
+}
+
+/// Host-pinned allowlist for the inline-image proxy: only `https` URLs whose
+/// host is exactly `uploads.linear.app`. Parsing via `url::Url` defeats
+/// `uploads.linear.app.evil.com` / userinfo-prefix spoofing.
+pub fn is_uploads_url(url: &str) -> bool {
+    match url::Url::parse(url) {
+        Ok(u) => u.scheme() == "https" && u.host_str() == Some(UPLOADS_HOST),
+        Err(_) => false,
+    }
 }
 
 // ── Pure helpers (unit-testable without a network) ──
@@ -540,6 +600,20 @@ mod tests {
     fn classify_ok() {
         let body = r#"{"data":{"viewer":{"id":"u1"}}}"#;
         assert_eq!(classify_body(body), Classified::Ok);
+    }
+
+    #[test]
+    fn is_uploads_url_pins_host_and_scheme() {
+        assert!(is_uploads_url("https://uploads.linear.app/a/b/c"));
+        // wrong scheme
+        assert!(!is_uploads_url("http://uploads.linear.app/a"));
+        // suffix-spoof host
+        assert!(!is_uploads_url("https://uploads.linear.app.evil.com/a"));
+        // unrelated host
+        assert!(!is_uploads_url("https://evil.com/a"));
+        // the api host is not an image host
+        assert!(!is_uploads_url("https://api.linear.app/graphql"));
+        assert!(!is_uploads_url("not a url"));
     }
 
     #[test]

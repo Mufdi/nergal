@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { useAtomValue } from "jotai";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useAtomValue, useSetAtom } from "jotai";
 import { open as openShell } from "@tauri-apps/plugin-shell";
 import { ChevronDown, ChevronLeft, ChevronRight, ExternalLink, GitBranch, Paperclip } from "lucide-react";
 import { invoke } from "@/lib/tauri";
@@ -8,6 +8,7 @@ import { StatusIcon } from "@/components/clickup/StatusIcon";
 import { PriorityIcon } from "@/components/clickup/PriorityIcon";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import {
+  copyLinearIssueAction,
   linearIssuesAtom,
   type IssueView,
   type LinearAttachment,
@@ -84,9 +85,13 @@ export function useLinearIssueController({
   setIssueId: (id: string | null) => void;
 }) {
   const issues = useAtomValue(linearIssuesAtom);
+  const copyIssue = useSetAtom(copyLinearIssueAction);
   const [detail, setDetail] = useState<LinearDetailData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // State-driven index cursor over actionable elements (mirrors ClickUp's
+  // detail nav: ↑/↓ move, Enter/Space activate, highlight via data-nav-selected).
+  const [navKey, setNavKey] = useState<string | null>(null);
   // Keep setIssueId stable for the detail's relation click handler
   const setIssueIdRef = useRef(setIssueId);
   setIssueIdRef.current = setIssueId;
@@ -99,12 +104,22 @@ export function useLinearIssueController({
   const navInternal = useRef(false);
   const [histNav, setHistNav] = useState({ canBack: false, canFwd: false });
 
-  // Reset + grab focus when issue opens
+  // Reset + grab focus when issue opens (clear the index cursor on drill-in)
   useEffect(() => {
+    setNavKey(null);
     if (issueId === null) return;
     const t = setTimeout(() => contentRef.current?.focus({ preventScroll: true }), 60);
     return () => clearTimeout(t);
   }, [issueId]);
+
+  // The cursor is state-driven (no DOM focus), so the scroll container won't
+  // follow it — bring the highlighted element into view.
+  useEffect(() => {
+    if (!navKey) return;
+    contentRef.current
+      ?.querySelector<HTMLElement>(`[data-nav-key="${CSS.escape(navKey)}"]`)
+      ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [navKey]);
 
   // Maintain drill-in history stack
   useEffect(() => {
@@ -200,6 +215,61 @@ export function useLinearIssueController({
     }
   }
 
+  // Visible actionable elements in DOM order (the nav-cursor source of truth).
+  function navKeysInOrder(): string[] {
+    const content = contentRef.current;
+    if (!content) return [];
+    return Array.from(content.querySelectorAll<HTMLElement>("[data-nav-key]"))
+      .filter((el) => el.offsetParent !== null)
+      .map((el) => el.dataset.navKey ?? "")
+      .filter(Boolean);
+  }
+
+  function activateNav(key: string) {
+    if (key === "copyid") {
+      if (issue?.identifier) copyIssue(issue.identifier);
+    } else if (key === "open") {
+      void openValidatedUrl(issue?.url);
+    } else if (key.startsWith("sub:")) {
+      setIssueId(key.slice(4));
+    } else if (key.startsWith("rel:")) {
+      setIssueId(key.slice(4));
+    } else if (key.startsWith("att:")) {
+      const att = attachments.find((a) => a.id === key.slice(4));
+      if (att) void openValidatedUrl(att.url);
+    }
+  }
+
+  function handleNavKeyDown(e: ReactKeyboardEvent) {
+    const target = e.target as HTMLElement | null;
+    if (target?.tagName === "TEXTAREA" || target?.tagName === "INPUT") return;
+    if (e.code === "ArrowDown" || e.code === "ArrowUp") {
+      const keys = navKeysInOrder();
+      if (keys.length === 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const idx = navKey ? keys.indexOf(navKey) : -1;
+      const next =
+        e.code === "ArrowDown" ? Math.min(idx + 1, keys.length - 1) : Math.max(idx - 1, 0);
+      setNavKey(keys[idx === -1 ? 0 : next] ?? keys[0]);
+    } else if ((e.code === "Enter" || e.code === "Space") && navKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      activateNav(navKey);
+    }
+  }
+
+  // Clicking an actionable element moves the cursor there; refocus the container
+  // (WebKitGTK doesn't focus buttons on click) so arrow-nav resumes.
+  function handleContainerClick(e: ReactMouseEvent) {
+    const target = e.target as HTMLElement | null;
+    const el = target?.closest<HTMLElement>("[data-nav-key]");
+    if (el?.dataset.navKey) setNavKey(el.dataset.navKey);
+    if (target && target.tagName !== "TEXTAREA" && target.tagName !== "INPUT") {
+      contentRef.current?.focus({ preventScroll: true });
+    }
+  }
+
   return {
     issueId,
     setIssueId,
@@ -216,6 +286,12 @@ export function useLinearIssueController({
     mainRef,
     histNav,
     stepHistory,
+    navKey,
+    setNavKey,
+    navKeysInOrder,
+    activateNav,
+    handleNavKeyDown,
+    handleContainerClick,
   };
 }
 
@@ -227,12 +303,14 @@ function SubIssueTree({
   depth,
   seen,
   onOpen,
+  navKey,
 }: {
   parentId: string;
   childMap: ReadonlyMap<string, IssueView[]>;
   depth: number;
   seen: ReadonlySet<string>;
   onOpen: (id: string) => void;
+  navKey: string | null;
 }) {
   const children = seen.has(parentId) ? [] : (childMap.get(parentId) ?? []);
   if (children.length === 0) return null;
@@ -247,6 +325,7 @@ function SubIssueTree({
           depth={depth}
           seen={new Set([...seen, parentId])}
           onOpen={onOpen}
+          navKey={navKey}
         />
       ))}
     </>
@@ -259,12 +338,14 @@ function SubIssueNode({
   depth,
   seen,
   onOpen,
+  navKey,
 }: {
   issue: IssueView;
   childMap: ReadonlyMap<string, IssueView[]>;
   depth: number;
   seen: ReadonlySet<string>;
   onOpen: (id: string) => void;
+  navKey: string | null;
 }) {
   const hasChildren = !seen.has(issue.id) && (childMap.get(issue.id)?.length ?? 0) > 0;
   // Default expanded in the detail modal (contrast with the panel which defaults collapsed).
@@ -276,8 +357,10 @@ function SubIssueNode({
       <button
         type="button"
         onClick={() => onOpen(issue.id)}
+        data-nav-key={`sub:${issue.id}`}
+        data-nav-selected={navKey === `sub:${issue.id}` || undefined}
         style={{ paddingLeft: 4 + depth * 16 }}
-        className="flex w-full items-center gap-1.5 rounded py-0.5 pr-1 text-left text-[11px] text-foreground/80 transition-colors hover:bg-secondary/40"
+        className="flex w-full items-center gap-1.5 rounded py-0.5 pr-1 text-left text-[11px] text-foreground/80 outline-none transition-colors hover:bg-secondary/40"
       >
         {/* Chevron slot (§9) */}
         {hasChildren ? (
@@ -314,6 +397,7 @@ function SubIssueNode({
           depth={depth + 1}
           seen={new Set([...seen, issue.id])}
           onOpen={onOpen}
+          navKey={navKey}
         />
       )}
     </div>
@@ -474,13 +558,24 @@ export function LinearIssueBody({
           </div>
         )}
         {issue.identifier && (
-          <div className="font-mono text-[10px] text-muted-foreground/60">{issue.identifier}</div>
+          <button
+            type="button"
+            data-nav-key="copyid"
+            data-nav-selected={c.navKey === "copyid" || undefined}
+            onClick={() => c.activateNav("copyid")}
+            className="self-start rounded px-1 font-mono text-[10px] text-muted-foreground/60 outline-none hover:text-foreground"
+            title="Copy issue id"
+          >
+            {issue.identifier}
+          </button>
         )}
         {issue.url && (
           <button
             type="button"
+            data-nav-key="open"
+            data-nav-selected={c.navKey === "open" || undefined}
             onClick={() => void openValidatedUrl(issue.url)}
-            className="self-start text-[10px] text-accent underline hover:no-underline"
+            className="self-start rounded px-1 text-[10px] text-accent underline outline-none hover:no-underline"
           >
             Open in Linear
           </button>
@@ -514,7 +609,7 @@ export function LinearIssueBody({
       <SectionCaps label="Description" />
       {issue.description && issue.description.trim() ? (
         <div className="-mx-3 -my-2 rounded">
-          <MarkdownView content={issue.description} gateRemoteImages />
+          <MarkdownView content={issue.description} gateRemoteImages linearAssets />
         </div>
       ) : (
         <p className="text-xs text-muted-foreground">No description</p>
@@ -535,6 +630,7 @@ export function LinearIssueBody({
             depth={0}
             seen={new Set<string>([issue.id])}
             onOpen={(id) => c.setIssueId(id)}
+            navKey={c.navKey}
           />
         ))}
       </div>
@@ -562,7 +658,7 @@ export function LinearIssueBody({
                 )}
               </div>
               <div className="-my-1.5">
-                <MarkdownView content={comment.body ?? ""} gateRemoteImages />
+                <MarkdownView content={comment.body ?? ""} gateRemoteImages linearAssets />
               </div>
             </div>
           ))}
@@ -579,8 +675,10 @@ export function LinearIssueBody({
           <button
             key={att.id}
             type="button"
+            data-nav-key={`att:${att.id}`}
+            data-nav-selected={c.navKey === `att:${att.id}` || undefined}
             onClick={() => void openValidatedUrl(att.url)}
-            className="flex items-center gap-1 rounded border border-border/60 bg-secondary/30 px-1.5 py-0.5 text-[10px] text-foreground/80 transition-colors hover:bg-secondary/60 hover:text-foreground"
+            className="flex items-center gap-1 rounded border border-border/60 bg-secondary/30 px-1.5 py-0.5 text-[10px] text-foreground/80 outline-none transition-colors hover:bg-secondary/60 hover:text-foreground"
           >
             <Paperclip size={9} className="shrink-0 text-muted-foreground" />
             <span className="max-w-32 truncate">{att.title ?? att.subtitle ?? att.url}</span>
@@ -599,8 +697,10 @@ export function LinearIssueBody({
           <button
             key={`${rel.relationType}:${rel.relatedId}`}
             type="button"
+            data-nav-key={`rel:${rel.relatedId}`}
+            data-nav-selected={c.navKey === `rel:${rel.relatedId}` || undefined}
             onClick={() => c.setIssueId(rel.relatedId)}
-            className="flex items-center gap-1.5 rounded px-1 py-0.5 text-left text-[11px] transition-colors hover:bg-secondary/40"
+            className="flex items-center gap-1.5 rounded px-1 py-0.5 text-left text-[11px] outline-none transition-colors hover:bg-secondary/40"
           >
             <span className="shrink-0 text-[10px] capitalize text-muted-foreground">
               {friendlyRelationType(rel.relationType)}
@@ -624,6 +724,8 @@ export function LinearIssueBody({
       <div
         ref={setOuterRef}
         tabIndex={0}
+        onKeyDown={c.handleNavKeyDown}
+        onClick={c.handleContainerClick}
         className="h-full overflow-y-auto outline-none"
       >
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-5 py-4">
@@ -641,7 +743,13 @@ export function LinearIssueBody({
 
   // Modal: properties rail on the right (order-2), main content scrolls left
   return (
-    <div ref={c.contentRef} tabIndex={0} className="flex h-full outline-none">
+    <div
+      ref={c.contentRef}
+      tabIndex={0}
+      onKeyDown={c.handleNavKeyDown}
+      onClick={c.handleContainerClick}
+      className="flex h-full outline-none"
+    >
       <aside className="order-2 flex w-44 shrink-0 flex-col gap-3 border-l border-border/50 px-2.5 py-2">
         {propertiesEl}
       </aside>

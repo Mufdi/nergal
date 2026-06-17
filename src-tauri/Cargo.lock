@@ -707,6 +707,7 @@ dependencies = [
  "anyhow",
  "arboard",
  "async-trait",
+ "base64 0.22.1",
  "bitflags 2.11.0",
  "clap",
  "dashmap",

@@ -1,7 +1,8 @@
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ComponentPropsWithoutRef } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { invoke } from "@/lib/tauri";
 import { useObsidianRemarkPlugin, isObsidianHref, openObsidianHref, obsidianUrlTransform } from "@/lib/markdown/obsidianMarkdown";
 
 interface MarkdownViewProps {
@@ -14,6 +15,60 @@ interface MarkdownViewProps {
   /// Prevents tracking pixels and SSRF from untrusted multi-writer content (e.g.
   /// Linear issue descriptions and comments). Default false.
   gateRemoteImages?: boolean;
+  /// When true, `uploads.linear.app` images (pasted inline into Linear issue
+  /// descriptions/comments) are fetched through the authenticated backend proxy
+  /// and rendered inline — a bare <img src> to that CDN 401s. First-party CDN,
+  /// so these auto-load; every other remote host still obeys `gateRemoteImages`.
+  linearAssets?: boolean;
+}
+
+function isLinearUpload(src?: string): boolean {
+  if (!src) return false;
+  try {
+    const u = new URL(src);
+    return u.protocol === "https:" && u.hostname === "uploads.linear.app";
+  } catch {
+    return false;
+  }
+}
+
+/// Fetches an authenticated `uploads.linear.app` image via the backend proxy
+/// (`linear_fetch_image` → base64 data URL) and renders it inline. Auto-loads:
+/// the URL came from the user's own workspace and the CDN is first-party.
+function LinearProxyImage({ src, alt }: { src?: string; alt?: string }) {
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!src) return;
+    let cancelled = false;
+    invoke<string>("linear_fetch_image", { url: src })
+      .then((d) => {
+        if (!cancelled) setDataUrl(d);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [src]);
+
+  if (failed) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded border border-border/50 bg-secondary/40 px-2 py-0.5 text-[10px] text-muted-foreground">
+        [image unavailable{alt ? `: ${alt}` : ""}]
+      </span>
+    );
+  }
+  if (!dataUrl) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded border border-border/50 bg-secondary/40 px-2 py-0.5 text-[10px] text-muted-foreground">
+        [loading image…]
+      </span>
+    );
+  }
+  return <img src={dataUrl} alt={alt} className="max-w-full rounded" />;
 }
 
 /// Lazy image placeholder shown when gateRemoteImages=true. Loads the real src
@@ -35,7 +90,7 @@ function GatedImage({ src, alt }: { src?: string; alt?: string }) {
   );
 }
 
-export function MarkdownView({ content, onWikilinkNavigate, gateRemoteImages = false }: MarkdownViewProps) {
+export function MarkdownView({ content, onWikilinkNavigate, gateRemoteImages = false, linearAssets = false }: MarkdownViewProps) {
   const obsidianPlugin = useObsidianRemarkPlugin();
   return (
     <div className="prose-invert max-w-none px-4 py-3 text-[12px] text-text">
@@ -120,11 +175,16 @@ export function MarkdownView({ content, onWikilinkNavigate, gateRemoteImages = f
           td: (props: ComponentPropsWithoutRef<"td">) => (
             <td className="border border-border px-2 py-1" {...props} />
           ),
-          ...(gateRemoteImages
+          ...(gateRemoteImages || linearAssets
             ? {
-                img: ({ src, alt }: ComponentPropsWithoutRef<"img">) => (
-                  <GatedImage src={src} alt={alt} />
-                ),
+                img: ({ src, alt }: ComponentPropsWithoutRef<"img">) =>
+                  linearAssets && isLinearUpload(src) ? (
+                    <LinearProxyImage src={src} alt={alt} />
+                  ) : gateRemoteImages ? (
+                    <GatedImage src={src} alt={alt} />
+                  ) : (
+                    <img src={src} alt={alt} className="max-w-full rounded" />
+                  ),
               }
             : {}),
         }}

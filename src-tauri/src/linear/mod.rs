@@ -200,6 +200,27 @@ pub fn linear_read_teams(
     mirror::read_teams(guard.conn()).map_err(|e| format!("{e:#}"))
 }
 
+/// Proxy an `uploads.linear.app` image with the Linear auth header attached and
+/// return it as a base64 `data:` URL the webview can render directly. A bare
+/// `<img src>` to that CDN 401s — only the backend holds the key. Host-pinned +
+/// `image/*`-only inside the client (SSRF-safe).
+#[tauri::command]
+pub async fn linear_fetch_image(url: String) -> Result<String, String> {
+    use base64::Engine as _;
+    let stored = tauri::async_runtime::spawn_blocking(auth::load_key)
+        .await
+        .map_err(|e| format!("join: {e}"))?
+        .map_err(|e| format!("{e:#}"))?
+        .ok_or_else(|| "no Linear key configured".to_string())?;
+    let client = build_client(stored.key);
+    let (content_type, bytes) = client
+        .fetch_image(&url)
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:{content_type};base64,{b64}"))
+}
+
 /// Lazily fetch an issue's detail (comments + attachments + relations) on
 /// detail-open. Network call; not from the mirror.
 #[tauri::command]

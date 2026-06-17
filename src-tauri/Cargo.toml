@@ -50,6 +50,11 @@ regex = "1"
 # `browser_navigate` command (iframe-first architecture).
 url = "2"
 
+# linear-mirror: encode authenticated uploads.linear.app images as data URLs
+# (the webview can't send the Linear auth header itself, so the backend proxies
+# the fetch and hands back a base64 data: URL).
+base64 = "0.22"
+
 # global-search-engine (obsidian-bridge M2): pure-Rust file walker used as the
 # fallback search path when ripgrep is absent from PATH. ripgrep is the fast
 # path (shell-out), walkdir keeps the engine self-contained without it.

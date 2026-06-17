@@ -749,6 +749,20 @@ body,
     0 0 0 4px var(--foreground);
 }
 
+/* ── Panel header-action buttons (ClickUp/Linear toolbars: sort, expand-all,
+   filters, label/tag popover triggers) are advanced via programmatic `.focus()`
+   during ←/→ keyboard nav. Pin the same box-shadow ring as `.cluihud-focus-ring`
+   so the keyboard cursor stays visible — the WebKitGTK native outline renders as
+   a rectangle that ignores the buttons' `border-radius`. Applied via the shared
+   `[data-header-action]` marker so both panels (and any future toolbar button)
+   get it for free. */
+[data-header-action]:focus {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--background),
+    0 0 0 4px var(--foreground);
+}
+
 /* ── Panel glow — opt-in via Settings → Appearance, gated on
    `<html data-panel-glow="on">`. Pure OUTER halo — paints around the
    panel without any inset bleed onto content.

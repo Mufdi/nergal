@@ -498,6 +498,7 @@ pub fn run() {
             linear::linear_read_issues,
             linear::linear_read_teams,
             linear::linear_issue_detail,
+            linear::linear_fetch_image,
             // Live preview browser
             browser::browser_validate_url,
             browser::browser_get_listening_ports,

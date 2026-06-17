@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   AlignLeft,
@@ -254,6 +254,8 @@ export function LinearPanel() {
   const [expandedIssueIds, setExpandedIssueIds] = useState<ReadonlySet<string>>(new Set());
   const [labelPopoverOpen, setLabelPopoverOpen] = useState(false);
   const labelPopoverRef = useRef<HTMLDivElement>(null);
+  const labelTriggerRef = useRef<HTMLButtonElement>(null);
+  const labelListRef = useRef<HTMLDivElement>(null);
 
   const activeView: LinearView = assignedToMe && groupBy === "state" ? "mine" : groupBy;
 
@@ -419,6 +421,40 @@ export function LinearPanel() {
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
   }, [labelPopoverOpen]);
+
+  // When the label popover opens, move focus to the first option so ↑/↓ work
+  // immediately (mirrors the ClickUp status Select keyboard mechanics).
+  useEffect(() => {
+    if (!labelPopoverOpen) return;
+    const first = labelListRef.current?.querySelector<HTMLElement>("[role='option']");
+    first?.focus();
+  }, [labelPopoverOpen]);
+
+  // Keyboard nav inside the open label listbox: ↑/↓ move the focused option,
+  // Space/Enter toggle (handled natively by the option button's onClick — no
+  // close, multi-select), Escape closes and returns focus to the trigger.
+  function onLabelListKeyDown(e: ReactKeyboardEvent<HTMLDivElement>) {
+    if (e.code === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      setLabelPopoverOpen(false);
+      labelTriggerRef.current?.focus();
+      return;
+    }
+    if (e.code !== "ArrowDown" && e.code !== "ArrowUp") return;
+    e.preventDefault();
+    e.stopPropagation();
+    const opts = Array.from(
+      labelListRef.current?.querySelectorAll<HTMLElement>("[role='option']") ?? [],
+    );
+    if (opts.length === 0) return;
+    const cur = opts.findIndex((o) => o === document.activeElement);
+    const next =
+      e.code === "ArrowDown"
+        ? Math.min(cur + 1, opts.length - 1)
+        : Math.max(cur - 1, 0);
+    opts[next < 0 ? 0 : next]?.focus();
+  }
 
   // Plain ↑/↓ moves the data-nav-selected cursor. Enter opens. Space toggles
   // sub-issues. E expands/collapses all. A toggles assigned-to-me. H toggles
@@ -765,10 +801,22 @@ export function LinearPanel() {
               <TooltipTrigger
                 render={
                   <button
+                    ref={labelTriggerRef}
                     type="button"
                     data-header-action
                     onClick={() => setLabelPopoverOpen((prev) => !prev)}
+                    onKeyDown={(e) => {
+                      // ArrowDown opens the popover (or dives into an open one);
+                      // the auto-focus effect lands on the first option.
+                      if (e.code !== "ArrowDown") return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (!labelPopoverOpen) setLabelPopoverOpen(true);
+                      else labelListRef.current?.querySelector<HTMLElement>("[role='option']")?.focus();
+                    }}
                     aria-label="Filter by label"
+                    aria-haspopup="listbox"
+                    aria-expanded={labelPopoverOpen}
                     aria-pressed={labelFilter.size > 0}
                     className={`flex size-6 shrink-0 items-center justify-center rounded transition-colors ${
                       labelFilter.size > 0
@@ -805,12 +853,21 @@ export function LinearPanel() {
             )}
 
             {labelPopoverOpen && allLabels.length > 0 && (
-              <div className="absolute right-0 top-full z-50 mt-1 min-w-40 max-w-56 rounded-md border border-border bg-popover shadow-md">
+              <div
+                ref={labelListRef}
+                role="listbox"
+                aria-label="Filter by label"
+                aria-multiselectable
+                tabIndex={-1}
+                onKeyDown={onLabelListKeyDown}
+                className="absolute right-0 top-full z-50 mt-1 min-w-40 max-w-56 rounded-md border border-border bg-popover shadow-md outline-none"
+              >
                 <div className="flex items-center justify-between border-b border-border/50 px-2 py-1">
                   <span className="text-[10px] font-medium text-muted-foreground">Labels</span>
                   {labelFilter.size > 0 && (
                     <button
                       type="button"
+                      tabIndex={-1}
                       onClick={() => setLabelFilter(new Set())}
                       className="text-[10px] text-muted-foreground hover:text-foreground"
                     >
@@ -825,8 +882,11 @@ export function LinearPanel() {
                       <button
                         key={label.id}
                         type="button"
+                        role="option"
+                        aria-selected={active}
+                        tabIndex={-1}
                         onClick={() => toggleLabelFilter(label.id)}
-                        className={`flex w-full items-center gap-2 px-2 py-1 text-left text-[11px] transition-colors hover:bg-secondary/50 ${active ? "text-foreground" : "text-muted-foreground"}`}
+                        className={`flex w-full items-center gap-2 px-2 py-1 text-left text-[11px] outline-none transition-colors hover:bg-secondary/50 focus:bg-accent focus:text-accent-foreground ${active ? "text-foreground" : "text-muted-foreground"}`}
                       >
                         <span
                           className="size-2 shrink-0 rounded-full"

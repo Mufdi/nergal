@@ -14,6 +14,7 @@ import {
   Flag,
   GitBranchPlus,
   Link2,
+  Paperclip,
   Pin,
   PinOff,
   RefreshCw,
@@ -1164,6 +1165,16 @@ function LinearIssueRow({
   const pinned = pinnedIssueIds.includes(issue.id);
   const bound = issue.id === boundIssueId;
 
+  // Detail indicators (mirror data only): a non-empty body = has description;
+  // an inline image / Linear upload reference in the body = has attachment
+  // (Linear's native attachments aren't mirrored — they live in the detail's
+  // live fetch — so "attachment" here means content embedded in the body, which
+  // is exactly what the user sees as an attachment in an issue).
+  const desc = issue.description?.trim();
+  const hasDescription = !!desc && desc.length > 0;
+  const hasAttachment =
+    !!desc && (desc.includes("![") || desc.includes("uploads.linear.app"));
+
   return (
     <button
       type="button"
@@ -1229,9 +1240,18 @@ function LinearIssueRow({
         {issue.title}
       </span>
 
-      {/* Trailing meta: sub-issue progress, labels, estimate, due, assignee avatar.
-          Yields to the verb buttons on hover / keyboard-cursor (ClickUp parity). */}
-      <span className="flex shrink-0 items-center gap-1 group-hover:hidden group-data-[nav-selected=true]:hidden">
+      {/* Trailing meta: detail/attachment indicators, sub-issue progress, labels,
+          estimate, due, assignee avatar. Stays visible on hover (the title
+          truncates to make room for the verb buttons — ClickUp parity; labels
+          are never hidden). */}
+      <span className="flex shrink-0 items-center gap-1">
+        {/* Detail indicators: description + attachment (mirror-derived) */}
+        {hasDescription && (
+          <AlignLeft size={10} className="shrink-0 text-muted-foreground/50" aria-label="Has description" />
+        )}
+        {hasAttachment && (
+          <Paperclip size={10} className="shrink-0 text-muted-foreground/50" aria-label="Has attachment" />
+        )}
         {/* Sub-issue progress: N/M when this issue has children */}
         {subIssueTotal > 0 && (
           <Tooltip>

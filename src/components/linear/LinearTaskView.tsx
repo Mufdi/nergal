@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { useAtomValue, useSetAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { open as openShell } from "@tauri-apps/plugin-shell";
 import {
+  CheckSquare,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -9,12 +10,15 @@ import {
   GitBranch,
   GitBranchPlus,
   Link2,
+  MessageSquarePlus,
   Paperclip,
   Pin,
   PinOff,
   RefreshCw,
   Send,
   Unlink,
+  UserCheck,
+  UserMinus,
 } from "lucide-react";
 import { invoke } from "@/lib/tauri";
 import { MarkdownView } from "@/components/plan/MarkdownView";
@@ -25,12 +29,17 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import {
   activeSessionLinearIssueAtom,
   activeSessionLinearPinsAtom,
+  clearLinearOverlayEntry,
   copyLinearIssueAction,
   LINEAR_ACTION_LABELS,
+  linearClosureOfferAtom,
   linearIssuesAtom,
+  linearOverlayAtom,
+  linearSyncStatusAtom,
   reinjectIssueAction,
   requestBindIssueAction,
   requestSendIssueAction,
+  setLinearOverlayEntry,
   spawnWorktreeWithIssueAction,
   togglePinIssueAction,
   type IssueView,
@@ -39,7 +48,10 @@ import {
   type LinearComment,
   type LinearIssueDetail,
   type LinearRelation,
+  type WorkflowStateView,
 } from "@/stores/linear";
+import { activeSessionIdAtom } from "@/stores/workspace";
+import { toastsAtom } from "@/stores/toast";
 
 // ── Shared helpers ──
 
@@ -935,10 +947,185 @@ export function ToolbarAction({
   );
 }
 
+/// State picker dropdown for the toolbar write controls.
+function StatePickerToolbar({
+  issueId,
+  teamId,
+  currentStateId,
+}: {
+  issueId: string;
+  teamId: string;
+  currentStateId?: string;
+}) {
+  const [states, setStates] = useState<WorkflowStateView[]>([]);
+  const [open, setOpen] = useState(false);
+  const setOverlay = useSetAtom(linearOverlayAtom);
+  const addToast = useSetAtom(toastsAtom);
+
+  useEffect(() => {
+    if (!teamId) return;
+    invoke<WorkflowStateView[]>("linear_read_team_states", { teamId })
+      .then(setStates)
+      .catch(() => {});
+  }, [teamId]);
+
+  const currentState = states.find((s) => s.id === currentStateId);
+
+  async function handleSelect(stateId: string) {
+    setOpen(false);
+    if (stateId === currentStateId) return;
+    // Optimistic overlay (Decision 1)
+    setLinearOverlayEntry(setOverlay, issueId, "state", stateId);
+    try {
+      await invoke("linear_set_issue_state", { issueId, stateId });
+      // Poll reconcile will clear the overlay on the next mirror refresh.
+    } catch (err) {
+      clearLinearOverlayEntry(setOverlay, issueId, "state");
+      addToast({ message: "State change failed", description: String(err), type: "error" });
+    }
+  }
+
+  if (states.length === 0) return null;
+
+  return (
+    <div className="relative">
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label="Change state"
+              onClick={() => setOpen((o) => !o)}
+              className="flex size-5 items-center justify-center gap-1 rounded text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
+            />
+          }
+        >
+          {currentState ? (
+            <LinearStatusIcon stateType={currentState.type} color={currentState.color ?? null} size={12} className="shrink-0" />
+          ) : (
+            <LinearStatusIcon stateType={undefined} color={null} size={12} className="shrink-0" />
+          )}
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Change state</TooltipContent>
+      </Tooltip>
+
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-1 min-w-36 rounded-md border border-border bg-popover shadow-md">
+          <div className="max-h-48 overflow-y-auto py-0.5">
+            {states.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => void handleSelect(s.id)}
+                className={`flex w-full items-center gap-2 px-2 py-1 text-left text-[11px] transition-colors hover:bg-secondary/50 ${s.id === currentStateId ? "text-foreground" : "text-muted-foreground"}`}
+              >
+                <LinearStatusIcon stateType={s.type} color={s.color ?? null} size={12} className="shrink-0" />
+                {s.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/// Comment composer (token-gated): textarea + send button.
+/// Routes through linear_request_comment_token → linear_execute_gated_write
+/// with close_out=false — posting a comment must NOT close out the issue.
+function CommentComposerToolbar({ issueId }: { issueId: string }) {
+  const [open, setOpen] = useState(false);
+  const [comment, setComment] = useState("");
+  const [sending, setSending] = useState(false);
+  const addToast = useSetAtom(toastsAtom);
+  const activeSessionId = useAtomValue(activeSessionIdAtom);
+
+  async function handleSend() {
+    if (!comment.trim() || sending || !activeSessionId) return;
+    setSending(true);
+    try {
+      // Token-gated: routes through request_comment_token (close_out=false)
+      // → execute_gated_write. This path posts the comment ONLY — it does NOT
+      // close out the issue (discriminant enforced by the backend token).
+      const token = await invoke<string>("linear_request_comment_token", {
+        issueId,
+        comment: comment.trim(),
+      });
+      await invoke("linear_execute_gated_write", { token, sessionId: activeSessionId });
+      addToast({ message: "Comment posted", description: comment.trim().slice(0, 60), type: "success" });
+      setComment("");
+      setOpen(false);
+    } catch (err) {
+      addToast({ message: "Comment failed", description: String(err), type: "error" });
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="relative">
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label="Post comment"
+              onClick={() => setOpen((o) => !o)}
+              className="flex size-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
+            />
+          }
+        >
+          <MessageSquarePlus size={12} />
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Post comment</TooltipContent>
+      </Tooltip>
+
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-md border border-border bg-popover p-2 shadow-md">
+          <textarea
+            autoFocus
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            placeholder="Write a comment…"
+            rows={3}
+            className="w-full resize-none rounded border border-border bg-background px-2 py-1.5 text-[11px] leading-relaxed outline-none placeholder:text-muted-foreground/60 focus:ring-1 focus:ring-foreground/30"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && e.ctrlKey) {
+                e.preventDefault();
+                void handleSend();
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setOpen(false);
+              }
+            }}
+          />
+          <div className="mt-1.5 flex justify-end gap-1">
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="rounded px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleSend()}
+              disabled={!comment.trim() || sending}
+              className="rounded bg-primary px-2 py-0.5 text-[10px] text-primary-foreground disabled:opacity-50"
+            >
+              {sending ? "Sending…" : "Send"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /// Issue → agent verbs for the floating-detail toolbar: send / spawn / pin /
-/// bind, plus an explicit re-inject when the issue is bound or pinned. Closure
-/// (writeback) and open-in-Linear (already a body nav key) are intentionally
-/// absent here — this change is read-only outward.
+/// bind, plus an explicit re-inject when the issue is bound or pinned.
+/// Write controls: state picker, assign-to-me/unassign, comment composer, close-out.
 export function LinearVerbToolbar({ issueId }: { issueId: string }) {
   const boundIssueId = useAtomValue(activeSessionLinearIssueAtom);
   const pinnedIssueIds = useAtomValue(activeSessionLinearPinsAtom);
@@ -947,12 +1134,84 @@ export function LinearVerbToolbar({ issueId }: { issueId: string }) {
   const togglePin = useSetAtom(togglePinIssueAction);
   const requestBind = useSetAtom(requestBindIssueAction);
   const reinject = useSetAtom(reinjectIssueAction);
+  const issues = useAtomValue(linearIssuesAtom);
+  const syncStatus = useAtomValue(linearSyncStatusAtom);
+  const setOverlay = useSetAtom(linearOverlayAtom);
+  const addToast = useSetAtom(toastsAtom);
+  const activeSessionId = useAtomValue(activeSessionIdAtom);
+  const [, setClosureOffer] = useAtom(linearClosureOfferAtom);
 
   const isPinned = pinnedIssueIds.includes(issueId);
   const isBound = issueId === boundIssueId;
 
+  const issue = issues.find((i) => i.id === issueId);
+  const viewerId = syncStatus?.viewerId;
+  const isAssignedToMe = viewerId ? issue?.assigneeId === viewerId : false;
+
+  async function handleAssignToMe() {
+    if (!viewerId) {
+      addToast({
+        message: "Cannot assign",
+        description: "Viewer identity unresolved — check Linear sync status.",
+        type: "error",
+      });
+      return;
+    }
+    setLinearOverlayEntry(setOverlay, issueId, "assignee", viewerId);
+    try {
+      await invoke("linear_set_assignee", { issueId, assigneeId: viewerId });
+    } catch (err) {
+      clearLinearOverlayEntry(setOverlay, issueId, "assignee");
+      addToast({ message: "Assign failed", description: String(err), type: "error" });
+    }
+  }
+
+  async function handleUnassign() {
+    setLinearOverlayEntry(setOverlay, issueId, "assignee", null);
+    try {
+      await invoke("linear_set_assignee", { issueId, assigneeId: null });
+    } catch (err) {
+      clearLinearOverlayEntry(setOverlay, issueId, "assignee");
+      addToast({ message: "Unassign failed", description: String(err), type: "error" });
+    }
+  }
+
+  function handleCloseOut() {
+    if (!activeSessionId) {
+      addToast({ message: "Close out", description: "No active session.", type: "info" });
+      return;
+    }
+    setClosureOffer({ issueId, sessionId: activeSessionId });
+  }
+
   return (
     <>
+      {/* Write controls: state picker, assign/unassign, comment composer, close-out */}
+      {issue && (
+        <StatePickerToolbar
+          issueId={issueId}
+          teamId={issue.teamId}
+          currentStateId={issue.stateId}
+        />
+      )}
+      {viewerId && (
+        <ToolbarAction
+          label={isAssignedToMe ? "Unassign (assigned to you)" : "Assign to me"}
+          onClick={() => void (isAssignedToMe ? handleUnassign() : handleAssignToMe())}
+          active={isAssignedToMe}
+        >
+          {isAssignedToMe ? <UserMinus size={12} /> : <UserCheck size={12} />}
+        </ToolbarAction>
+      )}
+      <CommentComposerToolbar issueId={issueId} />
+      <ToolbarAction label={LINEAR_ACTION_LABELS.closeOut} onClick={handleCloseOut}>
+        <CheckSquare size={12} />
+      </ToolbarAction>
+
+      {/* Separator */}
+      <span className="mx-0.5 h-3 w-px shrink-0 bg-border" aria-hidden />
+
+      {/* Existing agent verbs */}
       <ToolbarAction label={LINEAR_ACTION_LABELS.send} onClick={() => requestSend(issueId)}>
         <Send size={12} />
       </ToolbarAction>

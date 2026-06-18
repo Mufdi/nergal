@@ -45,6 +45,7 @@ import {
   activeSessionLinearPinsAtom,
   copyLinearIssueAction,
   linearAssignedToMeAtom,
+  linearClosedOutAtom,
   linearDetailIssueIdAtom,
   linearGroupByAtom,
   linearIssuesAtom,
@@ -1187,6 +1188,7 @@ function LinearIssueRow({
   const reinject = useSetAtom(reinjectIssueAction);
   const pinned = pinnedIssueIds.includes(issue.id);
   const bound = issue.id === boundIssueId;
+  const closedOut = useAtomValue(linearClosedOutAtom).has(issue.id);
 
   // Detail indicators (mirror data only): a non-empty body = has description;
   // an inline image / Linear upload reference in the body = has attachment
@@ -1268,6 +1270,19 @@ function LinearIssueRow({
           truncates to make room for the verb buttons — ClickUp parity; labels
           are never hidden). */}
       <span className="flex shrink-0 items-center gap-1">
+        {/* Closed-out badge: mirrors clickupClosedOutAtom badge in ClickUpPanel */}
+        {closedOut && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span className="shrink-0 rounded-full bg-green-500/15 px-1.5 text-[9px] font-medium text-green-400" />
+              }
+            >
+              done
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">Closed out in Nergal</TooltipContent>
+          </Tooltip>
+        )}
         {/* Detail indicators: description + attachment (mirror-derived) */}
         {hasDescription && (
           <AlignLeft size={10} className="shrink-0 text-muted-foreground/50" aria-label="Has description" />

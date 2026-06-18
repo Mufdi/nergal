@@ -33,6 +33,7 @@ import { ClickUpTaskDetail } from "@/components/clickup/ClickUpTaskDetail";
 import { ClickUpSendConfirmDialog } from "@/components/clickup/ClickUpConfirmDialogs";
 import { LinearSendConfirmDialog } from "@/components/linear/LinearConfirmDialogs";
 import { ClickUpClosureDialog } from "@/components/clickup/ClickUpClosureDialog";
+import { LinearClosureDialog } from "@/components/linear/LinearClosureDialog";
 import { LinearTaskDetail } from "@/components/linear/LinearTaskDetail";
 import { activeConflictedFilesAtom, gitChipModeAtom } from "@/stores/git";
 import { selectedConflictFileMapAtom } from "@/stores/conflict";
@@ -437,6 +438,7 @@ export function Workspace() {
       <ClickUpClosureDialog />
       <LinearTaskDetail />
       <LinearSendConfirmDialog />
+      <LinearClosureDialog />
     </div>
   );
 }

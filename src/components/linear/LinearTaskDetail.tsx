@@ -11,6 +11,7 @@ import {
   activeSessionLinearIssueAtom,
   activeSessionLinearPinsAtom,
   consumeLinearDetailCloseFocusSuppress,
+  linearClosureOfferAtom,
   linearDetailIssueIdAtom,
   reinjectIssueAction,
   requestBindIssueAction,
@@ -42,6 +43,7 @@ export function LinearTaskDetail() {
   const togglePin = useSetAtom(togglePinIssueAction);
   const requestBind = useSetAtom(requestBindIssueAction);
   const reinject = useSetAtom(reinjectIssueAction);
+  const [, setClosureOffer] = useAtom(linearClosureOfferAtom);
   const [geometry, setGeometry] = useState<FloatingGeometry>(DEFAULT_GEOMETRY);
   const wasOpenRef = useRef(false);
 
@@ -49,12 +51,9 @@ export function LinearTaskDetail() {
 
   // Contextual issue verbs: bare letters scoped to the Linear zone. The open
   // detail issue wins; otherwise the panel's data-nav-selected row (rows expose
-  // data-issue-id). Linear uses a single data-focus-zone='linear' for both the
-  // detail and the panel, so there is no clickup/panel split — resolve by which
-  // surface owns the target id. (Open-in-Linear is a body nav key, not a verb
-  // here; closure is writeback, out of scope for this change.)
+  // data-issue-id). KeyC = close-out (free in VERB_KEYS, Decision 6).
   useEffect(() => {
-    const VERB_KEYS = ["KeyS", "KeyW", "KeyP", "KeyB", "KeyR"];
+    const VERB_KEYS = ["KeyS", "KeyW", "KeyP", "KeyB", "KeyR", "KeyC"];
     function onKey(e: KeyboardEvent) {
       if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
       if (!VERB_KEYS.includes(e.code)) return;
@@ -89,11 +88,17 @@ export function LinearTaskDetail() {
           e.preventDefault();
           void reinject(id);
         }
+      } else if (e.code === "KeyC") {
+        // Close-out verb (Decision 6 — manual primary path). Requires an active session.
+        if (activeSessionId) {
+          e.preventDefault();
+          setClosureOffer({ issueId: id, sessionId: activeSessionId });
+        }
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [issueId, requestSend, spawnWorktree, togglePin, requestBind, reinject, boundIssueId, pinnedIssueIds]);
+  }, [issueId, requestSend, spawnWorktree, togglePin, requestBind, reinject, boundIssueId, pinnedIssueIds, activeSessionId, setClosureOffer]);
 
   // Restore focus when the modal closes (mirrors ClickUpTaskDetail). Skipped
   // when a worktree spawn closed it — that flow owns focus (the new session's

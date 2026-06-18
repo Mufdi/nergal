@@ -13,6 +13,74 @@ import {
   type Session,
 } from "./workspace";
 
+// ── Writeback: optimistic overlay (task 6.1 / Decision 1) ──
+
+/// Per-field key for the overlay atom.
+export type LinearOverlayKey = `${string}:${string}`; // `${issueId}:${field}`
+
+/// A pending edit sent to the API but not yet ack'd by a mirror reconcile.
+/// The overlay is volatile — it is never written to SQLite.
+export interface LinearOverlayEntry {
+  value: string | null;
+}
+
+/// In-memory optimistic overlay keyed by `${issueId}:${field}`. Cleared on
+/// API success (mirror reconcile will carry the truth); reverted on failure.
+export const linearOverlayAtom = atom<Record<LinearOverlayKey, LinearOverlayEntry>>({});
+
+/// Set an overlay entry for `issueId:field`.
+export function setLinearOverlayEntry(
+  set: (updater: (prev: Record<LinearOverlayKey, LinearOverlayEntry>) => Record<LinearOverlayKey, LinearOverlayEntry>) => void,
+  issueId: string,
+  field: string,
+  value: string | null,
+) {
+  const key: LinearOverlayKey = `${issueId}:${field}`;
+  set((prev) => ({ ...prev, [key]: { value } }));
+}
+
+/// Clear an overlay entry (on API success or failure).
+export function clearLinearOverlayEntry(
+  set: (updater: (prev: Record<LinearOverlayKey, LinearOverlayEntry>) => Record<LinearOverlayKey, LinearOverlayEntry>) => void,
+  issueId: string,
+  field: string,
+) {
+  const key: LinearOverlayKey = `${issueId}:${field}`;
+  set((prev) => {
+    const next = { ...prev };
+    delete next[key];
+    return next;
+  });
+}
+
+// ── Closure offer atom (task 6.1) ──
+
+export interface LinearClosureOffer {
+  issueId: string;
+  sessionId: string;
+  prUrl?: string;
+}
+
+/// Non-null when the Linear closure prompt is open. Raised by ship-success (prUrl
+/// set) or by the manual "Close out issue" verb (no prUrl).
+export const linearClosureOfferAtom = atom<LinearClosureOffer | null>(null);
+
+// ── Closed-out set (task 6.1 / 6.3) ──
+
+/// Issue ids that have been closed out locally. Drives the panel/detail badge.
+/// Uses a Set for O(1) membership checks — never written before a server ack.
+export const linearClosedOutAtom = atom<Set<string>>(new Set<string>());
+
+// ── WorkflowState shape (returned by linear_read_team_states) ──
+
+export interface WorkflowStateView {
+  id: string;
+  name: string;
+  type: string;
+  color?: string;
+  position: number;
+}
+
 type Store = ReturnType<typeof getDefaultStore>;
 
 // ── Backend view shapes ──
@@ -214,6 +282,20 @@ function findSession(workspaces: { sessions: Session[] }[], sessionId: string): 
   return null;
 }
 
+/// Public binding resolver keyed by sessionId — wraps the module-private
+/// findSession so ShipDialog.tsx can resolve the shipped session's bound issue
+/// without reading the active session (which may differ from the shipped one).
+/// Mirrors resolveActiveClickUpTaskById in clickup.ts.
+export function resolveActiveLinearIssueById(
+  workspaces: { sessions: Session[] }[],
+  bindingMap: Record<string, string | null>,
+  sessionId: string,
+): string | null {
+  const runtime = bindingMap[sessionId];
+  if (runtime !== undefined) return runtime;
+  return findSession(workspaces, sessionId)?.active_linear_issue_id ?? null;
+}
+
 export const activeSessionLinearIssueAtom = atom<string | null>((get) => {
   const id = get(activeSessionIdAtom);
   if (!id) return null;
@@ -254,6 +336,7 @@ export const LINEAR_ACTION_LABELS = {
   bind: "Bind as active issue (B)",
   unbind: `Unbind (B) — ${FUTURE_SPAWNS_HINT.toLowerCase()}`,
   reinject: "Re-inject into the live session (R)",
+  closeOut: "Close out issue (C) — mark done & unbind",
 } as const;
 
 /// Linear issue titles are multi-writer input and swal bodies render as HTML.
@@ -470,12 +553,14 @@ export const reinjectIssueAction = atom(null, async (get, set, issueId: string) 
 
 export async function refreshLinearMirror(store: Store): Promise<void> {
   try {
-    const [issues, teams] = await Promise.all([
+    const [issues, teams, closedOutIds] = await Promise.all([
       invoke<IssueView[]>("linear_read_issues", {}),
       invoke<TeamView[]>("linear_read_teams"),
+      invoke<string[]>("linear_read_closed_out"),
     ]);
     store.set(linearIssuesAtom, issues);
     store.set(linearTeamsAtom, teams);
+    store.set(linearClosedOutAtom, new Set(closedOutIds));
   } catch (err) {
     console.warn("[linear] mirror read failed:", err);
   }
@@ -505,6 +590,21 @@ export async function setupLinearListeners(store: Store): Promise<UnlistenFn[]> 
         type: "info",
       });
     }),
+  );
+
+  // Scalar write-conflict: remote superseded a local edit while we held an
+  // overlay entry (Decision 3). Warn via toast.
+  unlisteners.push(
+    await listen<{ issue_id: string; field: string; your_value: string; remote_value: string }>(
+      "linear:write-conflict",
+      (payload) => {
+        store.set(toastsAtom, {
+          message: "Linear write conflict",
+          description: `${payload.field}: your change was superseded by a remote edit (remote: "${payload.remote_value}")`,
+          type: "info",
+        });
+      },
+    ),
   );
 
   try {

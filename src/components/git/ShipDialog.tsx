@@ -31,6 +31,11 @@ import {
   clickupClosureOfferAtom,
   resolveActiveClickUpTaskById,
 } from "@/stores/clickup";
+import {
+  linearBindingMapAtom,
+  linearClosureOfferAtom,
+  resolveActiveLinearIssueById,
+} from "@/stores/linear";
 
 interface PrCommit { hash: string; subject: string }
 interface PrDiffstat { added: number; removed: number; files: number }
@@ -103,6 +108,8 @@ export function ShipDialog() {
   const workspaces = useAtomValue(workspacesAtom);
   const bindingMap = useAtomValue(clickupBindingMapAtom);
   const setClosureOffer = useSetAtom(clickupClosureOfferAtom);
+  const linearBindingMap = useAtomValue(linearBindingMapAtom);
+  const setLinearClosureOffer = useSetAtom(linearClosureOfferAtom);
 
   const [loading, setLoading] = useState(false);
   const [ghOk, setGhOk] = useState<boolean | null>(null);
@@ -317,13 +324,23 @@ export function ShipDialog() {
           prUrl: result.pr_info.url,
         });
       }
+      // Offer Linear closure for the SHIPPED session's bound issue (task 6.4).
+      // Mirrors the ClickUp hook: same shipped sessionId, push-only skips this.
+      const boundIssueId = resolveActiveLinearIssueById(workspaces, linearBindingMap, shippedSessionId);
+      if (boundIssueId) {
+        setLinearClosureOffer({
+          issueId: boundIssueId,
+          sessionId: shippedSessionId,
+          prUrl: result.pr_info.url,
+        });
+      }
       close();
     } catch (e) {
       setError(String(e));
     } finally {
       setShipping(false);
     }
-  }, [state.sessionId, state.inlineMessage, preview, ghOk, title, body, targetBranch, toStage, applyStageSelection, addToast, refreshGit, close, workspaces, bindingMap, setClosureOffer]);
+  }, [state.sessionId, state.inlineMessage, preview, ghOk, title, body, targetBranch, toStage, applyStageSelection, addToast, refreshGit, close, workspaces, bindingMap, setClosureOffer, linearBindingMap, setLinearClosureOffer]);
 
   const pushOnly = useCallback(async () => {
     if (!state.sessionId || pushing) return;

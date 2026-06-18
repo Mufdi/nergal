@@ -86,45 +86,65 @@ fn fallback_path() -> PathBuf {
     config_dir().join(FALLBACK_FILE)
 }
 
-fn keyring_entry() -> Result<keyring::Entry> {
-    keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
-        .map_err(|e| anyhow!("keyring entry init: {e}"))
+/// Defense in depth: `org_id` comes from the Linear API (a UUID) and is
+/// interpolated into a keyring account string AND a filename. Reject anything
+/// outside `[A-Za-z0-9-]` so a non-UUID value can never path-traverse out of the
+/// config dir or collide the `::`-delimited account namespace.
+fn validate_org_id(org_id: &str) -> Result<()> {
+    if !org_id.is_empty()
+        && org_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    {
+        Ok(())
+    } else {
+        bail!("invalid org id");
+    }
 }
 
-/// Store the key; returns `true` when it landed in the on-disk fallback. A
-/// keyring write also removes any stale fallback file so a cleared/rotated key
-/// can't survive in plaintext.
-pub fn store_key(key: &str) -> Result<bool> {
+/// Per-workspace keyring account: `linear-token::<org_id>`. The bare
+/// `linear-token` account is the legacy single-key store, migrated on first run.
+fn account_for(org_id: &str) -> String {
+    format!("{KEYRING_ACCOUNT}::{org_id}")
+}
+
+/// Per-workspace 0600 fallback file when the keyring is unavailable.
+fn fallback_path_for(org_id: &str) -> PathBuf {
+    // org_id is a Linear UUID (no path separators); safe as a filename component.
+    config_dir().join(format!("linear-{org_id}.toml"))
+}
+
+fn keyring_entry_for(account: &str) -> Result<keyring::Entry> {
+    keyring::Entry::new(KEYRING_SERVICE, account).map_err(|e| anyhow!("keyring entry init: {e}"))
+}
+
+/// Store a key under a specific keyring account + fallback path. Returns `true`
+/// when it landed in the on-disk fallback. A keyring write removes any stale
+/// fallback so a rotated key can't survive in plaintext.
+fn store_to(account: &str, fallback: &std::path::Path, key: &str) -> Result<bool> {
     let key = key.trim();
     if key.is_empty() {
         bail!("key is empty");
     }
-    match keyring_entry().and_then(|e| {
+    match keyring_entry_for(account).and_then(|e| {
         e.set_password(key)
             .map_err(|err| anyhow!("keyring write: {err}"))
     }) {
         Ok(()) => {
-            remove_fallback_file()?;
+            remove_fallback_at(fallback)?;
             Ok(false)
         }
         Err(e) => {
             tracing::warn!("keyring unavailable ({e}); storing Linear key on disk at 0600");
-            write_fallback_file(&fallback_path(), key)?;
+            write_fallback_file(fallback, key)?;
             Ok(true)
         }
     }
 }
 
-/// Load the key: keyring first, fallback file second. `None` when neither
-/// store has one.
-pub fn load_key() -> Result<Option<StoredKey>> {
-    // A transient keyring failure (D-Bus hiccup, locked collection) must not
-    // masquerade as "no key" — that would flip the UI to unconfigured while the
-    // key still sits in the keyring. Only a clean NoEntry plus a missing
-    // fallback file means Ok(None); other keyring errors surface as Err so the
-    // poller retries instead of parking on no_key.
+fn load_from(account: &str, fallback: &std::path::Path) -> Result<Option<StoredKey>> {
     let mut keyring_err: Option<anyhow::Error> = None;
-    match keyring_entry() {
+    match keyring_entry_for(account) {
         Ok(entry) => match entry.get_password() {
             Ok(key) => {
                 return Ok(Some(StoredKey {
@@ -143,7 +163,7 @@ pub fn load_key() -> Result<Option<StoredKey>> {
             keyring_err = Some(e);
         }
     }
-    match read_fallback_file(&fallback_path())? {
+    match read_fallback_file(fallback)? {
         Some(stored) => Ok(Some(stored)),
         None => match keyring_err {
             Some(e) => Err(e),
@@ -152,20 +172,57 @@ pub fn load_key() -> Result<Option<StoredKey>> {
     }
 }
 
-/// Remove the key from both stores. Idempotent.
-pub fn clear_key() -> Result<()> {
-    if let Ok(entry) = keyring_entry() {
+fn remove_from(account: &str, fallback: &std::path::Path) -> Result<()> {
+    if let Ok(entry) = keyring_entry_for(account) {
         match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => {}
             Err(e) => tracing::warn!("keyring delete failed: {e}"),
         }
     }
-    remove_fallback_file()
+    remove_fallback_at(fallback)
 }
 
-fn remove_fallback_file() -> Result<()> {
-    let path = fallback_path();
-    match std::fs::remove_file(&path) {
+/// Store the active-workspace key (per-org account). Returns `true` if on-disk.
+pub fn store_key_for(org_id: &str, key: &str) -> Result<bool> {
+    validate_org_id(org_id)?;
+    store_to(&account_for(org_id), &fallback_path_for(org_id), key)
+}
+
+/// Load a workspace's key (per-org account). `None` when neither store has one.
+pub fn load_key_for(org_id: &str) -> Result<Option<StoredKey>> {
+    validate_org_id(org_id)?;
+    load_from(&account_for(org_id), &fallback_path_for(org_id))
+}
+
+/// Remove a workspace's key from both stores. Idempotent.
+pub fn remove_key_for(org_id: &str) -> Result<()> {
+    validate_org_id(org_id)?;
+    remove_from(&account_for(org_id), &fallback_path_for(org_id))
+}
+
+/// Store the legacy single key; returns `true` when it landed on disk. Kept so
+/// the legacy `linear_set_key` path still works (the next poll migrates it to a
+/// per-workspace entry).
+pub fn store_key(key: &str) -> Result<bool> {
+    store_to(KEYRING_ACCOUNT, &fallback_path(), key)
+}
+
+/// Load the legacy single key (the pre-multi-workspace store). A transient
+/// keyring failure surfaces as Err (not Ok(None)) so the migration retries
+/// instead of treating it as "no legacy key". Used only by the one-time
+/// migration.
+pub fn load_key() -> Result<Option<StoredKey>> {
+    load_from(KEYRING_ACCOUNT, &fallback_path())
+}
+
+/// Remove the legacy key from both stores. Idempotent. Called after the legacy
+/// key has been migrated into a per-workspace entry.
+pub fn clear_key() -> Result<()> {
+    remove_from(KEYRING_ACCOUNT, &fallback_path())
+}
+
+fn remove_fallback_at(path: &std::path::Path) -> Result<()> {
+    match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(anyhow!("removing {}: {e}", path.display())),
@@ -181,9 +238,13 @@ fn write_fallback_file(path: &std::path::Path, key: &str) -> Result<()> {
     std::fs::create_dir_all(parent)
         .with_context(|| format!("creating config dir {}", parent.display()))?;
 
-    // Unique temp name per process; create_new guarantees we never open a
-    // pre-existing (possibly wider-mode) file.
-    let tmp = parent.join(format!(".{}.tmp-{}", FALLBACK_FILE, std::process::id()));
+    // Unique temp name per target file + process; create_new guarantees we
+    // never open a pre-existing (possibly wider-mode) file.
+    let fname = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(FALLBACK_FILE);
+    let tmp = parent.join(format!(".{fname}.tmp-{}", std::process::id()));
     let _ = std::fs::remove_file(&tmp);
     let mut file = OpenOptions::new()
         .write(true)
@@ -311,5 +372,17 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn validate_org_id_rejects_path_traversal_and_injection() {
+        assert!(validate_org_id("3752ff73-ed03-4477-8946-2a43f862de6e").is_ok());
+        assert!(validate_org_id("../../etc/passwd").is_err());
+        assert!(validate_org_id("a/b").is_err());
+        assert!(validate_org_id("a::b").is_err());
+        assert!(validate_org_id("").is_err());
+        // The per-org key functions reject before touching keyring/disk.
+        assert!(load_key_for("../evil").is_err());
+        assert!(remove_key_for("a/b").is_err());
     }
 }

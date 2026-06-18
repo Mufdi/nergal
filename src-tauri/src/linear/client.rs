@@ -20,7 +20,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use super::auth::{AuthMode, authorization_header_value};
-use super::model::{Comment, Connection, HistoryEntry, Issue, Team, Viewer};
+use super::model::{Comment, Connection, HistoryEntry, Issue, OrganizationInfo, Team, Viewer};
 
 /// Raw detail payload from a single detail-open fetch (comments + attachments +
 /// relations + history + creation meta), normalized into the panel's view model
@@ -149,6 +149,17 @@ impl LinearClient {
         }
         let d: Data = self.execute(VIEWER_QUERY, json!({})).await?;
         Ok(d.viewer)
+    }
+
+    /// Resolve the workspace (organization) this key belongs to — a key is
+    /// workspace-scoped, so this identifies which workspace it manages.
+    pub async fn resolve_organization(&self) -> Result<OrganizationInfo> {
+        #[derive(Deserialize)]
+        struct Data {
+            organization: OrganizationInfo,
+        }
+        let d: Data = self.execute(ORGANIZATION_QUERY, json!({})).await?;
+        Ok(d.organization)
     }
 
     /// Teams (bare). States and labels are fetched flat via separate top-level
@@ -416,7 +427,9 @@ fn redact(s: &str) -> String {
     // Keys are `lin_api_*` / `lin_oauth_*`; never let one survive into a log.
     let mut out = String::with_capacity(s.len());
     for token in s.split_whitespace() {
-        if token.starts_with("lin_api_") || token.starts_with("lin_oauth_") {
+        // `contains` (not `starts_with`): catch a key embedded mid-token, e.g.
+        // `key=lin_api_…` or `(lin_api_…)` in a transport/URL error echo.
+        if token.contains("lin_api_") || token.contains("lin_oauth_") {
             out.push_str("[redacted]");
         } else {
             out.push_str(token);
@@ -512,6 +525,7 @@ fn backoff_wait(headers: &HashMap<String, String>, now_ms: u128) -> Duration {
 // ── GraphQL documents ──
 
 const VIEWER_QUERY: &str = "query { viewer { id name email } }";
+const ORGANIZATION_QUERY: &str = "query { organization { id name urlKey } }";
 
 // Vocabularies (teams/states/labels) are fetched FLAT, not nested, because
 // Linear bills complexity as the PRODUCT of nested `first` values — a

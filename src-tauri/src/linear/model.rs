@@ -46,6 +46,16 @@ pub struct Viewer {
     pub email: Option<String>,
 }
 
+/// The workspace (organization) a key belongs to.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrganizationInfo {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub url_key: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Team {
     pub id: String,

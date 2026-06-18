@@ -499,6 +499,11 @@ pub fn run() {
             linear::linear_read_teams,
             linear::linear_issue_detail,
             linear::linear_fetch_image,
+            // Linear multi-workspace (linear-mirror-enhancements)
+            linear::linear_list_workspaces,
+            linear::linear_add_workspace,
+            linear::linear_remove_workspace,
+            linear::linear_set_active_workspace,
             // Linear issue → agent integration (linear-agent-integration)
             linear::linear_bind_issue,
             linear::linear_unbind_issue,

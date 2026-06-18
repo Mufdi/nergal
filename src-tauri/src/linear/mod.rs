@@ -138,14 +138,12 @@ pub async fn linear_clear_key(
     Ok(())
 }
 
-/// Validate the stored key against `viewer`. Does not persist anything.
+/// Validate the active workspace's key against `viewer`. Does not persist.
 #[tauri::command]
-pub async fn linear_validate_key() -> Result<ResolvedUser, String> {
-    let stored = tauri::async_runtime::spawn_blocking(auth::load_key)
-        .await
-        .map_err(|e| format!("join: {e}"))?
-        .map_err(|e| format!("{e:#}"))?
-        .ok_or_else(|| "no Linear key configured".to_string())?;
+pub async fn linear_validate_key(
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<ResolvedUser, String> {
+    let stored = load_active_stored_key(&db).await?;
     let client = build_client(stored.key);
     let viewer = client.get_viewer().await.map_err(|e| format!("{e:#}"))?;
     Ok(ResolvedUser {
@@ -172,6 +170,141 @@ pub fn linear_select_teams(
         mirror::set_selected_teams(guard.conn(), &team_ids).map_err(|e| format!("{e:#}"))?;
     }
     note_teams_selected(&app, &team_ids);
+    restart(&app);
+    Ok(())
+}
+
+// ── Multi-workspace (linear-mirror-enhancements) ──
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// List stored Linear workspaces (the active one flagged).
+#[tauri::command]
+pub fn linear_list_workspaces(
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<Vec<mirror::WorkspaceRow>, String> {
+    let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+    mirror::list_workspaces(guard.conn()).map_err(|e| format!("{e:#}"))
+}
+
+/// Add a workspace: validate the key, resolve its organization, store the key
+/// under the per-org keyring account, and record the workspace. The first
+/// workspace added becomes active (wipes+syncs). Returns the workspace row.
+#[tauri::command]
+pub async fn linear_add_workspace(
+    key: String,
+    app: AppHandle,
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<mirror::WorkspaceRow, String> {
+    let key = key.trim().to_string();
+    if key.is_empty() {
+        return Err("key is empty".into());
+    }
+    // Validate + resolve the workspace this key belongs to.
+    let org = build_client(key.clone())
+        .resolve_organization()
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+
+    let org_id = org.id.clone();
+    let key_for_store = key.clone();
+    let org_id_for_store = org_id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        auth::store_key_for(&org_id_for_store, &key_for_store)
+    })
+    .await
+    .map_err(|e| format!("join: {e}"))?
+    .map_err(|e| format!("{e:#}"))?;
+
+    let make_active = {
+        let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+        mirror::upsert_workspace(
+            guard.conn(),
+            &org.id,
+            &org.name,
+            org.url_key.as_deref(),
+            now_secs(),
+        )
+        .map_err(|e| format!("{e:#}"))?;
+        let first = mirror::get_active_org(guard.conn())
+            .map_err(|e| format!("{e:#}"))?
+            .is_none();
+        if first {
+            mirror::set_active_org(guard.conn(), Some(&org.id)).map_err(|e| format!("{e:#}"))?;
+            // New active workspace: wipe + epoch bump so a fresh sync seeds it.
+            mirror::bump_generation_and_wipe(guard.conn()).map_err(|e| format!("{e:#}"))?;
+        }
+        first
+    };
+    if make_active {
+        note_key_set(&app);
+        restart(&app);
+    }
+    Ok(mirror::WorkspaceRow {
+        active: make_active,
+        org_id: org.id,
+        name: org.name,
+        url_key: org.url_key,
+    })
+}
+
+/// Remove a workspace: delete its key + row. Removing the active one clears the
+/// active selection and wipes the mirror.
+#[tauri::command]
+pub async fn linear_remove_workspace(
+    org_id: String,
+    app: AppHandle,
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<(), String> {
+    let org_for_key = org_id.clone();
+    tauri::async_runtime::spawn_blocking(move || auth::remove_key_for(&org_for_key))
+        .await
+        .map_err(|e| format!("join: {e}"))?
+        .map_err(|e| format!("{e:#}"))?;
+    let was_active = {
+        let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+        let active = mirror::get_active_org(guard.conn()).map_err(|e| format!("{e:#}"))?;
+        mirror::remove_workspace(guard.conn(), &org_id).map_err(|e| format!("{e:#}"))?;
+        if active.as_deref() == Some(org_id.as_str()) {
+            mirror::set_active_org(guard.conn(), None).map_err(|e| format!("{e:#}"))?;
+            mirror::bump_generation_and_wipe(guard.conn()).map_err(|e| format!("{e:#}"))?;
+            true
+        } else {
+            false
+        }
+    };
+    if was_active {
+        note_key_cleared(&app);
+        restart(&app);
+    }
+    Ok(())
+}
+
+/// Make a stored workspace active: bump the epoch, wipe the current mirror,
+/// clear team selection, and re-sync the chosen workspace. The epoch guard
+/// prevents a late in-flight poll from the previous workspace committing here.
+#[tauri::command]
+pub fn linear_set_active_workspace(
+    org_id: String,
+    app: AppHandle,
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<(), String> {
+    {
+        let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+        // Guard: only a known workspace may become active — otherwise we'd wipe
+        // the mirror for an org with no key and strand the panel in an error.
+        if !mirror::workspace_exists(guard.conn(), &org_id).map_err(|e| format!("{e:#}"))? {
+            return Err("unknown workspace".into());
+        }
+        mirror::set_active_org(guard.conn(), Some(&org_id)).map_err(|e| format!("{e:#}"))?;
+        mirror::bump_generation_and_wipe(guard.conn()).map_err(|e| format!("{e:#}"))?;
+    }
+    note_key_set(&app);
     restart(&app);
     Ok(())
 }
@@ -430,13 +563,12 @@ pub fn linear_spawn_worktree_with_issue(
 /// `<img src>` to that CDN 401s — only the backend holds the key. Host-pinned +
 /// `image/*`-only inside the client (SSRF-safe).
 #[tauri::command]
-pub async fn linear_fetch_image(url: String) -> Result<String, String> {
+pub async fn linear_fetch_image(
+    url: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<String, String> {
     use base64::Engine as _;
-    let stored = tauri::async_runtime::spawn_blocking(auth::load_key)
-        .await
-        .map_err(|e| format!("join: {e}"))?
-        .map_err(|e| format!("{e:#}"))?
-        .ok_or_else(|| "no Linear key configured".to_string())?;
+    let stored = load_active_stored_key(&db).await?;
     let client = build_client(stored.key);
     let (content_type, bytes) = client
         .fetch_image(&url)
@@ -454,11 +586,7 @@ pub async fn linear_issue_detail(
     issue_id: String,
     db: tauri::State<'_, crate::db::SharedDb>,
 ) -> Result<LinearIssueDetail, String> {
-    let stored = tauri::async_runtime::spawn_blocking(auth::load_key)
-        .await
-        .map_err(|e| format!("join: {e}"))?
-        .map_err(|e| format!("{e:#}"))?
-        .ok_or_else(|| "no Linear key configured".to_string())?;
+    let stored = load_active_stored_key(&db).await?;
     let client = build_client(stored.key);
     let raw = client
         .issue_detail(&issue_id)
@@ -723,6 +851,89 @@ fn build_client(key: String) -> LinearClient {
     LinearClient::new(http, key, AuthMode::Personal)
 }
 
+/// Load the active workspace's key for a one-shot command (validate/detail/
+/// image). Errors with a clear message when no workspace is active or its key
+/// is missing.
+async fn load_active_stored_key(db: &crate::db::SharedDb) -> Result<auth::StoredKey, String> {
+    let active = {
+        let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+        mirror::get_active_org(guard.conn()).map_err(|e| format!("{e:#}"))?
+    };
+    let org = active.ok_or_else(|| "no active Linear workspace".to_string())?;
+    let stored = tauri::async_runtime::spawn_blocking(move || auth::load_key_for(&org))
+        .await
+        .map_err(|e| format!("join: {e}"))?
+        .map_err(|e| format!("{e:#}"))?
+        .ok_or_else(|| "no Linear key for the active workspace".to_string())?;
+    Ok(stored)
+}
+
+/// Resolve the key the poll loop should use this cycle, migrating a legacy
+/// single key into a per-workspace entry the first time. Returns `None` when no
+/// workspace is configured (the loop parks on `no_key`).
+async fn active_key_for_cycle(db: &crate::db::SharedDb) -> anyhow::Result<Option<auth::StoredKey>> {
+    // Active workspace already chosen → just load its key. Propagate a poisoned
+    // lock as Err (don't fall through to re-migrating a possibly-cleared legacy
+    // key — that would route the wrong key state).
+    let active = {
+        let guard = db.lock().map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+        mirror::get_active_org(guard.conn())?
+    };
+    if let Some(org) = active {
+        let key = tauri::async_runtime::spawn_blocking(move || auth::load_key_for(&org))
+            .await
+            .map_err(|e| anyhow::anyhow!("join: {e}"))??;
+        return Ok(key);
+    }
+
+    // No active workspace — try migrating a legacy single key.
+    let legacy = tauri::async_runtime::spawn_blocking(auth::load_key)
+        .await
+        .map_err(|e| anyhow::anyhow!("join: {e}"))??;
+    let Some(legacy) = legacy else {
+        return Ok(None);
+    };
+    match build_client(legacy.key.clone())
+        .resolve_organization()
+        .await
+    {
+        Ok(org) => {
+            let key = legacy.key.clone();
+            let org_id = org.id.clone();
+            let on_disk =
+                tauri::async_runtime::spawn_blocking(move || auth::store_key_for(&org_id, &key))
+                    .await
+                    .map_err(|e| anyhow::anyhow!("join: {e}"))??;
+            // Commit the workspace row BEFORE clearing the legacy key — a poisoned
+            // lock must NOT fall through to clear_key (that would delete the user's
+            // only working key after the namespaced copy isn't yet recorded).
+            {
+                let guard = db.lock().map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+                mirror::upsert_workspace(
+                    guard.conn(),
+                    &org.id,
+                    &org.name,
+                    org.url_key.as_deref(),
+                    now_secs(),
+                )?;
+                mirror::set_active_org(guard.conn(), Some(&org.id))?;
+            }
+            // Legacy entry migrated + recorded; remove it so it can't resurface.
+            let _ = tauri::async_runtime::spawn_blocking(auth::clear_key).await;
+            Ok(Some(auth::StoredKey {
+                key: legacy.key,
+                on_disk,
+            }))
+        }
+        Err(e) => {
+            // Offline/transient: use the legacy key directly this cycle, retry
+            // the migration next cycle (never blocks an existing user).
+            tracing::warn!("linear legacy-key migration deferred: {e:#}");
+            Ok(Some(legacy))
+        }
+    }
+}
+
 /// (Re)start the poll loop. Safe to call any time; key set/clear and team
 /// selection all funnel here. The loop decides whether it can run.
 pub fn restart(app: &AppHandle) {
@@ -776,10 +987,13 @@ fn poll_interval() -> Duration {
 
 async fn run_loop(app: AppHandle) {
     loop {
-        // Keyring access blocks on D-Bus; keep it off the async workers.
-        let stored = match tauri::async_runtime::spawn_blocking(auth::load_key).await {
-            Ok(Ok(Some(s))) => s,
-            Ok(Ok(None)) => {
+        let db = app.state::<crate::db::SharedDb>().inner().clone();
+        // Resolve the active workspace's key (migrating a legacy single key on
+        // first run). Keyring access blocks on D-Bus → handled off the workers
+        // inside the helper.
+        let stored = match active_key_for_cycle(&db).await {
+            Ok(Some(s)) => s,
+            Ok(None) => {
                 set_status(
                     &app,
                     SyncStatus {
@@ -789,21 +1003,15 @@ async fn run_loop(app: AppHandle) {
                 );
                 return;
             }
-            Ok(Err(e)) => {
-                // Transient keyring error: retry, don't park on no_key.
-                set_status(&app, err_status(format!("{e:#}")));
-                tokio::time::sleep(poll_interval()).await;
-                continue;
-            }
             Err(e) => {
-                tracing::warn!("linear key load join failed: {e}");
+                // Transient keyring/network error: retry, don't park on no_key.
+                set_status(&app, err_status(format!("{e:#}")));
                 tokio::time::sleep(poll_interval()).await;
                 continue;
             }
         };
         let key_on_disk = stored.on_disk;
         let client = build_client(stored.key);
-        let db = app.state::<crate::db::SharedDb>().inner().clone();
 
         // Pre-cycle baseline snapshot (suppress notifications until established).
         let pre = {

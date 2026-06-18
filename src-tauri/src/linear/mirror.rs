@@ -395,6 +395,98 @@ pub fn set_selected_teams(conn: &Connection, team_ids: &[String]) -> Result<()> 
     Ok(())
 }
 
+// ── Multi-workspace (linear-mirror-enhancements) ──
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRow {
+    pub org_id: String,
+    pub name: String,
+    pub url_key: Option<String>,
+    pub active: bool,
+}
+
+/// Active workspace org id (the one the mirror reflects), or `None` when no
+/// workspace is selected.
+pub fn get_active_org(conn: &Connection) -> Result<Option<String>> {
+    let v = conn.query_row(
+        "SELECT active_org_id FROM linear_sync_state WHERE id=1",
+        [],
+        |row| row.get::<_, Option<String>>(0),
+    )?;
+    Ok(v)
+}
+
+pub fn set_active_org(conn: &Connection, org_id: Option<&str>) -> Result<()> {
+    conn.execute(
+        "UPDATE linear_sync_state SET active_org_id=?1 WHERE id=1",
+        params![org_id],
+    )?;
+    Ok(())
+}
+
+/// List stored workspaces (non-secret metadata) with the active one flagged.
+pub fn list_workspaces(conn: &Connection) -> Result<Vec<WorkspaceRow>> {
+    let active = get_active_org(conn)?;
+    let mut stmt =
+        conn.prepare("SELECT org_id, name, url_key FROM linear_workspaces ORDER BY added_at")?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(rows
+        .into_iter()
+        .map(|(org_id, name, url_key)| WorkspaceRow {
+            active: active.as_deref() == Some(org_id.as_str()),
+            org_id,
+            name,
+            url_key,
+        })
+        .collect())
+}
+
+pub fn upsert_workspace(
+    conn: &Connection,
+    org_id: &str,
+    name: &str,
+    url_key: Option<&str>,
+    added_at: i64,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO linear_workspaces (org_id, name, url_key, added_at) VALUES (?1,?2,?3,?4) \
+         ON CONFLICT(org_id) DO UPDATE SET name=excluded.name, url_key=excluded.url_key",
+        params![org_id, name, url_key, added_at],
+    )?;
+    Ok(())
+}
+
+pub fn remove_workspace(conn: &Connection, org_id: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM linear_workspaces WHERE org_id=?1",
+        params![org_id],
+    )?;
+    Ok(())
+}
+
+pub fn workspace_count(conn: &Connection) -> Result<i64> {
+    let n = conn.query_row("SELECT COUNT(*) FROM linear_workspaces", [], |r| r.get(0))?;
+    Ok(n)
+}
+
+pub fn workspace_exists(conn: &Connection, org_id: &str) -> Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM linear_workspaces WHERE org_id=?1",
+        params![org_id],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
 pub fn current_key_generation(conn: &Connection) -> Result<i64> {
     let g = conn.query_row(
         "SELECT key_generation FROM linear_sync_state WHERE id=1",
@@ -790,5 +882,59 @@ mod tests {
             .unwrap();
         assert_eq!(name, "In Progress");
         assert_eq!(synth, 0);
+    }
+
+    fn mem_db_ws() -> Connection {
+        let conn = mem_db();
+        conn.execute_batch(include_str!("../../migrations/025_linear_workspaces.sql"))
+            .unwrap();
+        conn
+    }
+
+    #[test]
+    fn workspaces_crud_and_active() {
+        let conn = mem_db_ws();
+        assert_eq!(workspace_count(&conn).unwrap(), 0);
+        assert!(get_active_org(&conn).unwrap().is_none());
+
+        upsert_workspace(&conn, "org-a", "Red Ribbon", Some("redribbon"), 1).unwrap();
+        upsert_workspace(&conn, "org-b", "Other", None, 2).unwrap();
+        set_active_org(&conn, Some("org-a")).unwrap();
+
+        let list = list_workspaces(&conn).unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].org_id, "org-a"); // added_at order
+        assert!(list[0].active);
+        assert!(!list[1].active);
+        assert_eq!(list[0].url_key.as_deref(), Some("redribbon"));
+
+        // Upsert updates name, keeps the row.
+        upsert_workspace(&conn, "org-a", "Red Ribbon 2", Some("redribbon"), 1).unwrap();
+        assert_eq!(workspace_count(&conn).unwrap(), 2);
+        assert_eq!(list_workspaces(&conn).unwrap()[0].name, "Red Ribbon 2");
+
+        remove_workspace(&conn, "org-b").unwrap();
+        assert_eq!(workspace_count(&conn).unwrap(), 1);
+    }
+
+    #[test]
+    fn wipe_preserves_workspaces_and_sync_state() {
+        let conn = mem_db_ws();
+        seed_team(&conn, "t1");
+        upsert_issue(&conn, &issue("i1", "t1", "2026-06-16T00:00:00Z"), true).unwrap();
+        upsert_workspace(&conn, "org-a", "Red Ribbon", None, 1).unwrap();
+        set_active_org(&conn, Some("org-a")).unwrap();
+
+        // The switch path: bump epoch + wipe. Workspaces + sync_state survive.
+        bump_generation_and_wipe(&conn).unwrap();
+
+        assert_eq!(
+            read_issues(&conn, &IssueFilter::default()).unwrap().len(),
+            0
+        );
+        assert_eq!(workspace_count(&conn).unwrap(), 1);
+        // active_org_id is independent of the epoch bump (which clears viewer/teams).
+        assert_eq!(get_active_org(&conn).unwrap().as_deref(), Some("org-a"));
+        assert_eq!(current_key_generation(&conn).unwrap(), 1);
     }
 }

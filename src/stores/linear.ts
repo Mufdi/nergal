@@ -84,6 +84,13 @@ export interface TeamView {
   key: string;
 }
 
+export interface LinearWorkspace {
+  orgId: string;
+  name: string;
+  urlKey?: string;
+  active: boolean;
+}
+
 export interface SyncStatus {
   state: "idle" | "no_key" | "needs_team" | "syncing" | "ok" | "error";
   viewerId?: string;

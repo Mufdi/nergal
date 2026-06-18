@@ -226,6 +226,7 @@ impl Database {
             include_str!("../migrations/022_session_transcripts.sql"),
             include_str!("../migrations/023_linear_mirror.sql"),
             include_str!("../migrations/024_linear_session_binding.sql"),
+            include_str!("../migrations/025_linear_workspaces.sql"),
         ];
 
         for (i, sql) in migrations.iter().enumerate() {

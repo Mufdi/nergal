@@ -51,6 +51,7 @@ import {
   linearKeyOnDiskAtom,
   linearTeamsAtom,
   refreshLinearMirror,
+  type LinearWorkspace,
   type SyncStatus as LinearSyncStatus,
 } from "@/stores/linear";
 import { appStore } from "@/stores/jotaiStore";
@@ -963,17 +964,15 @@ const LINEAR_VIEW_OPTIONS = [
 
 function LinearSection() {
   const [syncStatus, setSyncStatus] = useAtom(linearSyncStatusAtom);
-  const [keyOnDisk, setKeyOnDisk] = useAtom(linearKeyOnDiskAtom);
+  const keyOnDisk = useAtomValue(linearKeyOnDiskAtom);
   const [config, setConfig] = useAtom(configAtom);
   const pushToast = useSetAtom(toastsAtom);
   const [keyInput, setKeyInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [resolvedViewer, setResolvedViewer] = useState<{ name?: string; email?: string } | null>(null);
+  const [workspaces, setWorkspaces] = useState<LinearWorkspace[]>([]);
   const [validationError, setValidationError] = useState<string | null>(null);
   const teams = useAtomValue(linearTeamsAtom);
   const selectedTeamIds = syncStatus?.selectedTeamIds ?? [];
-
-  const configured = syncStatus !== null && syncStatus.state !== "no_key";
 
   async function refreshStatus() {
     try {
@@ -983,17 +982,30 @@ function LinearSection() {
     }
   }
 
-  async function handleSetKey() {
+  async function refreshWorkspaces() {
+    try {
+      setWorkspaces(await invoke<LinearWorkspace[]>("linear_list_workspaces"));
+    } catch {
+      // non-fatal; the list just stays empty
+    }
+  }
+
+  useEffect(() => {
+    void refreshWorkspaces();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleAddWorkspace() {
     if (keyInput.trim().length === 0 || busy) return;
     setBusy(true);
     setValidationError(null);
     try {
-      const result = await invoke<{ keyOnDisk: boolean }>("linear_set_key", { key: keyInput.trim() });
-      setKeyOnDisk(result.keyOnDisk);
+      const ws = await invoke<LinearWorkspace>("linear_add_workspace", { key: keyInput.trim() });
       setKeyInput("");
-      await handleValidate();
+      await refreshWorkspaces();
       await refreshStatus();
       await refreshLinearMirror(appStore);
+      pushToast({ message: "Linear", description: `Workspace added: ${ws.name}`, type: "success" });
     } catch (err) {
       setValidationError(String(err));
     } finally {
@@ -1001,27 +1013,37 @@ function LinearSection() {
     }
   }
 
-  async function handleValidate() {
-    setValidationError(null);
-    try {
-      const viewer = await invoke<{ id: string; name?: string; email?: string }>("linear_validate_key");
-      setResolvedViewer({ name: viewer.name, email: viewer.email });
-    } catch (err) {
-      setResolvedViewer(null);
-      setValidationError(String(err));
-    }
-  }
-
-  async function handleClearKey() {
+  async function handleSetActive(orgId: string) {
     if (busy) return;
     setBusy(true);
     try {
-      await invoke("linear_clear_key");
-      setResolvedViewer(null);
-      setValidationError(null);
-      setKeyOnDisk(false);
+      await invoke("linear_set_active_workspace", { orgId });
+      await refreshWorkspaces();
       await refreshStatus();
-      pushToast({ message: "Linear", description: "API key cleared", type: "info" });
+      await refreshLinearMirror(appStore);
+    } catch (err) {
+      pushToast({ message: "Linear", description: String(err), type: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRemoveWorkspace(orgId: string, name: string) {
+    if (busy) return;
+    const ok = await swalConfirm({
+      title: "Remove workspace?",
+      body: `<strong>${name}</strong>'s API key will be deleted. If it's the active workspace its mirror is wiped.`,
+      confirmLabel: "Remove",
+      kind: "warning",
+      destructive: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await invoke("linear_remove_workspace", { orgId });
+      await refreshWorkspaces();
+      await refreshStatus();
+      await refreshLinearMirror(appStore);
     } catch (err) {
       pushToast({ message: "Linear", description: String(err), type: "error" });
     } finally {
@@ -1045,32 +1067,71 @@ function LinearSection() {
   return (
     <div className="grid gap-4">
       <p className="text-xs text-muted-foreground">
-        Read-only mirror of your Linear workspace. Paste a Personal API key
-        (Linear → Settings → API) to enable the panel.
+        Read-only mirror of your Linear workspaces. A Personal API key (Linear →
+        Settings → API) is workspace-scoped — add one per workspace, pick the
+        active one to mirror.
       </p>
 
+      {workspaces.length > 0 && (
+        <div className="grid gap-1.5">
+          <Label>Workspaces</Label>
+          <div className="flex flex-col gap-1">
+            {workspaces.map((ws) => (
+              <div key={ws.orgId} className="flex items-center gap-2 text-xs">
+                <label className="flex flex-1 items-center gap-2">
+                  <input
+                    type="radio"
+                    name="linear-active-workspace"
+                    checked={ws.active}
+                    onChange={() => void handleSetActive(ws.orgId)}
+                    disabled={busy}
+                    className="border border-border"
+                  />
+                  <span className={ws.active ? "font-medium text-foreground" : "text-foreground/80"}>
+                    {ws.name}
+                  </span>
+                  {ws.active && <span className="text-[10px] text-primary">active</span>}
+                </label>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => void handleRemoveWorkspace(ws.orgId, ws.name)}
+                  disabled={busy}
+                >
+                  <XCircle size={13} />
+                </Button>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Switching the active workspace wipes the mirror and re-syncs.
+          </p>
+        </div>
+      )}
+
       <div className="grid gap-1.5">
-        <Label htmlFor="linear-key">Personal API key</Label>
+        <Label htmlFor="linear-key">Add workspace</Label>
         <div className="flex items-center gap-2">
           <Input
             id="linear-key"
             type="password"
             value={keyInput}
             onChange={(e) => setKeyInput(e.target.value)}
-            placeholder={configured ? "Key configured — paste to replace" : "lin_api_…"}
+            placeholder="lin_api_…"
             autoComplete="off"
           />
           <Button
             variant="outline"
             size="sm"
-            onClick={() => void handleSetKey()}
+            onClick={() => void handleAddWorkspace()}
             disabled={busy || keyInput.trim().length === 0}
           >
-            {busy ? "Saving…" : "Set key"}
+            {busy ? "Adding…" : "Add"}
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          Stored in the OS keyring when available. The key never leaves this machine.
+          The key is validated, its workspace resolved, and stored in the OS
+          keyring when available. The key never leaves this machine.
         </p>
       </div>
 
@@ -1087,25 +1148,6 @@ function LinearSection() {
         </p>
       </div>
 
-      {configured && (
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => void handleValidate()} disabled={busy}>
-            Validate key
-          </Button>
-          <Button variant="destructive" size="sm" onClick={() => void handleClearKey()} disabled={busy}>
-            Clear key
-          </Button>
-        </div>
-      )}
-
-      {resolvedViewer && (
-        <p className="flex items-center gap-1.5 text-xs text-green-500">
-          <CheckCircle2 size={13} />
-          Key valid
-          {resolvedViewer.name ? ` — ${resolvedViewer.name}` : ""}
-          {resolvedViewer.email ? ` (${resolvedViewer.email})` : ""}
-        </p>
-      )}
       {validationError && (
         <p className="flex items-center gap-1.5 text-xs text-red-400">
           <XCircle size={13} className="shrink-0" />
@@ -1116,9 +1158,9 @@ function LinearSection() {
       {keyOnDisk && (
         <p className="flex items-start gap-1.5 rounded-md border border-yellow-500/30 bg-yellow-500/10 px-2 py-1.5 text-xs text-yellow-400">
           <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-          No OS keyring available — the key was written to
-          ~/.config/cluihud/linear.toml (mode 0600). Any process running as
-          your user can read it.
+          No OS keyring available — keys were written to
+          ~/.config/cluihud/linear-*.toml (mode 0600). Any process running as
+          your user can read them.
         </p>
       )}
 

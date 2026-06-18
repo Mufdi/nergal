@@ -86,7 +86,11 @@ pub struct Label {
     pub team: Option<IdRef>,
 }
 
+// camelCase: Linear sends `displayName`/`avatarUrl`. Without this the queries'
+// camelCase fields silently never populated display_name/avatar_url (they fell
+// back to `name`/initials) — root-caused while adding the activity feed.
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct User {
     pub id: String,
     #[serde(default)]
@@ -217,6 +221,61 @@ pub struct RelatedIssue {
     pub identifier: Option<String>,
     #[serde(default)]
     pub title: Option<String>,
+}
+
+/// One issue-history (activity) entry — fetched lazily on detail-open, not
+/// persisted. Only the fields the activity feed renders are deserialized.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryEntry {
+    pub id: String,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub actor: Option<User>,
+    #[serde(default)]
+    pub bot_actor: Option<BotActor>,
+    #[serde(default)]
+    pub from_state: Option<NamedRef>,
+    #[serde(default)]
+    pub to_state: Option<NamedRef>,
+    #[serde(default)]
+    pub from_assignee: Option<User>,
+    #[serde(default)]
+    pub to_assignee: Option<User>,
+    #[serde(default)]
+    pub added_label_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub removed_label_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub from_cycle: Option<CycleRef>,
+    #[serde(default)]
+    pub to_cycle: Option<CycleRef>,
+    #[serde(default)]
+    pub from_priority: Option<i64>,
+    #[serde(default)]
+    pub to_priority: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BotActor {
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NamedRef {
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CycleRef {
+    #[serde(default)]
+    pub number: Option<i64>,
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 /// Parse a Linear ISO8601 `DateTime` (`YYYY-MM-DDTHH:MM:SS[.fff]Z`, UTC) into

@@ -35,6 +35,7 @@ import {
   togglePinIssueAction,
   type IssueView,
   type LinearAttachment,
+  type LinearActivityEntry,
   type LinearComment,
   type LinearIssueDetail,
   type LinearRelation,
@@ -74,6 +75,51 @@ function formatDate(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
+/// Compact relative time ("3mo ago", "2d ago") for the activity feed.
+function formatRelative(ms: number): string {
+  const diff = Date.now() - ms;
+  const s = Math.max(0, Math.floor(diff / 1000));
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d}d ago`;
+  const mo = Math.floor(d / 30);
+  if (mo < 12) return `${mo}mo ago`;
+  return `${Math.floor(mo / 12)}y ago`;
+}
+
+/// The human verb for an activity entry, derived from its kind + from/to.
+function activityVerb(e: LinearActivityEntry): string {
+  switch (e.kind) {
+    case "created":
+      return "created the issue";
+    case "state":
+      return e.from && e.to ? `changed status ${e.from} → ${e.to}` : e.to ? `set status to ${e.to}` : "changed status";
+    case "assignee":
+      if (e.to && e.from) return `reassigned ${e.from} → ${e.to}`;
+      if (e.to) return `assigned to ${e.to}`;
+      return "unassigned the issue";
+    case "label": {
+      const parts: string[] = [];
+      if (e.added.length) parts.push(`added label ${e.added.join(", ")}`);
+      if (e.removed.length) parts.push(`removed label ${e.removed.join(", ")}`);
+      return parts.join("; ") || "changed labels";
+    }
+    case "cycle":
+      if (e.to && e.from) return `moved ${e.from} → ${e.to}`;
+      if (e.to) return `added to ${e.to}`;
+      if (e.from) return `removed from ${e.from}`;
+      return "changed cycle";
+    case "priority":
+      return e.from && e.to ? `changed priority ${e.from} → ${e.to}` : e.to ? `set priority to ${e.to}` : "changed priority";
+    default:
+      return "updated the issue";
+  }
+}
+
 /// Validates a URL through the backend (browser_validate_url) before opening.
 async function openValidatedUrl(url: string | undefined): Promise<void> {
   if (!url) return;
@@ -92,6 +138,7 @@ interface LinearDetailData {
   comments: LinearComment[];
   attachments: LinearAttachment[];
   relations: LinearRelation[];
+  activity: LinearActivityEntry[];
 }
 
 /// SWR cache for fetched detail payloads. Module-level so it survives a
@@ -205,6 +252,7 @@ export function useLinearIssueController({
           comments: detailPayload.comments,
           attachments: detailPayload.attachments,
           relations: detailPayload.relations,
+          activity: detailPayload.activity ?? [],
         };
         setDetail(data);
         detailCache.set(issueId, data);
@@ -224,6 +272,7 @@ export function useLinearIssueController({
   const comments = detail?.comments ?? [];
   const attachments = detail?.attachments ?? [];
   const relations = detail?.relations ?? [];
+  const activity = detail?.activity ?? [];
 
   // Sub-issues from the mirror (parentId === issueId)
   const subIssues = issueId ? issues.filter((i) => i.parentId === issueId) : [];
@@ -303,6 +352,7 @@ export function useLinearIssueController({
     comments,
     attachments,
     relations,
+    activity,
     subIssues,
     childMap,
     contentRef,
@@ -487,7 +537,7 @@ export function LinearIssueBody({
   layout: "modal" | "tab";
 }) {
   const isTab = layout === "tab";
-  const { detail, issue, loading, error, comments, attachments, relations, subIssues, childMap } = c;
+  const { detail, issue, loading, error, comments, attachments, relations, activity, subIssues, childMap } = c;
 
   const setOuterRef = (el: HTMLDivElement | null) => {
     c.contentRef.current = el;
@@ -740,6 +790,23 @@ export function LinearIssueBody({
     </>
   ) : null;
 
+  const activityEl = activity.length > 0 ? (
+    <>
+      <SectionCaps label="Activity" />
+      <div className="flex flex-col gap-1.5">
+        {activity.map((e) => (
+          <div key={e.id} className="flex items-baseline gap-1.5 text-[11px] text-muted-foreground">
+            <span className="font-medium text-foreground/70">{e.actor ?? "Linear"}</span>
+            <span className="min-w-0 flex-1">{activityVerb(e)}</span>
+            {e.createdAt != null && (
+              <span className="shrink-0 text-[10px] text-muted-foreground/60">{formatRelative(e.createdAt)}</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </>
+  ) : null;
+
   if (isTab) {
     return (
       <div
@@ -756,6 +823,7 @@ export function LinearIssueBody({
           {subIssuesEl}
           {attachmentsEl}
           {relationsEl}
+          {activityEl}
           {commentsEl}
         </div>
       </div>
@@ -779,6 +847,7 @@ export function LinearIssueBody({
         {subIssuesEl}
         {attachmentsEl}
         {relationsEl}
+        {activityEl}
         {commentsEl}
       </main>
     </div>

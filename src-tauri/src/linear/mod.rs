@@ -446,21 +446,46 @@ pub async fn linear_fetch_image(url: String) -> Result<String, String> {
     Ok(format!("data:{content_type};base64,{b64}"))
 }
 
-/// Lazily fetch an issue's detail (comments + attachments + relations) on
-/// detail-open. Network call; not from the mirror.
+/// Lazily fetch an issue's detail (comments + attachments + relations +
+/// activity) on detail-open. Network call; not from the mirror. Label ids in
+/// the history are resolved to names from the local mirror (no extra round-trip).
 #[tauri::command]
-pub async fn linear_issue_detail(issue_id: String) -> Result<LinearIssueDetail, String> {
+pub async fn linear_issue_detail(
+    issue_id: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<LinearIssueDetail, String> {
     let stored = tauri::async_runtime::spawn_blocking(auth::load_key)
         .await
         .map_err(|e| format!("join: {e}"))?
         .map_err(|e| format!("{e:#}"))?
         .ok_or_else(|| "no Linear key configured".to_string())?;
     let client = build_client(stored.key);
-    let (comments, attachments, relations) = client
+    let raw = client
         .issue_detail(&issue_id)
         .await
         .map_err(|e| format!("{e:#}"))?;
+
+    let label_names: std::collections::HashMap<String, String> = {
+        let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+        let mut stmt = guard
+            .conn()
+            .prepare("SELECT id, name FROM linear_labels")
+            .map_err(|e| format!("{e:#}"))?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| format!("{e:#}"))?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+    let activity = normalize_activity(&raw, &label_names);
+
+    let crate::linear::client::RawIssueDetail {
+        comments,
+        attachments,
+        relations,
+        ..
+    } = raw;
     Ok(LinearIssueDetail {
+        activity,
         comments: comments
             .into_iter()
             .map(|c| LinearComment {
@@ -499,6 +524,166 @@ pub struct LinearIssueDetail {
     pub comments: Vec<LinearComment>,
     pub attachments: Vec<LinearAttachment>,
     pub relations: Vec<LinearRelation>,
+    /// Issue history (activity) — creation + state/assignee/label/cycle/priority
+    /// changes, oldest first, like Linear's Activity section.
+    pub activity: Vec<LinearActivityEntry>,
+}
+
+/// One normalized activity line. `kind` drives the frontend's verb; `from`/`to`
+/// carry the change, `added`/`removed` carry label names.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinearActivityEntry {
+    pub id: String,
+    pub created_at: Option<i64>,
+    pub actor: Option<String>,
+    /// "created" | "state" | "assignee" | "label" | "cycle" | "priority"
+    pub kind: String,
+    pub from: Option<String>,
+    pub to: Option<String>,
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+}
+
+fn priority_word(p: i64) -> String {
+    match p {
+        1 => "urgent",
+        2 => "high",
+        3 => "normal",
+        4 => "low",
+        _ => "no priority",
+    }
+    .to_string()
+}
+
+fn cycle_label(c: &crate::linear::model::CycleRef) -> String {
+    match (&c.name, c.number) {
+        (Some(n), _) if !n.is_empty() => n.clone(),
+        (_, Some(num)) => format!("Cycle {num}"),
+        _ => "a cycle".to_string(),
+    }
+}
+
+/// Normalize the raw history into render-ready lines (oldest first) plus a
+/// synthesized "created" entry from the issue's creation meta. Entries with no
+/// recognized change are dropped (Linear emits some no-op history rows).
+fn normalize_activity(
+    raw: &crate::linear::client::RawIssueDetail,
+    label_names: &std::collections::HashMap<String, String>,
+) -> Vec<LinearActivityEntry> {
+    let resolve = |ids: &Option<Vec<String>>| -> Vec<String> {
+        ids.as_ref()
+            .map(|v| {
+                v.iter()
+                    .map(|id| {
+                        label_names
+                            .get(id)
+                            .cloned()
+                            .unwrap_or_else(|| "a label".to_string())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    let mut out: Vec<LinearActivityEntry> = Vec::new();
+
+    // Synthesized creation entry (oldest).
+    out.push(LinearActivityEntry {
+        id: "created".to_string(),
+        created_at: raw.created_at.as_deref().and_then(model::iso8601_to_epoch),
+        actor: raw
+            .creator
+            .as_ref()
+            .and_then(|u| u.display_name.clone().or_else(|| u.name.clone())),
+        kind: "created".to_string(),
+        from: None,
+        to: None,
+        added: Vec::new(),
+        removed: Vec::new(),
+    });
+
+    for h in &raw.history {
+        let actor = h
+            .actor
+            .as_ref()
+            .and_then(|u| u.display_name.clone().or_else(|| u.name.clone()))
+            .or_else(|| h.bot_actor.as_ref().and_then(|b| b.name.clone()));
+        let created_at = h.created_at.as_deref().and_then(model::iso8601_to_epoch);
+        let id = h.id.clone();
+
+        let entry = if h.from_state.is_some() || h.to_state.is_some() {
+            Some(LinearActivityEntry {
+                id,
+                created_at,
+                actor,
+                kind: "state".to_string(),
+                from: h.from_state.as_ref().and_then(|s| s.name.clone()),
+                to: h.to_state.as_ref().and_then(|s| s.name.clone()),
+                added: Vec::new(),
+                removed: Vec::new(),
+            })
+        } else if h.from_assignee.is_some() || h.to_assignee.is_some() {
+            Some(LinearActivityEntry {
+                id,
+                created_at,
+                actor,
+                kind: "assignee".to_string(),
+                from: h
+                    .from_assignee
+                    .as_ref()
+                    .and_then(|u| u.display_name.clone().or_else(|| u.name.clone())),
+                to: h
+                    .to_assignee
+                    .as_ref()
+                    .and_then(|u| u.display_name.clone().or_else(|| u.name.clone())),
+                added: Vec::new(),
+                removed: Vec::new(),
+            })
+        } else if h.added_label_ids.is_some() || h.removed_label_ids.is_some() {
+            Some(LinearActivityEntry {
+                id,
+                created_at,
+                actor,
+                kind: "label".to_string(),
+                from: None,
+                to: None,
+                added: resolve(&h.added_label_ids),
+                removed: resolve(&h.removed_label_ids),
+            })
+        } else if h.from_cycle.is_some() || h.to_cycle.is_some() {
+            Some(LinearActivityEntry {
+                id,
+                created_at,
+                actor,
+                kind: "cycle".to_string(),
+                from: h.from_cycle.as_ref().map(cycle_label),
+                to: h.to_cycle.as_ref().map(cycle_label),
+                added: Vec::new(),
+                removed: Vec::new(),
+            })
+        } else if h.from_priority.is_some() || h.to_priority.is_some() {
+            Some(LinearActivityEntry {
+                id,
+                created_at,
+                actor,
+                kind: "priority".to_string(),
+                from: h.from_priority.map(priority_word),
+                to: h.to_priority.map(priority_word),
+                added: Vec::new(),
+                removed: Vec::new(),
+            })
+        } else {
+            None
+        };
+        if let Some(e) = entry {
+            out.push(e);
+        }
+    }
+
+    // Oldest first (creation at the top), matching Linear's Activity section.
+    out.sort_by_key(|e| e.created_at.unwrap_or(i64::MAX));
+    out
 }
 
 #[derive(Debug, Serialize)]
@@ -727,5 +912,46 @@ fn notify_assignments(app: &AppHandle, db: &crate::db::SharedDb, ids: &[String])
         .spawn()
     {
         tracing::warn!("linear assignment notify-send failed: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::linear::client::RawIssueDetail;
+    use std::collections::HashMap;
+
+    #[test]
+    fn normalize_activity_classifies_and_orders() {
+        let history: Vec<crate::linear::model::HistoryEntry> = serde_json::from_value(serde_json::json!([
+            {"id":"h2","createdAt":"2026-01-03T00:00:00Z","botActor":{"name":"Linear"},"addedLabelIds":["l1"]},
+            {"id":"h1","createdAt":"2026-01-02T00:00:00Z","actor":{"id":"u1","displayName":"mufdidev"},"fromState":{"name":"Todo"},"toState":{"name":"Done"}},
+            {"id":"h3","createdAt":"2026-01-04T00:00:00Z","actor":{"id":"u1","displayName":"mufdidev"}}
+        ]))
+        .unwrap();
+        let raw = RawIssueDetail {
+            comments: vec![],
+            attachments: vec![],
+            relations: vec![],
+            history,
+            created_at: Some("2026-01-01T00:00:00Z".into()),
+            creator: serde_json::from_value(
+                serde_json::json!({"id":"u1","displayName":"mufdidev"}),
+            )
+            .ok(),
+        };
+        let labels = HashMap::from([("l1".to_string(), "Improvement".to_string())]);
+        let act = normalize_activity(&raw, &labels);
+
+        // Created entry first (oldest), then state, then label. h3 (no change) dropped.
+        assert_eq!(act.len(), 3);
+        assert_eq!(act[0].kind, "created");
+        assert_eq!(act[0].actor.as_deref(), Some("mufdidev"));
+        assert_eq!(act[1].kind, "state");
+        assert_eq!(act[1].from.as_deref(), Some("Todo"));
+        assert_eq!(act[1].to.as_deref(), Some("Done"));
+        assert_eq!(act[2].kind, "label");
+        assert_eq!(act[2].actor.as_deref(), Some("Linear")); // bot actor fallback
+        assert_eq!(act[2].added, vec!["Improvement".to_string()]);
     }
 }

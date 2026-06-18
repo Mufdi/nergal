@@ -60,10 +60,22 @@ export interface LinearRelation {
   relatedTitle?: string;
 }
 
+export interface LinearActivityEntry {
+  id: string;
+  createdAt?: number;
+  actor?: string;
+  kind: "created" | "state" | "assignee" | "label" | "cycle" | "priority";
+  from?: string;
+  to?: string;
+  added: string[];
+  removed: string[];
+}
+
 export interface LinearIssueDetail {
   comments: LinearComment[];
   attachments: LinearAttachment[];
   relations: LinearRelation[];
+  activity: LinearActivityEntry[];
 }
 
 export interface TeamView {

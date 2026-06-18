@@ -20,7 +20,19 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use super::auth::{AuthMode, authorization_header_value};
-use super::model::{Comment, Connection, Issue, Team, Viewer};
+use super::model::{Comment, Connection, HistoryEntry, Issue, Team, Viewer};
+
+/// Raw detail payload from a single detail-open fetch (comments + attachments +
+/// relations + history + creation meta), normalized into the panel's view model
+/// by `linear::mod`.
+pub struct RawIssueDetail {
+    pub comments: Vec<Comment>,
+    pub attachments: Vec<super::model::Attachment>,
+    pub relations: Vec<super::model::Relation>,
+    pub history: Vec<HistoryEntry>,
+    pub created_at: Option<String>,
+    pub creator: Option<super::model::User>,
+}
 
 const ENDPOINT: &str = "https://api.linear.app/graphql";
 const USER_AGENT: &str = "nergal-linear-sync";
@@ -296,37 +308,40 @@ impl LinearClient {
         Ok(d.issues)
     }
 
-    /// Comments + attachments + relations for an issue (lazy, on detail-open).
-    /// Not persisted — fetched fresh each open, like comments.
-    pub async fn issue_detail(
-        &self,
-        issue_id: &str,
-    ) -> Result<(
-        Vec<Comment>,
-        Vec<super::model::Attachment>,
-        Vec<super::model::Relation>,
-    )> {
+    /// Comments + attachments + relations + history (activity) for an issue
+    /// (lazy, on detail-open). Not persisted — fetched fresh each open.
+    pub async fn issue_detail(&self, issue_id: &str) -> Result<RawIssueDetail> {
         #[derive(Deserialize)]
         struct Data {
             issue: IssueDetail,
         }
         #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
         struct IssueDetail {
+            #[serde(default)]
+            created_at: Option<String>,
+            #[serde(default)]
+            creator: Option<super::model::User>,
             #[serde(default)]
             comments: Connection<Comment>,
             #[serde(default)]
             attachments: Connection<super::model::Attachment>,
             #[serde(default)]
             relations: Connection<super::model::Relation>,
+            #[serde(default)]
+            history: Connection<super::model::HistoryEntry>,
         }
         let d: Data = self
             .execute(ISSUE_DETAIL_QUERY, json!({ "id": issue_id }))
             .await?;
-        Ok((
-            d.issue.comments.nodes,
-            d.issue.attachments.nodes,
-            d.issue.relations.nodes,
-        ))
+        Ok(RawIssueDetail {
+            comments: d.issue.comments.nodes,
+            attachments: d.issue.attachments.nodes,
+            relations: d.issue.relations.nodes,
+            history: d.issue.history.nodes,
+            created_at: d.issue.created_at,
+            creator: d.issue.creator,
+        })
     }
 
     /// Fetch an `uploads.linear.app` asset with the Linear auth header attached.
@@ -570,9 +585,24 @@ const ISSUES_BY_ID_QUERY: &str =
 
 const ISSUE_DETAIL_QUERY: &str = "query Detail($id: String!) {
   issue(id: $id) {
+    createdAt
+    creator { id name displayName email avatarUrl }
     comments(first: 100) { nodes { id body createdAt user { id name displayName email avatarUrl } } }
     attachments(first: 50) { nodes { id title subtitle url } }
     relations(first: 50) { nodes { type relatedIssue { id identifier title } } }
+    history(first: 50) {
+      nodes {
+        id createdAt
+        actor { id name displayName email avatarUrl }
+        botActor { name }
+        fromState { name } toState { name }
+        fromAssignee { id name displayName email avatarUrl }
+        toAssignee { id name displayName email avatarUrl }
+        addedLabelIds removedLabelIds
+        fromCycle { number name } toCycle { number name }
+        fromPriority toPriority
+      }
+    }
   }
 }";
 

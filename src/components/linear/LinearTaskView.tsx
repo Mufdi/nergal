@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { invoke } from "@/lib/tauri";
 import { MarkdownView } from "@/components/plan/MarkdownView";
-import { StatusIcon } from "@/components/clickup/StatusIcon";
+import { LinearStatusIcon } from "@/components/linear/LinearStatusIcon";
 import { PriorityIcon } from "@/components/clickup/PriorityIcon";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -373,7 +373,6 @@ function SubIssueNode({
   const hasChildren = !seen.has(issue.id) && (childMap.get(issue.id)?.length ?? 0) > 0;
   // Default expanded in the detail modal (contrast with the panel which defaults collapsed).
   const [expanded, setExpanded] = useState(true);
-  const iconType = linearStateToIconType(issue.stateType);
 
   return (
     <div>
@@ -402,8 +401,8 @@ function SubIssueNode({
         ) : (
           <span className="w-3.5 shrink-0" aria-hidden />
         )}
-        <StatusIcon
-          type={iconType}
+        <LinearStatusIcon
+          stateType={issue.stateType}
           color={issue.stateColor ?? null}
           size={12}
           className="shrink-0"
@@ -519,7 +518,6 @@ export function LinearIssueBody({
     );
   }
 
-  const iconType = linearStateToIconType(issue.stateType);
   const priorityStr = linearPriorityStr(issue.priority);
 
   const now = Date.now();
@@ -530,7 +528,7 @@ export function LinearIssueBody({
       <div className="flex flex-col gap-1.5 text-[11px]">
         {issue.stateName && (
           <div className="flex items-center gap-1.5">
-            <StatusIcon type={iconType} color={issue.stateColor ?? null} size={13} className="shrink-0" />
+            <LinearStatusIcon stateType={issue.stateType} color={issue.stateColor ?? null} size={13} className="shrink-0" />
             <span className="text-foreground/80">{issue.stateName}</span>
           </div>
         )}
@@ -817,11 +815,10 @@ export function LinearIssueHistoryNav({ c }: { c: LinearIssueController }) {
 
 /// Title bar content for the floating modal.
 export function LinearIssueTitleContent({ c }: { c: LinearIssueController }) {
-  const iconType = linearStateToIconType(c.issue?.stateType);
   return (
     <>
-      <StatusIcon
-        type={iconType}
+      <LinearStatusIcon
+        stateType={c.issue?.stateType}
         color={c.issue?.stateColor ?? null}
         size={13}
         className="shrink-0"

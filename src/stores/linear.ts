@@ -124,8 +124,9 @@ export const linearTeamFilterAtom = atom<string | null>(null);
 export const linearGroupByAtom = atom<LinearGroupBy>("state");
 /// Default true: show only issues assigned to the viewer.
 export const linearAssignedToMeAtom = atom(true);
-/// When true, completed/canceled issues show (local filter, no fetch).
-export const linearShowCompletedAtom = atom(false);
+/// When true, completed/canceled/duplicate issues show (local filter, no fetch).
+/// Default on — the user wants terminal issues visible (they ARE mirrored).
+export const linearShowCompletedAtom = atom(true);
 
 /// Issue currently open in the floating detail module (null = closed).
 export const linearDetailIssueIdAtom = atom<string | null>(null);

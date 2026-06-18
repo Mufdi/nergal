@@ -34,7 +34,7 @@ import {
 } from "@/components/ui/tooltip";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { Select } from "@/components/ui/select";
-import { StatusIcon } from "@/components/clickup/StatusIcon";
+import { LinearStatusIcon } from "@/components/linear/LinearStatusIcon";
 import { PriorityIcon } from "@/components/clickup/PriorityIcon";
 import { zenModeAtom } from "@/stores/zenMode";
 import {
@@ -158,19 +158,27 @@ interface IssueGroup {
 }
 
 function isTerminal(stateType: string | undefined): boolean {
-  return stateType === "completed" || stateType === "cancelled" || stateType === "canceled";
+  return (
+    stateType === "completed" ||
+    stateType === "cancelled" ||
+    stateType === "canceled" ||
+    stateType === "duplicate"
+  );
 }
 
-/// Rank for state groups: workflow order triage→backlog→unstarted→started→completed→cancelled.
-/// "No state" always sorts last.
+/// Rank for state groups: Linear's own order as shown in the user's workspace —
+/// triage → started → unstarted → backlog → completed → canceled → duplicate.
+/// Within a rank, groups sort by workflow `position` ascending (so a completed
+/// state with position −899, "Pending", precedes "Done"). "No state" sorts last.
 const STATE_TYPE_RANK: Record<string, number> = {
   triage: 0,
-  backlog: 1,
+  started: 1,
   unstarted: 2,
-  started: 3,
+  backlog: 3,
   completed: 4,
   cancelled: 5,
   canceled: 5,
+  duplicate: 6,
 };
 
 function groupIssues(issues: IssueView[], groupBy: LinearGroupBy): IssueGroup[] {
@@ -196,7 +204,7 @@ function groupIssues(issues: IssueView[], groupBy: LinearGroupBy): IssueGroup[] 
   for (const issue of issues) {
     if (groupBy === "state") {
       const label = issue.stateName ?? "No state";
-      const rank = issue.stateType != null ? (STATE_TYPE_RANK[issue.stateType] ?? 6) : 7;
+      const rank = issue.stateType != null ? (STATE_TYPE_RANK[issue.stateType] ?? 7) : 8;
       push(`state:${issue.stateId ?? label}`, label, issue.stateType ?? null, issue.stateColor ?? null, issue, rank, issue.statePosition);
     } else if (groupBy === "project") {
       const label = issue.projectName ?? "No project";
@@ -1005,7 +1013,6 @@ function LinearGroupSection({
   copyIssue: (identifier: string) => void;
   allIssues: readonly IssueView[];
 }) {
-  const iconType = group.stateType ? linearStateToIconType(group.stateType) : null;
 
   // Render an issue and (when expanded) its full sub-issue tree, recursively.
   // `seen` guards malformed parent cycles (§9 canon).
@@ -1045,8 +1052,8 @@ function LinearGroupSection({
           ? <ChevronDown size={11} className="shrink-0 text-muted-foreground" />
           : <ChevronRight size={11} className="shrink-0 text-muted-foreground" />
         }
-        {iconType ? (
-          <StatusIcon type={iconType} color={group.color} size={13} className="shrink-0" title={group.label} />
+        {group.stateType ? (
+          <LinearStatusIcon stateType={group.stateType} color={group.color} size={13} className="shrink-0" title={group.label} />
         ) : group.color ? (
           <span className="size-1.5 shrink-0 rounded-full" style={{ background: group.color }} />
         ) : null}
@@ -1143,7 +1150,6 @@ function LinearIssueRow({
   copyIssue: (identifier: string) => void;
   allIssues: readonly IssueView[];
 }) {
-  const iconType = linearStateToIconType(issue.stateType);
   const priorityStr = linearPriorityStr(issue.priority);
   const now = Date.now();
   const overdue = issue.dueDate != null && issue.dueDate < now && !isTerminal(issue.stateType);
@@ -1205,8 +1211,8 @@ function LinearIssueRow({
       )}
 
       <PriorityIcon priority={priorityStr} size={12} className="shrink-0" />
-      <StatusIcon
-        type={iconType}
+      <LinearStatusIcon
+        stateType={issue.stateType}
         color={issue.stateColor ?? null}
         size={13}
         className="shrink-0"

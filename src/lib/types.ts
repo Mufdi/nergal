@@ -47,6 +47,9 @@ export interface Config {
   custom_themes: CustomTheme[];
   keymap_overrides: Record<string, string>;
   mcp_server_enabled: boolean;
+  /// Default panel view applied on first open (frontend-owned).
+  linear_default_view?: string | null;
+  clickup_default_view?: string | null;
 }
 
 export interface CustomThemeFonts {

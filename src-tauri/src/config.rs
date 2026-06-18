@@ -85,6 +85,15 @@ pub struct Config {
     /// for a workspace with very large teams. Backend-owned.
     #[serde(default)]
     pub linear_active_window_days: Option<u64>,
+    /// Default Linear panel view applied on first open: "mine" | "state" |
+    /// "project" | "assignee" | "cycle". `None`/unknown → "mine" (legacy
+    /// behavior). Frontend-owned (round-trips through get_config/save_config).
+    #[serde(default)]
+    pub linear_default_view: Option<String>,
+    /// Default ClickUp panel view applied on first open: "mine" | "status" |
+    /// "list" | "assignee". `None`/unknown → "mine". Frontend-owned.
+    #[serde(default)]
+    pub clickup_default_view: Option<String>,
     /// User keymap overrides, keyed by `ShortcutAction.id` (e.g. "new-session")
     /// → keys string in the registry format (e.g. "ctrl+alt+n"). The frontend
     /// dispatcher resolves override-over-default; the command palette renders
@@ -214,6 +223,8 @@ impl Default for Config {
             clickup_poll_interval_secs: None,
             linear_poll_interval_secs: None,
             linear_active_window_days: None,
+            linear_default_view: None,
+            clickup_default_view: None,
             keymap_overrides: HashMap::new(),
             mcp_server_enabled: false,
             summary: SummaryConfig::default(),

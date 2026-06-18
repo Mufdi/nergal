@@ -37,6 +37,7 @@ import { Select } from "@/components/ui/select";
 import { LinearStatusIcon } from "@/components/linear/LinearStatusIcon";
 import { PriorityIcon } from "@/components/clickup/PriorityIcon";
 import { zenModeAtom } from "@/stores/zenMode";
+import { configAtom } from "@/stores/config";
 import {
   GROUP_BY_ORDER,
   LINEAR_ACTION_LABELS,
@@ -138,6 +139,10 @@ function compareIssues(a: IssueView, b: IssueView, field: LinearSortField, dir: 
 // ── View chip strip ──
 type LinearView = "mine" | LinearGroupBy;
 const VIEW_ORDER: LinearView[] = ["mine", ...GROUP_BY_ORDER];
+
+/// The configured default view is applied once per app session (survives panel
+/// remounts; a user view change afterwards is never overridden).
+let linearDefaultViewApplied = false;
 const VIEW_LABEL: Record<LinearView, string> = {
   mine: "My issues",
   state: "State",
@@ -292,6 +297,18 @@ export function LinearPanel() {
       setGroupBy(view);
     }
   }
+
+  // Apply the configured default view once per session (before any user change).
+  const defaultView = useAtomValue(configAtom).linear_default_view;
+  useEffect(() => {
+    if (linearDefaultViewApplied) return;
+    linearDefaultViewApplied = true;
+    if (defaultView && defaultView !== "mine" && VIEW_ORDER.includes(defaultView as LinearView)) {
+      selectView(defaultView as LinearView);
+    }
+    // Run once on first mount; selectView is stable (atom setters).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Shift+←/→ cycles view chips (patterns.md §2)
   useEffect(() => {

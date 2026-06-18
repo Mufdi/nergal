@@ -749,9 +749,17 @@ function syncStateLabel(status: ClickUpSyncStatus): string {
   }
 }
 
+const CLICKUP_VIEW_OPTIONS = [
+  { value: "mine", label: "My tasks" },
+  { value: "status", label: "Status" },
+  { value: "list", label: "List" },
+  { value: "assignee", label: "Assignee" },
+];
+
 function ClickUpSection() {
   const [syncStatus, setSyncStatus] = useAtom(clickupSyncStatusAtom);
   const [tokenOnDisk, setTokenOnDisk] = useAtom(clickupTokenOnDiskAtom);
+  const [config, setConfig] = useAtom(configAtom);
   const pushToast = useSetAtom(toastsAtom);
   const [tokenInput, setTokenInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -910,6 +918,19 @@ function ClickUpSection() {
         </div>
       )}
 
+      <div className="grid gap-1.5">
+        <Label htmlFor="clickup-default-view">Default view</Label>
+        <Select
+          id="clickup-default-view"
+          value={config.clickup_default_view ?? "mine"}
+          onValueChange={(v) => setConfig((prev) => ({ ...prev, clickup_default_view: v }))}
+          options={CLICKUP_VIEW_OPTIONS}
+        />
+        <p className="text-xs text-muted-foreground">
+          The view the ClickUp panel opens on. Applies on next launch. Save to persist.
+        </p>
+      </div>
+
       {syncStatus && (
         <p className="text-xs text-muted-foreground">
           Status: {syncStateLabel(syncStatus)}
@@ -932,9 +953,18 @@ function linearSyncStateLabel(s: LinearSyncStatus): string {
   }
 }
 
+const LINEAR_VIEW_OPTIONS = [
+  { value: "mine", label: "My issues" },
+  { value: "state", label: "State" },
+  { value: "project", label: "Project" },
+  { value: "assignee", label: "Assignee" },
+  { value: "cycle", label: "Cycle" },
+];
+
 function LinearSection() {
   const [syncStatus, setSyncStatus] = useAtom(linearSyncStatusAtom);
   const [keyOnDisk, setKeyOnDisk] = useAtom(linearKeyOnDiskAtom);
+  const [config, setConfig] = useAtom(configAtom);
   const pushToast = useSetAtom(toastsAtom);
   const [keyInput, setKeyInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1041,6 +1071,19 @@ function LinearSection() {
         </div>
         <p className="text-xs text-muted-foreground">
           Stored in the OS keyring when available. The key never leaves this machine.
+        </p>
+      </div>
+
+      <div className="grid gap-1.5">
+        <Label htmlFor="linear-default-view">Default view</Label>
+        <Select
+          id="linear-default-view"
+          value={config.linear_default_view ?? "mine"}
+          onValueChange={(v) => setConfig((prev) => ({ ...prev, linear_default_view: v }))}
+          options={LINEAR_VIEW_OPTIONS}
+        />
+        <p className="text-xs text-muted-foreground">
+          The view the Linear panel opens on. Applies on next launch. Save to persist.
         </p>
       </div>
 
@@ -1158,12 +1201,14 @@ interface EditorInfo {
   available: boolean;
 }
 
+// `-?` strips the optional modifier so optional Config fields (e.g. the
+// default-view selects) don't leak `undefined` into the key union.
 type StringConfigKey = {
-  [K in keyof Config]: Config[K] extends string ? K : never;
+  [K in keyof Config]-?: Config[K] extends string ? K : never;
 }[keyof Config];
 
 type BooleanConfigKey = {
-  [K in keyof Config]: Config[K] extends boolean ? K : never;
+  [K in keyof Config]-?: Config[K] extends boolean ? K : never;
 }[keyof Config];
 
 const TOGGLE_FIELDS: { key: BooleanConfigKey; label: string; help: string }[] = [

@@ -31,6 +31,7 @@ import {
 import { open as openShell } from "@tauri-apps/plugin-shell";
 import { invoke } from "@/lib/tauri";
 import { focusIfPanelZone } from "@/lib/panelFocus";
+import { configAtom } from "@/stores/config";
 import { Select } from "@/components/ui/select";
 import { StatusIcon } from "@/components/clickup/StatusIcon";
 import { PriorityIcon } from "@/components/clickup/PriorityIcon";
@@ -82,6 +83,10 @@ import { activeSessionIdAtom } from "@/stores/workspace";
 /// status); the rest are plain group-by modes over the current filter state.
 type ClickUpView = "mine" | ClickUpGroupBy;
 const VIEW_ORDER: ClickUpView[] = ["mine", ...GROUP_BY_ORDER];
+
+/// The configured default view is applied once per app session (survives panel
+/// remounts; a user view change afterwards is never overridden).
+let clickupDefaultViewApplied = false;
 
 const VIEW_LABEL: Record<ClickUpView, string> = {
   mine: "My tasks",
@@ -236,6 +241,17 @@ export function ClickUpPanel() {
       setGroupBy(view);
     }
   }
+
+  // Apply the configured default view once per session (before any user change).
+  const defaultView = useAtomValue(configAtom).clickup_default_view;
+  useEffect(() => {
+    if (clickupDefaultViewApplied) return;
+    clickupDefaultViewApplied = true;
+    if (defaultView && defaultView !== "mine" && VIEW_ORDER.includes(defaultView as ClickUpView)) {
+      selectView(defaultView as ClickUpView);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Shift+←/→ cycles the view chips — component-local handler per the
   // chip-strip contract (docs/patterns.md §2), with the editable-field guard.

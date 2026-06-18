@@ -12,8 +12,15 @@ import {
   ChevronRight,
   Clock,
   Flag,
+  GitBranchPlus,
+  Link2,
+  Pin,
+  PinOff,
+  RefreshCw,
   RotateCcw,
+  Send,
   Tag,
+  Unlink,
   UserCheck,
   X,
 } from "lucide-react";
@@ -31,6 +38,9 @@ import { PriorityIcon } from "@/components/clickup/PriorityIcon";
 import { zenModeAtom } from "@/stores/zenMode";
 import {
   GROUP_BY_ORDER,
+  LINEAR_ACTION_LABELS,
+  activeSessionLinearIssueAtom,
+  activeSessionLinearPinsAtom,
   copyLinearIssueAction,
   linearAssignedToMeAtom,
   linearDetailIssueIdAtom,
@@ -42,6 +52,11 @@ import {
   linearSyncStatusAtom,
   linearTeamFilterAtom,
   linearTeamsAtom,
+  reinjectIssueAction,
+  requestBindIssueAction,
+  requestSendIssueAction,
+  spawnWorktreeWithIssueAction,
+  togglePinIssueAction,
   type IssueView,
   type LinearGroupBy,
   type LinearSortField,
@@ -1067,6 +1082,47 @@ function AssigneeAvatarSmall({ name, avatarUrl }: { name: string; avatarUrl?: st
   );
 }
 
+/// One row-level verb affordance (mirrors ClickUpPanel's RowAction): a
+/// span[role=button] because the row itself is a <button> (nested buttons are
+/// invalid HTML), with the delay-0 tooltip the panel already provides.
+function RowAction({
+  label,
+  onClick,
+  active = false,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  active?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            role="button"
+            tabIndex={-1}
+            aria-label={label}
+            onClick={(e) => {
+              e.stopPropagation();
+              onClick();
+            }}
+            className={`flex size-4 shrink-0 items-center justify-center rounded transition-colors ${
+              active
+                ? "text-primary hover:bg-secondary/60"
+                : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+            }`}
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="text-[10px]">{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 function LinearIssueRow({
   issue,
   depth = 0,
@@ -1094,6 +1150,19 @@ function LinearIssueRow({
   // Sub-issue progress: count children from the full pool (not filtered).
   const subIssueTotal = allIssues.filter((i) => i.parentId === issue.id).length;
   const subIssueDone = allIssues.filter((i) => i.parentId === issue.id && isTerminal(i.stateType)).length;
+
+  // Issue → agent verbs, read per-row (cheap derived atoms) so the prop chain
+  // through the group/tree stays untouched. Reveal mirrors ClickUpPanel: the
+  // trailing meta yields on hover / keyboard-cursor, the buttons take its place.
+  const boundIssueId = useAtomValue(activeSessionLinearIssueAtom);
+  const pinnedIssueIds = useAtomValue(activeSessionLinearPinsAtom);
+  const requestSend = useSetAtom(requestSendIssueAction);
+  const spawnWorktree = useSetAtom(spawnWorktreeWithIssueAction);
+  const togglePin = useSetAtom(togglePinIssueAction);
+  const requestBind = useSetAtom(requestBindIssueAction);
+  const reinject = useSetAtom(reinjectIssueAction);
+  const pinned = pinnedIssueIds.includes(issue.id);
+  const bound = issue.id === boundIssueId;
 
   return (
     <button
@@ -1160,8 +1229,9 @@ function LinearIssueRow({
         {issue.title}
       </span>
 
-      {/* Trailing meta: sub-issue progress, labels, estimate, due, assignee avatar */}
-      <span className="flex shrink-0 items-center gap-1">
+      {/* Trailing meta: sub-issue progress, labels, estimate, due, assignee avatar.
+          Yields to the verb buttons on hover / keyboard-cursor (ClickUp parity). */}
+      <span className="flex shrink-0 items-center gap-1 group-hover:hidden group-data-[nav-selected=true]:hidden">
         {/* Sub-issue progress: N/M when this issue has children */}
         {subIssueTotal > 0 && (
           <Tooltip>
@@ -1218,6 +1288,36 @@ function LinearIssueRow({
         {/* Assignee avatar */}
         {issue.assigneeName && (
           <AssigneeAvatarSmall name={issue.assigneeName} avatarUrl={issue.assigneeAvatarUrl} />
+        )}
+      </span>
+
+      {/* Verb buttons — appear on mouse hover AND on the keyboard cursor
+          (data-nav-selected), same affordance as ClickUpPanel rows. */}
+      <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex group-data-[nav-selected=true]:flex">
+        <RowAction label={LINEAR_ACTION_LABELS.send} onClick={() => requestSend(issue.id)}>
+          <Send size={10} />
+        </RowAction>
+        <RowAction label={LINEAR_ACTION_LABELS.spawn} onClick={() => void spawnWorktree(issue.id)}>
+          <GitBranchPlus size={10} />
+        </RowAction>
+        <RowAction
+          label={pinned ? LINEAR_ACTION_LABELS.unpin : LINEAR_ACTION_LABELS.pin}
+          onClick={() => void togglePin(issue.id)}
+          active={pinned}
+        >
+          {pinned ? <PinOff size={10} /> : <Pin size={10} />}
+        </RowAction>
+        <RowAction
+          label={bound ? LINEAR_ACTION_LABELS.unbind : LINEAR_ACTION_LABELS.bind}
+          onClick={() => void requestBind(issue.id)}
+          active={bound}
+        >
+          {bound ? <Unlink size={10} /> : <Link2 size={10} />}
+        </RowAction>
+        {(bound || pinned) && (
+          <RowAction label={LINEAR_ACTION_LABELS.reinject} onClick={() => void reinject(issue.id)}>
+            <RefreshCw size={10} />
+          </RowAction>
         )}
       </span>
     </button>

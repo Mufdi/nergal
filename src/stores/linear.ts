@@ -2,6 +2,7 @@ import { atom, type getDefaultStore } from "jotai";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { invoke, listen } from "@/lib/tauri";
 import { confirm as swalConfirm } from "@/lib/swal";
+import { focusZoneAtom } from "./shortcuts";
 import { toastsAtom } from "./toast";
 import {
   activeSessionIdAtom,
@@ -158,6 +159,21 @@ export const linearPinsMapAtom = atom<Record<string, string[]>>({});
 /// Pending send-as-prompt confirmation (the send auto-submits a turn, so the
 /// user reviews the composed block first). null = dialog closed.
 export const linearSendConfirmAtom = atom<{ sessionId: string; issueId: string } | null>(null);
+
+/// One-shot flag: when a worktree spawn closes the floating detail, the detail's
+/// close-effect must NOT restore focus to the panel — focus belongs to the new
+/// session's terminal. Module-level (not an atom) so the store action can set it
+/// and the component effect consumes it (mirrors ClickUp's suppressCloseFocusRef,
+/// which is component-local because ClickUp's convert-to-tab is the only setter).
+let _suppressDetailCloseFocus = false;
+export function suppressLinearDetailCloseFocus(): void {
+  _suppressDetailCloseFocus = true;
+}
+export function consumeLinearDetailCloseFocusSuppress(): boolean {
+  const v = _suppressDetailCloseFocus;
+  _suppressDetailCloseFocus = false;
+  return v;
+}
 
 /// Shared binding resolution for surfaces that render per-session rows (session
 /// tabs): runtime map wins, Session row seeds.
@@ -386,6 +402,15 @@ export const spawnWorktreeWithIssueAction = atom(null, async (get, set, issueId:
     // Activation spawns the PTY, which consumes the backend-queued initial
     // prompt — same flow as the ClickUp worktree verb.
     set(activeSessionIdAtom, session.id);
+    // When spawned from the floating detail, close it and send focus to the new
+    // session's prompt (not back to the panel). The suppress flag stops the
+    // detail's close-effect from yanking focus to the panel; setting the focus
+    // zone to "terminal" makes TerminalManager focus the freshly active PTY.
+    if (get(linearDetailIssueIdAtom) !== null) {
+      suppressLinearDetailCloseFocus();
+      set(linearDetailIssueIdAtom, null);
+      set(focusZoneAtom, "terminal");
+    }
     set(toastsAtom, {
       message: `Worktree session: ${session.name}`,
       description: "Issue bound and queued as the initial prompt.",

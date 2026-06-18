@@ -10,6 +10,7 @@ import { clampGeometryToViewport, type FloatingGeometry } from "@/stores/scratch
 import {
   activeSessionLinearIssueAtom,
   activeSessionLinearPinsAtom,
+  consumeLinearDetailCloseFocusSuppress,
   linearDetailIssueIdAtom,
   reinjectIssueAction,
   requestBindIssueAction,
@@ -94,10 +95,16 @@ export function LinearTaskDetail() {
     return () => window.removeEventListener("keydown", onKey);
   }, [issueId, requestSend, spawnWorktree, togglePin, requestBind, reinject, boundIssueId, pinnedIssueIds]);
 
-  // Restore focus when the modal closes (mirrors ClickUpTaskDetail)
+  // Restore focus when the modal closes (mirrors ClickUpTaskDetail). Skipped
+  // when a worktree spawn closed it — that flow owns focus (the new session's
+  // terminal), so stealing it back to the panel would be wrong.
   useEffect(() => {
     if (issueId !== null) {
       wasOpenRef.current = true;
+      return;
+    }
+    if (consumeLinearDetailCloseFocusSuppress()) {
+      wasOpenRef.current = false;
       return;
     }
     if (wasOpenRef.current) {

@@ -42,6 +42,7 @@ import {
   linearConfiguredAtom,
   linearDetailIssueIdAtom,
   linearIssuesAtom,
+  linearPinsMapAtom,
   resolveActiveLinearIssue,
 } from "@/stores/linear";
 import { toastsAtom } from "@/stores/toast";
@@ -172,6 +173,17 @@ function linearChipTooltip(
   return `Active Linear issue: ${issueName}${unsupported} — click to open its detail`;
 }
 
+function linearPinsChipTooltip(
+  count: number,
+  tier: ContextInjectionTier | undefined,
+  agentId: string | undefined,
+): string {
+  const noun = count === 1 ? "Linear issue pinned as context" : "Linear issues pinned as context";
+  const unsupported =
+    tier === "unsupported" ? ` · injection unsupported for ${agentId ?? "this agent"}` : "";
+  return `${count} ${noun}${unsupported}`;
+}
+
 /// Pinned ClickUp tasks ride the same injection channel as pinned notes —
 /// same tier honesty as pinnedChipTooltip.
 function clickupPinsChipTooltip(
@@ -225,6 +237,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   const linearConfigured = useAtomValue(linearConfiguredAtom);
   const clickupBindingMap = useAtomValue(clickupBindingMapAtom);
   const linearBindingMap = useAtomValue(linearBindingMapAtom);
+  const linearPinsMap = useAtomValue(linearPinsMapAtom);
   const linearIssues = useAtomValue(linearIssuesAtom);
   const clickupPinsMap = useAtomValue(clickupPinsMapAtom);
   const clickupTasks = useAtomValue(clickupTasksAtom);
@@ -553,6 +566,27 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
                     </TooltipTrigger>
                     <TooltipContent side="bottom">
                       {clickupChipTooltip(taskName, injectionTierMap[tabId], entry.session.agent_id)}
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              })()}
+
+              {/* Pinned Linear issues chip — count only, like the ClickUp pins chip. */}
+              {(() => {
+                const count = (linearPinsMap[tabId] ?? entry.session.pinned_linear_issue_ids ?? []).length;
+                if (count === 0) return null;
+                return (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span className="flex shrink-0 items-center gap-0.5 text-[10px] text-muted-foreground/70" />
+                      }
+                    >
+                      <LinearIcon size={9} className="shrink-0" />
+                      {count}
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      {linearPinsChipTooltip(count, injectionTierMap[tabId], entry.session.agent_id)}
                     </TooltipContent>
                   </Tooltip>
                 );

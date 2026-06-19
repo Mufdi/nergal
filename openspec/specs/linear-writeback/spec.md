@@ -1,7 +1,8 @@
-# linear-writeback
+# linear-writeback Specification
 
-## ADDED Requirements
-
+## Purpose
+TBD - created by archiving change linear-writeback. Update Purpose after archive.
+## Requirements
 ### Requirement: Bidirectional issue editing with server-side validation
 
 The system SHALL let the user edit a Linear issue from Nergal — change its workflow state, post comments, and set or clear the assignee — and reflect each change in Linear via the GraphQL API (`issueUpdate` for state and assignee, `commentCreate` for comments). Each mutation SHALL select the response `success` boolean and SHALL treat `success != true` (even with no GraphQL `errors`) as a write failure, never a silent no-op. The assignee surface SHALL be set-to-me and clear (Linear assignee is a single scalar, not a set); a full team-member picker is deferred (the mirror holds no complete member directory). An assign-to-me SHALL error when the viewer id is unresolved rather than fall through to clearing the assignee. State writes SHALL validate the target state belongs to the issue's team workflow states at the command boundary, not only in the UI. State options SHALL be the issue's **non-synthetic** team workflow states (per-team, never hardcoded), read from the mirror (`linear_workflow_states WHERE team_id = ? AND synthetic = 0`) — synthetic placeholder rows SHALL be excluded from both the picker and the validation source; no live resolution step is needed because Linear states are fully materialized per team (a divergence from ClickUp's per-List inheritance). Comment writes (unlike the direct state/assignee edits) SHALL route through the confirmation-token boundary, not a standalone comment command. Description, priority, and label writes are out of scope for this change.
@@ -35,6 +36,22 @@ The system SHALL let the user edit a Linear issue from Nergal — change its wor
 - **WHEN** a mutation returns `success: false` with no GraphQL errors
 - **THEN** the system SHALL treat it as a write failure
 - **AND** the frontend overlay SHALL revert
+
+### Requirement: Cycle assignment write-back
+
+The system SHALL let the user add an issue to a cycle, move it between cycles, or remove it from its cycle, reflected in Linear via `issueUpdate` (`cycleId`). The cycle picker SHALL list the team's cycles read from the mirror (`linear_cycles WHERE team_id = ?`) plus a "no cycle" option. Removal SHALL send `cycleId: null` (a `Some(None)` double-option so a state/assignee-only write never accidentally clears the cycle). Cycle writes SHALL reuse the same optimistic-overlay, provisional-registry, and echo-dedup machinery as assignee (a `Cycle` write-field), and SHALL NOT be token-gated (reversible, like state and assignee).
+
+#### Scenario: Add to or move between cycles
+
+- **WHEN** the user selects a cycle for the issue
+- **THEN** the system SHALL call `issueUpdate` with `cycleId` set to the chosen cycle id
+- **AND** the change SHALL be visible in Linear
+
+#### Scenario: Remove from cycle
+
+- **WHEN** the user selects "no cycle"
+- **THEN** the system SHALL call `issueUpdate` with `cycleId: null`
+- **AND** the issue SHALL no longer belong to a cycle in Linear
 
 ### Requirement: Optimistic UI without durable mirror corruption
 
@@ -161,3 +178,4 @@ The system SHALL offer the write-back closure at two agent-agnostic moments: on 
 - **THEN** the system SHALL report that the state change failed and the comment posted
 - **AND** SHALL still close the issue out locally (unbind + marker)
 - **AND** SHALL offer to retry the state carrying the issue id explicitly (the binding is already gone), without pretending the comment was rolled back
+

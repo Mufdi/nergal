@@ -81,6 +81,13 @@ export interface WorkflowStateView {
   position: number;
 }
 
+/// Returned by linear_read_team_cycles — the cycle picker source.
+export interface CycleView {
+  id: string;
+  name?: string;
+  number?: number;
+}
+
 type Store = ReturnType<typeof getDefaultStore>;
 
 // ── Backend view shapes ──
@@ -133,7 +140,8 @@ export interface LinearActivityEntry {
   id: string;
   createdAt?: number;
   actor?: string;
-  kind: "created" | "state" | "assignee" | "label" | "cycle" | "priority";
+  actorAvatarUrl?: string;
+  kind: "created" | "state" | "assignee" | "label" | "cycle" | "priority" | "estimate" | "dueDate" | "title" | "description";
   from?: string;
   to?: string;
   added: string[];

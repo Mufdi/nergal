@@ -744,6 +744,34 @@ pub fn read_team_states(conn: &Connection, team_id: &str) -> Result<Vec<Workflow
     Ok(states)
 }
 
+/// View returned by `read_team_cycles` — the cycle picker source.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CycleView {
+    pub id: String,
+    pub name: Option<String>,
+    pub number: Option<i64>,
+}
+
+/// Cycles for a team, newest first (highest number). Feeds the cycle picker.
+pub fn read_team_cycles(conn: &Connection, team_id: &str) -> Result<Vec<CycleView>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, number FROM linear_cycles \
+         WHERE team_id = ?1 \
+         ORDER BY number DESC",
+    )?;
+    let cycles = stmt
+        .query_map([team_id], |row| {
+            Ok(CycleView {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                number: row.get(2)?,
+            })
+        })?
+        .collect::<std::result::Result<_, _>>()?;
+    Ok(cycles)
+}
+
 /// Validate that `state_id` belongs to the non-synthetic states of `team_id`.
 /// Returns `Ok(())` when valid, `Err` when not found or synthetic.
 pub fn validate_state_for_team(conn: &Connection, team_id: &str, state_id: &str) -> Result<()> {
@@ -781,16 +809,19 @@ pub fn get_issue_team_id(conn: &Connection, issue_id: &str) -> Result<String> {
 /// Retrieve the current `state_id` and `assignee_id` for an issue from the
 /// post-reconcile mirror.  Returns `None` when the issue is absent (evicted /
 /// tombstoned / out of window).
+/// `(state_id, assignee_id, cycle_id)` for an issue — the writeback echo fields.
+pub type IssueWriteFields = (Option<String>, Option<String>, Option<String>);
+
 pub fn get_issue_write_fields(
     conn: &Connection,
     issue_id: &str,
-) -> Result<Option<(Option<String>, Option<String>)>> {
+) -> Result<Option<IssueWriteFields>> {
     use rusqlite::OptionalExtension;
-    let row: Option<(Option<String>, Option<String>)> = conn
+    let row = conn
         .query_row(
-            "SELECT state_id, assignee_id FROM linear_issues WHERE id = ?1",
+            "SELECT state_id, assignee_id, cycle_id FROM linear_issues WHERE id = ?1",
             [issue_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?;
     Ok(row)

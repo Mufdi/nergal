@@ -1,27 +1,36 @@
-import React, { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import React, { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { open as openShell } from "@tauri-apps/plugin-shell";
 import {
+  AlignLeft,
+  Calendar,
   CheckSquare,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Circle,
+  CircleDot,
   ExternalLink,
-  GitBranch,
+  Pencil,
   GitBranchPlus,
+  IterationCw,
   Link2,
   Paperclip,
   Pin,
   PinOff,
   RefreshCw,
   Send,
+  SignalHigh,
+  Tag,
   Unlink,
   UserCheck,
   UserMinus,
+  UserPlus,
 } from "lucide-react";
 import { invoke } from "@/lib/tauri";
 import { MarkdownView } from "@/components/plan/MarkdownView";
 import { LinearStatusIcon } from "@/components/linear/LinearStatusIcon";
+import { LinearEstimateIcon } from "@/components/linear/LinearEstimateIcon";
 import { PriorityIcon } from "@/components/clickup/PriorityIcon";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -49,6 +58,7 @@ import {
   type LinearIssueDetail,
   type LinearRelation,
   type WorkflowStateView,
+  type CycleView,
 } from "@/stores/linear";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { toastsAtom } from "@/stores/toast";
@@ -104,8 +114,21 @@ function formatRelative(secs: number): string {
   return `${Math.floor(mo / 12)}y ago`;
 }
 
+/// t-shirt estimate scale (matches the rail's TSHIRT_LABELS); maps the raw
+/// numeric estimate carried by an "estimate" activity to its size letter.
+const TSHIRT_ESTIMATE: Record<string, string> = { "1": "XS", "2": "S", "3": "M", "4": "L", "5": "XL", "6": "XXL" };
+
+/// Format a Linear `TimelessDate` (YYYY-MM-DD) as "Nov 18, 2025".
+function formatDateStr(s: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (!m) return s;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
 /// The human verb for an activity entry, derived from its kind + from/to.
-function activityVerb(e: LinearActivityEntry): string {
+/// `tshirt` maps estimate numbers to size letters when the team uses t-shirt sizing.
+function activityVerb(e: LinearActivityEntry, tshirt = false): string {
   switch (e.kind) {
     case "created":
       return "created the issue";
@@ -128,8 +151,52 @@ function activityVerb(e: LinearActivityEntry): string {
       return "changed cycle";
     case "priority":
       return e.from && e.to ? `changed priority ${e.from} → ${e.to}` : e.to ? `set priority to ${e.to}` : "changed priority";
+    case "estimate": {
+      const lbl = (v?: string) => (v == null ? null : tshirt ? TSHIRT_ESTIMATE[v] ?? v : v);
+      const to = lbl(e.to);
+      const from = lbl(e.from);
+      if (to && from) return `changed estimate ${from} → ${to}`;
+      if (to) return `estimated complexity as ${to}`;
+      return "removed the estimate";
+    }
+    case "dueDate":
+      if (e.to) return `set the due date to ${formatDateStr(e.to)}`;
+      return "removed the due date";
+    case "title":
+      return e.to ? `renamed to “${e.to}”` : "renamed the issue";
+    case "description":
+      return "updated the description";
     default:
       return "updated the issue";
+  }
+}
+
+/// The timeline node icon for an activity entry, keyed by its kind (and, for
+/// assignee, the add/remove direction). Matches Linear's activity-feed glyphs.
+function activityIcon(e: LinearActivityEntry, size = 11): React.ReactNode {
+  switch (e.kind) {
+    case "created":
+      return <CircleDot size={size} />;
+    case "assignee":
+      if (e.to && e.from) return <UserCheck size={size} />;
+      return e.to ? <UserPlus size={size} /> : <UserMinus size={size} />;
+    case "label":
+      return <Tag size={size} />;
+    case "cycle":
+      return <IterationCw size={size} />;
+    case "priority":
+      return <SignalHigh size={size} />;
+    case "estimate":
+      return <LinearEstimateIcon size={size} />;
+    case "dueDate":
+      return <Calendar size={size} />;
+    case "title":
+      return <Pencil size={size} />;
+    case "description":
+      return <AlignLeft size={size} />;
+    case "state":
+    default:
+      return <Circle size={size} />;
   }
 }
 
@@ -171,12 +238,14 @@ export function useLinearIssueController({
   const copyIssue = useSetAtom(copyLinearIssueAction);
   const activeSessionId = useAtomValue(activeSessionIdAtom);
   const addToast = useSetAtom(toastsAtom);
+  const [closedOutSet, setClosedOut] = useAtom(linearClosedOutAtom);
   const [detail, setDetail] = useState<LinearDetailData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [commentDraft, setCommentDraft] = useState("");
   const [postingComment, setPostingComment] = useState(false);
   const [statusPickerOpen, setStatusPickerOpen] = useState(false);
+  const [cyclePickerOpen, setCyclePickerOpen] = useState(false);
   const commentRef = useRef<HTMLTextAreaElement | null>(null);
   // State-driven index cursor over actionable elements (mirrors ClickUp's
   // detail nav: ↑/↓ move, Enter/Space activate, highlight via data-nav-selected).
@@ -201,12 +270,19 @@ export function useLinearIssueController({
     return () => clearTimeout(t);
   }, [issueId]);
 
+  // When a rail dropdown (state/cycle) closes, return focus to the nav container
+  // so arrow nav resumes. Mirrors ClickUp.
+  useEffect(() => {
+    if (issueId === null || statusPickerOpen || cyclePickerOpen) return;
+    contentRef.current?.focus({ preventScroll: true });
+  }, [statusPickerOpen, cyclePickerOpen, issueId]);
+
   // Status and due are in the properties rail (always at top) — scroll the main
   // content area to the top instead of scrollIntoView (which would scroll the
   // rail's aside, not the main pane). Everything else gets smooth scrollIntoView.
   useEffect(() => {
     if (!navKey) return;
-    if (navKey === "status" || navKey === "due") {
+    if (navKey === "status" || navKey === "due" || navKey === "cycle") {
       mainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
@@ -292,7 +368,10 @@ export function useLinearIssueController({
   }, [issueId]);
 
   const mirrorIssue = issueId ? issues.find((i) => i.id === issueId) ?? null : null;
-  const issue = detail?.issue ?? mirrorIssue;
+  // Prefer the live mirror (refreshed by the poll's `linear:changed`) over the
+  // detail's open-time snapshot so write-backs (state/assignee/cycle) reflect in
+  // the modal once the next reconcile lands, instead of staying stale until reopen.
+  const issue = mirrorIssue ?? detail?.issue;
   const comments = detail?.comments ?? [];
   const attachments = detail?.attachments ?? [];
   const relations = detail?.relations ?? [];
@@ -308,6 +387,21 @@ export function useLinearIssueController({
       const arr = childMap.get(i.parentId);
       if (arr) arr.push(i);
       else childMap.set(i.parentId, [i]);
+    }
+  }
+
+  const closedOut = issue ? closedOutSet.has(issue.id) : false;
+
+  async function handleUncloseOut(targetId: string) {
+    try {
+      await invoke("linear_unmark_closed_out", { issueId: targetId });
+      setClosedOut((prev) => {
+        const next = new Set(prev);
+        next.delete(targetId);
+        return next;
+      });
+    } catch {
+      // Badge stays — silently ignore.
     }
   }
 
@@ -328,6 +422,10 @@ export function useLinearIssueController({
       void openValidatedUrl(issue?.url);
     } else if (key === "status") {
       setStatusPickerOpen(true);
+    } else if (key === "cycle") {
+      setCyclePickerOpen(true);
+    } else if (key === "unclose") {
+      if (issue) void handleUncloseOut(issue.id);
     } else if (key === "comment") {
       commentRef.current?.focus();
     } else if (key.startsWith("sub:")) {
@@ -341,6 +439,9 @@ export function useLinearIssueController({
   }
 
   function handleNavKeyDown(e: ReactKeyboardEvent) {
+    // While a rail dropdown (state/cycle) is open it owns ↑/↓/Enter/Esc via its
+    // own window-capture handler; don't let the cursor steal those keys.
+    if (statusPickerOpen || cyclePickerOpen) return;
     const target = e.target as HTMLElement | null;
     if (target?.tagName === "TEXTAREA" || target?.tagName === "INPUT") return;
     if (e.code === "ArrowDown" || e.code === "ArrowUp") {
@@ -425,6 +526,8 @@ export function useLinearIssueController({
     activity,
     subIssues,
     childMap,
+    closedOut,
+    handleUncloseOut,
     contentRef,
     mainRef,
     histNav,
@@ -442,6 +545,8 @@ export function useLinearIssueController({
     handlePostComment,
     statusPickerOpen,
     setStatusPickerOpen,
+    cyclePickerOpen,
+    setCyclePickerOpen,
     refreshDetail,
   };
 }
@@ -583,8 +688,8 @@ function StatePickerRail({
   const [states, setStates] = useState<WorkflowStateView[]>([]);
   const setOverlay = useSetAtom(linearOverlayAtom);
   const addToast = useSetAtom(toastsAtom);
-  const dropdownRef = useRef<HTMLDivElement | null>(null);
-  const [dropCursor, setDropCursor] = useState(0);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [activeIdx, setActiveIdx] = useState(0);
 
   useEffect(() => {
     if (!teamId) return;
@@ -597,72 +702,271 @@ function StatePickerRail({
   useEffect(() => {
     if (!open) return;
     const idx = states.findIndex((s) => s.id === currentStateId);
-    setDropCursor(idx >= 0 ? idx : 0);
+    setActiveIdx(idx >= 0 ? idx : 0);
   }, [open, currentStateId, states]);
 
-  async function handleSelect(stateId: string) {
+  // Keep the keyboard-highlighted option scrolled into view in the dropdown.
+  useEffect(() => {
+    if (!open) return;
+    wrapRef.current
+      ?.querySelector<HTMLElement>(`[data-opt-idx="${activeIdx}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [open, activeIdx]);
+
+  function choose(stateId: string) {
     onOpenChange(false);
     if (stateId === currentStateId) return;
     setLinearOverlayEntry(setOverlay, issueId, "state", stateId);
-    try {
-      await invoke("linear_set_issue_state", { issueId, stateId });
-    } catch (err) {
+    invoke("linear_set_issue_state", { issueId, stateId }).catch((err) => {
       clearLinearOverlayEntry(setOverlay, issueId, "state");
       addToast({ message: "State change failed", description: String(err), type: "error" });
-    }
+    });
   }
 
-  function handleDropKeyDown(e: React.KeyboardEvent) {
-    if (!open || states.length === 0) return;
-    if (e.code === "ArrowDown") {
-      e.preventDefault();
-      e.stopPropagation();
-      setDropCursor((c) => Math.min(c + 1, states.length - 1));
-    } else if (e.code === "ArrowUp") {
-      e.preventDefault();
-      e.stopPropagation();
-      setDropCursor((c) => Math.max(c - 1, 0));
-    } else if (e.code === "Enter" || e.code === "Space") {
-      e.preventDefault();
-      e.stopPropagation();
-      const s = states[dropCursor];
-      if (s) void handleSelect(s.id);
-    } else if (e.code === "Escape") {
-      e.preventDefault();
-      e.stopPropagation();
-      onOpenChange(false);
+  // Exact copy of ClickUp's StatusPicker keyboard model: while open, a
+  // window-capture listener owns ↑/↓/Enter/Esc; stopImmediatePropagation beats
+  // the cursor's handleNavKeyDown and the FloatingPanel Esc-to-close.
+  useEffect(() => {
+    if (!open) return;
+    function onOutside(e: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) onOpenChange(false);
     }
-  }
+    function onKey(e: KeyboardEvent) {
+      if (states.length === 0) return;
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setActiveIdx((p) => (p + 1) % states.length);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setActiveIdx((p) => (p - 1 + states.length) % states.length);
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const s = states[activeIdx];
+        if (s) choose(s.id);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        onOpenChange(false);
+      }
+    }
+    document.addEventListener("mousedown", onOutside);
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("mousedown", onOutside);
+      window.removeEventListener("keydown", onKey, true);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, states, activeIdx]);
 
   return (
-    <div className="relative" onKeyDown={handleDropKeyDown}>
+    <div ref={wrapRef} className="relative">
       <button
         type="button"
         data-nav-key="status"
         data-nav-selected={navKey === "status" || undefined}
         onClick={() => onOpenChange(!open)}
-        className="flex items-center gap-1.5 rounded px-1 outline-none transition-colors hover:bg-secondary/40"
+        className={`flex items-center gap-1.5 rounded px-1 outline-none transition-colors hover:bg-secondary/40 ${
+          navKey === "status" ? "ring-1 ring-foreground/50" : ""
+        }`}
       >
         <LinearStatusIcon stateType={currentStateType} color={currentStateColor ?? null} size={13} className="shrink-0" />
         <span className="text-foreground/80">{currentStateName ?? "No state"}</span>
       </button>
       {open && states.length > 0 && (
         <div
-          ref={dropdownRef}
-          className="absolute left-0 top-full z-50 mt-1 min-w-40 rounded-md border border-border bg-popover shadow-md"
+          data-floating-popup
+          className="absolute left-0 top-full z-50 mt-1 min-w-40 rounded-md border border-border bg-card shadow-md"
         >
           <div className="max-h-48 overflow-y-auto py-0.5">
             {states.map((s, i) => (
               <button
                 key={s.id}
                 type="button"
-                onClick={() => void handleSelect(s.id)}
-                className={`flex w-full items-center gap-2 px-2 py-1 text-left text-[11px] transition-colors hover:bg-secondary/50 ${
-                  i === dropCursor ? "bg-secondary/50" : ""
-                } ${s.id === currentStateId ? "text-foreground" : "text-muted-foreground"}`}
+                data-opt-idx={i}
+                data-nav-selected={i === activeIdx || undefined}
+                onMouseEnter={() => setActiveIdx(i)}
+                onClick={() => void choose(s.id)}
+                className={`flex w-full items-center gap-2 px-2 py-1 text-left text-[11px] transition-colors data-[nav-selected=true]:bg-accent data-[nav-selected=true]:text-accent-foreground ${
+                  s.id === currentStateId ? "text-foreground" : "text-muted-foreground"
+                }`}
               >
                 <LinearStatusIcon stateType={s.type} color={s.color ?? null} size={12} className="shrink-0" />
                 {s.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Cycle picker in the properties rail (keyboard-reachable, data-nav-key="cycle") ──
+
+/// "Add to cycle" / change-cycle control. Lists the team's cycles + a "No cycle"
+/// option. Writes via linear_set_issue_cycle + the optimistic overlay. Keyboard
+/// model is identical to StatePickerRail (window-capture while open).
+function CyclePicker({
+  issueId,
+  teamId,
+  currentCycleId,
+  currentCycleName,
+  navKey,
+  open,
+  onOpenChange,
+}: {
+  issueId: string;
+  teamId: string;
+  currentCycleId?: string;
+  currentCycleName?: string;
+  navKey: string | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [cycles, setCycles] = useState<CycleView[]>([]);
+  const setOverlay = useSetAtom(linearOverlayAtom);
+  const addToast = useSetAtom(toastsAtom);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [activeIdx, setActiveIdx] = useState(0);
+  // Optimistic label shown until the mirror prop reflects the chosen cycle (the
+  // global overlay isn't applied to the displayed issue — Decision parity gap).
+  const [pending, setPending] = useState<{ target: string | null; label: string } | null>(null);
+
+  useEffect(() => {
+    if (!teamId) return;
+    invoke<CycleView[]>("linear_read_team_cycles", { teamId })
+      .then(setCycles)
+      .catch(() => {});
+  }, [teamId]);
+
+  // "No cycle" (id "") leads so the issue can be removed from its cycle.
+  const options = useMemo(
+    () => [
+      { id: "", label: "No cycle" },
+      ...cycles.map((c) => ({
+        id: c.id,
+        label: c.name && c.name.length > 0 ? c.name : c.number != null ? `Cycle ${c.number}` : "Cycle",
+      })),
+    ],
+    [cycles],
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    const idx = options.findIndex((o) => o.id === (currentCycleId ?? ""));
+    setActiveIdx(idx >= 0 ? idx : 0);
+  }, [open, currentCycleId, options]);
+
+  useEffect(() => {
+    if (!open) return;
+    wrapRef.current
+      ?.querySelector<HTMLElement>(`[data-opt-idx="${activeIdx}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [open, activeIdx]);
+
+  // Clear the optimistic label once the mirror catches up to the chosen cycle.
+  useEffect(() => {
+    if (pending && (currentCycleId ?? null) === pending.target) setPending(null);
+  }, [currentCycleId, pending]);
+
+  function choose(cycleId: string) {
+    onOpenChange(false);
+    const target = cycleId === "" ? null : cycleId;
+    // Compare against the optimistic target when one is pending, so removing a
+    // just-added cycle isn't swallowed as a no-op before the mirror catches up.
+    const effectiveCurrent = pending ? pending.target : currentCycleId ?? null;
+    if (effectiveCurrent === target) return;
+    const label = options.find((o) => o.id === cycleId)?.label ?? "";
+    setPending({ target, label });
+    setLinearOverlayEntry(setOverlay, issueId, "cycle", target);
+    invoke("linear_set_issue_cycle", { issueId, cycleId: target }).catch((err) => {
+      setPending(null);
+      clearLinearOverlayEntry(setOverlay, issueId, "cycle");
+      addToast({ message: "Cycle change failed", description: String(err), type: "error" });
+    });
+  }
+
+  // What the trigger shows: optimistic choice (cycle name, or none → "Add to
+  // cycle") while pending, otherwise the mirror's current cycle name.
+  const displayName = pending ? (pending.target === null ? undefined : pending.label) : currentCycleName;
+
+  useEffect(() => {
+    if (!open) return;
+    function onOutside(e: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) onOpenChange(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (options.length === 0) return;
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setActiveIdx((p) => (p + 1) % options.length);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setActiveIdx((p) => (p - 1 + options.length) % options.length);
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const o = options[activeIdx];
+        if (o) choose(o.id);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        onOpenChange(false);
+      }
+    }
+    document.addEventListener("mousedown", onOutside);
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("mousedown", onOutside);
+      window.removeEventListener("keydown", onKey, true);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, options, activeIdx]);
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        type="button"
+        data-nav-key="cycle"
+        data-nav-selected={navKey === "cycle" || undefined}
+        onClick={() => onOpenChange(!open)}
+        className={`flex items-center gap-1.5 rounded px-1 outline-none transition-colors hover:bg-secondary/40 ${
+          navKey === "cycle" ? "ring-1 ring-foreground/50" : ""
+        }`}
+      >
+        <IterationCw
+          size={12}
+          className={`shrink-0 ${displayName ? "text-muted-foreground" : "text-muted-foreground/60"}`}
+        />
+        <span className={displayName ? "text-foreground/80" : "text-muted-foreground/70"}>
+          {displayName ?? "Add to cycle"}
+        </span>
+      </button>
+      {open && (
+        <div
+          data-floating-popup
+          className="absolute left-0 top-full z-50 mt-1 min-w-40 rounded-md border border-border bg-card shadow-md"
+        >
+          <div className="max-h-48 overflow-y-auto py-0.5">
+            {options.map((o, i) => (
+              <button
+                key={o.id || "none"}
+                type="button"
+                data-opt-idx={i}
+                data-nav-selected={i === activeIdx || undefined}
+                onMouseEnter={() => setActiveIdx(i)}
+                onClick={() => void choose(o.id)}
+                className={`flex w-full items-center gap-2 px-2 py-1 text-left text-[11px] transition-colors data-[nav-selected=true]:bg-accent data-[nav-selected=true]:text-accent-foreground ${
+                  o.id === (currentCycleId ?? "") ? "text-foreground" : "text-muted-foreground"
+                }`}
+              >
+                <IterationCw size={11} className="shrink-0" />
+                {o.label}
               </button>
             ))}
           </div>
@@ -733,22 +1037,7 @@ export function LinearIssueBody({
   layout: "modal" | "tab";
 }) {
   const isTab = layout === "tab";
-  const { detail, issue, loading, error, comments, attachments, relations, activity, subIssues, childMap } = c;
-  const [closedOutSet, setClosedOut] = useAtom(linearClosedOutAtom);
-  const closedOut = issue ? closedOutSet.has(issue.id) : false;
-
-  async function handleUncloseOut(issueId: string) {
-    try {
-      await invoke("linear_unmark_closed_out", { issueId });
-      setClosedOut((prev) => {
-        const next = new Set(prev);
-        next.delete(issueId);
-        return next;
-      });
-    } catch {
-      // Badge stays — silently ignore.
-    }
-  }
+  const { detail, issue, loading, error, comments, attachments, relations, activity, subIssues, childMap, closedOut } = c;
 
   const setOuterRef = (el: HTMLDivElement | null) => {
     c.contentRef.current = el;
@@ -785,20 +1074,28 @@ export function LinearIssueBody({
 
   const TSHIRT_LABELS: Record<number, string> = { 1: "XS", 2: "S", 3: "M", 4: "L", 5: "XL", 6: "XXL" };
 
+  const cardClass =
+    "flex flex-col gap-1.5 rounded-lg border border-border/40 bg-secondary/20 px-2.5 py-2";
+
+  // Linear's rail is three stacked cards: Properties (status/priority/assignee/
+  // estimate/cycle + meta), Labels, Project.
   const propertiesEl = (
-    <div className="flex flex-col gap-2">
-      <SectionCaps label="Properties" />
-      <div className="flex flex-col gap-1.5 text-[11px]">
+    <>
+      <div className={cardClass}>
+        <SectionCaps label="Properties" />
+        <div className="flex flex-col gap-1.5 text-[11px]">
         {closedOut && issue && (
           <div className="flex items-center gap-1.5">
             <span className="rounded-full bg-green-500/15 px-1.5 text-[9px] font-medium text-green-400">done</span>
             <button
               type="button"
-              onClick={() => void handleUncloseOut(issue.id)}
-              className="text-[9px] text-muted-foreground hover:text-foreground"
+              data-nav-key="unclose"
+              data-nav-selected={c.navKey === "unclose" || undefined}
+              onClick={() => void c.handleUncloseOut(issue.id)}
+              className="rounded px-1 text-[9px] text-muted-foreground outline-none hover:text-foreground"
               title="Unmark closed out"
             >
-              ×
+              Mark undone
             </button>
           </div>
         )}
@@ -828,12 +1125,31 @@ export function LinearIssueBody({
           </div>
         )}
         {issue.estimate != null && (
-          <div className="flex items-center gap-1.5 text-foreground/80">
-            <span className="flex size-4 shrink-0 items-center justify-center rounded bg-secondary text-[9px] font-semibold tabular-nums">
-              {issue.estimationType === "tShirt" ? (TSHIRT_LABELS[issue.estimate] ?? issue.estimate) : issue.estimate}
-            </span>
-            <span className="text-muted-foreground">{issue.estimationType === "tShirt" ? "size" : "points"}</span>
-          </div>
+          issue.estimationType === "tShirt" ? (
+            // Linear shows t-shirt estimates as its estimate glyph + size letter.
+            <div className="flex items-center gap-1.5 text-foreground/80">
+              <LinearEstimateIcon size={12} className="shrink-0 text-muted-foreground" />
+              <span className="font-medium">{TSHIRT_LABELS[issue.estimate] ?? issue.estimate}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 text-foreground/80">
+              <span className="flex size-4 shrink-0 items-center justify-center rounded bg-secondary text-[9px] font-semibold tabular-nums">
+                {issue.estimate}
+              </span>
+              <span className="text-muted-foreground">points</span>
+            </div>
+          )
+        )}
+        {issue.teamId && (
+          <CyclePicker
+            issueId={issue.id}
+            teamId={issue.teamId}
+            currentCycleId={issue.cycleId}
+            currentCycleName={issue.cycleName}
+            navKey={c.navKey}
+            open={c.cyclePickerOpen}
+            onOpenChange={c.setCyclePickerOpen}
+          />
         )}
         {issue.dueDate != null && (
           <div className="flex items-center gap-1.5">
@@ -846,16 +1162,9 @@ export function LinearIssueBody({
             </span>
           </div>
         )}
-        {issue.cycleName && (
-          <div className="flex items-center gap-1.5 text-foreground/80">
-            <GitBranch size={12} className="shrink-0 text-muted-foreground" />
-            <span className="truncate">{issue.cycleName}</span>
-          </div>
-        )}
-        {issue.projectName && (
-          <div className="flex items-center gap-1.5 text-foreground/80">
-            <span className="size-2 shrink-0 rounded-sm bg-primary/40" aria-hidden />
-            <span className="truncate">{issue.projectName}</span>
+        {issue.createdAt && (
+          <div className="text-[10px] text-muted-foreground">
+            Created {formatDate(issue.createdAt)}
           </div>
         )}
         {issue.updatedAt && (
@@ -886,10 +1195,11 @@ export function LinearIssueBody({
             Open in Linear
           </button>
         )}
+        </div>
       </div>
 
       {issue.labels.length > 0 && (
-        <div className="flex flex-col gap-1">
+        <div className={cardClass}>
           <SectionCaps label="Labels" />
           <div className="flex flex-wrap gap-1">
             {issue.labels.map((label) => (
@@ -907,7 +1217,17 @@ export function LinearIssueBody({
           </div>
         </div>
       )}
-    </div>
+
+      {issue.projectName && (
+        <div className={cardClass}>
+          <SectionCaps label="Project" />
+          <div className="flex items-center gap-1.5 text-[11px] text-foreground/80">
+            <span className="size-2 shrink-0 rounded-sm bg-primary/40" aria-hidden />
+            <span className="truncate">{issue.projectName}</span>
+          </div>
+        </div>
+      )}
+    </>
   );
 
   const descEl = (
@@ -1004,15 +1324,20 @@ export function LinearIssueBody({
           onChange={(e) => c.setCommentDraft(e.target.value)}
           placeholder="Write a comment… (Ctrl+Enter to post)"
           rows={2}
-          className="w-full resize-none rounded border border-border bg-background px-2 py-1.5 text-[11px] leading-relaxed outline-none placeholder:text-muted-foreground/50 focus:ring-1 focus:ring-foreground/30"
+          className={`w-full resize-none rounded border bg-background px-2 py-1.5 text-[11px] leading-relaxed outline-none placeholder:text-muted-foreground/50 focus:ring-1 focus:ring-foreground/30 ${
+            c.navKey === "comment" ? "border-foreground/40" : "border-border"
+          }`}
           onKeyDown={(e) => {
             if (e.key === "Enter" && e.ctrlKey) {
               e.preventDefault();
               void c.handlePostComment();
             }
+            // Escape backs out to the cursor (keeps the draft) so the keyboard
+            // can return to the elements above — mirrors ClickUp's composer.
             if (e.key === "Escape") {
               e.preventDefault();
-              c.setCommentDraft("");
+              e.stopPropagation();
+              c.setNavKey("comment");
               c.contentRef.current?.focus({ preventScroll: true });
             }
           }}
@@ -1097,20 +1422,32 @@ export function LinearIssueBody({
 
   const activityEl = activity.length > 0 ? (
     <>
+      <div className="border-t border-border/50" />
       <SectionCaps label="Activity" />
-      <div className="flex flex-col divide-y divide-border/30 rounded border border-border/40 bg-secondary/10">
-        {activity.map((e) => (
-          <div key={e.id} className="flex items-start gap-2 px-2.5 py-1.5">
-            <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-secondary text-[7px] font-medium text-foreground/70">
-              {(e.actor ?? "L").slice(0, 2).toUpperCase()}
-            </span>
-            <div className="min-w-0 flex-1">
-              <span className="text-[11px] font-medium text-foreground/80">{e.actor ?? "Linear"}</span>
-              <span className="ml-1 text-[11px] text-muted-foreground">{activityVerb(e)}</span>
-            </div>
-            {e.createdAt != null && (
-              <span className="shrink-0 text-[10px] text-muted-foreground/50">{formatRelative(e.createdAt)}</span>
+      {/* Timeline: actor avatar (create/assign) or action-icon nodes on a vertical
+          spine — mirrors Linear's activity feed. */}
+      <div className="flex flex-col">
+        {activity.map((e, i) => (
+          <div key={e.id} className="relative flex gap-2">
+            {i < activity.length - 1 && (
+              <span className="absolute left-[8px] top-[16px] bottom-0 w-px bg-border/50" aria-hidden />
             )}
+            {e.kind === "created" || e.kind === "assignee" ? (
+              <span className="relative z-10 shrink-0">
+                <AssigneeAvatar name={e.actor ?? "Linear"} avatarUrl={e.actorAvatarUrl} size={16} />
+              </span>
+            ) : (
+              <span className="relative z-10 flex size-4 shrink-0 items-center justify-center text-muted-foreground">
+                {activityIcon(e, 11)}
+              </span>
+            )}
+            <div className="min-w-0 flex-1 pb-3 pt-px text-[10px] leading-snug">
+              <span className="font-medium text-foreground/80">{e.actor ?? "Linear"}</span>
+              <span className="ml-1 text-muted-foreground">{activityVerb(e, issue.estimationType === "tShirt")}</span>
+              {e.createdAt != null && (
+                <span className="ml-1 text-muted-foreground/50">· {formatRelative(e.createdAt)}</span>
+              )}
+            </div>
           </div>
         ))}
       </div>
@@ -1149,7 +1486,7 @@ export function LinearIssueBody({
       onClick={c.handleContainerClick}
       className="flex h-full outline-none"
     >
-      <aside className="order-2 flex w-44 shrink-0 flex-col gap-3 border-l border-border/50 px-2.5 py-2">
+      <aside className="order-2 flex w-48 shrink-0 flex-col gap-2 overflow-y-auto border-l border-border/40 px-2 py-2">
         {propertiesEl}
       </aside>
       <main ref={c.mainRef} className="order-1 flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-2">
@@ -1245,92 +1582,9 @@ export function ToolbarAction({
   );
 }
 
-/// State picker dropdown for the toolbar write controls.
-function StatePickerToolbar({
-  issueId,
-  teamId,
-  currentStateId,
-}: {
-  issueId: string;
-  teamId: string;
-  currentStateId?: string;
-}) {
-  const [states, setStates] = useState<WorkflowStateView[]>([]);
-  const [open, setOpen] = useState(false);
-  const setOverlay = useSetAtom(linearOverlayAtom);
-  const addToast = useSetAtom(toastsAtom);
-
-  useEffect(() => {
-    if (!teamId) return;
-    invoke<WorkflowStateView[]>("linear_read_team_states", { teamId })
-      .then(setStates)
-      .catch(() => {});
-  }, [teamId]);
-
-  const currentState = states.find((s) => s.id === currentStateId);
-
-  async function handleSelect(stateId: string) {
-    setOpen(false);
-    if (stateId === currentStateId) return;
-    // Optimistic overlay (Decision 1)
-    setLinearOverlayEntry(setOverlay, issueId, "state", stateId);
-    try {
-      await invoke("linear_set_issue_state", { issueId, stateId });
-      // Poll reconcile will clear the overlay on the next mirror refresh.
-    } catch (err) {
-      clearLinearOverlayEntry(setOverlay, issueId, "state");
-      addToast({ message: "State change failed", description: String(err), type: "error" });
-    }
-  }
-
-  if (states.length === 0) return null;
-
-  return (
-    <div className="relative">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              aria-label="Change state"
-              onClick={() => setOpen((o) => !o)}
-              className="flex size-5 items-center justify-center gap-1 rounded text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
-            />
-          }
-        >
-          {currentState ? (
-            <LinearStatusIcon stateType={currentState.type} color={currentState.color ?? null} size={12} className="shrink-0" />
-          ) : (
-            <LinearStatusIcon stateType={undefined} color={null} size={12} className="shrink-0" />
-          )}
-        </TooltipTrigger>
-        <TooltipContent side="bottom">Change state</TooltipContent>
-      </Tooltip>
-
-      {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 min-w-36 rounded-md border border-border bg-popover shadow-md">
-          <div className="max-h-48 overflow-y-auto py-0.5">
-            {states.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => void handleSelect(s.id)}
-                className={`flex w-full items-center gap-2 px-2 py-1 text-left text-[11px] transition-colors hover:bg-secondary/50 ${s.id === currentStateId ? "text-foreground" : "text-muted-foreground"}`}
-              >
-                <LinearStatusIcon stateType={s.type} color={s.color ?? null} size={12} className="shrink-0" />
-                {s.name}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 /// Issue → agent verbs for the floating-detail toolbar: send / spawn / pin /
 /// bind, plus an explicit re-inject when the issue is bound or pinned.
-/// Write controls: state picker, assign-to-me/unassign, comment composer, close-out.
+/// Write controls: assign-to-me/unassign, close-out (state lives in the rail).
 export function LinearVerbToolbar({ issueId }: { issueId: string }) {
   const boundIssueId = useAtomValue(activeSessionLinearIssueAtom);
   const pinnedIssueIds = useAtomValue(activeSessionLinearPinsAtom);
@@ -1391,14 +1645,8 @@ export function LinearVerbToolbar({ issueId }: { issueId: string }) {
 
   return (
     <>
-      {/* Write controls: state picker, assign/unassign, comment composer, close-out */}
-      {issue && (
-        <StatePickerToolbar
-          issueId={issueId}
-          teamId={issue.teamId}
-          currentStateId={issue.stateId}
-        />
-      )}
+      {/* Write controls: assign/unassign, close-out. State lives in the
+          Properties rail (StatePickerRail) — no duplicate picker in the header. */}
       {viewerId && (
         <ToolbarAction
           label={isAssignedToMe ? "Unassign (assigned to you)" : "Assign to me"}

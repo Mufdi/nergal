@@ -347,6 +347,7 @@ pub async fn linear_execute_gated_write(
                     let input = super::client::IssueUpdateInput {
                         state_id: Some(state_id.clone()),
                         assignee_id: None,
+                        cycle_id: None,
                     };
                     match client.issue_update(&tok.issue_id, input).await {
                         Ok(_) => StateOutcome::Ok,

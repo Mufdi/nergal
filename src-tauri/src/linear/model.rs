@@ -273,6 +273,21 @@ pub struct HistoryEntry {
     pub from_priority: Option<i64>,
     #[serde(default)]
     pub to_priority: Option<i64>,
+    #[serde(default)]
+    pub from_estimate: Option<f64>,
+    #[serde(default)]
+    pub to_estimate: Option<f64>,
+    /// `TimelessDate` (YYYY-MM-DD) or null.
+    #[serde(default)]
+    pub from_due_date: Option<String>,
+    #[serde(default)]
+    pub to_due_date: Option<String>,
+    #[serde(default)]
+    pub from_title: Option<String>,
+    #[serde(default)]
+    pub to_title: Option<String>,
+    #[serde(default)]
+    pub updated_description: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

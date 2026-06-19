@@ -668,6 +668,7 @@ pub struct LinearActivityEntry {
     pub id: String,
     pub created_at: Option<i64>,
     pub actor: Option<String>,
+    pub actor_avatar_url: Option<String>,
     /// "created" | "state" | "assignee" | "label" | "cycle" | "priority"
     pub kind: String,
     pub from: Option<String>,
@@ -685,6 +686,16 @@ fn priority_word(p: i64) -> String {
         _ => "no priority",
     }
     .to_string()
+}
+
+/// Estimate as a compact string: whole numbers lose the decimal (Linear's
+/// t-shirt scale is 1..=6; points are usually integers too).
+fn estimate_str(v: f64) -> String {
+    if v.fract() == 0.0 {
+        format!("{}", v as i64)
+    } else {
+        format!("{v}")
+    }
 }
 
 fn cycle_label(c: &crate::linear::model::CycleRef) -> String {
@@ -727,6 +738,7 @@ fn normalize_activity(
             .creator
             .as_ref()
             .and_then(|u| u.display_name.clone().or_else(|| u.name.clone())),
+        actor_avatar_url: raw.creator.as_ref().and_then(|u| u.avatar_url.clone()),
         kind: "created".to_string(),
         from: None,
         to: None,
@@ -740,6 +752,7 @@ fn normalize_activity(
             .as_ref()
             .and_then(|u| u.display_name.clone().or_else(|| u.name.clone()))
             .or_else(|| h.bot_actor.as_ref().and_then(|b| b.name.clone()));
+        let actor_avatar_url = h.actor.as_ref().and_then(|u| u.avatar_url.clone());
         let created_at = h.created_at.as_deref().and_then(model::iso8601_to_epoch);
         let id = h.id.clone();
 
@@ -748,6 +761,7 @@ fn normalize_activity(
                 id,
                 created_at,
                 actor,
+                actor_avatar_url,
                 kind: "state".to_string(),
                 from: h.from_state.as_ref().and_then(|s| s.name.clone()),
                 to: h.to_state.as_ref().and_then(|s| s.name.clone()),
@@ -759,6 +773,7 @@ fn normalize_activity(
                 id,
                 created_at,
                 actor,
+                actor_avatar_url,
                 kind: "assignee".to_string(),
                 from: h
                     .from_assignee
@@ -776,6 +791,7 @@ fn normalize_activity(
                 id,
                 created_at,
                 actor,
+                actor_avatar_url,
                 kind: "label".to_string(),
                 from: None,
                 to: None,
@@ -787,6 +803,7 @@ fn normalize_activity(
                 id,
                 created_at,
                 actor,
+                actor_avatar_url,
                 kind: "cycle".to_string(),
                 from: h.from_cycle.as_ref().map(cycle_label),
                 to: h.to_cycle.as_ref().map(cycle_label),
@@ -798,9 +815,60 @@ fn normalize_activity(
                 id,
                 created_at,
                 actor,
+                actor_avatar_url,
                 kind: "priority".to_string(),
                 from: h.from_priority.map(priority_word),
                 to: h.to_priority.map(priority_word),
+                added: Vec::new(),
+                removed: Vec::new(),
+            })
+        } else if h.from_estimate.is_some() || h.to_estimate.is_some() {
+            Some(LinearActivityEntry {
+                id,
+                created_at,
+                actor,
+                actor_avatar_url,
+                kind: "estimate".to_string(),
+                // Raw estimate value; the frontend maps to the t-shirt label when
+                // the team uses t-shirt sizing.
+                from: h.from_estimate.map(estimate_str),
+                to: h.to_estimate.map(estimate_str),
+                added: Vec::new(),
+                removed: Vec::new(),
+            })
+        } else if h.from_due_date.is_some() || h.to_due_date.is_some() {
+            Some(LinearActivityEntry {
+                id,
+                created_at,
+                actor,
+                actor_avatar_url,
+                kind: "dueDate".to_string(),
+                from: h.from_due_date.clone(),
+                to: h.to_due_date.clone(),
+                added: Vec::new(),
+                removed: Vec::new(),
+            })
+        } else if h.from_title.is_some() || h.to_title.is_some() {
+            Some(LinearActivityEntry {
+                id,
+                created_at,
+                actor,
+                actor_avatar_url,
+                kind: "title".to_string(),
+                from: h.from_title.clone(),
+                to: h.to_title.clone(),
+                added: Vec::new(),
+                removed: Vec::new(),
+            })
+        } else if h.updated_description == Some(true) {
+            Some(LinearActivityEntry {
+                id,
+                created_at,
+                actor,
+                actor_avatar_url,
+                kind: "description".to_string(),
+                from: None,
+                to: None,
                 added: Vec::new(),
                 removed: Vec::new(),
             })
@@ -907,6 +975,7 @@ pub async fn linear_set_issue_state(
     let input = client::IssueUpdateInput {
         state_id: Some(state_id.clone()),
         assignee_id: None,
+        cycle_id: None,
     };
     match client.issue_update(&issue_id, input).await {
         Ok(_) => Ok(()),
@@ -961,11 +1030,73 @@ pub async fn linear_set_assignee(
         state_id: None,
         // outer Some → include the key; inner None → set to null (unassign).
         assignee_id: Some(assignee_id.clone()),
+        cycle_id: None,
     };
     match client.issue_update(&issue_id, input).await {
         Ok(_) => Ok(()),
         Err(e) => {
             registry.clear_entry(&issue_id, &writeback::WriteField::Assignee);
+            Err(format!("{e:#}"))
+        }
+    }
+}
+
+/// Cycles for a team — feeds the cycle picker in the detail rail.
+#[tauri::command]
+pub fn linear_read_team_cycles(
+    team_id: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<Vec<mirror::CycleView>, String> {
+    let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+    mirror::read_team_cycles(guard.conn(), &team_id).map_err(|e| format!("{e:#}"))
+}
+
+/// Move the issue into a cycle (`Some(id)`) or remove it from its cycle
+/// (`None` → `cycleId: null`). Reversible, un-token-gated — mirrors
+/// `linear_set_assignee` (provisional registry record before the API call).
+#[tauri::command]
+pub async fn linear_set_issue_cycle(
+    issue_id: String,
+    cycle_id: Option<String>,
+    db: tauri::State<'_, crate::db::SharedDb>,
+    registry: tauri::State<'_, writeback::WritebackRegistry>,
+) -> Result<(), String> {
+    let pre = {
+        let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+        use rusqlite::OptionalExtension;
+        guard
+            .conn()
+            .query_row(
+                "SELECT cycle_id FROM linear_issues WHERE id = ?1",
+                [&issue_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(|e| format!("{e:#}"))?
+            .flatten()
+    };
+
+    // Provisional record BEFORE the API call (empty string = removed from cycle).
+    let written = cycle_id.as_deref().unwrap_or("");
+    registry.record(
+        &issue_id,
+        writeback::WriteField::Cycle,
+        written,
+        pre.as_deref(),
+    );
+
+    let stored = load_active_stored_key(&db).await?;
+    let client = build_client(stored.key);
+    let input = client::IssueUpdateInput {
+        state_id: None,
+        assignee_id: None,
+        // outer Some → include the key; inner None → set to null (remove).
+        cycle_id: Some(cycle_id.clone()),
+    };
+    match client.issue_update(&issue_id, input).await {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            registry.clear_entry(&issue_id, &writeback::WriteField::Cycle);
             Err(format!("{e:#}"))
         }
     }
@@ -1223,7 +1354,7 @@ async fn run_loop(app: AppHandle) {
                                     mirror::get_issue_write_fields(g.conn(), issue_id).ok()
                                 })
                                 .flatten();
-                            let Some((server_state, server_assignee)) = fields else {
+                            let Some((server_state, server_assignee, server_cycle)) = fields else {
                                 // Issue fell out of the poll window; no fresh
                                 // remote value — skip (correct by design,
                                 // Decision 2 edge case).
@@ -1237,6 +1368,9 @@ async fn run_loop(app: AppHandle) {
                                     }
                                     writeback::WriteField::Assignee => {
                                         server_assignee.as_deref().unwrap_or("")
+                                    }
+                                    writeback::WriteField::Cycle => {
+                                        server_cycle.as_deref().unwrap_or("")
                                     }
                                 };
                                 match writeback::check_echo(&entry, server_val) {

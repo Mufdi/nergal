@@ -517,8 +517,10 @@ pub fn run() {
             linear::linear_spawn_worktree_with_issue,
             // Linear write-back (linear-writeback): direct writes + closure gate
             linear::linear_read_team_states,
+            linear::linear_read_team_cycles,
             linear::linear_set_issue_state,
             linear::linear_set_assignee,
+            linear::linear_set_issue_cycle,
             linear::linear_mark_closed_out,
             linear::linear_read_closed_out,
             linear::linear_unmark_closed_out,

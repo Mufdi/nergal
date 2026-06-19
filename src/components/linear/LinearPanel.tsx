@@ -411,13 +411,32 @@ export function LinearPanel() {
       }
     }
     const compare = (a: IssueView, b: IssueView) => compareIssues(a, b, sort.field, sort.dir);
-    for (const arr of childMap.values()) arr.sort(compare);
+    // In non-state groupings (project/assignee/cycle) the section header isn't a
+    // state, so order issues within each group by the default state order first
+    // (In Progress → Todo → Backlog → … → Duplicate), then the active sort —
+    // mirrors Linear. In the state grouping each group is one state, so this is
+    // a no-op and the active sort wins.
+    const stateRankOf = (i: IssueView) =>
+      i.stateType != null ? (STATE_TYPE_RANK[i.stateType] ?? 7) : 8;
+    const groupCompare =
+      effectiveGroupBy === "state"
+        ? compare
+        : (a: IssueView, b: IssueView) => {
+            const ra = stateRankOf(a);
+            const rb = stateRankOf(b);
+            if (ra !== rb) return ra - rb;
+            const pa = a.statePosition ?? 0;
+            const pb = b.statePosition ?? 0;
+            if (pa !== pb) return pa - pb;
+            return compare(a, b);
+          };
+    for (const arr of childMap.values()) arr.sort(groupCompare);
 
     // Top-level rows: visible issues whose parent is not also visible.
     const visibleIds = new Set(projectFiltered.map((i) => i.id));
     const topLevel = projectFiltered
       .filter((i) => !i.parentId || !visibleIds.has(i.parentId))
-      .sort(compare);
+      .sort(groupCompare);
 
     // Collect all unique labels present in the team-scoped+completed-scoped pool
     // (not the label-filtered one) so the filter popover always shows all options.
@@ -601,7 +620,11 @@ export function LinearPanel() {
         e.preventDefault();
         if (e.code === "ArrowUp" && idx === 0) {
           selected?.removeAttribute("data-nav-selected");
-          root.querySelector<HTMLElement>("[role='combobox'], select")?.focus();
+          // Bottom rung above the list: project filter (project view) else team.
+          const rung =
+            root.querySelector<HTMLElement>("#linear-project-filter") ??
+            root.querySelector<HTMLElement>("[role='combobox'], select");
+          rung?.focus();
           return;
         }
         const next = e.code === "ArrowDown"
@@ -633,8 +656,10 @@ export function LinearPanel() {
     return () => window.removeEventListener("keydown", onKey);
   }, [keyListenerActive, assignedToMe, groupBy, setAssignedToMe, setShowCompleted, copyIssue]);
 
-  // ↓ from the focused team select hands control back to the list cursor
-  // (mirrors ClickUpPanel's Select handler).
+  // ↑/↓ ladders between the filter selects and the list cursor. Rungs, top→bottom:
+  // team select → project select (project view only) → list. ↓ off the bottom
+  // rung enters the list; ↑ off the top rung is left to the Select natively.
+  // (mirrors ClickUpPanel's Select handler.)
   useEffect(() => {
     if (!keyListenerActive) return;
     function onSelectKey(e: KeyboardEvent) {
@@ -643,20 +668,36 @@ export function LinearPanel() {
       const root = rootRef.current;
       const target = e.target as HTMLElement | null;
       if (!root || !target) return;
-      const sel = root.querySelector<HTMLElement>("[role='combobox'], select");
-      if (!sel || target !== sel) return;
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.code !== "ArrowDown") return;
-      target.blur();
-      focusIfPanelZone(root);
-      const first = root.querySelector<HTMLElement>("[data-nav-item]");
-      if (!first) return;
-      for (const item of root.querySelectorAll("[data-nav-selected]")) {
-        item.removeAttribute("data-nav-selected");
+      const rungs = [
+        root.querySelector<HTMLElement>("#linear-team-filter"),
+        root.querySelector<HTMLElement>("#linear-project-filter"),
+      ].filter(Boolean) as HTMLElement[];
+      const ri = rungs.indexOf(target);
+      if (ri === -1) return;
+      if (e.code === "ArrowDown") {
+        e.preventDefault();
+        e.stopPropagation();
+        const below = rungs[ri + 1];
+        if (below) {
+          below.focus();
+          return;
+        }
+        target.blur();
+        focusIfPanelZone(root);
+        const first = root.querySelector<HTMLElement>("[data-nav-item]");
+        if (!first) return;
+        for (const item of root.querySelectorAll("[data-nav-selected]")) {
+          item.removeAttribute("data-nav-selected");
+        }
+        first.setAttribute("data-nav-selected", "true");
+        first.scrollIntoView({ block: "nearest" });
+      } else {
+        const above = rungs[ri - 1];
+        if (!above) return;
+        e.preventDefault();
+        e.stopPropagation();
+        above.focus();
       }
-      first.setAttribute("data-nav-selected", "true");
-      first.scrollIntoView({ block: "nearest" });
     }
     window.addEventListener("keydown", onSelectKey, true);
     return () => window.removeEventListener("keydown", onSelectKey, true);
@@ -718,6 +759,7 @@ export function LinearPanel() {
         {/* Header: team selector + sort pickers + filter toggles */}
         <div className="flex shrink-0 items-center gap-1.5 border-b border-border/50 px-2 py-1.5">
           <Select
+            id="linear-team-filter"
             value={teamFilter ?? ""}
             onValueChange={(v) => setTeamFilter(v === "" ? null : v)}
             options={[{ value: "", label: "Todos" }, ...teams.map((t) => ({ value: t.id, label: t.name }))]}
@@ -996,6 +1038,7 @@ export function LinearPanel() {
         {activeView === "project" && projects.length > 0 && (
           <div className="flex shrink-0 items-center gap-1.5 border-b border-border/50 px-2 py-1.5">
             <Select
+              id="linear-project-filter"
               value={projectFilter ?? ""}
               onValueChange={(v) => setProjectFilter(v === "" ? null : v)}
               options={[{ value: "", label: "Todos" }, ...projects.map((p) => ({ value: p.id, label: p.name }))]}

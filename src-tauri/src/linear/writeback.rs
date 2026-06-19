@@ -50,6 +50,7 @@ pub const WRITE_TTL: Duration = Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS *
 pub enum WriteField {
     State,
     Assignee,
+    Cycle,
 }
 
 /// A single recorded write.

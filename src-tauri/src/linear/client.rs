@@ -431,7 +431,7 @@ impl LinearClient {
         const MUTATION: &str = "mutation Update($id: String!, $input: IssueUpdateInput!) {
   issueUpdate(id: $id, input: $input) {
     success
-    issue { state { id } assignee { id } }
+    issue { state { id } assignee { id } cycle { id } }
   }
 }";
         let d: Data = self
@@ -497,6 +497,8 @@ pub struct UpdatedIssue {
     pub state: Option<IdRef>,
     #[serde(default)]
     pub assignee: Option<IdRef>,
+    #[serde(default)]
+    pub cycle: Option<IdRef>,
 }
 
 /// Input for `issueUpdate`.  Both fields are individually optional:
@@ -514,6 +516,10 @@ pub struct IssueUpdateInput {
     pub state_id: Option<String>,
     #[serde(rename = "assigneeId", skip_serializing_if = "Option::is_none")]
     pub assignee_id: Option<Option<String>>,
+    /// `Some(Some(id))` → move to cycle; `Some(None)` → remove from cycle
+    /// (`cycleId: null`); outer `None` → leave unchanged.
+    #[serde(rename = "cycleId", skip_serializing_if = "Option::is_none")]
+    pub cycle_id: Option<Option<String>>,
 }
 
 /// A bare `{ id }` reference (re-exported for use in `client.rs` tests without
@@ -651,7 +657,7 @@ const ORGANIZATION_QUERY: &str = "query { organization { id name urlKey } }";
 // 10k per-query cap. Flat top-level queries are each independently small.
 const TEAMS_QUERY: &str = "query Teams($first: Int!, $after: String) {
   teams(first: $first, after: $after) {
-    nodes { id name key estimationType }
+    nodes { id name key estimationType: issueEstimationType }
     pageInfo { hasNextPage endCursor }
   }
 }";
@@ -733,6 +739,10 @@ const ISSUE_DETAIL_QUERY: &str = "query Detail($id: String!) {
         addedLabelIds removedLabelIds
         fromCycle { number name } toCycle { number name }
         fromPriority toPriority
+        fromEstimate toEstimate
+        fromDueDate toDueDate
+        fromTitle toTitle
+        updatedDescription
       }
     }
   }
@@ -874,6 +884,7 @@ mod tests {
         let input = IssueUpdateInput {
             state_id: Some("s1".into()),
             assignee_id: None,
+            cycle_id: None,
         };
         let json = serde_json::to_string(&input).unwrap();
         assert!(json.contains("stateId"), "must contain stateId: {json}");
@@ -889,6 +900,7 @@ mod tests {
         let input = IssueUpdateInput {
             state_id: None,
             assignee_id: Some(Some("u1".into())),
+            cycle_id: None,
         };
         let json = serde_json::to_string(&input).unwrap();
         assert!(
@@ -904,11 +916,47 @@ mod tests {
         let input = IssueUpdateInput {
             state_id: None,
             assignee_id: Some(None),
+            cycle_id: None,
         };
         let json = serde_json::to_string(&input).unwrap();
         assert!(
             json.contains(r#""assigneeId":null"#),
             "explicit unassign must be assigneeId:null: {json}"
+        );
+    }
+
+    // Cycle set vs remove vs untouched serialization (mirrors the assignee
+    // double-option semantics: Some(None) → cycleId:null removes from cycle).
+    #[test]
+    fn issue_update_cycle_set_remove_and_omit() {
+        let set = serde_json::to_string(&IssueUpdateInput {
+            cycle_id: Some(Some("c1".into())),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(
+            set.contains(r#""cycleId":"c1""#),
+            "set must carry the id: {set}"
+        );
+
+        let remove = serde_json::to_string(&IssueUpdateInput {
+            cycle_id: Some(None),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(
+            remove.contains(r#""cycleId":null"#),
+            "remove must be cycleId:null: {remove}"
+        );
+
+        let untouched = serde_json::to_string(&IssueUpdateInput {
+            state_id: Some("s1".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(
+            !untouched.contains("cycleId"),
+            "state-only write must omit cycleId: {untouched}"
         );
     }
 

@@ -46,4 +46,4 @@
 
 - [x] 6.1 `cd src-tauri && cargo clippy -- -D warnings && cargo test && cargo fmt --check`
 - [x] 6.2 `npx tsc --noEmit`
-- [ ] 6.3 Manual walk per proposal § Cómo verifico (dev, `pnpm tauri dev` — no release/build/install this cycle). **PENDING**: needs the user's real Linear key + running GUI (same blocker as linear-mirror #1's walk).
+- [x] 6.3 Manual walk per proposal § Cómo verifico (dev, `pnpm tauri dev` — no release/build/install this cycle). Walked OK 2026-06-18.

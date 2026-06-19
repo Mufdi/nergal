@@ -58,4 +58,4 @@
 - [x] 6.1 `cd src-tauri && cargo clippy -- -D warnings && cargo test && cargo fmt --check`
 - [x] 6.2 `npx tsc --noEmit`
 - [x] 6.3 `linear_poll_interval_secs` + `linear_active_window_days` added to `BACKEND_OWNED_CONFIG_KEYS` (config.rs); verify Settings round-trip doesn't clobber them (the stale-config regression from the summarizer work).
-- [ ] 6.4 Manual walk per proposal § Cómo verifico (configure key → teams/issues → team picker → group-by state → floating detail with sub-issues/comments → assign from web → `notify-send`).
+- [x] 6.4 Manual walk per proposal § Cómo verifico (configure key → teams/issues → team picker → group-by state → floating detail with sub-issues/comments → assign from web → `notify-send`). Walked OK 2026-06-18 (`pnpm tauri dev`).

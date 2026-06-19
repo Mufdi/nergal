@@ -33,4 +33,4 @@
 
 ## 5. Verification
 - [x] 5.1 `cargo clippy -- -D warnings && cargo test && cargo fmt --check` · `npx tsc --noEmit` · `vite build`
-- [ ] 5.2 Manual walk (dev) per proposal § Cómo verifico.
+- [x] 5.2 Manual walk (dev) per proposal § Cómo verifico. Walked OK 2026-06-18 (A+B+C+D).

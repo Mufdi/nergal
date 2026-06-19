@@ -1,0 +1,28 @@
+{
+  "tier": "L",
+  "tier_source": "user-stated",
+  "ceremony": "deep",
+  "risk_tier": "critical",
+  "files_estimate": 13,
+  "tags": ["security", "feature"],
+  "visibility": "private",
+  "spec_target": "linear-writeback",
+  "rigor_applied": {
+    "discovery_invoked": true,
+    "iprev_rounds": 3,
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": ["compile", "test", "lint", "security"],
+    "per_phase_models": {
+      "design": "claude-opus-4-8",
+      "implementation": "claude-sonnet-4-6",
+      "exploration": "claude-haiku-4-5"
+    }
+  },
+  "interview_answers": {
+    "scope": "state + assignee + comment writes + token-gated closure (unbind + worked-closed marker). description/priority/labels deferred.",
+    "reference": "archived clickup-writeback, adapted to Linear GraphQL",
+    "walk": "dev only (pnpm tauri dev), default-off, no release/build this cycle"
+  },
+  "interview_ts": "2026-06-18"
+}

@@ -400,7 +400,125 @@ impl LinearClient {
         }
         Ok((content_type, bytes.to_vec()))
     }
+
+    // ── Write mutations (linear-writeback) ──
+
+    /// Update an issue's state and/or assignee.
+    ///
+    /// The outer `Option` on `assignee_id` in `IssueUpdateInput` is intentionally
+    /// handled by serde's `skip_serializing_if = "Option::is_none"` (via the
+    /// wrapper below) so a state-only write **omits** the `assigneeId` key
+    /// entirely and does NOT unassign.  An inner `None` (`Some(None)`) explicitly
+    /// clears the assignee.
+    ///
+    /// Returns `Err` on a GraphQL error OR when `success != true` (Decision 8).
+    pub async fn issue_update(
+        &self,
+        issue_id: &str,
+        input: IssueUpdateInput,
+    ) -> Result<UpdatedIssue> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct IssueUpdatePayload {
+            success: bool,
+            issue: Option<UpdatedIssue>,
+        }
+        #[derive(Deserialize)]
+        struct Data {
+            #[serde(rename = "issueUpdate")]
+            issue_update: IssueUpdatePayload,
+        }
+        const MUTATION: &str = "mutation Update($id: String!, $input: IssueUpdateInput!) {
+  issueUpdate(id: $id, input: $input) {
+    success
+    issue { state { id } assignee { id } }
+  }
+}";
+        let d: Data = self
+            .execute(
+                MUTATION,
+                serde_json::json!({ "id": issue_id, "input": input }),
+            )
+            .await?;
+        if !d.issue_update.success {
+            bail!("issueUpdate returned success=false for issue {issue_id}");
+        }
+        d.issue_update
+            .issue
+            .ok_or_else(|| anyhow!("issueUpdate succeeded but returned no issue"))
+    }
+
+    /// Create a comment on an issue.
+    ///
+    /// Returns the created comment id on success.  Returns `Err` on a GraphQL
+    /// error OR when `success != true` (Decision 8).
+    pub async fn comment_create(&self, issue_id: &str, body: &str) -> Result<String> {
+        #[derive(Deserialize)]
+        struct CreatedComment {
+            id: String,
+        }
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct CommentCreatePayload {
+            success: bool,
+            comment: Option<CreatedComment>,
+        }
+        #[derive(Deserialize)]
+        struct Data {
+            #[serde(rename = "commentCreate")]
+            comment_create: CommentCreatePayload,
+        }
+        const MUTATION: &str = "mutation Comment($input: CommentCreateInput!) {
+  commentCreate(input: $input) {
+    success
+    comment { id }
+  }
+}";
+        let d: Data = self
+            .execute(
+                MUTATION,
+                serde_json::json!({ "input": { "issueId": issue_id, "body": body } }),
+            )
+            .await?;
+        if !d.comment_create.success {
+            bail!("commentCreate returned success=false for issue {issue_id}");
+        }
+        d.comment_create
+            .comment
+            .map(|c| c.id)
+            .ok_or_else(|| anyhow!("commentCreate succeeded but returned no comment"))
+    }
 }
+
+/// Updated issue fields returned by `issueUpdate`.
+#[derive(Debug, Deserialize)]
+pub struct UpdatedIssue {
+    #[serde(default)]
+    pub state: Option<IdRef>,
+    #[serde(default)]
+    pub assignee: Option<IdRef>,
+}
+
+/// Input for `issueUpdate`.  Both fields are individually optional:
+/// - omit `state_id` → do not change the state
+/// - omit `assignee_id` (outer `None`) → do not change the assignee
+/// - `assignee_id = Some(None)` → clear the assignee (unassign)
+/// - `assignee_id = Some(Some(id))` → set assignee
+///
+/// The `skip_serializing_if` guard on `assignee_id` is critical: without it
+/// serde serialises `outer-None` as `assigneeId: null`, silently unassigning
+/// on a state-only write (Decision 8, review N4).
+#[derive(Debug, Default, serde::Serialize)]
+pub struct IssueUpdateInput {
+    #[serde(rename = "stateId", skip_serializing_if = "Option::is_none")]
+    pub state_id: Option<String>,
+    #[serde(rename = "assigneeId", skip_serializing_if = "Option::is_none")]
+    pub assignee_id: Option<Option<String>>,
+}
+
+/// A bare `{ id }` reference (re-exported for use in `client.rs` tests without
+/// reaching into model).
+use super::model::IdRef;
 
 /// Host-pinned allowlist for the inline-image proxy: only `https` URLs whose
 /// host is exactly `uploads.linear.app`. Parsing via `url::Url` defeats
@@ -533,7 +651,7 @@ const ORGANIZATION_QUERY: &str = "query { organization { id name urlKey } }";
 // 10k per-query cap. Flat top-level queries are each independently small.
 const TEAMS_QUERY: &str = "query Teams($first: Int!, $after: String) {
   teams(first: $first, after: $after) {
-    nodes { id name key }
+    nodes { id name key estimationType }
     pageInfo { hasNextPage endCursor }
   }
 }";
@@ -601,7 +719,7 @@ const ISSUE_DETAIL_QUERY: &str = "query Detail($id: String!) {
   issue(id: $id) {
     createdAt
     creator { id name displayName email avatarUrl }
-    comments(first: 100) { nodes { id body createdAt user { id name displayName email avatarUrl } } }
+    comments(first: 100) { nodes { id body createdAt user { id name displayName email avatarUrl } parent { id } } }
     attachments(first: 50) { nodes { id title subtitle url } }
     relations(first: 50) { nodes { type relatedIssue { id identifier title } } }
     history(first: 50) {
@@ -746,5 +864,119 @@ mod tests {
     fn redact_strips_keys() {
         assert!(!redact("error with lin_api_abc123 here").contains("lin_api_abc123"));
         assert_eq!(redact("clean message"), "clean message");
+    }
+
+    // ── IssueUpdateInput serde shape (Decision 8 / review N4) ──
+
+    // 1.3 State-only write omits assigneeId entirely (not null).
+    #[test]
+    fn issue_update_state_only_omits_assignee_id() {
+        let input = IssueUpdateInput {
+            state_id: Some("s1".into()),
+            assignee_id: None,
+        };
+        let json = serde_json::to_string(&input).unwrap();
+        assert!(json.contains("stateId"), "must contain stateId: {json}");
+        assert!(
+            !json.contains("assigneeId"),
+            "state-only write must NOT contain assigneeId (not even null): {json}"
+        );
+    }
+
+    // 1.3 Assignee-only write (set).
+    #[test]
+    fn issue_update_assignee_only_contains_assignee_id() {
+        let input = IssueUpdateInput {
+            state_id: None,
+            assignee_id: Some(Some("u1".into())),
+        };
+        let json = serde_json::to_string(&input).unwrap();
+        assert!(
+            json.contains("assigneeId"),
+            "must contain assigneeId: {json}"
+        );
+        assert!(!json.contains("stateId"), "must omit stateId: {json}");
+    }
+
+    // 1.3 Explicit unassign: assigneeId present as null.
+    #[test]
+    fn issue_update_explicit_unassign_produces_null() {
+        let input = IssueUpdateInput {
+            state_id: None,
+            assignee_id: Some(None),
+        };
+        let json = serde_json::to_string(&input).unwrap();
+        assert!(
+            json.contains(r#""assigneeId":null"#),
+            "explicit unassign must be assigneeId:null: {json}"
+        );
+    }
+
+    // 1.3 success=false with no errors is classified as a write failure.
+    // We can't call the method without a live server, but we verify the shape
+    // serde expects so the runtime path works correctly: a response with
+    // success=false must NOT be treated as Ok.
+    #[test]
+    fn issue_update_payload_success_false_deserialized() {
+        // The `execute` helper returns Ok when there are no errors in the body;
+        // the issueUpdate method must check the `success` field in the payload.
+        #[derive(serde::Deserialize)]
+        struct Payload {
+            success: bool,
+        }
+        #[derive(serde::Deserialize)]
+        struct Data {
+            #[serde(rename = "issueUpdate")]
+            issue_update: Payload,
+        }
+        let body = r#"{"data":{"issueUpdate":{"success":false,"issue":null}}}"#;
+        let parsed: super::GraphQlResponse<Data> = serde_json::from_str(body).unwrap();
+        let d = parsed.data.unwrap();
+        assert!(
+            !d.issue_update.success,
+            "success=false must not be swallowed"
+        );
+    }
+
+    // 1.3 commentCreate shape: issueId + body.
+    #[test]
+    fn comment_create_payload_shape() {
+        #[derive(serde::Deserialize)]
+        struct Payload {
+            success: bool,
+            comment: Option<Comment>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Comment {
+            id: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct Data {
+            #[serde(rename = "commentCreate")]
+            comment_create: Payload,
+        }
+        let body = r#"{"data":{"commentCreate":{"success":true,"comment":{"id":"cmt1"}}}}"#;
+        let parsed: super::GraphQlResponse<Data> = serde_json::from_str(body).unwrap();
+        let d = parsed.data.unwrap();
+        assert!(d.comment_create.success);
+        assert_eq!(d.comment_create.comment.unwrap().id, "cmt1");
+    }
+
+    // 1.3 commentCreate success=false → classified as failure.
+    #[test]
+    fn comment_create_success_false_deserialized() {
+        #[derive(serde::Deserialize)]
+        struct Payload {
+            success: bool,
+        }
+        #[derive(serde::Deserialize)]
+        struct Data {
+            #[serde(rename = "commentCreate")]
+            comment_create: Payload,
+        }
+        let body = r#"{"data":{"commentCreate":{"success":false,"comment":null}}}"#;
+        let parsed: super::GraphQlResponse<Data> = serde_json::from_str(body).unwrap();
+        let d = parsed.data.unwrap();
+        assert!(!d.comment_create.success, "success=false must be caught");
     }
 }

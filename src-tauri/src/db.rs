@@ -227,6 +227,8 @@ impl Database {
             include_str!("../migrations/023_linear_mirror.sql"),
             include_str!("../migrations/024_linear_session_binding.sql"),
             include_str!("../migrations/025_linear_workspaces.sql"),
+            include_str!("../migrations/026_linear_closed_out.sql"),
+            include_str!("../migrations/027_linear_estimation_type.sql"),
         ];
 
         for (i, sql) in migrations.iter().enumerate() {

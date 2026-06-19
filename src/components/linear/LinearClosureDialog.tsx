@@ -19,6 +19,7 @@ import {
   linearBindingMapAtom,
   linearClosedOutAtom,
   linearClosureOfferAtom,
+  linearDetailIssueIdAtom,
   linearIssuesAtom,
   type WorkflowStateView,
 } from "@/stores/linear";
@@ -55,6 +56,7 @@ export function LinearClosureDialog() {
   const addToast = useSetAtom(toastsAtom);
   const setBindingMap = useSetAtom(linearBindingMapAtom);
   const setClosedOut = useSetAtom(linearClosedOutAtom);
+  const setDetailIssueId = useSetAtom(linearDetailIssueIdAtom);
 
   const [states, setStates] = useState<WorkflowStateView[]>([]);
   const [statesLoading, setStatesLoading] = useState(false);
@@ -145,6 +147,8 @@ export function LinearClosureDialog() {
       setClosedOut((prev) => new Set([...prev, closedIssueId]));
       // Reflect the unbind in the runtime binding map (backend already unbound).
       setBindingMap((prev) => ({ ...prev, [closedSessionId]: null }));
+      // Close the detail modal so it doesn't linger on the closed issue.
+      setDetailIssueId(null);
     }
     addToast({ message: "Issue closed out", description, type: "success" });
     close();

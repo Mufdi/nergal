@@ -50,6 +50,7 @@ import {
   linearGroupByAtom,
   linearIssuesAtom,
   linearLabelFilterAtom,
+  linearProjectFilterAtom,
   linearShowCompletedAtom,
   linearSortAtom,
   linearSyncStatusAtom,
@@ -64,6 +65,7 @@ import {
   type LinearGroupBy,
   type LinearSortField,
 } from "@/stores/linear";
+import { invoke } from "@/lib/tauri";
 
 // ── Priority mapping: Linear int → PriorityIcon string ──
 // 0=none, 1=urgent, 2=high, 3=medium, 4=low
@@ -275,6 +277,8 @@ export function LinearPanel() {
   const [showCompleted, setShowCompleted] = useAtom(linearShowCompletedAtom);
   const [sort, setSort] = useAtom(linearSortAtom);
   const [labelFilter, setLabelFilter] = useAtom(linearLabelFilterAtom);
+  const [projectFilter, setProjectFilter] = useAtom(linearProjectFilterAtom);
+  const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   const setDetailIssueId = useSetAtom(linearDetailIssueIdAtom);
   const copyIssue = useSetAtom(copyLinearIssueAction);
   const zenOpen = useAtomValue(zenModeAtom).open;
@@ -310,6 +314,14 @@ export function LinearPanel() {
     // Run once on first mount; selectView is stable (atom setters).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Fetch projects list when the project view is active.
+  useEffect(() => {
+    if (activeView !== "project") return;
+    invoke<{ id: string; name: string }[]>("linear_read_projects")
+      .then(setProjects)
+      .catch(() => {});
+  }, [activeView]);
 
   // Shift+←/→ cycles view chips (patterns.md §2)
   useEffect(() => {
@@ -377,6 +389,16 @@ export function LinearPanel() {
         ? withCompleted.filter((i) => i.labels.some((l) => labelFilter.has(l.id)))
         : withCompleted;
 
+    // Apply project filter: when a specific project is selected in the project view,
+    // narrow to that project and re-group by state (like the "mine" view).
+    const projectFiltered =
+      projectFilter !== null && groupBy === "project"
+        ? labelFiltered.filter((i) => i.projectId === projectFilter)
+        : labelFiltered;
+
+    const effectiveGroupBy: LinearGroupBy =
+      projectFilter !== null && groupBy === "project" ? "state" : groupBy;
+
     // Build global parent→children map over the full (unfiltered) pool so a
     // visible parent shows ALL its sub-issues regardless of filter (§9 canon).
     const fullPool = showCompleted ? teamScoped : teamScoped.filter((i) => !isTerminal(i.stateType));
@@ -392,8 +414,8 @@ export function LinearPanel() {
     for (const arr of childMap.values()) arr.sort(compare);
 
     // Top-level rows: visible issues whose parent is not also visible.
-    const visibleIds = new Set(labelFiltered.map((i) => i.id));
-    const topLevel = labelFiltered
+    const visibleIds = new Set(projectFiltered.map((i) => i.id));
+    const topLevel = projectFiltered
       .filter((i) => !i.parentId || !visibleIds.has(i.parentId))
       .sort(compare);
 
@@ -408,12 +430,12 @@ export function LinearPanel() {
     const allLabels = [...labelsMap.values()].sort((a, b) => a.name.localeCompare(b.name));
 
     return {
-      groups: groupIssues(topLevel, groupBy),
+      groups: groupIssues(topLevel, effectiveGroupBy),
       visibleCount: topLevel.length,
       childMap,
       allLabels,
     };
-  }, [issues, teamFilter, assignedToMe, showCompleted, groupBy, syncStatus?.viewerId, sort, labelFilter]);
+  }, [issues, teamFilter, assignedToMe, showCompleted, groupBy, syncStatus?.viewerId, sort, labelFilter, projectFilter]);
 
   allParentIdsRef.current = new Set(childMap.keys());
 
@@ -970,6 +992,18 @@ export function LinearPanel() {
           ))}
         </div>
 
+        {/* Project filter select — only visible in the project view when projects are loaded */}
+        {activeView === "project" && projects.length > 0 && (
+          <div className="flex shrink-0 items-center gap-1.5 border-b border-border/50 px-2 py-1.5">
+            <Select
+              value={projectFilter ?? ""}
+              onValueChange={(v) => setProjectFilter(v === "" ? null : v)}
+              options={[{ value: "", label: "Todos" }, ...projects.map((p) => ({ value: p.id, label: p.name }))]}
+              className="h-6 w-auto min-w-28 flex-1 px-2 py-0 text-[11px]"
+            />
+          </div>
+        )}
+
         {syncStatus?.state === "error" && syncStatus.error && (
           <div className="shrink-0 truncate bg-destructive/10 px-3 py-1 text-[10px] text-red-400" title={syncStatus.error}>
             Sync error: {syncStatus.error}
@@ -1170,7 +1204,8 @@ function LinearIssueRow({
 }) {
   const priorityStr = linearPriorityStr(issue.priority);
   const now = Date.now();
-  const overdue = issue.dueDate != null && issue.dueDate < now && !isTerminal(issue.stateType);
+  // dueDate from backend is epoch seconds; multiply by 1000 to compare with Date.now() (ms).
+  const overdue = issue.dueDate != null && issue.dueDate * 1000 < now && !isTerminal(issue.stateType);
 
   // Sub-issue progress: count children from the full pool (not filtered).
   const subIssueTotal = allIssues.filter((i) => i.parentId === issue.id).length;
@@ -1188,7 +1223,21 @@ function LinearIssueRow({
   const reinject = useSetAtom(reinjectIssueAction);
   const pinned = pinnedIssueIds.includes(issue.id);
   const bound = issue.id === boundIssueId;
-  const closedOut = useAtomValue(linearClosedOutAtom).has(issue.id);
+  const [closedOutSet, setClosedOut] = useAtom(linearClosedOutAtom);
+  const closedOut = closedOutSet.has(issue.id);
+
+  async function handleUncloseOut() {
+    try {
+      await invoke("linear_unmark_closed_out", { issueId: issue.id });
+      setClosedOut((prev) => {
+        const next = new Set(prev);
+        next.delete(issue.id);
+        return next;
+      });
+    } catch {
+      // Badge stays — silently ignore.
+    }
+  }
 
   // Detail indicators (mirror data only): a non-empty body = has description;
   // an inline image / Linear upload reference in the body = has attachment
@@ -1270,17 +1319,26 @@ function LinearIssueRow({
           truncates to make room for the verb buttons — ClickUp parity; labels
           are never hidden). */}
       <span className="flex shrink-0 items-center gap-1">
-        {/* Closed-out badge: mirrors clickupClosedOutAtom badge in ClickUpPanel */}
+        {/* Closed-out badge + un-close-out affordance */}
         {closedOut && (
           <Tooltip>
             <TooltipTrigger
               render={
-                <span className="shrink-0 rounded-full bg-green-500/15 px-1.5 text-[9px] font-medium text-green-400" />
+                <span
+                  role="button"
+                  tabIndex={-1}
+                  aria-label="Unmark closed out"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleUncloseOut();
+                  }}
+                  className="shrink-0 cursor-pointer rounded-full bg-green-500/15 px-1.5 text-[9px] font-medium text-green-400 hover:bg-red-500/15 hover:text-red-400"
+                />
               }
             >
               done
             </TooltipTrigger>
-            <TooltipContent side="bottom" className="text-[10px]">Closed out in Nergal</TooltipContent>
+            <TooltipContent side="bottom" className="text-[10px]">Closed out — click to unmark</TooltipContent>
           </Tooltip>
         )}
         {/* Detail indicators: description + attachment (mirror-derived) */}
@@ -1320,19 +1378,25 @@ function LinearIssueRow({
           </span>
         ))}
 
-        {/* Estimate chip */}
-        {issue.estimate != null && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <span className="flex size-3.5 shrink-0 items-center justify-center rounded bg-secondary text-[9px] font-semibold tabular-nums text-muted-foreground" />
-              }
-            >
-              {issue.estimate}
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="text-[10px]">{issue.estimate} points</TooltipContent>
-          </Tooltip>
-        )}
+        {/* Estimate chip — maps to t-shirt label when team uses tShirt estimation */}
+        {issue.estimate != null && (() => {
+          const TSHIRT: Record<number, string> = { 1: "XS", 2: "S", 3: "M", 4: "L", 5: "XL", 6: "XXL" };
+          const isTshirt = issue.estimationType === "tShirt";
+          const label = isTshirt ? (TSHIRT[issue.estimate] ?? String(issue.estimate)) : String(issue.estimate);
+          const tooltip = isTshirt ? `${label} (size)` : `${issue.estimate} points`;
+          return (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span className="flex size-3.5 shrink-0 items-center justify-center rounded bg-secondary text-[9px] font-semibold tabular-nums text-muted-foreground" />
+                }
+              >
+                {label}
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-[10px]">{tooltip}</TooltipContent>
+            </Tooltip>
+          );
+        })()}
 
         {/* Due date */}
         {issue.dueDate != null && (
@@ -1382,6 +1446,7 @@ function LinearIssueRow({
   );
 }
 
-function formatDueDate(ms: number): string {
-  return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+// Backend timestamps are epoch SECONDS; multiply by 1000 for JS Date/Date.now().
+function formatDueDate(secs: number): string {
+  return new Date(secs * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }

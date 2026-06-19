@@ -28,11 +28,22 @@ pub fn upsert_team(
     key: &str,
     synced_at: i64,
 ) -> Result<()> {
+    upsert_team_with_estimation(conn, id, name, key, None, synced_at)
+}
+
+pub fn upsert_team_with_estimation(
+    conn: &Connection,
+    id: &str,
+    name: &str,
+    key: &str,
+    estimation_type: Option<&str>,
+    synced_at: i64,
+) -> Result<()> {
     // A real team upsert clears the synthetic flag (a stub becomes real).
     conn.execute(
-        "INSERT INTO linear_teams (id, name, key, synthetic, synced_at) VALUES (?1, ?2, ?3, 0, ?4) \
-         ON CONFLICT(id) DO UPDATE SET name=?2, key=?3, synthetic=0, synced_at=?4",
-        params![id, name, key, synced_at],
+        "INSERT INTO linear_teams (id, name, key, synthetic, estimation_type, synced_at) VALUES (?1, ?2, ?3, 0, ?4, ?5) \
+         ON CONFLICT(id) DO UPDATE SET name=?2, key=?3, synthetic=0, estimation_type=?4, synced_at=?5",
+        params![id, name, key, estimation_type, synced_at],
     )?;
     Ok(())
 }
@@ -564,6 +575,9 @@ pub struct IssueView {
     pub url: Option<String>,
     pub stale: bool,
     pub labels: Vec<LabelView>,
+    /// Team estimation scheme: notUsed | exponential | fibonacci | linear | tShirt.
+    /// Drives the estimate label in the detail (tShirt → XS/S/M/L/XL/XXL).
+    pub estimation_type: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -580,12 +594,14 @@ pub fn read_issues(conn: &Connection, filter: &IssueFilter) -> Result<Vec<IssueV
                 i.state_id, s.name, s.type, s.color, s.position, \
                 i.assignee_id, COALESCE(u.display_name, u.name), u.avatar_url, \
                 i.project_id, p.name, i.cycle_id, c.name, i.parent_id, \
-                i.created_at, i.updated_at, i.due_date, i.url, i.stale \
+                i.created_at, i.updated_at, i.due_date, i.url, i.stale, \
+                t.estimation_type \
          FROM linear_issues i \
          LEFT JOIN linear_workflow_states s ON s.id = i.state_id \
          LEFT JOIN linear_users u ON u.id = i.assignee_id \
          LEFT JOIN linear_projects p ON p.id = i.project_id \
          LEFT JOIN linear_cycles c ON c.id = i.cycle_id \
+         LEFT JOIN linear_teams t ON t.id = i.team_id \
          WHERE 1=1",
     );
     let mut binds: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -629,6 +645,7 @@ pub fn read_issues(conn: &Connection, filter: &IssueFilter) -> Result<Vec<IssueV
                 url: row.get(23)?,
                 stale: row.get::<_, i64>(24)? != 0,
                 labels: Vec::new(),
+                estimation_type: row.get(25)?,
             })
         })?
         .collect::<std::result::Result<_, _>>()?;
@@ -686,6 +703,178 @@ pub fn read_teams(conn: &Connection) -> Result<Vec<TeamView>> {
     Ok(teams)
 }
 
+// ── Writeback reads (linear-writeback) ──
+
+/// View returned by `read_team_states` — the state picker source.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowStateView {
+    pub id: String,
+    pub name: String,
+    pub state_type: String,
+    pub color: Option<String>,
+    pub position: Option<f64>,
+}
+
+/// Non-synthetic workflow states for a team, ordered by position.
+///
+/// Used by the state picker and the server-side state-validation helper.
+/// Synthetic placeholder rows (`synthetic=1`, inserted by `ensure_state_placeholder`
+/// for FK resolution) are always excluded — a placeholder id offered to the
+/// user or passed through validation could drive `issueUpdate` with a non-real
+/// state id.
+pub fn read_team_states(conn: &Connection, team_id: &str) -> Result<Vec<WorkflowStateView>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, type, color, position \
+         FROM linear_workflow_states \
+         WHERE team_id = ?1 AND synthetic = 0 \
+         ORDER BY position",
+    )?;
+    let states = stmt
+        .query_map([team_id], |row| {
+            Ok(WorkflowStateView {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                state_type: row.get(2)?,
+                color: row.get(3)?,
+                position: row.get(4)?,
+            })
+        })?
+        .collect::<std::result::Result<_, _>>()?;
+    Ok(states)
+}
+
+/// Validate that `state_id` belongs to the non-synthetic states of `team_id`.
+/// Returns `Ok(())` when valid, `Err` when not found or synthetic.
+pub fn validate_state_for_team(conn: &Connection, team_id: &str, state_id: &str) -> Result<()> {
+    use rusqlite::OptionalExtension;
+    let found: Option<i64> = conn
+        .query_row(
+            "SELECT 1 FROM linear_workflow_states \
+             WHERE id = ?1 AND team_id = ?2 AND synthetic = 0",
+            [state_id, team_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if found.is_some() {
+        Ok(())
+    } else {
+        anyhow::bail!("state {state_id:?} is not a valid non-synthetic state for team {team_id:?}")
+    }
+}
+
+/// Retrieve the `team_id` for a given issue from the mirror.
+///
+/// Used by the state-validation helper when only the `issue_id` is available.
+pub fn get_issue_team_id(conn: &Connection, issue_id: &str) -> Result<String> {
+    use rusqlite::OptionalExtension;
+    let team_id: Option<String> = conn
+        .query_row(
+            "SELECT team_id FROM linear_issues WHERE id = ?1",
+            [issue_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    team_id.ok_or_else(|| anyhow::anyhow!("issue {issue_id:?} not found in the mirror"))
+}
+
+/// Retrieve the current `state_id` and `assignee_id` for an issue from the
+/// post-reconcile mirror.  Returns `None` when the issue is absent (evicted /
+/// tombstoned / out of window).
+pub fn get_issue_write_fields(
+    conn: &Connection,
+    issue_id: &str,
+) -> Result<Option<(Option<String>, Option<String>)>> {
+    use rusqlite::OptionalExtension;
+    let row: Option<(Option<String>, Option<String>)> = conn
+        .query_row(
+            "SELECT state_id, assignee_id FROM linear_issues WHERE id = ?1",
+            [issue_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    Ok(row)
+}
+
+/// Insert a comment into the `linear_comments` mirror after a successful post.
+///
+/// `ON CONFLICT DO UPDATE` makes the upsert idempotent so a poll echo that
+/// brings the same id never duplicates the row.
+pub fn upsert_comment(
+    conn: &Connection,
+    issue_id: &str,
+    comment_id: &str,
+    author_id: Option<&str>,
+    body: &str,
+    created_at_secs: i64,
+) -> Result<()> {
+    let user_json = author_id.map(|id| format!(r#"{{"id":"{id}"}}"#));
+    conn.execute(
+        "INSERT INTO linear_comments (id, issue_id, user_json, body, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5) \
+         ON CONFLICT(id) DO UPDATE SET \
+          issue_id=?2, user_json=?3, body=?4, created_at=?5",
+        rusqlite::params![comment_id, issue_id, user_json, body, created_at_secs],
+    )?;
+    Ok(())
+}
+
+// ── Worked & closed marker (linear-writeback) ──
+
+/// Record that an issue was closed out from a session.
+///
+/// `ON CONFLICT DO UPDATE` so re-closing the same issue (e.g. after a crash
+/// and reopen) is safe: it just refreshes the timestamp.
+pub fn mark_closed_out(conn: &Connection, issue_id: &str, closed_at: i64) -> Result<()> {
+    conn.execute(
+        "INSERT INTO linear_closed_out (issue_id, closed_at) VALUES (?1, ?2) \
+         ON CONFLICT(issue_id) DO UPDATE SET closed_at=?2",
+        rusqlite::params![issue_id, closed_at],
+    )?;
+    Ok(())
+}
+
+/// All issue ids that were closed out from a session.
+pub fn read_closed_out(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT issue_id FROM linear_closed_out ORDER BY closed_at")?;
+    let ids = stmt
+        .query_map([], |r| r.get(0))?
+        .collect::<std::result::Result<_, _>>()?;
+    Ok(ids)
+}
+
+/// Remove the worked-closed marker for an issue, allowing it to be re-closed later.
+pub fn unmark_closed_out(conn: &Connection, issue_id: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM linear_closed_out WHERE issue_id = ?1",
+        rusqlite::params![issue_id],
+    )?;
+    Ok(())
+}
+
+// ── Projects ──
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectView {
+    pub id: String,
+    pub name: String,
+}
+
+/// All projects in the mirror, ordered by name — feeds the panel project-select.
+pub fn read_projects(conn: &Connection) -> Result<Vec<ProjectView>> {
+    let mut stmt = conn.prepare("SELECT id, name FROM linear_projects ORDER BY name")?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(ProjectView {
+                id: r.get(0)?,
+                name: r.get(1)?,
+            })
+        })?
+        .collect::<std::result::Result<_, _>>()?;
+    Ok(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -696,6 +885,10 @@ mod tests {
         conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
         conn.execute_batch(include_str!("../../migrations/023_linear_mirror.sql"))
             .unwrap();
+        conn.execute_batch(include_str!(
+            "../../migrations/027_linear_estimation_type.sql"
+        ))
+        .unwrap();
         conn
     }
 
@@ -936,5 +1129,204 @@ mod tests {
         // active_org_id is independent of the epoch bump (which clears viewer/teams).
         assert_eq!(get_active_org(&conn).unwrap().as_deref(), Some("org-a"));
         assert_eq!(current_key_generation(&conn).unwrap(), 1);
+    }
+
+    fn mem_db_wb() -> Connection {
+        let conn = mem_db();
+        // 025 adds workspace tables (no FK to sessions); skip 024 which
+        // ALTER TABLEs sessions (absent in the minimal in-memory schema).
+        // 027 (estimation_type ALTER TABLE) is already applied by mem_db().
+        conn.execute_batch(include_str!("../../migrations/025_linear_workspaces.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../../migrations/026_linear_closed_out.sql"))
+            .unwrap();
+        conn
+    }
+
+    // 1.2 read_team_states excludes synthetic rows and is ordered by position
+    #[test]
+    fn read_team_states_excludes_synthetic_and_is_ordered() {
+        let conn = mem_db();
+        seed_team(&conn, "t1");
+        // Real state at position 2.
+        let real_a: model::WorkflowState = serde_json::from_value(serde_json::json!({
+            "id": "s-a", "name": "In Progress", "type": "started", "color": "#0f0", "position": 2.0
+        }))
+        .unwrap();
+        // Real state at position 1.
+        let real_b: model::WorkflowState = serde_json::from_value(serde_json::json!({
+            "id": "s-b", "name": "Backlog", "type": "backlog", "color": "#888", "position": 1.0
+        }))
+        .unwrap();
+        upsert_workflow_state(&conn, &real_a, "t1").unwrap();
+        upsert_workflow_state(&conn, &real_b, "t1").unwrap();
+        // Synthetic placeholder — must be absent from the picker.
+        ensure_state_placeholder(&conn, "s-synth", "t1").unwrap();
+
+        let states = read_team_states(&conn, "t1").unwrap();
+        assert_eq!(states.len(), 2, "synthetic must be excluded");
+        assert_eq!(states[0].id, "s-b", "position order: s-b first");
+        assert_eq!(states[1].id, "s-a");
+    }
+
+    // 1.3 validate_state_for_team rejects synthetic and unknown ids
+    #[test]
+    fn validate_state_rejects_synthetic_and_unknown() {
+        let conn = mem_db();
+        seed_team(&conn, "t1");
+        let real: model::WorkflowState = serde_json::from_value(serde_json::json!({
+            "id": "s-real", "name": "Done", "type": "completed", "color": "#0f0", "position": 1.0
+        }))
+        .unwrap();
+        upsert_workflow_state(&conn, &real, "t1").unwrap();
+        ensure_state_placeholder(&conn, "s-synth", "t1").unwrap();
+
+        assert!(validate_state_for_team(&conn, "t1", "s-real").is_ok());
+        assert!(
+            validate_state_for_team(&conn, "t1", "s-synth").is_err(),
+            "synthetic id must be rejected"
+        );
+        assert!(
+            validate_state_for_team(&conn, "t1", "s-nonexistent").is_err(),
+            "unknown id must be rejected"
+        );
+    }
+
+    // 4.4 upsert_comment inserts once and is idempotent on echo
+    #[test]
+    fn upsert_comment_inserts_once_and_echo_is_idempotent() {
+        let conn = mem_db();
+        seed_team(&conn, "t1");
+        upsert_issue(&conn, &issue("i1", "t1", "2026-06-16T00:00:00Z"), false).unwrap();
+
+        upsert_comment(&conn, "i1", "c1", Some("author-uuid"), "hello", 1_000).unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM linear_comments WHERE id='c1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+
+        // Echo: upsert same id again — must remain at 1.
+        upsert_comment(&conn, "i1", "c1", Some("author-uuid"), "hello", 1_000).unwrap();
+        let count2: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM linear_comments WHERE id='c1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count2, 1, "echo upsert must not duplicate the row");
+    }
+
+    // 5.2 mark_closed_out and read_closed_out round-trip
+    #[test]
+    fn closed_out_round_trip() {
+        let conn = mem_db_wb();
+        assert!(read_closed_out(&conn).unwrap().is_empty());
+        mark_closed_out(&conn, "issue-a", 1000).unwrap();
+        mark_closed_out(&conn, "issue-b", 1001).unwrap();
+        let mut ids = read_closed_out(&conn).unwrap();
+        ids.sort();
+        assert_eq!(ids, vec!["issue-a", "issue-b"]);
+
+        // Re-closing the same issue updates the timestamp (idempotent).
+        mark_closed_out(&conn, "issue-a", 2000).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM linear_closed_out", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2, "re-close must not duplicate the row");
+    }
+
+    // 8.3 unmark_closed_out removes the marker
+    #[test]
+    fn unmark_closed_out_removes_marker() {
+        let conn = mem_db_wb();
+        mark_closed_out(&conn, "issue-x", 5000).unwrap();
+        let ids = read_closed_out(&conn).unwrap();
+        assert_eq!(ids, vec!["issue-x"]);
+
+        unmark_closed_out(&conn, "issue-x").unwrap();
+        assert!(
+            read_closed_out(&conn).unwrap().is_empty(),
+            "unmark must delete the row"
+        );
+
+        // Unmarking a non-existent id is a no-op (not an error).
+        unmark_closed_out(&conn, "no-such-issue").unwrap();
+    }
+
+    // 8.4 read_projects returns rows ordered by name
+    #[test]
+    fn read_projects_ordered_by_name() {
+        let conn = mem_db_wb();
+        conn.execute(
+            "INSERT INTO linear_projects (id, name) VALUES ('p1','Zebra'),('p2','Alpha')",
+            [],
+        )
+        .unwrap();
+
+        let projects = read_projects(&conn).unwrap();
+        assert_eq!(projects.len(), 2);
+        assert_eq!(projects[0].id, "p2");
+        assert_eq!(projects[0].name, "Alpha");
+        assert_eq!(projects[1].id, "p1");
+        assert_eq!(projects[1].name, "Zebra");
+    }
+
+    // 8.4 read_projects returns empty when no rows
+    #[test]
+    fn read_projects_empty() {
+        let conn = mem_db_wb();
+        assert!(read_projects(&conn).unwrap().is_empty());
+    }
+
+    // 8.2 estimation_type persisted on upsert_team_with_estimation + surfaced on IssueView
+    #[test]
+    fn estimation_type_persisted_and_surfaced() {
+        let conn = mem_db_wb();
+        upsert_team_with_estimation(&conn, "t-ts", "Tee", "TEE", Some("tShirt"), 1).unwrap();
+
+        // Verify the column was written.
+        let val: Option<String> = conn
+            .query_row(
+                "SELECT estimation_type FROM linear_teams WHERE id='t-ts'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(val.as_deref(), Some("tShirt"));
+
+        // Seed a minimal issue and verify estimation_type flows through read_issues.
+        upsert_issue(&conn, &issue("i-ts", "t-ts", "2026-06-18T00:00:00Z"), false).unwrap();
+        let views = read_issues(
+            &conn,
+            &IssueFilter {
+                team_id: Some("t-ts".into()),
+                include_stale: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].estimation_type.as_deref(), Some("tShirt"));
+    }
+
+    // 8.2 upsert_team_with_estimation updates estimation_type on conflict
+    #[test]
+    fn estimation_type_updates_on_conflict() {
+        let conn = mem_db_wb();
+        upsert_team_with_estimation(&conn, "t-u", "Up", "UP", Some("fibonacci"), 1).unwrap();
+        upsert_team_with_estimation(&conn, "t-u", "Up", "UP", Some("tShirt"), 2).unwrap();
+
+        let val: Option<String> = conn
+            .query_row(
+                "SELECT estimation_type FROM linear_teams WHERE id='t-u'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(val.as_deref(), Some("tShirt"));
     }
 }

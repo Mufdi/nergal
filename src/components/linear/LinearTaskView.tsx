@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import React, { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { open as openShell } from "@tauri-apps/plugin-shell";
 import {
@@ -10,7 +10,6 @@ import {
   GitBranch,
   GitBranchPlus,
   Link2,
-  MessageSquarePlus,
   Paperclip,
   Pin,
   PinOff,
@@ -32,6 +31,7 @@ import {
   clearLinearOverlayEntry,
   copyLinearIssueAction,
   LINEAR_ACTION_LABELS,
+  linearClosedOutAtom,
   linearClosureOfferAtom,
   linearIssuesAtom,
   linearOverlayAtom,
@@ -83,13 +83,14 @@ export function linearPriorityStr(p: number): string | null {
   }
 }
 
-function formatDate(ms: number): string {
-  return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+// Backend timestamps are epoch SECONDS; multiply by 1000 for JS Date/Date.now().
+function formatDate(secs: number): string {
+  return new Date(secs * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
 /// Compact relative time ("3mo ago", "2d ago") for the activity feed.
-function formatRelative(ms: number): string {
-  const diff = Date.now() - ms;
+function formatRelative(secs: number): string {
+  const diff = Date.now() - secs * 1000;
   const s = Math.max(0, Math.floor(diff / 1000));
   if (s < 60) return "just now";
   const m = Math.floor(s / 60);
@@ -168,9 +169,15 @@ export function useLinearIssueController({
 }) {
   const issues = useAtomValue(linearIssuesAtom);
   const copyIssue = useSetAtom(copyLinearIssueAction);
+  const activeSessionId = useAtomValue(activeSessionIdAtom);
+  const addToast = useSetAtom(toastsAtom);
   const [detail, setDetail] = useState<LinearDetailData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [commentDraft, setCommentDraft] = useState("");
+  const [postingComment, setPostingComment] = useState(false);
+  const [statusPickerOpen, setStatusPickerOpen] = useState(false);
+  const commentRef = useRef<HTMLTextAreaElement | null>(null);
   // State-driven index cursor over actionable elements (mirrors ClickUp's
   // detail nav: ↑/↓ move, Enter/Space activate, highlight via data-nav-selected).
   const [navKey, setNavKey] = useState<string | null>(null);
@@ -194,10 +201,15 @@ export function useLinearIssueController({
     return () => clearTimeout(t);
   }, [issueId]);
 
-  // The cursor is state-driven (no DOM focus), so the scroll container won't
-  // follow it — bring the highlighted element into view.
+  // Status and due are in the properties rail (always at top) — scroll the main
+  // content area to the top instead of scrollIntoView (which would scroll the
+  // rail's aside, not the main pane). Everything else gets smooth scrollIntoView.
   useEffect(() => {
     if (!navKey) return;
+    if (navKey === "status" || navKey === "due") {
+      mainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
     contentRef.current
       ?.querySelector<HTMLElement>(`[data-nav-key="${CSS.escape(navKey)}"]`)
       ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -314,6 +326,10 @@ export function useLinearIssueController({
       if (issue?.identifier) copyIssue(issue.identifier);
     } else if (key === "open") {
       void openValidatedUrl(issue?.url);
+    } else if (key === "status") {
+      setStatusPickerOpen(true);
+    } else if (key === "comment") {
+      commentRef.current?.focus();
     } else if (key.startsWith("sub:")) {
       setIssueId(key.slice(4));
     } else if (key.startsWith("rel:")) {
@@ -354,6 +370,48 @@ export function useLinearIssueController({
     }
   }
 
+  async function refreshDetail(id: string) {
+    try {
+      const [issueList, detailPayload] = await Promise.all([
+        invoke<IssueView[]>("linear_read_issues", { includeStale: true }),
+        invoke<LinearIssueDetail>("linear_issue_detail", { issueId: id }),
+      ]);
+      const refreshedIssue = issueList.find((i) => i.id === id) ?? null;
+      const data: LinearDetailData = {
+        issue: refreshedIssue,
+        comments: detailPayload.comments,
+        attachments: detailPayload.attachments,
+        relations: detailPayload.relations,
+        activity: detailPayload.activity ?? [],
+      };
+      setDetail(data);
+      detailCache.set(id, data);
+    } catch {
+      // Stale cache stays — comment was still posted.
+    }
+  }
+
+  async function handlePostComment() {
+    const trimmed = commentDraft.trim();
+    if (!trimmed || postingComment || !activeSessionId || !issueId) return;
+    setPostingComment(true);
+    try {
+      // Token-gated path: close_out=false — posting a comment must NOT close the issue.
+      const token = await invoke<string>("linear_request_comment_token", {
+        issueId,
+        comment: trimmed,
+      });
+      await invoke("linear_execute_gated_write", { token, sessionId: activeSessionId });
+      addToast({ message: "Comment posted", description: trimmed.slice(0, 60), type: "success" });
+      setCommentDraft("");
+      await refreshDetail(issueId);
+    } catch (err) {
+      addToast({ message: "Comment failed", description: String(err), type: "error" });
+    } finally {
+      setPostingComment(false);
+    }
+  }
+
   return {
     issueId,
     setIssueId,
@@ -377,6 +435,14 @@ export function useLinearIssueController({
     activateNav,
     handleNavKeyDown,
     handleContainerClick,
+    commentDraft,
+    setCommentDraft,
+    postingComment,
+    commentRef,
+    handlePostComment,
+    statusPickerOpen,
+    setStatusPickerOpen,
+    refreshDetail,
   };
 }
 
@@ -488,6 +554,124 @@ function SubIssueNode({
   );
 }
 
+// ── State picker in the properties rail (keyboard-reachable, data-nav-key="status") ──
+
+/// Replaces the read-only state icon in the Properties rail with a keyboard-reachable
+/// pill. Enter opens the dropdown (own ↑/↓/Enter/Esc capture). Writes via
+/// linear_set_issue_state + the optimistic overlay (reversible, un-token-gated).
+function StatePickerRail({
+  issueId,
+  teamId,
+  currentStateId,
+  currentStateType,
+  currentStateColor,
+  currentStateName,
+  navKey,
+  open,
+  onOpenChange,
+}: {
+  issueId: string;
+  teamId: string;
+  currentStateId?: string;
+  currentStateType?: string;
+  currentStateColor?: string;
+  currentStateName?: string;
+  navKey: string | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [states, setStates] = useState<WorkflowStateView[]>([]);
+  const setOverlay = useSetAtom(linearOverlayAtom);
+  const addToast = useSetAtom(toastsAtom);
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
+  const [dropCursor, setDropCursor] = useState(0);
+
+  useEffect(() => {
+    if (!teamId) return;
+    invoke<WorkflowStateView[]>("linear_read_team_states", { teamId })
+      .then(setStates)
+      .catch(() => {});
+  }, [teamId]);
+
+  // When dropdown opens, reset cursor to the current state.
+  useEffect(() => {
+    if (!open) return;
+    const idx = states.findIndex((s) => s.id === currentStateId);
+    setDropCursor(idx >= 0 ? idx : 0);
+  }, [open, currentStateId, states]);
+
+  async function handleSelect(stateId: string) {
+    onOpenChange(false);
+    if (stateId === currentStateId) return;
+    setLinearOverlayEntry(setOverlay, issueId, "state", stateId);
+    try {
+      await invoke("linear_set_issue_state", { issueId, stateId });
+    } catch (err) {
+      clearLinearOverlayEntry(setOverlay, issueId, "state");
+      addToast({ message: "State change failed", description: String(err), type: "error" });
+    }
+  }
+
+  function handleDropKeyDown(e: React.KeyboardEvent) {
+    if (!open || states.length === 0) return;
+    if (e.code === "ArrowDown") {
+      e.preventDefault();
+      e.stopPropagation();
+      setDropCursor((c) => Math.min(c + 1, states.length - 1));
+    } else if (e.code === "ArrowUp") {
+      e.preventDefault();
+      e.stopPropagation();
+      setDropCursor((c) => Math.max(c - 1, 0));
+    } else if (e.code === "Enter" || e.code === "Space") {
+      e.preventDefault();
+      e.stopPropagation();
+      const s = states[dropCursor];
+      if (s) void handleSelect(s.id);
+    } else if (e.code === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      onOpenChange(false);
+    }
+  }
+
+  return (
+    <div className="relative" onKeyDown={handleDropKeyDown}>
+      <button
+        type="button"
+        data-nav-key="status"
+        data-nav-selected={navKey === "status" || undefined}
+        onClick={() => onOpenChange(!open)}
+        className="flex items-center gap-1.5 rounded px-1 outline-none transition-colors hover:bg-secondary/40"
+      >
+        <LinearStatusIcon stateType={currentStateType} color={currentStateColor ?? null} size={13} className="shrink-0" />
+        <span className="text-foreground/80">{currentStateName ?? "No state"}</span>
+      </button>
+      {open && states.length > 0 && (
+        <div
+          ref={dropdownRef}
+          className="absolute left-0 top-full z-50 mt-1 min-w-40 rounded-md border border-border bg-popover shadow-md"
+        >
+          <div className="max-h-48 overflow-y-auto py-0.5">
+            {states.map((s, i) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => void handleSelect(s.id)}
+                className={`flex w-full items-center gap-2 px-2 py-1 text-left text-[11px] transition-colors hover:bg-secondary/50 ${
+                  i === dropCursor ? "bg-secondary/50" : ""
+                } ${s.id === currentStateId ? "text-foreground" : "text-muted-foreground"}`}
+              >
+                <LinearStatusIcon stateType={s.type} color={s.color ?? null} size={12} className="shrink-0" />
+                {s.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Body helpers ──
 
 /// Renders a small round avatar: img when `avatarUrl` is present and loads,
@@ -550,6 +734,21 @@ export function LinearIssueBody({
 }) {
   const isTab = layout === "tab";
   const { detail, issue, loading, error, comments, attachments, relations, activity, subIssues, childMap } = c;
+  const [closedOutSet, setClosedOut] = useAtom(linearClosedOutAtom);
+  const closedOut = issue ? closedOutSet.has(issue.id) : false;
+
+  async function handleUncloseOut(issueId: string) {
+    try {
+      await invoke("linear_unmark_closed_out", { issueId });
+      setClosedOut((prev) => {
+        const next = new Set(prev);
+        next.delete(issueId);
+        return next;
+      });
+    } catch {
+      // Badge stays — silently ignore.
+    }
+  }
 
   const setOuterRef = (el: HTMLDivElement | null) => {
     c.contentRef.current = el;
@@ -584,15 +783,37 @@ export function LinearIssueBody({
 
   const now = Date.now();
 
+  const TSHIRT_LABELS: Record<number, string> = { 1: "XS", 2: "S", 3: "M", 4: "L", 5: "XL", 6: "XXL" };
+
   const propertiesEl = (
     <div className="flex flex-col gap-2">
       <SectionCaps label="Properties" />
       <div className="flex flex-col gap-1.5 text-[11px]">
-        {issue.stateName && (
+        {closedOut && issue && (
           <div className="flex items-center gap-1.5">
-            <LinearStatusIcon stateType={issue.stateType} color={issue.stateColor ?? null} size={13} className="shrink-0" />
-            <span className="text-foreground/80">{issue.stateName}</span>
+            <span className="rounded-full bg-green-500/15 px-1.5 text-[9px] font-medium text-green-400">done</span>
+            <button
+              type="button"
+              onClick={() => void handleUncloseOut(issue.id)}
+              className="text-[9px] text-muted-foreground hover:text-foreground"
+              title="Unmark closed out"
+            >
+              ×
+            </button>
           </div>
+        )}
+        {issue.teamId && (
+          <StatePickerRail
+            issueId={issue.id}
+            teamId={issue.teamId}
+            currentStateId={issue.stateId}
+            currentStateType={issue.stateType}
+            currentStateColor={issue.stateColor}
+            currentStateName={issue.stateName}
+            navKey={c.navKey}
+            open={c.statusPickerOpen}
+            onOpenChange={c.setStatusPickerOpen}
+          />
         )}
         {priorityStr && (
           <div className="flex items-center gap-1.5">
@@ -609,15 +830,17 @@ export function LinearIssueBody({
         {issue.estimate != null && (
           <div className="flex items-center gap-1.5 text-foreground/80">
             <span className="flex size-4 shrink-0 items-center justify-center rounded bg-secondary text-[9px] font-semibold tabular-nums">
-              {issue.estimate}
+              {issue.estimationType === "tShirt" ? (TSHIRT_LABELS[issue.estimate] ?? issue.estimate) : issue.estimate}
             </span>
-            <span className="text-muted-foreground">points</span>
+            <span className="text-muted-foreground">{issue.estimationType === "tShirt" ? "size" : "points"}</span>
           </div>
         )}
         {issue.dueDate != null && (
           <div className="flex items-center gap-1.5">
             <span
-              className={`text-[10px] tabular-nums ${issue.dueDate < now ? "text-red-400" : "text-foreground/80"}`}
+              className={`text-[10px] tabular-nums ${issue.dueDate * 1000 < now ? "text-red-400" : "text-foreground/80"}`}
+              data-nav-key="due"
+              data-nav-selected={c.navKey === "due" || undefined}
             >
               Due {formatDate(issue.dueDate)}
             </span>
@@ -720,6 +943,39 @@ export function LinearIssueBody({
     </>
   ) : null;
 
+  // Build comment thread map: top-level + replies by parentId.
+  const topLevelComments = comments.filter((comment) => !comment.parentId);
+  const repliesMap = new Map<string, LinearComment[]>();
+  for (const comment of comments) {
+    if (comment.parentId) {
+      const arr = repliesMap.get(comment.parentId) ?? [];
+      arr.push(comment);
+      repliesMap.set(comment.parentId, arr);
+    }
+  }
+
+  function renderComment(comment: LinearComment, isReply: boolean) {
+    return (
+      <div
+        key={comment.id}
+        className={`rounded border bg-secondary/20 ${isReply ? "border-border/30 bg-secondary/10" : "border-border/50"}`}
+      >
+        <div className="flex items-center gap-1.5 px-2 pt-1.5 text-[10px] text-muted-foreground">
+          <span className="flex size-4 items-center justify-center rounded-full bg-secondary text-[8px] font-medium text-foreground/70">
+            {(comment.author ?? "?").slice(0, 2).toUpperCase()}
+          </span>
+          <span className="font-medium text-foreground/70">{comment.author ?? "Unknown"}</span>
+          {comment.createdAt != null && (
+            <span>{formatDate(comment.createdAt)}</span>
+          )}
+        </div>
+        <div className="-my-1.5">
+          <MarkdownView content={comment.body ?? ""} gateRemoteImages linearAssets />
+        </div>
+      </div>
+    );
+  }
+
   const commentsEl = (
     <>
       <SectionCaps label={`Comments · ${comments.length}`} />
@@ -727,26 +983,63 @@ export function LinearIssueBody({
         <p className="text-xs text-muted-foreground">No comments</p>
       ) : (
         <div className="flex flex-col gap-2">
-          {comments.map((comment) => (
-            <div key={comment.id} className="rounded border border-border/50 bg-secondary/20">
-              <div className="flex items-center gap-1.5 px-2 pt-1.5 text-[10px] text-muted-foreground">
-                <span
-                  className="flex size-4 items-center justify-center rounded-full bg-secondary text-[8px] font-medium text-foreground/70"
-                >
-                  {(comment.author ?? "?").slice(0, 2).toUpperCase()}
-                </span>
-                <span className="font-medium text-foreground/70">{comment.author ?? "Unknown"}</span>
-                {comment.createdAt != null && (
-                  <span>{formatDate(comment.createdAt)}</span>
-                )}
-              </div>
-              <div className="-my-1.5">
-                <MarkdownView content={comment.body ?? ""} gateRemoteImages linearAssets />
-              </div>
+          {topLevelComments.map((comment) => (
+            <div key={comment.id}>
+              {renderComment(comment, false)}
+              {(repliesMap.get(comment.id) ?? []).map((reply) => (
+                <div key={reply.id} className="ml-4 mt-1">
+                  {renderComment(reply, true)}
+                </div>
+              ))}
             </div>
           ))}
         </div>
       )}
+      {/* Inline comment composer — token-gated, close_out=false (posting must NOT close the issue) */}
+      <div className="mt-2 flex flex-col gap-1.5">
+        <textarea
+          ref={c.commentRef}
+          data-nav-key="comment"
+          value={c.commentDraft}
+          onChange={(e) => c.setCommentDraft(e.target.value)}
+          placeholder="Write a comment… (Ctrl+Enter to post)"
+          rows={2}
+          className="w-full resize-none rounded border border-border bg-background px-2 py-1.5 text-[11px] leading-relaxed outline-none placeholder:text-muted-foreground/50 focus:ring-1 focus:ring-foreground/30"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && e.ctrlKey) {
+              e.preventDefault();
+              void c.handlePostComment();
+            }
+            if (e.key === "Escape") {
+              e.preventDefault();
+              c.setCommentDraft("");
+              c.contentRef.current?.focus({ preventScroll: true });
+            }
+          }}
+        />
+        {c.commentDraft.trim() && (
+          <div className="flex justify-end gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                c.setCommentDraft("");
+                c.contentRef.current?.focus({ preventScroll: true });
+              }}
+              className="rounded px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void c.handlePostComment()}
+              disabled={c.postingComment}
+              className="rounded bg-primary px-2 py-0.5 text-[10px] text-primary-foreground disabled:opacity-50"
+            >
+              {c.postingComment ? "Posting…" : "Post"}
+            </button>
+          </div>
+        )}
+      </div>
     </>
   );
 
@@ -805,13 +1098,18 @@ export function LinearIssueBody({
   const activityEl = activity.length > 0 ? (
     <>
       <SectionCaps label="Activity" />
-      <div className="flex flex-col gap-1.5">
+      <div className="flex flex-col divide-y divide-border/30 rounded border border-border/40 bg-secondary/10">
         {activity.map((e) => (
-          <div key={e.id} className="flex items-baseline gap-1.5 text-[11px] text-muted-foreground">
-            <span className="font-medium text-foreground/70">{e.actor ?? "Linear"}</span>
-            <span className="min-w-0 flex-1">{activityVerb(e)}</span>
+          <div key={e.id} className="flex items-start gap-2 px-2.5 py-1.5">
+            <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-secondary text-[7px] font-medium text-foreground/70">
+              {(e.actor ?? "L").slice(0, 2).toUpperCase()}
+            </span>
+            <div className="min-w-0 flex-1">
+              <span className="text-[11px] font-medium text-foreground/80">{e.actor ?? "Linear"}</span>
+              <span className="ml-1 text-[11px] text-muted-foreground">{activityVerb(e)}</span>
+            </div>
             {e.createdAt != null && (
-              <span className="shrink-0 text-[10px] text-muted-foreground/60">{formatRelative(e.createdAt)}</span>
+              <span className="shrink-0 text-[10px] text-muted-foreground/50">{formatRelative(e.createdAt)}</span>
             )}
           </div>
         ))}
@@ -1030,99 +1328,6 @@ function StatePickerToolbar({
   );
 }
 
-/// Comment composer (token-gated): textarea + send button.
-/// Routes through linear_request_comment_token → linear_execute_gated_write
-/// with close_out=false — posting a comment must NOT close out the issue.
-function CommentComposerToolbar({ issueId }: { issueId: string }) {
-  const [open, setOpen] = useState(false);
-  const [comment, setComment] = useState("");
-  const [sending, setSending] = useState(false);
-  const addToast = useSetAtom(toastsAtom);
-  const activeSessionId = useAtomValue(activeSessionIdAtom);
-
-  async function handleSend() {
-    if (!comment.trim() || sending || !activeSessionId) return;
-    setSending(true);
-    try {
-      // Token-gated: routes through request_comment_token (close_out=false)
-      // → execute_gated_write. This path posts the comment ONLY — it does NOT
-      // close out the issue (discriminant enforced by the backend token).
-      const token = await invoke<string>("linear_request_comment_token", {
-        issueId,
-        comment: comment.trim(),
-      });
-      await invoke("linear_execute_gated_write", { token, sessionId: activeSessionId });
-      addToast({ message: "Comment posted", description: comment.trim().slice(0, 60), type: "success" });
-      setComment("");
-      setOpen(false);
-    } catch (err) {
-      addToast({ message: "Comment failed", description: String(err), type: "error" });
-    } finally {
-      setSending(false);
-    }
-  }
-
-  return (
-    <div className="relative">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              aria-label="Post comment"
-              onClick={() => setOpen((o) => !o)}
-              className="flex size-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
-            />
-          }
-        >
-          <MessageSquarePlus size={12} />
-        </TooltipTrigger>
-        <TooltipContent side="bottom">Post comment</TooltipContent>
-      </Tooltip>
-
-      {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-md border border-border bg-popover p-2 shadow-md">
-          <textarea
-            autoFocus
-            value={comment}
-            onChange={(e) => setComment(e.target.value)}
-            placeholder="Write a comment…"
-            rows={3}
-            className="w-full resize-none rounded border border-border bg-background px-2 py-1.5 text-[11px] leading-relaxed outline-none placeholder:text-muted-foreground/60 focus:ring-1 focus:ring-foreground/30"
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && e.ctrlKey) {
-                e.preventDefault();
-                void handleSend();
-              }
-              if (e.key === "Escape") {
-                e.preventDefault();
-                setOpen(false);
-              }
-            }}
-          />
-          <div className="mt-1.5 flex justify-end gap-1">
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              className="rounded px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleSend()}
-              disabled={!comment.trim() || sending}
-              className="rounded bg-primary px-2 py-0.5 text-[10px] text-primary-foreground disabled:opacity-50"
-            >
-              {sending ? "Sending…" : "Send"}
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 /// Issue → agent verbs for the floating-detail toolbar: send / spawn / pin /
 /// bind, plus an explicit re-inject when the issue is bound or pinned.
 /// Write controls: state picker, assign-to-me/unassign, comment composer, close-out.
@@ -1203,7 +1408,6 @@ export function LinearVerbToolbar({ issueId }: { issueId: string }) {
           {isAssignedToMe ? <UserMinus size={12} /> : <UserCheck size={12} />}
         </ToolbarAction>
       )}
-      <CommentComposerToolbar issueId={issueId} />
       <ToolbarAction label={LINEAR_ACTION_LABELS.closeOut} onClick={handleCloseOut}>
         <CheckSquare size={12} />
       </ToolbarAction>

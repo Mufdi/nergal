@@ -292,6 +292,8 @@ pub fn run() {
         .manage(linear::LinearSyncState::default())
         .manage(clickup::writeback::WritebackRegistry::default())
         .manage(clickup::closure::ClosureTokenStore::default())
+        .manage(linear::writeback::WritebackRegistry::default())
+        .manage(linear::closure::GatedTokenStore::default())
         .manage(PendingDeepLinks::default())
         .invoke_handler(tauri::generate_handler![
             // PTY commands
@@ -513,6 +515,18 @@ pub fn run() {
             linear::linear_send_issue_as_prompt,
             linear::linear_reinject_issue,
             linear::linear_spawn_worktree_with_issue,
+            // Linear write-back (linear-writeback): direct writes + closure gate
+            linear::linear_read_team_states,
+            linear::linear_set_issue_state,
+            linear::linear_set_assignee,
+            linear::linear_mark_closed_out,
+            linear::linear_read_closed_out,
+            linear::linear_unmark_closed_out,
+            linear::linear_read_projects,
+            linear::closure::linear_request_comment_token,
+            linear::closure::linear_request_closure_token,
+            linear::closure::linear_execute_gated_write,
+            linear::closure::linear_verify_comment_landed,
             // Live preview browser
             browser::browser_validate_url,
             browser::browser_get_listening_ports,

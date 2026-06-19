@@ -110,6 +110,7 @@ export interface IssueView {
   dueDate?: number;
   url?: string;
   estimate?: number;
+  estimationType?: string;
   stale: boolean;
   labels: { id: string; name: string; color?: string }[];
 }
@@ -175,6 +176,7 @@ export interface LinearComment {
   body?: string;
   createdAt?: number;
   author?: string;
+  parentId?: string | null;
 }
 
 // ── Data atoms ──
@@ -220,6 +222,9 @@ export const linearDetailIssueIdAtom = atom<string | null>(null);
 
 /// Active label filter: set of label ids. Empty set = no filter.
 export const linearLabelFilterAtom = atom<ReadonlySet<string>>(new Set<string>());
+
+/// Active project filter — null = "Todos" (group all by project); a project id = filter + group by state.
+export const linearProjectFilterAtom = atom<string | null>(null);
 
 /// Copy an issue identifier to the OS clipboard + toast. Routes through the
 /// robust terminal_clipboard_write (Wayland plugin stalls async) matching

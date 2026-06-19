@@ -179,7 +179,14 @@ pub fn reconcile(
     // Vocabularies first (FK targets), fetched flat. Teams → states (each names
     // its team) → labels.
     for team in &cycle.teams {
-        mirror::upsert_team(&tx, &team.id, &team.name, &team.key, cycle.cycle_now)?;
+        mirror::upsert_team_with_estimation(
+            &tx,
+            &team.id,
+            &team.name,
+            &team.key,
+            team.estimation_type.as_deref(),
+            cycle.cycle_now,
+        )?;
     }
     for s in &cycle.states {
         if let Some(t) = &s.team {
@@ -477,6 +484,10 @@ mod tests {
         conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
         conn.execute_batch(include_str!("../../migrations/023_linear_mirror.sql"))
             .unwrap();
+        conn.execute_batch(include_str!(
+            "../../migrations/027_linear_estimation_type.sql"
+        ))
+        .unwrap();
         conn
     }
 

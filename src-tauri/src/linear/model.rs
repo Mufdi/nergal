@@ -57,6 +57,7 @@ pub struct OrganizationInfo {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Team {
     pub id: String,
     pub name: String,
@@ -65,6 +66,10 @@ pub struct Team {
     pub states: Connection<WorkflowState>,
     #[serde(default)]
     pub labels: Connection<Label>,
+    /// notUsed | exponential | fibonacci | linear | tShirt — drives the estimate
+    /// label mapping in the detail view.
+    #[serde(default)]
+    pub estimation_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -199,6 +204,9 @@ pub struct Comment {
     pub created_at: Option<String>,
     #[serde(default)]
     pub user: Option<User>,
+    /// Reply threading: present when this comment is a reply to another.
+    #[serde(default)]
+    pub parent: Option<IdRef>,
 }
 
 /// Issue attachment (link, file ref) — fetched lazily on detail-open, not

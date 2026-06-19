@@ -7,10 +7,12 @@
 
 pub mod auth;
 pub mod client;
+pub mod closure;
 pub mod integration;
 pub mod mirror;
 pub mod model;
 pub mod poller;
+pub mod writeback;
 
 use std::time::Duration;
 
@@ -621,6 +623,7 @@ pub async fn linear_issue_detail(
                 body: c.body,
                 created_at: c.created_at.as_deref().and_then(model::iso8601_to_epoch),
                 author: c.user.and_then(|u| u.display_name.or(u.name)),
+                parent_id: c.parent.map(|p| p.id),
             })
             .collect(),
         attachments: attachments
@@ -821,6 +824,8 @@ pub struct LinearComment {
     pub body: Option<String>,
     pub created_at: Option<i64>,
     pub author: Option<String>,
+    /// Id of the parent comment when this is a reply; `null` for top-level comments.
+    pub parent_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -839,6 +844,174 @@ pub struct LinearRelation {
     pub related_id: String,
     pub related_identifier: Option<String>,
     pub related_title: Option<String>,
+}
+
+// ── Write-back commands (linear-writeback) ──
+
+/// Non-synthetic workflow states for a team — feeds the state picker in the
+/// detail and the closure prompt.  Synthetic placeholder rows are excluded
+/// (Decision 8 / review #3: a placeholder id must never reach `issueUpdate`).
+#[tauri::command]
+pub fn linear_read_team_states(
+    team_id: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<Vec<mirror::WorkflowStateView>, String> {
+    let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+    mirror::read_team_states(guard.conn(), &team_id).map_err(|e| format!("{e:#}"))
+}
+
+/// Update the issue's state (reversible, un-token-gated; validates non-synthetic
+/// team membership at the command boundary — Decision 5).
+///
+/// Records a provisional registry entry BEFORE the API call (TOCTOU-safe —
+/// review #7).  Clears it on failure.  On success the reconcile will write the
+/// acked value from the server to the mirror; the frontend overlay reverts.
+#[tauri::command]
+pub async fn linear_set_issue_state(
+    issue_id: String,
+    state_id: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+    registry: tauri::State<'_, writeback::WritebackRegistry>,
+) -> Result<(), String> {
+    // Server-side state validation.
+    let pre = {
+        let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+        let team_id =
+            mirror::get_issue_team_id(guard.conn(), &issue_id).map_err(|e| format!("{e:#}"))?;
+        mirror::validate_state_for_team(guard.conn(), &team_id, &state_id)
+            .map_err(|e| format!("{e:#}"))?;
+        // Read the pre-write value for echo/conflict comparison.
+        use rusqlite::OptionalExtension;
+        guard
+            .conn()
+            .query_row(
+                "SELECT state_id FROM linear_issues WHERE id = ?1",
+                [&issue_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(|e| format!("{e:#}"))?
+            .flatten()
+    };
+
+    // Provisional record BEFORE the API call.
+    registry.record(
+        &issue_id,
+        writeback::WriteField::State,
+        &state_id,
+        pre.as_deref(),
+    );
+
+    let stored = load_active_stored_key(&db).await?;
+    let client = build_client(stored.key);
+    let input = client::IssueUpdateInput {
+        state_id: Some(state_id.clone()),
+        assignee_id: None,
+    };
+    match client.issue_update(&issue_id, input).await {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            registry.clear_entry(&issue_id, &writeback::WriteField::State);
+            Err(format!("{e:#}"))
+        }
+    }
+}
+
+/// Update the issue's assignee (reversible, un-token-gated).
+///
+/// `assignee_id = None` → explicit unassign (sends `assigneeId: null`).
+/// The frontend "assign to me" path resolves the viewer id and passes it;
+/// the frontend must error when `viewer_id` is unresolved rather than pass
+/// `None` (which would unassign — the opposite of intent, Decision 8 / review
+/// #11).
+#[tauri::command]
+pub async fn linear_set_assignee(
+    issue_id: String,
+    assignee_id: Option<String>,
+    db: tauri::State<'_, crate::db::SharedDb>,
+    registry: tauri::State<'_, writeback::WritebackRegistry>,
+) -> Result<(), String> {
+    let pre = {
+        let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+        use rusqlite::OptionalExtension;
+        guard
+            .conn()
+            .query_row(
+                "SELECT assignee_id FROM linear_issues WHERE id = ?1",
+                [&issue_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(|e| format!("{e:#}"))?
+            .flatten()
+    };
+
+    // Provisional record BEFORE the API call.
+    let written = assignee_id.as_deref().unwrap_or("");
+    registry.record(
+        &issue_id,
+        writeback::WriteField::Assignee,
+        written,
+        pre.as_deref(),
+    );
+
+    let stored = load_active_stored_key(&db).await?;
+    let client = build_client(stored.key);
+    let input = client::IssueUpdateInput {
+        state_id: None,
+        // outer Some → include the key; inner None → set to null (unassign).
+        assignee_id: Some(assignee_id.clone()),
+    };
+    match client.issue_update(&issue_id, input).await {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            registry.clear_entry(&issue_id, &writeback::WriteField::Assignee);
+            Err(format!("{e:#}"))
+        }
+    }
+}
+
+/// Record that an issue was closed out from this session (durable local marker,
+/// separate from any Linear state).
+#[tauri::command]
+pub fn linear_mark_closed_out(
+    issue_id: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<(), String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+    mirror::mark_closed_out(guard.conn(), &issue_id, now).map_err(|e| format!("{e:#}"))
+}
+
+/// Issue ids that were closed out — drives the panel badge.
+#[tauri::command]
+pub fn linear_read_closed_out(
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<Vec<String>, String> {
+    let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+    mirror::read_closed_out(guard.conn()).map_err(|e| format!("{e:#}"))
+}
+
+/// Remove the worked-closed marker so the frontend can un-close-out an issue.
+#[tauri::command]
+pub fn linear_unmark_closed_out(
+    issue_id: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<(), String> {
+    let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+    mirror::unmark_closed_out(guard.conn(), &issue_id).map_err(|e| format!("{e:#}"))
+}
+
+/// Projects in the mirror — feeds the panel project-select.
+#[tauri::command]
+pub fn linear_read_projects(
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<Vec<mirror::ProjectView>, String> {
+    let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+    mirror::read_projects(guard.conn()).map_err(|e| format!("{e:#}"))
 }
 
 // ── Poller lifecycle ──
@@ -1026,9 +1199,70 @@ async fn run_loop(app: AppHandle) {
             .unwrap_or_default();
 
         match poller::run_cycle(&client, &db).await {
-            Ok(Some(outcome)) => {
+            Ok(Some(mut outcome)) => {
                 if !outcome.discarded {
                     let _ = app.emit("linear:changed", ());
+
+                    // ── Echo/conflict hook (linear-writeback, Decision 2/3) ──
+                    //
+                    // run_cycle drops the FetchedCycle and returns only
+                    // ReconcileOutcome with no per-issue values (review N2), so
+                    // we read the post-reconcile mirror (server truth after blind
+                    // upsert) for each recent-write entry.
+                    //
+                    // The WritebackRegistry is reached via app.state() — NOT via
+                    // tauri::State injection (command-only), review N3.
+                    if let Some(reg) = app.try_state::<writeback::WritebackRegistry>() {
+                        reg.purge_expired();
+                        let issue_ids = reg.tracked_issue_ids();
+                        for issue_id in &issue_ids {
+                            let fields = db
+                                .lock()
+                                .ok()
+                                .and_then(|g| {
+                                    mirror::get_issue_write_fields(g.conn(), issue_id).ok()
+                                })
+                                .flatten();
+                            let Some((server_state, server_assignee)) = fields else {
+                                // Issue fell out of the poll window; no fresh
+                                // remote value — skip (correct by design,
+                                // Decision 2 edge case).
+                                continue;
+                            };
+                            let entries = reg.entries_for_issue(issue_id);
+                            for entry in entries {
+                                let server_val = match entry.field {
+                                    writeback::WriteField::State => {
+                                        server_state.as_deref().unwrap_or("")
+                                    }
+                                    writeback::WriteField::Assignee => {
+                                        server_assignee.as_deref().unwrap_or("")
+                                    }
+                                };
+                                match writeback::check_echo(&entry, server_val) {
+                                    writeback::EchoCheckResult::OwnEcho => {
+                                        reg.clear_entry(issue_id, &entry.field);
+                                        // Filter own assignee echo from
+                                        // newly_assigned (REGRESSION guard —
+                                        // own "assign to me" must not
+                                        // self-fire linear:assigned).
+                                        if entry.field == writeback::WriteField::Assignee {
+                                            outcome.newly_assigned.retain(|id| id != issue_id);
+                                        }
+                                    }
+                                    writeback::EchoCheckResult::ScalarConflict(c) => {
+                                        reg.clear_entry(issue_id, &entry.field);
+                                        let _ = app.emit("linear:write-conflict", &c);
+                                    }
+                                    writeback::EchoCheckResult::Unrelated => {
+                                        // Write not yet landed; keep entry for
+                                        // the next cycle.
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // Notify only post-baseline (suppress the seeding cycle).
                     if pre_baseline && !outcome.newly_assigned.is_empty() {
                         notify_assignments(&app, &db, &outcome.newly_assigned);
@@ -1161,5 +1395,54 @@ mod tests {
         assert_eq!(act[2].kind, "label");
         assert_eq!(act[2].actor.as_deref(), Some("Linear")); // bot actor fallback
         assert_eq!(act[2].added, vec!["Improvement".to_string()]);
+    }
+
+    // 8.1 comment parent_id round-trip: mapping propagates the parent id correctly
+    #[test]
+    fn comment_parent_id_round_trip() {
+        use crate::linear::model;
+
+        let raw_reply: model::Comment = serde_json::from_value(serde_json::json!({
+            "id": "c-reply",
+            "body": "A reply",
+            "createdAt": "2026-06-18T10:00:00Z",
+            "user": { "id": "u1", "displayName": "Alice" },
+            "parent": { "id": "c-top" }
+        }))
+        .unwrap();
+        let raw_top: model::Comment = serde_json::from_value(serde_json::json!({
+            "id": "c-top",
+            "body": "Top-level",
+            "createdAt": "2026-06-18T09:00:00Z",
+            "user": { "id": "u1", "displayName": "Alice" }
+        }))
+        .unwrap();
+
+        let mapped_reply = LinearComment {
+            id: raw_reply.id,
+            body: raw_reply.body,
+            created_at: raw_reply
+                .created_at
+                .as_deref()
+                .and_then(model::iso8601_to_epoch),
+            author: raw_reply.user.and_then(|u| u.display_name.or(u.name)),
+            parent_id: raw_reply.parent.map(|p| p.id),
+        };
+        let mapped_top = LinearComment {
+            id: raw_top.id,
+            body: raw_top.body,
+            created_at: raw_top
+                .created_at
+                .as_deref()
+                .and_then(model::iso8601_to_epoch),
+            author: raw_top.user.and_then(|u| u.display_name.or(u.name)),
+            parent_id: raw_top.parent.map(|p| p.id),
+        };
+
+        assert_eq!(mapped_reply.parent_id.as_deref(), Some("c-top"));
+        assert_eq!(
+            mapped_top.parent_id, None,
+            "top-level comment must have no parent_id"
+        );
     }
 }

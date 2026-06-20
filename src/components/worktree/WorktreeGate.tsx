@@ -9,6 +9,8 @@ import {
 } from "@/stores/worktreeGate";
 import { workspacesAtom } from "@/stores/workspace";
 import * as terminalService from "@/components/terminal/terminalService";
+import { Kbd } from "@/components/ui/kbd";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 /// Permission presets the human can pick when editing (kebab-case matches the
 /// Rust `PermissionPreset` serde). `bypass` is the escalation the gate guards.
@@ -74,11 +76,14 @@ export function WorktreeGate() {
     if (draft && !ids.includes(draft.id)) setDraft(null);
   }, [requests, selectedId, draft]);
 
-  // Capture focus when a request first appears (the user asked the card to own
-  // the keyboard so a decision can be made hands-on-keyboard).
+  // Capture focus when a request arrives so the card owns the keyboard (the
+  // user decides hands-on-keyboard). Deferred — the focus has to land after the
+  // DOM commits and after any competing terminal refocus on the same tick.
   useEffect(() => {
-    if (requests.length > 0 && prevCount.current === 0) {
-      rootRef.current?.focus();
+    if (requests.length > prevCount.current) {
+      prevCount.current = requests.length;
+      const t = setTimeout(() => rootRef.current?.focus(), 80);
+      return () => clearTimeout(t);
     }
     prevCount.current = requests.length;
   }, [requests.length]);
@@ -167,13 +172,14 @@ export function WorktreeGate() {
   if (requests.length === 0) return null;
 
   return (
+    <TooltipProvider delay={0}>
     <div
       ref={rootRef}
       data-focus-zone="worktree-gate"
       tabIndex={0}
       className="pointer-events-auto fixed bottom-3 right-3 z-[60] flex max-h-[80vh] w-[360px] flex-col gap-2 overflow-y-auto outline-none"
     >
-      <div className="flex items-center gap-2 rounded-md bg-card/95 px-2.5 py-1.5 text-[11px] font-medium text-foreground shadow-lg ring-1 ring-border/60 backdrop-blur">
+      <div className="flex items-center gap-2 rounded-md border border-border bg-popover px-2.5 py-1.5 text-[11px] font-medium text-popover-foreground shadow-xl">
         <GitBranch size={13} className="text-primary" />
         Worktree request{requests.length === 1 ? "" : "s"}
         <span className="ml-auto rounded bg-primary/15 px-1.5 text-[10px] text-primary">
@@ -197,6 +203,7 @@ export function WorktreeGate() {
         />
       ))}
     </div>
+    </TooltipProvider>
   );
 }
 
@@ -234,8 +241,8 @@ function RequestCard({
       data-nav-selected={selected ? "true" : undefined}
       data-request-id={req.id}
       onMouseDown={onSelect}
-      className={`flex flex-col gap-1.5 rounded-lg bg-card p-2.5 text-[12px] text-foreground shadow-lg ring-1 ${
-        selected ? "ring-primary/70" : "ring-border/60"
+      className={`flex flex-col gap-1.5 rounded-lg border bg-popover p-2.5 text-[12px] text-popover-foreground shadow-xl ${
+        selected ? "border-primary" : "border-border"
       }`}
     >
       <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -253,7 +260,7 @@ function RequestCard({
           aria-label="Edit prompt"
         />
       ) : (
-        <p className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words rounded bg-secondary/20 px-2 py-1 text-[12px] leading-snug">
+        <p className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words rounded border border-border/50 bg-muted/40 px-2 py-1 text-[12px] leading-snug">
           {req.prompt}
         </p>
       )}
@@ -295,17 +302,25 @@ function RequestCard({
             ))}
           </select>
         ) : (
-          <span
-            title="Permission mode the agent requested for the new session"
-            className={
-              bypass
-                ? "flex items-center gap-1 rounded bg-destructive/15 px-1.5 py-0.5 font-medium text-destructive"
-                : "rounded bg-muted/50 px-1.5 py-0.5 text-muted-foreground"
-            }
-          >
-            {bypass && <AlertTriangle size={10} />}
-            permissions: {req.permission_preset ?? "default"}
-          </span>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span
+                  className={
+                    bypass
+                      ? "flex items-center gap-1 rounded bg-destructive/15 px-1.5 py-0.5 font-medium text-destructive"
+                      : "rounded bg-muted/50 px-1.5 py-0.5 text-muted-foreground"
+                  }
+                />
+              }
+            >
+              {bypass && <AlertTriangle size={10} />}
+              permissions: {req.permission_preset ?? "default"}
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              Permission mode the agent requested for the new session
+            </TooltipContent>
+          </Tooltip>
         )}
         {req.allow_skip_in_cycle && (
           <span className="flex items-center gap-1 rounded bg-destructive/15 px-1.5 py-0.5 font-medium text-destructive">
@@ -325,19 +340,23 @@ function RequestCard({
         </div>
       )}
 
-      <div
-        className="flex items-center gap-2 text-[10px] text-muted-foreground"
-        title="Existing git worktrees in this repository, and free disk on its volume"
-      >
-        <span>{req.resources.worktree_count} worktrees in repo</span>
-        <span>·</span>
-        <span>{formatBytes(req.resources.free_disk_bytes)} free</span>
-        {req.resources.over_soft_cap && (
-          <span className="flex items-center gap-0.5 text-amber-500">
-            <AlertTriangle size={10} /> over soft cap ({req.resources.soft_cap})
-          </span>
-        )}
-      </div>
+      <Tooltip>
+        <TooltipTrigger
+          render={<div className="flex items-center gap-2 text-[10px] text-muted-foreground" />}
+        >
+          <span>{req.resources.worktree_count} worktrees in repo</span>
+          <span>·</span>
+          <span>{formatBytes(req.resources.free_disk_bytes)} free</span>
+          {req.resources.over_soft_cap && (
+            <span className="flex items-center gap-0.5 text-amber-500">
+              <AlertTriangle size={10} /> over soft cap ({req.resources.soft_cap})
+            </span>
+          )}
+        </TooltipTrigger>
+        <TooltipContent side="top">
+          Existing git worktrees in this repository, and free disk on its volume
+        </TooltipContent>
+      </Tooltip>
 
       <div className="mt-0.5 flex items-center gap-1.5">
         {editing ? (
@@ -354,9 +373,9 @@ function RequestCard({
               type="button"
               disabled={busy}
               onClick={onCancelEdit}
-              className="rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent disabled:opacity-50"
+              className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent disabled:opacity-50"
             >
-              Cancel
+              Cancel <Kbd keys="esc" className="ml-0.5" />
             </button>
           </>
         ) : (
@@ -365,28 +384,25 @@ function RequestCard({
               type="button"
               disabled={busy}
               onClick={() => onApprove(false)}
-              title="Approve (A)"
               className="flex items-center gap-1 rounded bg-primary px-2 py-1 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
-              <Check size={12} /> Approve
+              <Check size={12} /> Approve <Kbd keys="a" tone="onPrimary" className="ml-0.5" />
             </button>
             <button
               type="button"
               disabled={busy}
               onClick={onStartEdit}
-              title="Edit prompt, branch and permissions (E)"
               className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent disabled:opacity-50"
             >
-              <Pencil size={12} /> Edit
+              <Pencil size={12} /> Edit <Kbd keys="e" className="ml-0.5" />
             </button>
             <button
               type="button"
               disabled={busy}
               onClick={onDeny}
-              title="Deny (D)"
               className="ml-auto flex items-center gap-1 rounded px-2 py-1 text-[11px] text-destructive hover:bg-destructive/10 disabled:opacity-50"
             >
-              <X size={12} /> Deny
+              <X size={12} /> Deny <Kbd keys="d" className="ml-0.5" />
             </button>
           </>
         )}

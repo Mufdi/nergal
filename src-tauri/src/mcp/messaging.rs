@@ -405,6 +405,7 @@ mod tests {
             agents: AgentRuntimeState::bootstrap().unwrap(),
             app_uid: 0,
             delivery: Arc::new(NoopDelivery),
+            worktree_gate: Default::default(),
         }
     }
 

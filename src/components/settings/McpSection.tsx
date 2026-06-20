@@ -26,6 +26,42 @@ export function McpSection() {
     }
   }
 
+  const worktreesEnabled = config.agent_spawned_worktrees?.enabled ?? false;
+  async function toggleWorktrees(enabled: boolean) {
+    setConfig((p) => ({
+      ...p,
+      agent_spawned_worktrees: {
+        enabled,
+        request_timeout_secs: p.agent_spawned_worktrees?.request_timeout_secs ?? 3600,
+        max_pending_per_session: p.agent_spawned_worktrees?.max_pending_per_session ?? 3,
+        soft_worktree_cap: p.agent_spawned_worktrees?.soft_worktree_cap ?? 0,
+      },
+    })); // optimistic
+    try {
+      await invoke("agent_worktrees_set_enabled", { enabled });
+      setToasts({
+        message: "Agent-spawned worktrees",
+        description: enabled
+          ? "Enabled — agents can request a worktree session (you approve each one)."
+          : "Disabled — requests are refused.",
+        type: "success",
+      });
+    } catch (e) {
+      setConfig((p) => ({
+        ...p,
+        agent_spawned_worktrees: {
+          ...(p.agent_spawned_worktrees ?? {
+            request_timeout_secs: 3600,
+            max_pending_per_session: 3,
+            soft_worktree_cap: 0,
+          }),
+          enabled: !enabled,
+        },
+      })); // rollback
+      setToasts({ message: "Agent-spawned worktrees", description: String(e), type: "error" });
+    }
+  }
+
   const crossEnabled = config.cross_session?.enabled ?? false;
   async function toggleCrossSession(enabled: boolean) {
     setConfig((p) => ({
@@ -96,6 +132,29 @@ export function McpSection() {
             cluihud routes delivery by waking the target's terminal. Relayed context is labeled advisory,
             never carrying your authority. This is the master kill-switch — off halts all delivery.
             Requires the MCP server above to be enabled.
+          </span>
+        </label>
+      </div>
+      <div className="flex items-start gap-3 border-t border-border/40 pt-4 text-sm">
+        <Switch
+          id="setting-agent_spawned_worktrees_enabled"
+          checked={worktreesEnabled}
+          onCheckedChange={toggleWorktrees}
+          aria-label="Enable agent-spawned worktree sessions"
+          className="mt-1"
+        />
+        <label
+          htmlFor="setting-agent_spawned_worktrees_enabled"
+          className="flex flex-col gap-0.5 cursor-pointer"
+        >
+          <span className="font-medium">Agent-spawned worktree sessions</span>
+          <span className="text-xs text-muted-foreground">
+            Lets an agent <em>request</em> a new dedicated worktree session
+            (<code className="text-[11px]">create_worktree_session</code>) under an active
+            workspace. Every request waits for your explicit approval in a gate that shows the
+            requesting session, prompt, target agent and permission preset — nothing is created
+            until you approve. The most resource-sensitive capability; off by default. Requires
+            the MCP server above to be enabled.
           </span>
         </label>
       </div>

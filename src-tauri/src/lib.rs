@@ -207,6 +207,10 @@ pub fn run() {
     let agent_state = AgentRuntimeState::bootstrap()
         .expect("failed to bootstrap agent runtime state with default registrations");
 
+    // Agent-spawned-worktree gate: shared between the MCP daemon (the request
+    // tools) and the Tauri gate commands (the human approval path).
+    let worktree_gate = crate::mcp::worktree_sessions::WorktreeGateState::default();
+
     // Take the EventSink receiver from the bootstrap'd runtime state — the
     // consumer task is spawned from the Tauri setup callback below where
     // AppHandle is available.
@@ -285,6 +289,7 @@ pub fn run() {
         .manage(db.clone())
         .manage(plan_state.clone())
         .manage(agent_state.clone())
+        .manage(worktree_gate.clone())
         .manage(ScratchpadState::new(scratchpad_root.clone()))
         .manage(crate::obsidian::templates_watcher::TemplatesWatcherState::new())
         .manage(crate::obsidian::pinned_notes_watcher::PinnedNotesWatcherState::new())
@@ -327,6 +332,10 @@ pub fn run() {
             mcp::messaging::cross_session_thread_messages,
             mcp::messaging::cross_session_mark_seen,
             mcp::messaging::cross_session_unread_counts,
+            mcp::worktree_sessions::agent_worktrees_set_enabled,
+            mcp::worktree_sessions::list_worktree_requests,
+            mcp::worktree_sessions::approve_worktree_request,
+            mcp::worktree_sessions::deny_worktree_request,
             commands::validate_path,
             // Task commands
             commands::get_tasks,
@@ -630,6 +639,7 @@ pub fn run() {
             let mcp_db = db.clone();
             let mcp_agents = agent_state.clone();
             let mcp_app = app_handle.clone();
+            let mcp_worktree_gate = worktree_gate.clone();
             tauri::async_runtime::spawn(async move {
                 let path = crate::mcp::socket_path();
                 match crate::mcp::transport::UnixSocketTransport::bind(&path) {
@@ -642,11 +652,26 @@ pub fn run() {
                             delivery: std::sync::Arc::new(crate::mcp::delivery::AppBridge::new(
                                 mcp_app,
                             )),
+                            worktree_gate: mcp_worktree_gate,
                         };
                         crate::mcp::serve(transport, ctx).await;
                     }
                     Err(e) => tracing::error!("mcp daemon bind error: {e}"),
                 }
+            });
+
+            // Agent-spawned-worktree request sweeper: atomically purges timed-out
+            // requests (notifying their requesters) + GCs the terminal ledger.
+            let wt_sweep_app = app_handle.clone();
+            let wt_sweep_agents = agent_state.clone();
+            let wt_sweep_gate = worktree_gate.clone();
+            tauri::async_runtime::spawn(async move {
+                crate::mcp::worktree_sessions::run_worktree_request_sweeper(
+                    wt_sweep_app,
+                    wt_sweep_agents,
+                    wt_sweep_gate,
+                )
+                .await;
             });
 
             // Cross-session messaging deadline sweeper: actively closes threads

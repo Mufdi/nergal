@@ -12,6 +12,7 @@ import { addActivityAtom, completeToolActivityAtom } from "./activity";
 import { toastsAtom } from "./toast";
 import { localhostPortsAtom } from "./browser";
 import { providerStatusAtom, type ProviderStatus } from "./statusFeed";
+import { loadWorktreeRequests } from "./worktreeGate";
 import { notify } from "@/lib/notifications";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
@@ -316,6 +317,19 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
     }),
   );
 
+  // Agent-spawned-worktree gate: both events only signal "the queue changed";
+  // re-fetch the enriched list (count + free disk are computed fresh server-side).
+  unlisteners.push(
+    await listen<{ request_id: string }>("worktree:request", () => {
+      void loadWorktreeRequests(store);
+    }),
+  );
+  unlisteners.push(
+    await listen<{ request_id: string }>("worktree:resolved", () => {
+      void loadWorktreeRequests(store);
+    }),
+  );
+
   // Cover startup race: the scanner's first emit fires ~4ms after backend
   // boot, often before this listener is registered, and Tauri events do
   // not buffer. Query current snapshot once, then deltas keep us in sync.
@@ -325,6 +339,8 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
   } catch {
     /* tolerate failure — scanner deltas will eventually populate the atom */
   }
+  // Initial gate load (covers requests enqueued before this boot).
+  void loadWorktreeRequests(store);
 
   return unlisteners;
 }

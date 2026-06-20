@@ -17,6 +17,7 @@ pub mod router;
 pub mod shim;
 pub mod summary;
 pub mod transport;
+pub mod worktree_sessions;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -71,6 +72,9 @@ pub struct DaemonContext {
     /// Bridge to the live app: PTY wake + frontend events. `NoopDelivery` in
     /// tests / headless. Cross-session messaging actuates delivery through this.
     pub delivery: Arc<dyn SessionDelivery>,
+    /// In-memory queue + terminal ledger for agent-spawned-worktree requests.
+    /// Shared with the Tauri gate commands (the same underlying maps).
+    pub worktree_gate: worktree_sessions::WorktreeGateState,
 }
 
 impl DaemonContext {
@@ -246,6 +250,42 @@ pub fn tool_definitions() -> Vec<Value> {
                 "additionalProperties": false,
             },
         }),
+        json!({
+            "name": "create_worktree_session",
+            "description": "REQUEST (do not create) a new dedicated worktree session under an active workspace, behind a mandatory human gate. Non-blocking: returns { pending_request_id } immediately — it NEVER waits for the human decision. The outcome arrives asynchronously (you are woken if idle) or via get_worktree_request_status(request_id). status: pending (queued), disabled (feature off), invalid_workspace, invalid_request, too_many_pending_requests. The human sees your prompt + requested agent + permission preset and may Approve/Edit/Deny; on approve the session starts with your prompt as its first turn and control passes to the user.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "workspace_id": { "type": "string", "description": "Target active workspace id (from list_sessions descriptors)." },
+                    "prompt": { "type": "string", "description": "The dedicated first-turn prompt for the new session." },
+                    "branch_name": { "type": "string", "description": "Suggested branch/worktree name (a slug is derived; the user may edit)." },
+                    "agent": { "type": "string", "description": "Agent CLI to launch (e.g. claude-code); omit for the project/default agent." },
+                    "launch_options": { "type": "object", "description": "Optional LaunchOptions (permission_preset, startup_command). The human sees and may clamp the permission preset.", "additionalProperties": true }
+                },
+                "required": ["workspace_id", "prompt"],
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "get_worktree_request_status",
+            "description": "Poll the outcome of a create_worktree_session request. Returns { state }: pending | approved (with session_id) | denied | timed_out | cancelled | failed (with reason) | not_found (unknown/expired, or abandoned after a daemon restart).",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "request_id": { "type": "string", "description": "The pending_request_id returned by create_worktree_session." } },
+                "required": ["request_id"],
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "cancel_worktree_request",
+            "description": "Withdraw a still-pending worktree request you created (no effect once it has been approved/denied/timed out). Returns { state }: cancelled on success, else the current state.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "request_id": { "type": "string", "description": "The pending_request_id to cancel." } },
+                "required": ["request_id"],
+                "additionalProperties": false,
+            },
+        }),
     ]
 }
 
@@ -373,6 +413,84 @@ pub fn dispatch(
                     match messaging::search_sessions(ctx, query) {
                         Ok(v) => tool_ok(req.id.clone(), v),
                         Err(e) => err(req.id.clone(), INTERNAL_ERROR, &e.to_string(), None),
+                    }
+                }
+                Some("create_worktree_session") => {
+                    let Some(requester) = identity else {
+                        return err(
+                            req.id.clone(),
+                            INVALID_PARAMS,
+                            "caller could not be identified (no live session hint)",
+                            None,
+                        );
+                    };
+                    let workspace_id = args.get("workspace_id").and_then(|v| v.as_str());
+                    let prompt = args.get("prompt").and_then(|v| v.as_str());
+                    match (workspace_id, prompt) {
+                        (Some(workspace_id), Some(prompt)) => {
+                            let branch_name = args.get("branch_name").and_then(|v| v.as_str());
+                            let agent = args.get("agent").and_then(|v| v.as_str());
+                            let launch_options = args
+                                .get("launch_options")
+                                .cloned()
+                                .and_then(|v| serde_json::from_value(v).ok());
+                            let cfg = Config::load().agent_spawned_worktrees;
+                            tool_ok(
+                                req.id.clone(),
+                                worktree_sessions::create_worktree_session(
+                                    ctx,
+                                    &cfg,
+                                    requester,
+                                    workspace_id,
+                                    prompt,
+                                    branch_name,
+                                    agent,
+                                    launch_options,
+                                ),
+                            )
+                        }
+                        _ => err(
+                            req.id.clone(),
+                            INVALID_PARAMS,
+                            "`workspace_id` and `prompt` are required",
+                            None,
+                        ),
+                    }
+                }
+                Some("get_worktree_request_status") => {
+                    match args.get("request_id").and_then(|v| v.as_str()) {
+                        Some(request_id) => tool_ok(
+                            req.id.clone(),
+                            worktree_sessions::get_worktree_request_status(ctx, request_id),
+                        ),
+                        None => err(
+                            req.id.clone(),
+                            INVALID_PARAMS,
+                            "request_id is required",
+                            None,
+                        ),
+                    }
+                }
+                Some("cancel_worktree_request") => {
+                    let Some(caller) = identity else {
+                        return err(
+                            req.id.clone(),
+                            INVALID_PARAMS,
+                            "caller could not be identified (no live session hint)",
+                            None,
+                        );
+                    };
+                    match args.get("request_id").and_then(|v| v.as_str()) {
+                        Some(request_id) => tool_ok(
+                            req.id.clone(),
+                            worktree_sessions::cancel_worktree_request(ctx, caller, request_id),
+                        ),
+                        None => err(
+                            req.id.clone(),
+                            INVALID_PARAMS,
+                            "request_id is required",
+                            None,
+                        ),
                     }
                 }
                 Some(other) => err(
@@ -513,6 +631,7 @@ mod tests {
             agents,
             app_uid: 0,
             delivery: Arc::new(crate::mcp::delivery::NoopDelivery),
+            worktree_gate: Default::default(),
         }
     }
 
@@ -549,6 +668,9 @@ mod tests {
                 "read_messages",
                 "list_threads",
                 "search_sessions",
+                "create_worktree_session",
+                "get_worktree_request_status",
+                "cancel_worktree_request",
             ]
         );
     }

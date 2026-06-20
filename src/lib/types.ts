@@ -50,6 +50,9 @@ export interface Config {
   /// Cross-session messaging (backend-owned; toggled via cross_session_set_enabled).
   /// Optional because get_config carries it but the frontend never writes it back.
   cross_session?: CrossSessionConfig;
+  /// Agent-spawned worktree sessions (backend-owned; toggled via
+  /// agent_worktrees_set_enabled). Optional for the same reason.
+  agent_spawned_worktrees?: AgentWorktreesConfig;
   /// Default panel view applied on first open (frontend-owned).
   linear_default_view?: string | null;
   clickup_default_view?: string | null;
@@ -60,6 +63,13 @@ export interface CrossSessionConfig {
   max_hops: number;
   msg_budget: number;
   deadline_secs: number;
+}
+
+export interface AgentWorktreesConfig {
+  enabled: boolean;
+  request_timeout_secs: number;
+  max_pending_per_session: number;
+  soft_worktree_cap: number;
 }
 
 export interface CustomThemeFonts {

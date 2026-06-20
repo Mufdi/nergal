@@ -121,6 +121,52 @@ pub struct Config {
     /// `cross_session_set_enabled`; the tuning fields are config-file only).
     #[serde(default)]
     pub cross_session: CrossSessionConfig,
+    /// Agent-spawned worktree sessions (agent-spawned-worktrees). An agent may
+    /// REQUEST a worktree session; a mandatory, structurally un-bypassable human
+    /// gate approves it. The `enabled` kill-switch is default off — the most
+    /// resource-sensitive capability of the MCP set. Backend-owned (the toggle
+    /// goes through `agent_worktrees_set_enabled`; tuning fields are file-only).
+    #[serde(default)]
+    pub agent_spawned_worktrees: AgentWorktreesConfig,
+}
+
+/// Tuning + kill-switch for agent-spawned worktree sessions. All fields have
+/// explicit defaults; the request timeout is clamped at use-time to a 24h cap.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentWorktreesConfig {
+    /// Master kill-switch. Off → `create_worktree_session` returns `disabled`
+    /// and enqueues nothing. Default off.
+    #[serde(default)]
+    pub enabled: bool,
+    /// How long a request waits at the gate before the sweeper atomically purges
+    /// it as `timed_out`. Default ~1h; clamped to [60s, 24h] at use-time.
+    #[serde(default = "default_worktree_request_timeout_secs")]
+    pub request_timeout_secs: u64,
+    /// Per-session cap on concurrent pending requests (keeps the gate usable).
+    #[serde(default = "default_max_pending_per_session")]
+    pub max_pending_per_session: u32,
+    /// Soft cap on total worktrees: the gate UI WARNS when the count meets/
+    /// exceeds it (never blocks). 0 → no warning.
+    #[serde(default)]
+    pub soft_worktree_cap: u32,
+}
+
+fn default_worktree_request_timeout_secs() -> u64 {
+    3600
+}
+fn default_max_pending_per_session() -> u32 {
+    3
+}
+
+impl Default for AgentWorktreesConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            request_timeout_secs: default_worktree_request_timeout_secs(),
+            max_pending_per_session: default_max_pending_per_session(),
+            soft_worktree_cap: 0,
+        }
+    }
 }
 
 /// Tuning + kill-switch for cross-session messaging. Budget is a message-count
@@ -277,6 +323,7 @@ impl Default for Config {
             mcp_server_enabled: false,
             summary: SummaryConfig::default(),
             cross_session: CrossSessionConfig::default(),
+            agent_spawned_worktrees: AgentWorktreesConfig::default(),
         }
     }
 }

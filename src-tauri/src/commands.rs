@@ -103,6 +103,7 @@ pub fn get_config() -> Result<Config, String> {
 const BACKEND_OWNED_CONFIG_KEYS: &[&str] = &[
     "summary",
     "cross_session",
+    "agent_spawned_worktrees",
     "clickup_poll_interval_secs",
     "linear_poll_interval_secs",
     "linear_active_window_days",

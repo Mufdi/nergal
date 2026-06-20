@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::Result;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::AsyncBufReadExt;
 use tokio::net::UnixListener;
 
@@ -622,6 +622,12 @@ fn process_event(
     {
         let bridge = crate::mcp::delivery::AppBridge::new(app.clone());
         crate::mcp::delivery::drain_idle(db, &bridge, csid);
+        // Same working→idle point: deliver any worktree-request outcomes that
+        // resolved while this session was working (the deny/approve/timeout it
+        // could not be woken for at resolution time).
+        if let Some(gate) = app.try_state::<crate::mcp::worktree_sessions::WorktreeGateState>() {
+            crate::mcp::worktree_sessions::drain_worktree_outcomes(&gate, &bridge, csid);
+        }
     }
 
     let mut frontend_event = FrontendHookEvent::from_hook(event);

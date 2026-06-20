@@ -59,12 +59,14 @@ export async function approveWorktreeRequest(
   req: WorktreeRequestView,
   editedPrompt?: string,
   editedBranch?: string,
+  editedPreset?: string,
 ): Promise<void> {
   try {
     const session = await invoke<Session>("approve_worktree_request", {
       requestId: req.id,
       editedPrompt: editedPrompt ?? null,
       editedBranch: editedBranch ?? null,
+      editedPreset: editedPreset ?? null,
     });
     store.set(workspacesAtom, (prev) =>
       prev.map((w) =>

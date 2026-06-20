@@ -1,5 +1,5 @@
 import { useAtomValue, useStore } from "jotai";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Check, GitBranch, Pencil, X } from "lucide-react";
 import {
   worktreeRequestsAtom,
@@ -8,6 +8,11 @@ import {
   type WorktreeRequestView,
 } from "@/stores/worktreeGate";
 import { workspacesAtom } from "@/stores/workspace";
+import * as terminalService from "@/components/terminal/terminalService";
+
+/// Permission presets the human can pick when editing (kebab-case matches the
+/// Rust `PermissionPreset` serde). `bypass` is the escalation the gate guards.
+const PRESETS = ["default", "plan", "accept-edits", "auto", "bypass"] as const;
 
 function formatBytes(n: number): string {
   if (n <= 0) return "—";
@@ -21,15 +26,29 @@ function formatBytes(n: number): string {
   return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
+interface EditDraft {
+  id: string;
+  prompt: string;
+  branch: string;
+  preset: string;
+}
+
 /// Native, structurally un-bypassable approval gate for agent-spawned worktree
-/// sessions. Renders as a non-blocking floating stack (work continues behind
-/// it) listing every pending request with Approve / Edit / Deny. The requested
-/// agent + permission preset are broken out explicitly — a `bypass` preset is
-/// flagged, since that is exactly the escalation this gate exists to catch.
+/// sessions. A non-blocking floating stack (work continues behind it) that
+/// captures keyboard focus when a request arrives so the human can decide
+/// without the mouse: ↑/↓ select a card, A approve, E edit, D deny, Esc returns
+/// focus to the terminal (patterns.md §5 + §8). Every agent-chosen escalation
+/// input (agent, permission preset, startup_command, bypass-in-cycle) is shown
+/// flagged — a `bypass` preset or a shell prelude is exactly what this catches.
 export function WorktreeGate() {
   const requests = useAtomValue(worktreeRequestsAtom);
   const workspaces = useAtomValue(workspacesAtom);
   const store = useStore();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<EditDraft | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const prevCount = useRef(0);
 
   const nameOf = useMemo(() => {
     const sessions = new Map<string, string>();
@@ -44,11 +63,117 @@ export function WorktreeGate() {
     };
   }, [workspaces]);
 
+  // Keep the cursor valid as the queue changes; drop a stale edit draft.
+  useEffect(() => {
+    const ids = requests.map((r) => r.id);
+    if (ids.length === 0) {
+      if (selectedId !== null) setSelectedId(null);
+    } else if (!selectedId || !ids.includes(selectedId)) {
+      setSelectedId(ids[0]);
+    }
+    if (draft && !ids.includes(draft.id)) setDraft(null);
+  }, [requests, selectedId, draft]);
+
+  // Capture focus when a request first appears (the user asked the card to own
+  // the keyboard so a decision can be made hands-on-keyboard).
+  useEffect(() => {
+    if (requests.length > 0 && prevCount.current === 0) {
+      rootRef.current?.focus();
+    }
+    prevCount.current = requests.length;
+  }, [requests.length]);
+
+  const approve = useCallback(
+    async (req: WorktreeRequestView, useDraft: boolean) => {
+      setBusyId(req.id);
+      const d = useDraft && draft?.id === req.id ? draft : null;
+      await approveWorktreeRequest(store, req, d?.prompt, d?.branch, d?.preset);
+      setDraft(null);
+      setBusyId(null);
+    },
+    [store, draft],
+  );
+
+  const deny = useCallback(
+    async (id: string) => {
+      setBusyId(id);
+      await denyWorktreeRequest(store, id);
+      setBusyId(null);
+    },
+    [store],
+  );
+
+  const startEdit = useCallback((req: WorktreeRequestView) => {
+    setDraft({
+      id: req.id,
+      prompt: req.prompt,
+      branch: req.branch_name ?? "",
+      preset: req.permission_preset ?? "default",
+    });
+  }, []);
+
+  // Window-level keyboard nav scoped to the gate zone (patterns.md §8). Uses
+  // `e.key` not `e.code` — native WebKitGTK keydown does not populate `code`
+  // (matches the cross-session / ClickUp panels).
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const t = e.target as HTMLElement | null;
+      // Esc works even from an edit field: cancel the edit, else release focus.
+      if (e.key === "Escape" && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        if (draft) {
+          e.preventDefault();
+          setDraft(null);
+          rootRef.current?.focus();
+          return;
+        }
+        if (t?.closest("[data-focus-zone='worktree-gate']")) {
+          e.preventDefault();
+          terminalService.focusActive();
+          return;
+        }
+      }
+      if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      const inField =
+        t?.tagName === "INPUT" ||
+        t?.tagName === "TEXTAREA" ||
+        t?.getAttribute("contenteditable") === "true";
+      if (inField) return;
+      if (!t?.closest("[data-focus-zone='worktree-gate']")) return;
+      const ids = requests.map((r) => r.id);
+      if (ids.length === 0) return;
+      const idx = Math.max(0, ids.indexOf(selectedId ?? ids[0]));
+      const sel = requests.find((r) => r.id === selectedId);
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSelectedId(ids[Math.min(idx + 1, ids.length - 1)]);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSelectedId(ids[Math.max(idx - 1, 0)]);
+      } else if (e.key === "a" && sel && busyId !== sel.id) {
+        e.preventDefault();
+        void approve(sel, false);
+      } else if (e.key === "e" && sel) {
+        e.preventDefault();
+        startEdit(sel);
+      } else if (e.key === "d" && sel && busyId !== sel.id) {
+        e.preventDefault();
+        void deny(sel.id);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [requests, selectedId, draft, busyId, approve, deny, startEdit]);
+
   if (requests.length === 0) return null;
 
   return (
-    <div className="pointer-events-none fixed bottom-3 right-3 z-[60] flex max-h-[80vh] w-[360px] flex-col gap-2 overflow-y-auto">
-      <div className="pointer-events-auto flex items-center gap-2 rounded-md bg-card/95 px-2.5 py-1.5 text-[11px] font-medium text-foreground shadow-lg ring-1 ring-border/60 backdrop-blur">
+    <div
+      ref={rootRef}
+      data-focus-zone="worktree-gate"
+      tabIndex={0}
+      className="pointer-events-auto fixed bottom-3 right-3 z-[60] flex max-h-[80vh] w-[360px] flex-col gap-2 overflow-y-auto outline-none"
+    >
+      <div className="flex items-center gap-2 rounded-md bg-card/95 px-2.5 py-1.5 text-[11px] font-medium text-foreground shadow-lg ring-1 ring-border/60 backdrop-blur">
         <GitBranch size={13} className="text-primary" />
         Worktree request{requests.length === 1 ? "" : "s"}
         <span className="ml-auto rounded bg-primary/15 px-1.5 text-[10px] text-primary">
@@ -56,7 +181,20 @@ export function WorktreeGate() {
         </span>
       </div>
       {requests.map((req) => (
-        <RequestCard key={req.id} req={req} nameOf={nameOf} store={store} />
+        <RequestCard
+          key={req.id}
+          req={req}
+          nameOf={nameOf}
+          selected={req.id === selectedId}
+          draft={draft?.id === req.id ? draft : null}
+          busy={busyId === req.id}
+          onSelect={() => setSelectedId(req.id)}
+          onApprove={(useDraft) => approve(req, useDraft)}
+          onDeny={() => deny(req.id)}
+          onStartEdit={() => startEdit(req)}
+          onCancelEdit={() => setDraft(null)}
+          onDraftChange={(patch) => setDraft((d) => (d ? { ...d, ...patch } : d))}
+        />
       ))}
     </div>
   );
@@ -65,37 +203,41 @@ export function WorktreeGate() {
 function RequestCard({
   req,
   nameOf,
-  store,
+  selected,
+  draft,
+  busy,
+  onSelect,
+  onApprove,
+  onDeny,
+  onStartEdit,
+  onCancelEdit,
+  onDraftChange,
 }: {
   req: WorktreeRequestView;
   nameOf: { session: (id: string) => string; workspace: (id: string) => string };
-  store: ReturnType<typeof useStore>;
+  selected: boolean;
+  draft: EditDraft | null;
+  busy: boolean;
+  onSelect: () => void;
+  onApprove: (useDraft: boolean) => void;
+  onDeny: () => void;
+  onStartEdit: () => void;
+  onCancelEdit: () => void;
+  onDraftChange: (patch: Partial<EditDraft>) => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [prompt, setPrompt] = useState(req.prompt);
-  const [branch, setBranch] = useState(req.branch_name ?? "");
-  const [busy, setBusy] = useState(false);
-
-  const bypass = req.permission_preset === "bypass";
-
-  async function approve(useEdits: boolean) {
-    setBusy(true);
-    await approveWorktreeRequest(
-      store,
-      req,
-      useEdits ? prompt : undefined,
-      useEdits ? branch : undefined,
-    );
-    // The card unmounts when the queue re-fetch drops this request.
-  }
-
-  async function deny() {
-    setBusy(true);
-    await denyWorktreeRequest(store, req.id);
-  }
+  const editing = draft !== null;
+  const bypass = (editing ? draft.preset : req.permission_preset) === "bypass";
 
   return (
-    <div className="pointer-events-auto flex flex-col gap-1.5 rounded-lg bg-card p-2.5 text-[12px] text-foreground shadow-lg ring-1 ring-border/60">
+    <div
+      data-nav-item
+      data-nav-selected={selected ? "true" : undefined}
+      data-request-id={req.id}
+      onMouseDown={onSelect}
+      className={`flex flex-col gap-1.5 rounded-lg bg-card p-2.5 text-[12px] text-foreground shadow-lg ring-1 ${
+        selected ? "ring-primary/70" : "ring-border/60"
+      }`}
+    >
       <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
         <span className="font-medium text-foreground/90">{nameOf.session(req.requesting_session)}</span>
         <span>wants a worktree in</span>
@@ -104,8 +246,8 @@ function RequestCard({
 
       {editing ? (
         <textarea
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
+          value={draft.prompt}
+          onChange={(e) => onDraftChange({ prompt: e.target.value })}
           rows={4}
           className="w-full resize-y rounded border border-border/50 bg-background px-2 py-1 text-[12px] leading-snug outline-none focus:border-primary/60"
           aria-label="Edit prompt"
@@ -120,8 +262,8 @@ function RequestCard({
         <GitBranch size={11} className="text-muted-foreground" />
         {editing ? (
           <input
-            value={branch}
-            onChange={(e) => setBranch(e.target.value)}
+            value={draft.branch}
+            onChange={(e) => onDraftChange({ branch: e.target.value })}
             placeholder="branch name"
             className="flex-1 rounded border border-border/50 bg-background px-1.5 py-0.5 text-[11px] outline-none focus:border-primary/60"
             aria-label="Edit branch name"
@@ -135,16 +277,36 @@ function RequestCard({
         <span className="rounded bg-muted/50 px-1.5 py-0.5 text-muted-foreground">
           agent: {req.agent ?? "default"}
         </span>
-        <span
-          className={
-            bypass
-              ? "flex items-center gap-1 rounded bg-destructive/15 px-1.5 py-0.5 font-medium text-destructive"
-              : "rounded bg-muted/50 px-1.5 py-0.5 text-muted-foreground"
-          }
-        >
-          {bypass && <AlertTriangle size={10} />}
-          preset: {req.permission_preset ?? "default"}
-        </span>
+        {editing ? (
+          <select
+            value={draft.preset}
+            onChange={(e) => onDraftChange({ preset: e.target.value })}
+            aria-label="Edit permission mode"
+            className={`rounded border px-1 py-0.5 text-[10px] outline-none ${
+              bypass
+                ? "border-destructive/50 bg-destructive/10 font-medium text-destructive"
+                : "border-border/50 bg-background text-muted-foreground"
+            }`}
+          >
+            {PRESETS.map((p) => (
+              <option key={p} value={p}>
+                permissions: {p}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span
+            title="Permission mode the agent requested for the new session"
+            className={
+              bypass
+                ? "flex items-center gap-1 rounded bg-destructive/15 px-1.5 py-0.5 font-medium text-destructive"
+                : "rounded bg-muted/50 px-1.5 py-0.5 text-muted-foreground"
+            }
+          >
+            {bypass && <AlertTriangle size={10} />}
+            permissions: {req.permission_preset ?? "default"}
+          </span>
+        )}
         {req.allow_skip_in_cycle && (
           <span className="flex items-center gap-1 rounded bg-destructive/15 px-1.5 py-0.5 font-medium text-destructive">
             <AlertTriangle size={10} /> bypass-in-cycle
@@ -163,8 +325,11 @@ function RequestCard({
         </div>
       )}
 
-      <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-        <span>{req.resources.worktree_count} worktrees</span>
+      <div
+        className="flex items-center gap-2 text-[10px] text-muted-foreground"
+        title="Existing git worktrees in this repository, and free disk on its volume"
+      >
+        <span>{req.resources.worktree_count} worktrees in repo</span>
         <span>·</span>
         <span>{formatBytes(req.resources.free_disk_bytes)} free</span>
         {req.resources.over_soft_cap && (
@@ -180,7 +345,7 @@ function RequestCard({
             <button
               type="button"
               disabled={busy}
-              onClick={() => approve(true)}
+              onClick={() => onApprove(true)}
               className="flex items-center gap-1 rounded bg-primary px-2 py-1 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
               <Check size={12} /> Approve edited
@@ -188,7 +353,7 @@ function RequestCard({
             <button
               type="button"
               disabled={busy}
-              onClick={() => setEditing(false)}
+              onClick={onCancelEdit}
               className="rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent disabled:opacity-50"
             >
               Cancel
@@ -199,7 +364,8 @@ function RequestCard({
             <button
               type="button"
               disabled={busy}
-              onClick={() => approve(false)}
+              onClick={() => onApprove(false)}
+              title="Approve (A)"
               className="flex items-center gap-1 rounded bg-primary px-2 py-1 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
               <Check size={12} /> Approve
@@ -207,7 +373,8 @@ function RequestCard({
             <button
               type="button"
               disabled={busy}
-              onClick={() => setEditing(true)}
+              onClick={onStartEdit}
+              title="Edit prompt, branch and permissions (E)"
               className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent disabled:opacity-50"
             >
               <Pencil size={12} /> Edit
@@ -215,7 +382,8 @@ function RequestCard({
             <button
               type="button"
               disabled={busy}
-              onClick={deny}
+              onClick={onDeny}
+              title="Deny (D)"
               className="ml-auto flex items-center gap-1 rounded px-2 py-1 text-[11px] text-destructive hover:bg-destructive/10 disabled:opacity-50"
             >
               <X size={12} /> Deny

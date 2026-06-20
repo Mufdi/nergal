@@ -103,6 +103,11 @@ struct LedgerEntry {
 struct GateInner {
     pending: HashMap<String, PendingWorktreeRequest>,
     ledger: HashMap<String, LedgerEntry>,
+    /// Outcome notes that could not be pushed at resolution time because the
+    /// requester was working/awaiting (pasting then would corrupt its turn).
+    /// Drained on the requester's next working→idle `Stop` (mirrors the
+    /// cross-session idle-transition drain), so an outcome is never stranded.
+    undelivered: HashMap<String, Vec<String>>,
 }
 
 /// Shared in-memory queue + terminal ledger. Cheap to clone (inner `Arc`).
@@ -228,6 +233,21 @@ impl WorktreeGateState {
         self.lock()
             .ledger
             .retain(|_, e| now.saturating_sub(e.resolved_at) < LEDGER_RETENTION_SECS);
+    }
+
+    /// Queue an outcome note for a session that could not be woken now (it was
+    /// working/awaiting). Drained on its next idle transition.
+    fn enqueue_outcome(&self, session: &str, note: String) {
+        self.lock()
+            .undelivered
+            .entry(session.to_string())
+            .or_default()
+            .push(note);
+    }
+
+    /// Remove and return a session's queued outcome notes (for the idle drain).
+    fn take_outcomes(&self, session: &str) -> Vec<String> {
+        self.lock().undelivered.remove(session).unwrap_or_default()
     }
 }
 
@@ -370,37 +390,69 @@ fn outcome_note(request_id: &str, state: &WorktreeRequestState) -> String {
     crate::mcp::delivery::sanitize_for_pty(&note)
 }
 
-/// Deliver a terminal outcome to the requesting session: a PTY wake ONLY if the
-/// session is currently idle (never paste mid-turn — that would corrupt a
-/// working agent's input), plus a frontend event. A working/unknown session
-/// learns the outcome via `get_worktree_request_status` (the poll fallback).
-/// `cancelled` is skipped for the wake (the agent already knows) but still
-/// emitted so the gate UI can clear it.
+/// Deliver a terminal outcome to the requesting session, plus a frontend event.
+/// The PTY wake fires immediately only if the requester is idle (pasting into a
+/// working/awaiting agent would corrupt its turn); otherwise the note is queued
+/// and drained on the requester's next working→idle `Stop` (see
+/// [`drain_worktree_outcomes`]) — so an outcome is never stranded, mirroring the
+/// cross-session idle-transition drain. `cancelled` is skipped (agent-initiated,
+/// it already knows) but still emitted so the gate UI clears it.
 pub fn notify_outcome(
+    gate: &WorktreeGateState,
     delivery: &dyn SessionDelivery,
     agents: &AgentRuntimeState,
     requesting_session: &str,
     request_id: &str,
     state: &WorktreeRequestState,
 ) {
-    if !matches!(state, WorktreeRequestState::Cancelled) {
+    let note = if matches!(state, WorktreeRequestState::Cancelled) {
+        String::new()
+    } else {
+        outcome_note(request_id, state)
+    };
+    if !note.is_empty() {
         let idle = agents
             .session_activity(requesting_session)
             .map(|a| a.mode == "idle")
             .unwrap_or(false);
+        // Idle → wake now; on a wake failure, queue for the next idle drain
+        // rather than dropping it. Working/awaiting → queue (never paste now).
         if idle {
-            let note = outcome_note(request_id, state);
-            if !note.is_empty()
-                && let Err(e) = delivery.wake_idle(requesting_session, &note)
-            {
+            if let Err(e) = delivery.wake_idle(requesting_session, &note) {
                 tracing::debug!(requesting_session, "worktree outcome wake failed: {e:#}");
+                gate.enqueue_outcome(requesting_session, note);
             }
+        } else {
+            gate.enqueue_outcome(requesting_session, note);
         }
     }
     delivery.emit(
         "worktree:resolved",
         json!({ "request_id": request_id, "requesting_session": requesting_session }),
     );
+}
+
+/// Deliver any queued worktree outcomes to a now-idle session by waking its PTY.
+/// Called from the hook server on a `Stop` (working→idle), the same liveness
+/// point cross-session uses. Best-effort: a wake failure re-queues the notes so
+/// the next idle flip retries (never stranded, never silently dropped).
+pub fn drain_worktree_outcomes(
+    gate: &WorktreeGateState,
+    delivery: &dyn SessionDelivery,
+    session_id: &str,
+) {
+    let notes = gate.take_outcomes(session_id);
+    if notes.is_empty() {
+        return;
+    }
+    let combined = notes.join("\n");
+    if let Err(e) = delivery.wake_idle(session_id, &combined) {
+        tracing::debug!(session_id, "worktree outcome drain wake failed: {e:#}");
+        // Re-queue verbatim so a later idle flip retries.
+        for note in notes {
+            gate.enqueue_outcome(session_id, note);
+        }
+    }
 }
 
 /// Background sweeper: atomically purge timed-out requests (notifying their
@@ -416,6 +468,7 @@ pub async fn run_worktree_request_sweeper(
         let now = now_secs();
         for req in gate.due_timeouts(now) {
             notify_outcome(
+                &gate,
                 &bridge,
                 &agents,
                 &req.requesting_session,
@@ -512,6 +565,7 @@ pub fn deny_worktree_request(
     gate.resolve(&request_id, WorktreeRequestState::Denied);
     let bridge = AppBridge::new(app);
     notify_outcome(
+        &gate,
         &bridge,
         &agents,
         &req.requesting_session,
@@ -532,6 +586,7 @@ pub fn approve_worktree_request(
     request_id: String,
     edited_prompt: Option<String>,
     edited_branch: Option<String>,
+    edited_preset: Option<String>,
     gate: tauri::State<'_, WorktreeGateState>,
     db: tauri::State<'_, crate::db::SharedDb>,
     agents: tauri::State<'_, AgentRuntimeState>,
@@ -561,6 +616,7 @@ pub fn approve_worktree_request(
             },
         );
         notify_outcome(
+            &gate,
             &bridge,
             &agents,
             &req.requesting_session,
@@ -575,6 +631,7 @@ pub fn approve_worktree_request(
         &req,
         edited_prompt,
         edited_branch,
+        edited_preset,
         &db,
         &agents,
         &plan_watcher,
@@ -592,6 +649,7 @@ pub fn approve_worktree_request(
                 },
             );
             notify_outcome(
+                &gate,
                 &bridge,
                 &agents,
                 &req.requesting_session,
@@ -610,6 +668,7 @@ pub fn approve_worktree_request(
                 },
             );
             notify_outcome(
+                &gate,
                 &bridge,
                 &agents,
                 &req.requesting_session,
@@ -630,6 +689,7 @@ fn build_worktree_session(
     req: &PendingWorktreeRequest,
     edited_prompt: Option<String>,
     edited_branch: Option<String>,
+    edited_preset: Option<String>,
     db: &crate::db::SharedDb,
     agents: &AgentRuntimeState,
     plan_watcher: &crate::agents::claude_code::plan::SharedPlanWatcher,
@@ -646,6 +706,20 @@ fn build_worktree_session(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or("agent worktree");
+
+    // The human may downgrade (or change) the requested permission preset at the
+    // gate — e.g. bypass → auto. Apply the edit over the requested LaunchOptions.
+    let launch_options = {
+        let mut lo = req.launch_options.clone();
+        if let Some(preset_str) = edited_preset.as_deref().filter(|s| !s.is_empty())
+            && let Ok(preset) = serde_json::from_value::<crate::models::PermissionPreset>(
+                Value::String(preset_str.to_string()),
+            )
+        {
+            lo.get_or_insert_with(Default::default).permission_preset = preset;
+        }
+        lo.filter(|lo| !lo.is_noop())
+    };
 
     let (session, text) = {
         let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
@@ -699,7 +773,7 @@ fn build_worktree_session(
             agent_internal_session_id: None,
             agent_capabilities: Vec::new(),
             pinned_note_paths: Vec::new(),
-            launch_options: req.launch_options.clone().filter(|lo| !lo.is_noop()),
+            launch_options,
             env_shells: Vec::new(),
             active_clickup_task_id: None,
             pinned_clickup_task_ids: Vec::new(),
@@ -921,6 +995,22 @@ mod tests {
         let v = create_worktree_session(&ctx, &cfg, "s1", "nope", "do it", None, None, None);
         assert_eq!(v["status"], "invalid_workspace");
         assert!(ctx.worktree_gate.list_pending().is_empty());
+    }
+
+    #[test]
+    fn undelivered_outcomes_queue_then_drain_once() {
+        // The stranded-deny fix: an outcome that can't be pushed (requester
+        // working) is queued, then taken exactly once on the idle drain.
+        let gate = WorktreeGateState::default();
+        gate.enqueue_outcome("s1", "denied".into());
+        gate.enqueue_outcome("s1", "approved".into());
+        gate.enqueue_outcome("s2", "timed out".into());
+        let drained = gate.take_outcomes("s1");
+        assert_eq!(drained, vec!["denied".to_string(), "approved".to_string()]);
+        // Second drain is empty (delivered once, not re-delivered).
+        assert!(gate.take_outcomes("s1").is_empty());
+        // Other sessions are untouched.
+        assert_eq!(gate.take_outcomes("s2"), vec!["timed out".to_string()]);
     }
 
     #[test]

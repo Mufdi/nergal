@@ -15,8 +15,13 @@ type Store = ReturnType<typeof getDefaultStore>;
 /// context. Mirrors the Rust `GateRequestView` (flattened PendingWorktreeRequest
 /// + `resources`). `launch_options` is intentionally omitted — the human-facing
 /// escalation input (`permission_preset`) is broken out instead.
+export type RequestKind =
+  | { type: "create" }
+  | { type: "resume"; target_session_id: string };
+
 export interface WorktreeRequestView {
   id: string;
+  kind: RequestKind;
   requesting_session: string;
   workspace_id: string;
   repo_path: string;
@@ -51,9 +56,10 @@ export async function loadWorktreeRequests(store: Store): Promise<void> {
   }
 }
 
-/// Approve a request and activate the returned session (the activation spawns
-/// its PTY, which consumes the backend-queued initial prompt — same flow as a
-/// ClickUp/Linear worktree spawn). Optional human edits to prompt/branch.
+/// Approve a request and activate the returned session. Create → a brand-new
+/// session is added + marked fresh so it spawns ("new" mode); Resume → the
+/// existing session is activated WITHOUT the fresh mark so it resumes
+/// ("continue" mode). Either way the backend-queued prompt is its first turn.
 export async function approveWorktreeRequest(
   store: Store,
   req: WorktreeRequestView,
@@ -61,6 +67,7 @@ export async function approveWorktreeRequest(
   editedBranch?: string,
   editedPreset?: string,
 ): Promise<void> {
+  const isResume = req.kind.type === "resume";
   try {
     const session = await invoke<Session>("approve_worktree_request", {
       requestId: req.id,
@@ -68,17 +75,24 @@ export async function approveWorktreeRequest(
       editedBranch: editedBranch ?? null,
       editedPreset: editedPreset ?? null,
     });
-    store.set(workspacesAtom, (prev) =>
-      prev.map((w) =>
-        w.id === session.workspace_id ? { ...w, sessions: [...w.sessions, session] } : w,
-      ),
-    );
-    store.set(freshSessionsAtom, (prev) => new Set([...prev, session.id]));
+    if (!isResume) {
+      // New session: add it to its workspace and mark it fresh ("new" spawn).
+      store.set(workspacesAtom, (prev) =>
+        prev.map((w) =>
+          w.id === session.workspace_id ? { ...w, sessions: [...w.sessions, session] } : w,
+        ),
+      );
+      store.set(freshSessionsAtom, (prev) => new Set([...prev, session.id]));
+    }
+    // Resume: the session already lives in workspacesAtom; NOT marking it fresh
+    // makes the terminal activate it in resume ("continue") mode.
     store.set(expandedWorkspaceIdsAtom, (prev) => new Set([...(prev ?? []), session.workspace_id]));
     store.set(activeSessionIdAtom, session.id);
     store.set(toastsAtom, {
-      message: `Worktree session: ${session.name}`,
-      description: "Approved — the agent's prompt is queued as its first turn.",
+      message: isResume ? `Resumed: ${session.name}` : `Worktree session: ${session.name}`,
+      description: isResume
+        ? "Session revived — the relayed message is queued as its next turn."
+        : "Approved — the agent's prompt is queued as its first turn.",
       type: "success",
     });
   } catch (err) {

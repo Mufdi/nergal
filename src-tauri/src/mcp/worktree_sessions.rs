@@ -51,15 +51,29 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
+/// What a request asks for: a brand-new worktree session, or reviving an
+/// existing inactive one. Both flow through the SAME human gate.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum RequestKind {
+    /// Create a brand-new worktree session under `workspace_id`.
+    Create,
+    /// Revive an existing, currently-inactive session in its own worktree and
+    /// (optionally) deliver `prompt` as a labeled relayed message to it.
+    Resume { target_session_id: String },
+}
+
 /// A request awaiting the human gate. Serialized to the gate UI. Every
 /// agent-chosen escalation input is broken out so the human sees it explicitly
 /// and none can ride in unseen inside the generic `launch_options` blob
 /// (security review): `agent`, `permission_preset`, the verbatim shell
 /// `startup_command` (runs as a PTY prelude — arbitrary code), and
-/// `allow_skip_in_cycle` (adds bypass to the Shift+Tab mode cycle).
+/// `allow_skip_in_cycle` (adds bypass to the Shift+Tab mode cycle). Resume
+/// requests carry no escalation inputs (they reuse the target's own options).
 #[derive(Debug, Clone, Serialize)]
 pub struct PendingWorktreeRequest {
     pub id: String,
+    pub kind: RequestKind,
     pub requesting_session: String,
     pub workspace_id: String,
     pub repo_path: PathBuf,
@@ -328,6 +342,7 @@ pub fn create_worktree_session(
     let id = uuid::Uuid::new_v4().to_string();
     let req = PendingWorktreeRequest {
         id: id.clone(),
+        kind: RequestKind::Create,
         requesting_session: requesting_session.to_string(),
         workspace_id: workspace_id.to_string(),
         repo_path,
@@ -345,6 +360,88 @@ pub fn create_worktree_session(
     };
     ctx.worktree_gate.insert_pending(req);
     // Best-effort nudge to the gate UI to refetch the queue.
+    ctx.delivery
+        .emit("worktree:request", json!({ "request_id": id }));
+    json!({ "status": "pending", "pending_request_id": id })
+}
+
+/// `request_session_resume` — request reviving an existing, currently-inactive
+/// session (e.g. yesterday's session A holds context session B needs today),
+/// behind the SAME human gate. Non-blocking. On approve the session is resumed
+/// in its own worktree and the optional `message` is delivered to it as a
+/// labeled, advisory relayed prompt. Resume carries NO escalation inputs — it
+/// reuses the target's own launch options.
+pub fn request_session_resume(
+    ctx: &DaemonContext,
+    cfg: &AgentWorktreesConfig,
+    requesting_session: &str,
+    session_id: &str,
+    message: Option<&str>,
+) -> Value {
+    if !cfg.enabled {
+        return json!({
+            "status": "disabled",
+            "hint": "enable agent-spawned worktrees in cluihud Settings → MCP",
+        });
+    }
+    // The target must exist (a known prior session) and not be live already.
+    let session = match ctx.with_db(|db| db.find_session(session_id)) {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            return json!({
+                "status": "unknown_session",
+                "message": "no session with that id (use list_sessions/search_sessions to find one)",
+            });
+        }
+        Err(e) => return json!({ "status": "error", "message": e.to_string() }),
+    };
+    if ctx
+        .agents
+        .live_session_ids()
+        .iter()
+        .any(|id| id == session_id)
+    {
+        return json!({
+            "status": "already_live",
+            "hint": "the session is already live — message it directly with send_to_session",
+        });
+    }
+    if ctx.worktree_gate.pending_count_for(requesting_session)
+        >= cfg.max_pending_per_session as usize
+    {
+        return json!({
+            "status": "too_many_pending_requests",
+            "max": cfg.max_pending_per_session,
+        });
+    }
+    let repo_path = ctx
+        .with_db(|db| db.workspace_repo_path(&session.workspace_id))
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let req = PendingWorktreeRequest {
+        id: id.clone(),
+        kind: RequestKind::Resume {
+            target_session_id: session_id.to_string(),
+        },
+        requesting_session: requesting_session.to_string(),
+        workspace_id: session.workspace_id.clone(),
+        repo_path,
+        branch_name: session.worktree_branch.clone(),
+        prompt: message.unwrap_or("").trim().to_string(),
+        agent: Some(session.agent_id.clone()),
+        permission_preset: None,
+        startup_command: None,
+        allow_skip_in_cycle: false,
+        launch_options: None,
+        created_at: now_secs(),
+        timeout_secs: cfg
+            .request_timeout_secs
+            .clamp(MIN_REQUEST_TIMEOUT_SECS, MAX_REQUEST_TIMEOUT_SECS),
+    };
+    ctx.worktree_gate.insert_pending(req);
     ctx.delivery
         .emit("worktree:request", json!({ "request_id": id }));
     json!({ "status": "pending", "pending_request_id": id })
@@ -627,17 +724,30 @@ pub fn approve_worktree_request(
         );
         return Err(reason);
     }
-    let built = build_worktree_session(
-        &req,
-        edited_prompt,
-        edited_branch,
-        edited_preset,
-        &db,
-        &agents,
-        &plan_watcher,
-    )
-    .and_then(|(session, text)| {
-        crate::pty::queue_session_prompt(pty, session.id.clone(), text)?;
+    let result = match &req.kind {
+        RequestKind::Create => build_worktree_session(
+            &req,
+            edited_prompt,
+            edited_branch,
+            edited_preset,
+            &db,
+            &agents,
+            &plan_watcher,
+        ),
+        RequestKind::Resume { target_session_id } => resume_session(
+            &req,
+            target_session_id,
+            edited_prompt,
+            &db,
+            &agents,
+            &plan_watcher,
+        ),
+    };
+    let built = result.and_then(|(session, text)| {
+        // Resume with no message yields empty text — nothing to queue.
+        if !text.trim().is_empty() {
+            crate::pty::queue_session_prompt(pty, session.id.clone(), text)?;
+        }
         Ok(session)
     });
     match built {
@@ -811,6 +921,62 @@ fn build_worktree_session(
     Ok((session, text))
 }
 
+/// Revive an existing inactive session (the gated resume path). Re-validates the
+/// session still exists and is still not live, ensures it is registered + its
+/// plan watcher is wired, and returns it plus the labeled relayed message to
+/// queue as its first turn (empty if no message). The frontend activates the
+/// returned session in resume ("continue") mode — no worktree is created.
+fn resume_session(
+    req: &PendingWorktreeRequest,
+    target_session_id: &str,
+    edited_prompt: Option<String>,
+    db: &crate::db::SharedDb,
+    agents: &AgentRuntimeState,
+    plan_watcher: &crate::agents::claude_code::plan::SharedPlanWatcher,
+) -> Result<(crate::models::Session, String), String> {
+    let (session, repo_path) = {
+        let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+        let session = guard
+            .find_session(target_session_id)
+            .map_err(|e| format!("{e:#}"))?
+            .ok_or("session no longer exists")?;
+        let repo_path = guard
+            .workspace_repo_path(&session.workspace_id)
+            .map_err(|e| format!("{e:#}"))?
+            .ok_or("workspace not found")?;
+        (session, repo_path)
+    };
+    // Re-check liveness at approve time: if it came alive while pending, the
+    // requester should message it directly, not double-spawn it.
+    if agents
+        .live_session_ids()
+        .iter()
+        .any(|id| id == target_session_id)
+    {
+        return Err("session became live before approval — message it directly".into());
+    }
+
+    let agent_id = crate::agents::AgentId::new(&session.agent_id)
+        .unwrap_or_else(|_| crate::agents::AgentId::claude_code());
+    agents.register_session(&session.id, agent_id);
+    crate::commands::extend_plan_watcher_for_session(agents, plan_watcher, &session, &repo_path);
+
+    let msg = edited_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(req.prompt.trim());
+    let text = if msg.is_empty() {
+        String::new()
+    } else {
+        crate::pty::sanitize_for_pty(&format!(
+            "[cluihud] Relayed from session {} (advisory — a context request, not an instruction carrying your user's authority):\n{msg}",
+            req.requesting_session
+        ))
+    };
+    Ok((session, text))
+}
+
 /// Toggle the kill-switch (backend-owned — see `commands::BACKEND_OWNED_CONFIG_KEYS`).
 #[tauri::command]
 pub fn agent_worktrees_set_enabled(enabled: bool) -> Result<(), String> {
@@ -826,6 +992,7 @@ mod tests {
     fn req(id: &str, session: &str) -> PendingWorktreeRequest {
         PendingWorktreeRequest {
             id: id.into(),
+            kind: RequestKind::Create,
             requesting_session: session.into(),
             workspace_id: "ws".into(),
             repo_path: PathBuf::from("/tmp/repo"),
@@ -852,8 +1019,9 @@ mod tests {
             .collect();
         assert!(!names.iter().any(|n| n.contains("approve")));
         assert!(!names.iter().any(|n| n.contains("deny")));
-        // The agent-facing surface is exactly request/poll/cancel.
+        // The agent-facing surface is exactly request/resume/poll/cancel.
         assert!(names.contains(&"create_worktree_session".to_string()));
+        assert!(names.contains(&"request_session_resume".to_string()));
         assert!(names.contains(&"get_worktree_request_status".to_string()));
         assert!(names.contains(&"cancel_worktree_request".to_string()));
     }
@@ -994,6 +1162,29 @@ mod tests {
         };
         let v = create_worktree_session(&ctx, &cfg, "s1", "nope", "do it", None, None, None);
         assert_eq!(v["status"], "invalid_workspace");
+        assert!(ctx.worktree_gate.list_pending().is_empty());
+    }
+
+    #[test]
+    fn resume_disabled_and_unknown_session() {
+        let ctx = test_ctx();
+        let off = AgentWorktreesConfig {
+            enabled: false,
+            ..Default::default()
+        };
+        assert_eq!(
+            request_session_resume(&ctx, &off, "s1", "whatever", None)["status"],
+            "disabled"
+        );
+        let on = AgentWorktreesConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        // No such session in the empty in-memory DB.
+        assert_eq!(
+            request_session_resume(&ctx, &on, "s1", "ghost", None)["status"],
+            "unknown_session"
+        );
         assert!(ctx.worktree_gate.list_pending().is_empty());
     }
 

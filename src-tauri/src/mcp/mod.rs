@@ -267,6 +267,19 @@ pub fn tool_definitions() -> Vec<Value> {
             },
         }),
         json!({
+            "name": "request_session_resume",
+            "description": "REQUEST (behind the same human gate) reviving an existing but currently-INACTIVE session — e.g. yesterday's session holds context you need now and send_to_session refused it (inactive_target). Non-blocking: returns { pending_request_id }; on approval cluihud resumes the session in its own worktree and delivers your optional message to it as a labeled, advisory relayed prompt. status: pending | disabled | unknown_session | already_live (just send_to_session it) | too_many_pending_requests. Use this to revive a session; use create_worktree_session only to make a brand-new one.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session_id": { "type": "string", "description": "The inactive session to revive (from list_sessions/search_sessions)." },
+                    "message": { "type": "string", "description": "Optional message delivered to the revived session as its first relayed turn." }
+                },
+                "required": ["session_id"],
+                "additionalProperties": false,
+            },
+        }),
+        json!({
             "name": "get_worktree_request_status",
             "description": "Poll the outcome of a create_worktree_session request. Returns { state }: pending | approved (with session_id) | denied | timed_out | cancelled | failed (with reason) | not_found (unknown/expired, or abandoned after a daemon restart).",
             "inputSchema": {
@@ -453,6 +466,34 @@ pub fn dispatch(
                             req.id.clone(),
                             INVALID_PARAMS,
                             "`workspace_id` and `prompt` are required",
+                            None,
+                        ),
+                    }
+                }
+                Some("request_session_resume") => {
+                    let Some(requester) = identity else {
+                        return err(
+                            req.id.clone(),
+                            INVALID_PARAMS,
+                            "caller could not be identified (no live session hint)",
+                            None,
+                        );
+                    };
+                    match args.get("session_id").and_then(|v| v.as_str()) {
+                        Some(session_id) => {
+                            let message = args.get("message").and_then(|v| v.as_str());
+                            let cfg = Config::load().agent_spawned_worktrees;
+                            tool_ok(
+                                req.id.clone(),
+                                worktree_sessions::request_session_resume(
+                                    ctx, &cfg, requester, session_id, message,
+                                ),
+                            )
+                        }
+                        None => err(
+                            req.id.clone(),
+                            INVALID_PARAMS,
+                            "session_id is required",
                             None,
                         ),
                     }
@@ -669,6 +710,7 @@ mod tests {
                 "list_threads",
                 "search_sessions",
                 "create_worktree_session",
+                "request_session_resume",
                 "get_worktree_request_status",
                 "cancel_worktree_request",
             ]

@@ -150,7 +150,8 @@ export function CrossSessionPanel() {
     return (
       <div
         ref={rootRef}
-        className="flex h-full flex-col bg-card text-foreground"
+        tabIndex={-1}
+        className="flex h-full flex-col bg-card text-foreground outline-none"
         onMouseDown={markActiveSeen}
         onFocus={markActiveSeen}
       >

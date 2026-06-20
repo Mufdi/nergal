@@ -154,13 +154,18 @@ mod tests {
     fn degraded_tools_list_matches_registry() {
         let m = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {} });
         let r = degraded_response(&m);
-        let names: Vec<&str> = r["result"]["tools"]
+        let names: Vec<String> = r["result"]["tools"]
             .as_array()
             .unwrap()
             .iter()
-            .filter_map(|t| t["name"].as_str())
+            .filter_map(|t| t["name"].as_str().map(String::from))
             .collect();
-        assert_eq!(names, vec!["whoami", "list_sessions", "get_session"]);
+        // Single source: the degraded list must equal the daemon's registry.
+        let expected: Vec<String> = super::super::tool_definitions()
+            .iter()
+            .filter_map(|t| t["name"].as_str().map(String::from))
+            .collect();
+        assert_eq!(names, expected);
     }
 
     #[test]

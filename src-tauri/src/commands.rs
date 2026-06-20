@@ -102,6 +102,7 @@ pub fn get_config() -> Result<Config, String> {
 /// frontend payload so the on-disk value always wins.
 const BACKEND_OWNED_CONFIG_KEYS: &[&str] = &[
     "summary",
+    "cross_session",
     "clickup_poll_interval_secs",
     "linear_poll_interval_secs",
     "linear_active_window_days",

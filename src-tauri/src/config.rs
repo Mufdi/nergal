@@ -114,6 +114,54 @@ pub struct Config {
     /// them as two switches but only one value is ever persisted.
     #[serde(default)]
     pub summary: SummaryConfig,
+    /// Cross-session agent-to-agent messaging (cross-session-messaging). The
+    /// `enabled` kill-switch gates ALL delivery (PTY wake + Stop emit) and is
+    /// default off — a halt switch for a critical-tier autonomous PTY-injecting
+    /// router. Backend-owned (the `enabled` toggle goes through
+    /// `cross_session_set_enabled`; the tuning fields are config-file only).
+    #[serde(default)]
+    pub cross_session: CrossSessionConfig,
+}
+
+/// Tuning + kill-switch for cross-session messaging. Budget is a message-count
+/// cap + a wall-clock deadline — NEVER tokens (cluihud cannot measure agent-side
+/// tokens). All fields have explicit defaults.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrossSessionConfig {
+    /// Master kill-switch. Off → no delivery of any kind. Default off.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Reach hop cap: how many NEW participants a thread may pull in (A→B→C→D).
+    /// A reply between existing participants does not count against this.
+    #[serde(default = "default_max_hops")]
+    pub max_hops: u32,
+    /// Conversation-length cap (message count) before a thread auto-closes.
+    #[serde(default = "default_msg_budget")]
+    pub msg_budget: u32,
+    /// Wall-clock lifetime (seconds) before the deadline sweeper closes a thread.
+    #[serde(default = "default_deadline_secs")]
+    pub deadline_secs: u64,
+}
+
+fn default_max_hops() -> u32 {
+    4
+}
+fn default_msg_budget() -> u32 {
+    30
+}
+fn default_deadline_secs() -> u64 {
+    1800
+}
+
+impl Default for CrossSessionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_hops: default_max_hops(),
+            msg_budget: default_msg_budget(),
+            deadline_secs: default_deadline_secs(),
+        }
+    }
 }
 
 /// Which inference backend produces session summaries. The variants are
@@ -228,6 +276,7 @@ impl Default for Config {
             keymap_overrides: HashMap::new(),
             mcp_server_enabled: false,
             summary: SummaryConfig::default(),
+            cross_session: CrossSessionConfig::default(),
         }
     }
 }

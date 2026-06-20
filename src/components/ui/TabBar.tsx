@@ -21,6 +21,7 @@ import {
   FileCode,
   ScrollText,
   Globe,
+  MessagesSquare,
   MoreHorizontal,
   Pin,
   X,
@@ -45,6 +46,7 @@ const TAB_ICONS: Record<TabType, ComponentType<{ size?: number | string; classNa
   "clickup-task": ClickUpIcon,
   linear: LinearIcon,
   "linear-issue": LinearIcon,
+  crosssession: MessagesSquare,
 };
 
 export function TabBar() {

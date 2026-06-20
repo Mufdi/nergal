@@ -287,6 +287,7 @@ mod tests {
             db,
             agents,
             app_uid: 0,
+            delivery: std::sync::Arc::new(crate::mcp::delivery::NoopDelivery),
         }
     }
 

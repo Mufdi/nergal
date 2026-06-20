@@ -56,6 +56,7 @@ import {
   GitCompareArrows,
   ClipboardList,
   GitBranch,
+  MessagesSquare,
   Globe,
   ChevronDown,
   ExternalLink,
@@ -212,6 +213,7 @@ const PANEL_BUTTONS: {
   { type: "obsidiannote", label: "Obsidian", shortcut: "Ctrl+Shift+Q", icon: ObsidianIcon },
   { type: "clickup", label: "ClickUp", shortcut: "Ctrl+Shift+M", icon: ClickUpIcon },
   { type: "linear", label: "Linear", shortcut: "Ctrl+Shift+I", icon: LinearIcon },
+  { type: "crosssession", label: "Cross-session", shortcut: "Ctrl+Shift+X", icon: MessagesSquare },
 ];
 
 
@@ -246,6 +248,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
     if (b.type === "obsidiannote" && !obsidianEnabled) return false;
     if (b.type === "clickup" && !clickupConfigured) return false;
     if (b.type === "linear" && !linearConfigured) return false;
+    if (b.type === "crosssession" && !config.cross_session?.enabled) return false;
     return true;
   });
 

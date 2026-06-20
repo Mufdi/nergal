@@ -611,6 +611,19 @@ fn process_event(
         }
     }
 
+    // Cross-session delivery liveness drain (cross-session-messaging, finding 3):
+    // a `Stop` is the working→idle transition, so deliver any messages that
+    // queued while this session was working — for ALL agents, not just CC.
+    // `drain_idle` gates on the kill-switch and only wakes when the pending queue
+    // is non-empty, so this is a no-op when the feature is off or nothing queued.
+    // Gated to `Stop` (not `SessionEnd`) so a teardown never wakes a dying PTY.
+    if let Some(csid) = cluihud_session_id
+        && matches!(event, HookEvent::Stop { .. })
+    {
+        let bridge = crate::mcp::delivery::AppBridge::new(app.clone());
+        crate::mcp::delivery::drain_idle(db, &bridge, csid);
+    }
+
     let mut frontend_event = FrontendHookEvent::from_hook(event);
     frontend_event.cluihud_session_id = cluihud_session_id.map(String::from);
     let _ = app.emit("hook:event", &frontend_event);

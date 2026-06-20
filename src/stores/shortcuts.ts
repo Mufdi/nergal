@@ -548,6 +548,18 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     }
     togglePanel("linear", "Linear");
   }},
+  { id: "open-crosssession", label: "Open Cross-session Panel", keys: "ctrl+shift+x", category: "panel", keywords: ["cross", "session", "messages", "agent", "panel", "threads"], handler: () => {
+    const s = store();
+    if (!s.get(configAtom).cross_session?.enabled) {
+      s.set(toastsAtom, {
+        message: "Cross-session messaging",
+        description: "Disabled — enable it in Settings → MCP.",
+        type: "info",
+      });
+      return;
+    }
+    togglePanel("crosssession", "Cross-session");
+  }},
   { id: "toggle-scratchpad", label: "Toggle Scratchpad", keys: "ctrl+alt+l", category: "panel", keywords: ["scratchpad", "notes", "scratch", "buffer"], handler: () => store().set(scratchpadOpenAtom, (prev: boolean) => !prev) },
   { id: "obsidian-quick-capture", label: "Quick Capture to Obsidian", keys: "ctrl+alt+q", category: "action", keywords: ["obsidian", "vault", "capture", "inbox", "note"], handler: () => {
     const s = store();

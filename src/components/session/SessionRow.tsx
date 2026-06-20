@@ -3,6 +3,7 @@ import { useAtomValue } from "jotai";
 import {
   CircleDot,
   GitBranch,
+  MessagesSquare,
   Pencil,
   Trash2,
 } from "lucide-react";
@@ -15,6 +16,7 @@ import {
 import type { Session, Workspace } from "@/stores/workspace";
 import { gitInfoMapAtom } from "@/stores/git";
 import { pendingAsksAtom, pendingAttentionAtom } from "@/stores/askUser";
+import { crossSessionUnreadMapAtom, crossSessionActiveParticipantsAtom } from "@/stores/crossSession";
 import { SessionIndicator } from "./SessionIndicator";
 import claudeIcon from "@/assets/agents/claude.svg";
 import codexIcon from "@/assets/agents/codex.svg";
@@ -58,6 +60,8 @@ export function SessionRow({
   const pendingAsks = useAtomValue(pendingAsksAtom);
   const pendingAttention = useAtomValue(pendingAttentionAtom);
   const isAwaiting = !!pendingAsks[session.id] || !!pendingAttention[session.id];
+  const crossUnread = useAtomValue(crossSessionUnreadMapAtom)[session.id] ?? 0;
+  const inCrossThread = useAtomValue(crossSessionActiveParticipantsAtom).has(session.id);
 
   function handleRenameSubmit() {
     const trimmed = editName.trim();
@@ -106,6 +110,30 @@ export function SessionRow({
         );
       })()}
       <SessionIndicator sessionId={session.id} sessionStatus={session.status} size="sm" />
+
+      {(inCrossThread || crossUnread > 0) && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                className={`flex shrink-0 items-center gap-0.5 rounded-full px-1 py-px ${
+                  crossUnread > 0 ? "bg-primary/20 text-primary" : "bg-muted/50 text-muted-foreground"
+                }`}
+              />
+            }
+          >
+            <MessagesSquare className="size-2.5" />
+            {crossUnread > 0 && (
+              <span className="text-[9px] font-semibold leading-none tabular-nums">{crossUnread}</span>
+            )}
+          </TooltipTrigger>
+          <TooltipContent side="top" className="text-[10px]">
+            {crossUnread > 0
+              ? `${crossUnread} unread cross-session message${crossUnread > 1 ? "s" : ""}`
+              : "In a live cross-session conversation"}
+          </TooltipContent>
+        </Tooltip>
+      )}
 
       {editing ? (
         <input

@@ -33,6 +33,7 @@ import { ObsidianNoteView } from "@/components/obsidian/ObsidianNoteView";
 import { ClickUpPanel } from "@/components/clickup/ClickUpPanel";
 import { ClickUpTaskTab } from "@/components/clickup/ClickUpTaskTab";
 import { LinearPanel } from "@/components/linear/LinearPanel";
+import { CrossSessionPanel } from "@/components/crosssession/CrossSessionPanel";
 import { VaultNoteFinder } from "@/components/obsidian/VaultNoteFinder";
 import * as terminalService from "@/components/terminal/terminalService";
 import { CodeEditor } from "@/components/editor/CodeEditor";
@@ -440,6 +441,8 @@ function ViewPanelContent({ view }: { view: TabType }) {
       return <ClickUpPanel />;
     case "linear":
       return <LinearPanel />;
+    case "crosssession":
+      return <CrossSessionPanel />;
     default:
       return null;
   }

@@ -47,9 +47,19 @@ export interface Config {
   custom_themes: CustomTheme[];
   keymap_overrides: Record<string, string>;
   mcp_server_enabled: boolean;
+  /// Cross-session messaging (backend-owned; toggled via cross_session_set_enabled).
+  /// Optional because get_config carries it but the frontend never writes it back.
+  cross_session?: CrossSessionConfig;
   /// Default panel view applied on first open (frontend-owned).
   linear_default_view?: string | null;
   clickup_default_view?: string | null;
+}
+
+export interface CrossSessionConfig {
+  enabled: boolean;
+  max_hops: number;
+  msg_budget: number;
+  deadline_secs: number;
 }
 
 export interface CustomThemeFonts {

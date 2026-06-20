@@ -322,6 +322,11 @@ pub fn run() {
             mcp::summary::set_summary_api_key,
             mcp::summary::clear_summary_api_key,
             mcp::summary::has_summary_api_key,
+            mcp::messaging::cross_session_set_enabled,
+            mcp::messaging::cross_session_list_threads,
+            mcp::messaging::cross_session_thread_messages,
+            mcp::messaging::cross_session_mark_seen,
+            mcp::messaging::cross_session_unread_counts,
             commands::validate_path,
             // Task commands
             commands::get_tasks,
@@ -624,6 +629,7 @@ pub fn run() {
             // `mcp_server_enabled` (default off) per request.
             let mcp_db = db.clone();
             let mcp_agents = agent_state.clone();
+            let mcp_app = app_handle.clone();
             tauri::async_runtime::spawn(async move {
                 let path = crate::mcp::socket_path();
                 match crate::mcp::transport::UnixSocketTransport::bind(&path) {
@@ -633,11 +639,23 @@ pub fn run() {
                             db: mcp_db,
                             agents: mcp_agents,
                             app_uid,
+                            delivery: std::sync::Arc::new(crate::mcp::delivery::AppBridge::new(
+                                mcp_app,
+                            )),
                         };
                         crate::mcp::serve(transport, ctx).await;
                     }
                     Err(e) => tracing::error!("mcp daemon bind error: {e}"),
                 }
+            });
+
+            // Cross-session messaging deadline sweeper: actively closes threads
+            // past their wall-clock deadline (round-2 finding 5). Gated by the
+            // kill-switch internally; idle work when the feature is off.
+            let sweeper_app = app_handle.clone();
+            let sweeper_db = db.clone();
+            tauri::async_runtime::spawn(async move {
+                crate::mcp::messaging::run_deadline_sweeper(sweeper_app, sweeper_db).await;
             });
 
             // Sync agent MCP-config registration with the persisted flag on

@@ -1007,7 +1007,7 @@ mod tests {
             CustomFieldValue::Labels(vec!["l1".into(), "l2".into()]).to_api_value(),
             json!(["l1", "l2"])
         );
-        assert_eq!(CustomFieldValue::Number(3.14).to_api_value(), json!(3.14));
+        assert_eq!(CustomFieldValue::Number(2.5).to_api_value(), json!(2.5));
         // Date is sent as a string (ClickUp API convention).
         assert_eq!(
             CustomFieldValue::Date(1_717_000_000_000).to_api_value(),

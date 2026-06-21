@@ -64,6 +64,18 @@ function GatePicker({
   const [open, setOpen] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+
+  // Commit a choice and return focus to the trigger so Tab keeps moving
+  // through the edit fields (no focus trap on the just-clicked option).
+  const choose = useCallback(
+    (v: string) => {
+      onChange(v);
+      setOpen(false);
+      triggerRef.current?.focus();
+    },
+    [onChange],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -96,12 +108,12 @@ function GatePicker({
       } else if (e.key === "Enter") {
         e.preventDefault();
         e.stopImmediatePropagation();
-        onChange(options[activeIdx].value);
-        setOpen(false);
+        choose(options[activeIdx].value);
       } else if (e.key === "Escape") {
         e.preventDefault();
         e.stopImmediatePropagation();
         setOpen(false);
+        triggerRef.current?.focus();
       }
     }
     document.addEventListener("mousedown", onOutside);
@@ -110,13 +122,14 @@ function GatePicker({
       document.removeEventListener("mousedown", onOutside);
       window.removeEventListener("keydown", onKey, true);
     };
-  }, [open, activeIdx, onChange, options]);
+  }, [open, activeIdx, choose, options]);
 
   const current = options.find((o) => o.value === value);
   const danger = current?.danger ?? false;
   return (
     <div ref={wrapRef} className="relative">
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-label={ariaLabel}
@@ -142,10 +155,7 @@ function GatePicker({
                 data-opt-idx={i}
                 data-nav-selected={i === activeIdx || undefined}
                 onMouseEnter={() => setActiveIdx(i)}
-                onClick={() => {
-                  onChange(o.value);
-                  setOpen(false);
-                }}
+                onClick={() => choose(o.value)}
                 className={`flex w-full items-center gap-1.5 px-2 py-1 text-left text-[11px] transition-colors data-[nav-selected=true]:bg-accent data-[nav-selected=true]:text-accent-foreground ${
                   o.danger ? "text-destructive" : "text-muted-foreground"
                 }`}
@@ -160,12 +170,6 @@ function GatePicker({
     </div>
   );
 }
-
-const PRESET_OPTIONS: PickerOption[] = PRESETS.map((p) => ({
-  value: p,
-  label: p,
-  danger: p === "bypass",
-}));
 
 /// Native, structurally un-bypassable approval gate for agent-spawned worktree
 /// sessions (create) and reviving inactive ones (resume). One solid floating
@@ -378,6 +382,7 @@ export function WorktreeGate() {
               key={req.id}
               req={req}
               nameOf={nameOf}
+              agents={agents}
               agentOptions={agentOptions}
               selected={req.id === selectedId}
               draft={draft?.id === req.id ? draft : null}
@@ -399,6 +404,7 @@ export function WorktreeGate() {
 function RequestRow({
   req,
   nameOf,
+  agents,
   agentOptions,
   selected,
   draft,
@@ -412,6 +418,7 @@ function RequestRow({
 }: {
   req: WorktreeRequestView;
   nameOf: { session: (id: string) => string; workspace: (id: string) => string };
+  agents: AvailableAgent[];
   agentOptions: PickerOption[];
   selected: boolean;
   draft: EditDraft | null;
@@ -433,6 +440,26 @@ function RequestRow({
   useEffect(() => {
     if (editing) requestAnimationFrame(() => textareaRef.current?.focus());
   }, [editing]);
+
+  // The permission presets a given agent actually supports (each adapter
+  // declares its own); "default"/unknown falls back to the full set. Mirrors the
+  // session-creation modal: the preset dropdown follows the chosen agent.
+  const presetsForAgent = useCallback(
+    (agentId: string): string[] => {
+      if (agentId === "default") return [...PRESETS];
+      return agents.find((a) => a.id === agentId)?.permission_presets ?? [...PRESETS];
+    },
+    [agents],
+  );
+  const presetOptions = useMemo<PickerOption[]>(
+    () =>
+      (editing ? presetsForAgent(draft.agent) : [...PRESETS]).map((p) => ({
+        value: p,
+        label: p,
+        danger: p === "bypass",
+      })),
+    [editing, draft, presetsForAgent],
+  );
 
   return (
     <div
@@ -498,7 +525,14 @@ function RequestRow({
                 options={agentOptions}
                 prefix="agent:"
                 ariaLabel="Edit agent"
-                onChange={(a) => onDraftChange({ agent: a })}
+                onChange={(a) => {
+                  // Keep the preset valid for the newly-chosen agent.
+                  const presets = presetsForAgent(a);
+                  const preset = presets.includes(draft.preset)
+                    ? draft.preset
+                    : (presets[0] ?? "default");
+                  onDraftChange({ agent: a, preset });
+                }}
               />
             ) : (
               <span className="rounded bg-muted/50 px-1.5 py-0.5 text-muted-foreground">
@@ -508,7 +542,7 @@ function RequestRow({
             {editing ? (
               <GatePicker
                 value={draft.preset}
-                options={PRESET_OPTIONS}
+                options={presetOptions}
                 prefix="permissions:"
                 ariaLabel="Edit permission mode"
                 onChange={(p) => onDraftChange({ preset: p })}

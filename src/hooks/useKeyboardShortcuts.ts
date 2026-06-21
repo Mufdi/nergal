@@ -185,8 +185,11 @@ export function useKeyboardShortcuts() {
       // Ctrl+Enter is a submit gesture in non-terminal text fields (stash
       // message, commit message, PR comment) — those scoped handlers win.
       const inNonTerminalField =
-        (target?.tagName === "INPUT" || target?.tagName === "TEXTAREA"
+        ((target?.tagName === "INPUT" || target?.tagName === "TEXTAREA"
           || inEditor || target?.getAttribute("contenteditable") === "true")
+          // The worktree gate owns Ctrl+Enter (commit edit) while focused, so
+          // the global fullscreen must not also fire from a gate button/row.
+          || !!target?.closest("[data-focus-zone='worktree-gate']"))
         && !target?.closest("[data-focus-zone='terminal']");
 
       // Ctrl+} — dual matching because the `}` glyph is layout-dependent:

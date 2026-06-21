@@ -35,6 +35,109 @@ interface EditDraft {
   preset: string;
 }
 
+/// Keyboard-reachable permission-mode dropdown — same model as the ClickUp /
+/// Linear status pickers (patterns.md §11): a Tab-focusable trigger button; while
+/// open a window-capture listener owns ↑/↓/Enter/Esc (stopImmediatePropagation
+/// beats the gate's own nav handler); click-outside closes. `bypass` is flagged.
+function PresetPicker({ value, onChange }: { value: string; onChange: (p: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [activeIdx, setActiveIdx] = useState(0);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const idx = PRESETS.indexOf(value as (typeof PRESETS)[number]);
+    setActiveIdx(idx >= 0 ? idx : 0);
+  }, [open, value]);
+
+  useEffect(() => {
+    if (!open) return;
+    wrapRef.current
+      ?.querySelector<HTMLElement>(`[data-opt-idx="${activeIdx}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [open, activeIdx]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onOutside(e: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setActiveIdx((p) => (p + 1) % PRESETS.length);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setActiveIdx((p) => (p - 1 + PRESETS.length) % PRESETS.length);
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        onChange(PRESETS[activeIdx]);
+        setOpen(false);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onOutside);
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("mousedown", onOutside);
+      window.removeEventListener("keydown", onKey, true);
+    };
+  }, [open, activeIdx, onChange]);
+
+  const bypass = value === "bypass";
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-label="Edit permission mode"
+        className={`flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] outline-none focus:ring-1 focus:ring-primary ${
+          bypass
+            ? "border-destructive/50 bg-destructive/10 font-medium text-destructive"
+            : "border-border/60 bg-background text-muted-foreground"
+        }`}
+      >
+        {bypass && <AlertTriangle size={10} />}
+        permissions: {value}
+      </button>
+      {open && (
+        <div
+          data-floating-popup
+          className="absolute bottom-full left-0 z-50 mb-1 min-w-36 rounded-md border border-border bg-card shadow-md"
+        >
+          <div className="max-h-44 overflow-y-auto py-0.5">
+            {PRESETS.map((p, i) => (
+              <button
+                key={p}
+                type="button"
+                data-opt-idx={i}
+                data-nav-selected={i === activeIdx || undefined}
+                onMouseEnter={() => setActiveIdx(i)}
+                onClick={() => {
+                  onChange(p);
+                  setOpen(false);
+                }}
+                className={`flex w-full items-center gap-1.5 px-2 py-1 text-left text-[11px] transition-colors data-[nav-selected=true]:bg-accent data-[nav-selected=true]:text-accent-foreground ${
+                  p === "bypass" ? "text-destructive" : "text-muted-foreground"
+                }`}
+              >
+                {p === "bypass" && <AlertTriangle size={10} />}
+                {p}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /// Native, structurally un-bypassable approval gate for agent-spawned worktree
 /// sessions (create) and reviving inactive ones (resume). One solid floating
 /// panel (work continues behind it) that captures keyboard focus when a request
@@ -135,6 +238,8 @@ export function WorktreeGate() {
   // `code` (matches the cross-session / ClickUp panels).
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      // An open floating popup (e.g. the preset dropdown) owns ALL keys — defer.
+      if (document.querySelector("[data-floating-popup]")) return;
       const t = e.target as HTMLElement | null;
       const inGate = !!t?.closest("[data-focus-zone='worktree-gate']");
       // Esc: cancel an edit, else release focus to the terminal.
@@ -157,6 +262,9 @@ export function WorktreeGate() {
         if (r && busyId !== r.id) void approve(r, true);
         return;
       }
+      // While editing, let the fields + the preset picker own all other keys
+      // (Tab moves prompt → branch → preset → buttons natively).
+      if (draft) return;
       if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
       const inField =
         t?.tagName === "INPUT" ||
@@ -333,22 +441,7 @@ function RequestRow({
               agent: {req.agent ?? "default"}
             </span>
             {editing ? (
-              <select
-                value={draft.preset}
-                onChange={(e) => onDraftChange({ preset: e.target.value })}
-                aria-label="Edit permission mode"
-                className={`rounded border px-1 py-0.5 text-[10px] outline-none ${
-                  bypass
-                    ? "border-destructive/50 bg-destructive/10 font-medium text-destructive"
-                    : "border-border/50 bg-background text-muted-foreground"
-                }`}
-              >
-                {PRESETS.map((p) => (
-                  <option key={p} value={p}>
-                    permissions: {p}
-                  </option>
-                ))}
-              </select>
+              <PresetPicker value={draft.preset} onChange={(p) => onDraftChange({ preset: p })} />
             ) : (
               <Tooltip>
                 <TooltipTrigger

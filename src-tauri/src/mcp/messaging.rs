@@ -18,6 +18,11 @@ use super::{DaemonContext, directory};
 use crate::config::Config;
 use crate::db::{CrossSessionMessage, CrossSessionThread};
 
+/// A target that idled within this many seconds is treated as not-yet-settled:
+/// its TUI may still be returning to the prompt, so an immediate paste would
+/// stick. Its imminent next `Stop` drains it instead.
+const IDLE_SETTLE_SECS: u64 = 2;
+
 fn now_secs() -> u64 {
     // A far-future sentinel on a pre-epoch clock (rather than 0): a 0 here would
     // make every thread's `deadline_at = now + N` tiny and the sweeper would
@@ -169,19 +174,27 @@ pub fn send_to_session(
         json!({ "thread_id": thread.id, "to": to, "from": sender }),
     );
 
-    // State-aware delivery: wake the target now UNLESS it is actively working.
-    // The runtime mode side-map is volatile (empty after an app restart, or for
-    // a session that hasn't emitted an event since the daemon started), so a
-    // strict `mode == "idle"` check left a quiet idle session queued forever —
-    // it never produces the `Stop` the idle-drain needs (walk finding). We
-    // therefore wake unless the target is mid-turn (`running`) or blocked on a
-    // prompt (`needs_attention`); an idle/completed/unknown target is woken (a
-    // paste into a momentarily-busy agent REPL is buffered, not corrupting).
+    // State-aware delivery: wake the target now UNLESS it is actively working
+    // OR only just idled. The runtime mode side-map is volatile (empty after an
+    // app restart, or for a session that hasn't emitted an event since the
+    // daemon started), so a strict `mode == "idle"` check left a quiet idle
+    // session queued forever — it never produces the `Stop` the idle-drain needs
+    // (walk finding). So we wake on idle/completed/unknown — EXCEPT a target that
+    // idled within the last couple seconds: its TUI may still be returning to the
+    // prompt, and an immediate bracketed-paste-then-Enter then sticks unsent
+    // (walk regression). Such a target is mid-conversation and will emit another
+    // `Stop` momentarily, which drains it reliably; a *settled* idle (or an
+    // unknown-mode session that won't Stop on its own) is still woken now.
+    let activity = ctx.agents.session_activity(to);
     let target_busy = matches!(
-        ctx.agents.session_activity(to).map(|a| a.mode).as_deref(),
+        activity.as_ref().map(|a| a.mode.as_str()),
         Some("running") | Some("needs_attention")
     );
-    let delivery_status = if target_busy {
+    let just_idled = activity
+        .as_ref()
+        .map(|a| a.mode == "idle" && now_secs().saturating_sub(a.last_activity) < IDLE_SETTLE_SECS)
+        .unwrap_or(false);
+    let delivery_status = if target_busy || just_idled {
         "queued"
     } else {
         delivery::drain_idle(&ctx.db, ctx.delivery.as_ref(), to);
@@ -550,27 +563,29 @@ mod tests {
     }
 
     #[test]
-    fn idle_target_delivery_embeds_and_consumes() {
-        // A non-busy target is woken at send time with the body embedded, and the
-        // wake consumes (delivery == consume for the wake path; read_messages is
-        // the fallback). After a successful (Noop) wake, nothing stays pending.
+    fn just_idled_target_is_queued_until_stop() {
+        // A target that idled just now (last_activity == now) may still be
+        // returning its TUI to the prompt — an immediate paste would stick, so it
+        // is queued (its imminent next Stop drains it). The message stays pending.
         let c = cfg(4, 30);
         let ctx = ctx();
         add_live_session(&ctx, "A");
         add_live_session(&ctx, "B");
-        ctx.agents.record_activity("B", "idle", None);
+        ctx.agents.record_activity("B", "idle", None); // stamps now → just idled
         let r = send_to_session(&ctx, &c, "A", "B", "wake up", None).unwrap();
-        assert_eq!(r["delivery"], "delivered");
+        assert_eq!(r["delivery"], "queued", "a just-idled target is not pasted");
         let pending = ctx
             .with_db(|db| db.cross_session_undelivered_for("B"))
             .unwrap();
-        assert!(pending.is_empty(), "wake consumes; nothing left pending");
+        assert_eq!(pending.len(), 1, "message waits for the target's next Stop");
     }
 
     #[test]
-    fn unknown_mode_target_is_woken_not_stranded() {
+    fn unknown_mode_target_is_woken_and_consumed() {
         // The walk bug: a quiet idle target with NO recorded activity (mode-map
-        // empty after restart) must still be woken at send, not left queued.
+        // empty after restart) must still be woken at send (it won't Stop on its
+        // own), and the wake consumes (delivery == consume; read_messages is the
+        // fallback) so nothing stays pending.
         let c = cfg(4, 30);
         let ctx = ctx();
         add_live_session(&ctx, "A");
@@ -580,5 +595,9 @@ mod tests {
             r["delivery"], "delivered",
             "unknown mode → woken, not queued"
         );
+        let pending = ctx
+            .with_db(|db| db.cross_session_undelivered_for("B"))
+            .unwrap();
+        assert!(pending.is_empty(), "wake consumes; nothing left pending");
     }
 }

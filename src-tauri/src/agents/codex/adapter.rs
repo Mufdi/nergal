@@ -158,16 +158,20 @@ impl AgentAdapter for CodexAdapter {
                 args.push(id.to_string());
             }
         }
-        // Permission preset → Codex approval flags (per openai/codex docs;
-        // binary not present on the dev machine to verify, hence fresh-launch
-        // only — `codex resume <id> --full-auto` arg order is unverified).
-        // Plan/Auto are unmapped: Codex plan mode is TUI-only, no CLI flag.
+        // Permission preset → Codex approval flags (verified against codex-cli
+        // 0.139.0). `--full-auto` was REMOVED; the modern equivalent of "run
+        // without per-command approval, sandboxed to the workspace" is
+        // `--ask-for-approval never --sandbox workspace-write`. Bypass drops the
+        // sandbox too. Plan/Auto stay unmapped (Codex plan mode is TUI-only).
         if ctx.resume_from.is_none()
             && let Some(opts) = ctx.launch_options
         {
             match opts.permission_preset {
                 crate::models::PermissionPreset::AcceptEdits => {
-                    args.push("--full-auto".into());
+                    args.push("--ask-for-approval".into());
+                    args.push("never".into());
+                    args.push("--sandbox".into());
+                    args.push("workspace-write".into());
                 }
                 crate::models::PermissionPreset::Bypass => {
                     args.push("--dangerously-bypass-approvals-and-sandbox".into());
@@ -425,5 +429,45 @@ command = "/usr/bin/foo"
                 vec!["resume".to_string(), "abc-uuid".to_string()]
             );
         }
+    }
+
+    #[test]
+    fn permission_presets_map_to_real_codex_0139_flags() {
+        // Regression guard: `--full-auto` was removed in codex-cli 0.139.0.
+        use crate::models::{LaunchOptions, PermissionPreset};
+        let a = CodexAdapter::new();
+        let cwd = std::path::Path::new("/tmp");
+        let mk = |preset: PermissionPreset| {
+            let opts = LaunchOptions {
+                permission_preset: preset,
+                ..Default::default()
+            };
+            // Leak so the &-borrow in SpawnContext lives for the call.
+            let opts: &'static LaunchOptions = Box::leak(Box::new(opts));
+            SpawnContext {
+                session_id: "s",
+                cwd,
+                resume_from: None,
+                initial_prompt: None,
+                injected_context: None,
+                launch_options: Some(opts),
+            }
+        };
+        let edits = a.spawn(&mk(PermissionPreset::AcceptEdits)).unwrap();
+        assert_eq!(
+            edits.args,
+            vec![
+                "--ask-for-approval".to_string(),
+                "never".to_string(),
+                "--sandbox".to_string(),
+                "workspace-write".to_string(),
+            ]
+        );
+        assert!(!edits.args.iter().any(|a| a == "--full-auto"));
+        let bypass = a.spawn(&mk(PermissionPreset::Bypass)).unwrap();
+        assert_eq!(
+            bypass.args,
+            vec!["--dangerously-bypass-approvals-and-sandbox".to_string()]
+        );
     }
 }

@@ -91,10 +91,13 @@ export function WorktreeGate() {
     if (draft && !ids.includes(draft.id)) setDraft(null);
   }, [requests, selectedId, draft]);
 
-  // Capture focus when a new request arrives so the panel owns the keyboard.
+  // Capture focus when a new request arrives so the panel owns the keyboard;
+  // hand focus back to the terminal once the queue empties (gate closes).
   useEffect(() => {
-    if (requests.length > prevCount.current) focusGate();
+    const prev = prevCount.current;
     prevCount.current = requests.length;
+    if (requests.length > prev) focusGate();
+    else if (requests.length === 0 && prev > 0) terminalService.focusActive();
   }, [requests.length, focusGate]);
 
   const approve = useCallback(
@@ -144,6 +147,14 @@ export function WorktreeGate() {
         } else {
           terminalService.focusActive();
         }
+        return;
+      }
+      // Ctrl+Enter commits an edit (works from inside the textarea/inputs).
+      if (e.key === "Enter" && e.ctrlKey && draft && inGate) {
+        e.preventDefault();
+        e.stopPropagation();
+        const r = requests.find((x) => x.id === draft.id);
+        if (r && busyId !== r.id) void approve(r, true);
         return;
       }
       if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
@@ -252,6 +263,13 @@ function RequestRow({
   const editing = draft !== null;
   const isResume = req.kind.type === "resume";
   const bypass = (editing ? draft.preset : req.permission_preset) === "bypass";
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Entering edit mode moves focus into the prompt so the user can type at once
+  // (and Tab from there reaches branch → preset → buttons).
+  useEffect(() => {
+    if (editing) requestAnimationFrame(() => textareaRef.current?.focus());
+  }, [editing]);
 
   return (
     <div
@@ -277,6 +295,7 @@ function RequestRow({
       {/* prompt / relayed message */}
       {editing ? (
         <textarea
+          ref={textareaRef}
           value={draft.prompt}
           onChange={(e) => onDraftChange({ prompt: e.target.value })}
           rows={4}
@@ -400,6 +419,7 @@ function RequestRow({
               className="flex items-center gap-1 rounded bg-primary px-2 py-1 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
               <Check size={12} /> {isResume ? "Resume edited" : "Approve edited"}
+              <Kbd keys="ctrl+enter" tone="onPrimary" className="ml-0.5" />
             </button>
             <button
               type="button"

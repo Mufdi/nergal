@@ -9,6 +9,8 @@ import {
 } from "@/stores/worktreeGate";
 import { workspacesAtom } from "@/stores/workspace";
 import * as terminalService from "@/components/terminal/terminalService";
+import { invoke } from "@/lib/tauri";
+import type { AvailableAgent } from "@/lib/types";
 import { Kbd } from "@/components/ui/kbd";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -33,22 +35,41 @@ interface EditDraft {
   prompt: string;
   branch: string;
   preset: string;
+  agent: string;
 }
 
-/// Keyboard-reachable permission-mode dropdown — same model as the ClickUp /
-/// Linear status pickers (patterns.md §11): a Tab-focusable trigger button; while
-/// open a window-capture listener owns ↑/↓/Enter/Esc (stopImmediatePropagation
-/// beats the gate's own nav handler); click-outside closes. `bypass` is flagged.
-function PresetPicker({ value, onChange }: { value: string; onChange: (p: string) => void }) {
+/// Keyboard-reachable dropdown — same model as the ClickUp / Linear status
+/// pickers (patterns.md §11): a Tab-focusable trigger; while open a window-capture
+/// listener owns ↑/↓/Enter/Esc (stopImmediatePropagation beats the gate's own nav
+/// handler); click-outside closes. Reused for the permission preset and the agent.
+interface PickerOption {
+  value: string;
+  label: string;
+  danger?: boolean;
+}
+
+function GatePicker({
+  value,
+  options,
+  prefix,
+  ariaLabel,
+  onChange,
+}: {
+  value: string;
+  options: PickerOption[];
+  prefix: string;
+  ariaLabel: string;
+  onChange: (value: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
-    const idx = PRESETS.indexOf(value as (typeof PRESETS)[number]);
+    const idx = options.findIndex((o) => o.value === value);
     setActiveIdx(idx >= 0 ? idx : 0);
-  }, [open, value]);
+  }, [open, value, options]);
 
   useEffect(() => {
     if (!open) return;
@@ -63,18 +84,19 @@ function PresetPicker({ value, onChange }: { value: string; onChange: (p: string
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
     }
     function onKey(e: KeyboardEvent) {
+      if (options.length === 0) return;
       if (e.key === "ArrowDown") {
         e.preventDefault();
         e.stopImmediatePropagation();
-        setActiveIdx((p) => (p + 1) % PRESETS.length);
+        setActiveIdx((p) => (p + 1) % options.length);
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
         e.stopImmediatePropagation();
-        setActiveIdx((p) => (p - 1 + PRESETS.length) % PRESETS.length);
+        setActiveIdx((p) => (p - 1 + options.length) % options.length);
       } else if (e.key === "Enter") {
         e.preventDefault();
         e.stopImmediatePropagation();
-        onChange(PRESETS[activeIdx]);
+        onChange(options[activeIdx].value);
         setOpen(false);
       } else if (e.key === "Escape") {
         e.preventDefault();
@@ -88,23 +110,24 @@ function PresetPicker({ value, onChange }: { value: string; onChange: (p: string
       document.removeEventListener("mousedown", onOutside);
       window.removeEventListener("keydown", onKey, true);
     };
-  }, [open, activeIdx, onChange]);
+  }, [open, activeIdx, onChange, options]);
 
-  const bypass = value === "bypass";
+  const current = options.find((o) => o.value === value);
+  const danger = current?.danger ?? false;
   return (
     <div ref={wrapRef} className="relative">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        aria-label="Edit permission mode"
+        aria-label={ariaLabel}
         className={`flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] outline-none focus:ring-1 focus:ring-primary ${
-          bypass
+          danger
             ? "border-destructive/50 bg-destructive/10 font-medium text-destructive"
             : "border-border/60 bg-background text-muted-foreground"
         }`}
       >
-        {bypass && <AlertTriangle size={10} />}
-        permissions: {value}
+        {danger && <AlertTriangle size={10} />}
+        {prefix} {current?.label ?? value}
       </button>
       {open && (
         <div
@@ -112,23 +135,23 @@ function PresetPicker({ value, onChange }: { value: string; onChange: (p: string
           className="absolute bottom-full left-0 z-50 mb-1 min-w-36 rounded-md border border-border bg-card shadow-md"
         >
           <div className="max-h-44 overflow-y-auto py-0.5">
-            {PRESETS.map((p, i) => (
+            {options.map((o, i) => (
               <button
-                key={p}
+                key={o.value}
                 type="button"
                 data-opt-idx={i}
                 data-nav-selected={i === activeIdx || undefined}
                 onMouseEnter={() => setActiveIdx(i)}
                 onClick={() => {
-                  onChange(p);
+                  onChange(o.value);
                   setOpen(false);
                 }}
                 className={`flex w-full items-center gap-1.5 px-2 py-1 text-left text-[11px] transition-colors data-[nav-selected=true]:bg-accent data-[nav-selected=true]:text-accent-foreground ${
-                  p === "bypass" ? "text-destructive" : "text-muted-foreground"
+                  o.danger ? "text-destructive" : "text-muted-foreground"
                 }`}
               >
-                {p === "bypass" && <AlertTriangle size={10} />}
-                {p}
+                {o.danger && <AlertTriangle size={10} />}
+                {o.label}
               </button>
             ))}
           </div>
@@ -137,6 +160,12 @@ function PresetPicker({ value, onChange }: { value: string; onChange: (p: string
     </div>
   );
 }
+
+const PRESET_OPTIONS: PickerOption[] = PRESETS.map((p) => ({
+  value: p,
+  label: p,
+  danger: p === "bypass",
+}));
 
 /// Native, structurally un-bypassable approval gate for agent-spawned worktree
 /// sessions (create) and reviving inactive ones (resume). One solid floating
@@ -153,7 +182,20 @@ export function WorktreeGate() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<EditDraft | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [agents, setAgents] = useState<AvailableAgent[]>([]);
   const prevCount = useRef(0);
+
+  // The installed agents the human can pick at the gate, plus a "default"
+  // (keep the requested/project default). Fetched lazily on first request.
+  const agentOptions = useMemo<PickerOption[]>(
+    () => [
+      { value: "default", label: "default" },
+      ...agents
+        .filter((a) => a.installed)
+        .map((a) => ({ value: a.id, label: a.display_name })),
+    ],
+    [agents],
+  );
 
   const nameOf = useMemo(() => {
     const sessions = new Map<string, string>();
@@ -183,6 +225,15 @@ export function WorktreeGate() {
     requestAnimationFrame(() => requestAnimationFrame(attempt));
   }, []);
 
+  // Load the installed agents once there's something to approve (so the agent
+  // picker is ready when the human opens Edit).
+  useEffect(() => {
+    if (requests.length === 0 || agents.length > 0) return;
+    invoke<AvailableAgent[]>("list_available_agents")
+      .then(setAgents)
+      .catch(() => {});
+  }, [requests.length, agents.length]);
+
   // Keep the cursor valid as the queue changes; drop a stale edit draft.
   useEffect(() => {
     const ids = requests.map((r) => r.id);
@@ -207,7 +258,7 @@ export function WorktreeGate() {
     async (req: WorktreeRequestView, useDraft: boolean) => {
       setBusyId(req.id);
       const d = useDraft && draft?.id === req.id ? draft : null;
-      await approveWorktreeRequest(store, req, d?.prompt, d?.branch, d?.preset);
+      await approveWorktreeRequest(store, req, d?.prompt, d?.branch, d?.preset, d?.agent);
       setDraft(null);
       setBusyId(null);
     },
@@ -229,6 +280,7 @@ export function WorktreeGate() {
       prompt: req.prompt,
       branch: req.branch_name ?? "",
       preset: req.permission_preset ?? "default",
+      agent: req.agent ?? "default",
     });
   }, []);
 
@@ -326,6 +378,7 @@ export function WorktreeGate() {
               key={req.id}
               req={req}
               nameOf={nameOf}
+              agentOptions={agentOptions}
               selected={req.id === selectedId}
               draft={draft?.id === req.id ? draft : null}
               busy={busyId === req.id}
@@ -346,6 +399,7 @@ export function WorktreeGate() {
 function RequestRow({
   req,
   nameOf,
+  agentOptions,
   selected,
   draft,
   busy,
@@ -358,6 +412,7 @@ function RequestRow({
 }: {
   req: WorktreeRequestView;
   nameOf: { session: (id: string) => string; workspace: (id: string) => string };
+  agentOptions: PickerOption[];
   selected: boolean;
   draft: EditDraft | null;
   busy: boolean;
@@ -437,11 +492,27 @@ function RequestRow({
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
-            <span className="rounded bg-muted/50 px-1.5 py-0.5 text-muted-foreground">
-              agent: {req.agent ?? "default"}
-            </span>
             {editing ? (
-              <PresetPicker value={draft.preset} onChange={(p) => onDraftChange({ preset: p })} />
+              <GatePicker
+                value={draft.agent}
+                options={agentOptions}
+                prefix="agent:"
+                ariaLabel="Edit agent"
+                onChange={(a) => onDraftChange({ agent: a })}
+              />
+            ) : (
+              <span className="rounded bg-muted/50 px-1.5 py-0.5 text-muted-foreground">
+                agent: {req.agent ?? "default"}
+              </span>
+            )}
+            {editing ? (
+              <GatePicker
+                value={draft.preset}
+                options={PRESET_OPTIONS}
+                prefix="permissions:"
+                ariaLabel="Edit permission mode"
+                onChange={(p) => onDraftChange({ preset: p })}
+              />
             ) : (
               <Tooltip>
                 <TooltipTrigger

@@ -684,6 +684,7 @@ pub fn approve_worktree_request(
     edited_prompt: Option<String>,
     edited_branch: Option<String>,
     edited_preset: Option<String>,
+    edited_agent: Option<String>,
     gate: tauri::State<'_, WorktreeGateState>,
     db: tauri::State<'_, crate::db::SharedDb>,
     agents: tauri::State<'_, AgentRuntimeState>,
@@ -730,6 +731,7 @@ pub fn approve_worktree_request(
             edited_prompt,
             edited_branch,
             edited_preset,
+            edited_agent,
             &db,
             &agents,
             &plan_watcher,
@@ -795,11 +797,13 @@ pub fn approve_worktree_request(
 /// Create the worktree + session row + queue the first prompt. Mirrors
 /// `clickup_spawn_worktree_with_task`. On a create-then-DB-fail, rolls back the
 /// just-created worktree so no orphan dir is left.
+#[allow(clippy::too_many_arguments)] // edits map 1:1 to the gate's editable fields.
 fn build_worktree_session(
     req: &PendingWorktreeRequest,
     edited_prompt: Option<String>,
     edited_branch: Option<String>,
     edited_preset: Option<String>,
+    edited_agent: Option<String>,
     db: &crate::db::SharedDb,
     agents: &AgentRuntimeState,
     plan_watcher: &crate::agents::claude_code::plan::SharedPlanWatcher,
@@ -851,11 +855,15 @@ fn build_worktree_session(
         let wt_path =
             crate::worktree::create_worktree(&repo_path, &slug).map_err(|e| e.to_string())?;
 
-        // Resolve the agent: the requested one (validated at request time) wins,
-        // else the project/default resolution (mirrors create_session).
-        let agent_id = req
-            .agent
+        // Resolve the agent: the human's gate edit wins, else the requested one
+        // (validated at request time), else the project/default resolution
+        // (mirrors create_session). An empty / "default" edit means "don't
+        // override — keep the requested-or-project default".
+        let agent_id = edited_agent
             .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && *s != "default")
+            .or(req.agent.as_deref())
             .and_then(|s| crate::agents::AgentId::new(s).ok())
             .unwrap_or_else(|| {
                 let cfg = crate::config::Config::load();

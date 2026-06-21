@@ -66,6 +66,7 @@ export async function approveWorktreeRequest(
   editedPrompt?: string,
   editedBranch?: string,
   editedPreset?: string,
+  editedAgent?: string,
 ): Promise<void> {
   const isResume = req.kind.type === "resume";
   try {
@@ -74,6 +75,7 @@ export async function approveWorktreeRequest(
       editedPrompt: editedPrompt ?? null,
       editedBranch: editedBranch ?? null,
       editedPreset: editedPreset ?? null,
+      editedAgent: editedAgent ?? null,
     });
     if (!isResume) {
       // New session: add it to its workspace and mark it fresh ("new" spawn).

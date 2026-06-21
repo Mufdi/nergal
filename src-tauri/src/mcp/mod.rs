@@ -260,7 +260,16 @@ pub fn tool_definitions() -> Vec<Value> {
                     "prompt": { "type": "string", "description": "The dedicated first-turn prompt for the new session." },
                     "branch_name": { "type": "string", "description": "Suggested branch/worktree name (a slug is derived; the user may edit)." },
                     "agent": { "type": "string", "description": "Agent CLI to launch (e.g. claude-code); omit for the project/default agent." },
-                    "launch_options": { "type": "object", "description": "Optional LaunchOptions (permission_preset, startup_command). The human sees and may clamp the permission preset.", "additionalProperties": true }
+                    "launch_options": {
+                        "type": "object",
+                        "description": "Optional launch options for the new session. The human sees and may change the permission preset before approving.",
+                        "properties": {
+                            "permission_preset": { "type": "string", "enum": ["default", "plan", "accept-edits", "auto", "bypass"], "description": "Permission mode for the new session (default = normal prompts)." },
+                            "startup_command": { "type": "string", "description": "Short shell prelude run before the agent starts (NOT a long-running setup)." },
+                            "allow_skip_in_cycle": { "type": "boolean", "description": "Add bypass to the in-session Shift+Tab mode cycle." }
+                        },
+                        "additionalProperties": false
+                    }
                 },
                 "required": ["workspace_id", "prompt"],
                 "additionalProperties": false,

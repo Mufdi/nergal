@@ -75,12 +75,26 @@ A thread SHALL be `{ id, originator_session, participants, status, max_hops, msg
 
 The system SHALL wake a target according to its mode, through a `SessionDelivery` abstraction. An idle target SHALL receive a PTY stdin wake note (via the existing PTY writer, only the owning agent PTY, with every embedded relayed string sanitized) that **embeds the pending message bodies directly** — the wake IS the read, so no separate `read_messages` round-trip is needed; once the wake lands the system SHALL mark those messages `agent_consumed_at` (delivery == consume for the wake path). `read_messages` remains as a catch-up / full-history fallback. A working target's delivery SHALL be queued; on the target's next `Stop`, the `cluihud hook stop` CLI command SHALL query for pending deliveries and emit `hookSpecificOutput.additionalContext` on its stdout (the hook socket is fire-and-forget and cannot return data). Delivery SHALL key off `agent_consumed_at` (set by the wake path or `read_messages`), never `human_seen_at`. If the wake fails to land the messages SHALL be left unconsumed so the next idle flip retries — never stranded.
 
-Every working→idle transition with a non-empty pending queue SHALL trigger a PTY wake for ALL agents, and a send to an already-idle target SHALL wake it immediately — the `additionalContext` path is a best-effort fast layer, never the sole delivery path, so a message sent just after a `Stop` is never stranded.
+Every working→idle transition with a non-empty pending queue SHALL trigger a PTY wake, and a send to an **already-settled** idle target SHALL wake it immediately — the `additionalContext` path is a best-effort fast layer, never the sole delivery path, so a message sent just after a `Stop` is never stranded.
 
-#### Scenario: Deliver to an idle target
+**Wake submit timing (walk hardening).** A wake note SHALL be pasted to the PTY WITHOUT the `\r` submit, and the submit SHALL be sent as a separate lone `\r` after a short settle, so the Enter does not travel in the same write burst as the bracketed-paste end marker and race the TUI's exit from paste mode (which would leave the note as an unsubmitted draft). At most ONE PTY paste SHALL occur per idle transition: when a cross-session wake pastes on a `Stop`, any other queued PTY delivery for that session (e.g. an agent-spawned-worktree outcome) SHALL defer to the next idle rather than paste back-to-back (the second paste would race the first's submit).
 
-- **WHEN** a message is recorded for a target whose mode is idle
-- **THEN** the system SHALL inject a sanitized wake note embedding the message bodies into the target's PTY stdin, then mark them `agent_consumed_at` (no separate `read_messages` round-trip required)
+**Just-idled debounce.** A target that idled only moments ago (within a short settle window) MAY still be returning its TUI to the prompt; the send-path immediate wake SHALL queue such a target rather than paste into it, relying on its imminent next `Stop` to drain it. A *settled* idle target — or one whose runtime mode is unknown (the side-map is volatile and empty after a restart, and a quiet idle session never emits the `Stop` the drain needs) — SHALL still be woken immediately so it is never stranded.
+
+#### Scenario: Deliver to a settled idle target
+
+- **WHEN** a message is recorded for a target whose mode is idle and that has been idle past the settle window (or whose mode is unknown)
+- **THEN** the system SHALL inject a sanitized wake note embedding the message bodies into the target's PTY stdin (pasted without the Enter, then submitted with a settled `\r`), then mark them `agent_consumed_at`
+
+#### Scenario: Just-idled target is queued, not pasted
+
+- **WHEN** a message is recorded for a target that idled within the settle window
+- **THEN** the delivery SHALL be queued (status `queued`) and the message SHALL remain pending until the target's next `Stop` drains it, never pasted into a not-yet-ready prompt
+
+#### Scenario: At most one paste per idle transition
+
+- **WHEN** a session reaches `Stop` with both a pending cross-session message AND a pending agent-spawned-worktree outcome
+- **THEN** the cross-session wake SHALL paste and the worktree-outcome delivery SHALL defer to the next idle, so two bracketed pastes never race each other's submit
 
 #### Scenario: Deliver to a working target via Stop CLI stdout
 

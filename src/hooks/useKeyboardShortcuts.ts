@@ -70,7 +70,11 @@ export function useKeyboardShortcuts() {
           || target?.tagName === "TEXTAREA"
           || !!target?.closest(".cm-editor")
           || target?.getAttribute("contenteditable") === "true";
-        if (inTextInput) {
+        // The worktree gate is a self-contained form (prompt → branch → agent →
+        // preset → buttons) — let native Tab traverse its controls instead of
+        // consuming the key, so the user can move off the picker triggers.
+        const inGate = !!target?.closest("[data-focus-zone='worktree-gate']");
+        if (inTextInput || inGate) {
           return;
         }
         e.preventDefault();

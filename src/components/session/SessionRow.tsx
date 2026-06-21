@@ -19,7 +19,7 @@ import { pendingAsksAtom, pendingAttentionAtom } from "@/stores/askUser";
 import { crossSessionUnreadMapAtom, crossSessionActiveParticipantsAtom } from "@/stores/crossSession";
 import { SessionIndicator } from "./SessionIndicator";
 import claudeIcon from "@/assets/agents/claude.svg";
-import codexIcon from "@/assets/agents/codex.svg";
+import codexIcon from "@/assets/agents/codex.png";
 import opencodeIcon from "@/assets/agents/opencode.svg";
 import piIcon from "@/assets/agents/pi.svg";
 

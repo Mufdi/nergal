@@ -10,7 +10,7 @@ import type { AvailableAgent } from "@/lib/types";
 import type { EnvShellDef, LaunchOptions, PermissionPreset } from "@/stores/workspace";
 import { invoke } from "@/lib/tauri";
 import claudeLogo from "@/assets/agents/claude.svg";
-import codexLogo from "@/assets/agents/codex.svg";
+import codexLogo from "@/assets/agents/codex.png";
 import opencodeLogo from "@/assets/agents/opencode.svg";
 import piLogo from "@/assets/agents/pi.svg";
 

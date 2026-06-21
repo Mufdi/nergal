@@ -132,3 +132,27 @@ The tool SHALL be gated by `agent_spawned_worktrees_enabled` (default off). The 
 
 - **WHEN** the daemon restarts with pending requests
 - **THEN** those requests SHALL be dropped, no push notification SHALL be attempted, and a subsequent `get_worktree_request_status` SHALL return `not_found` (the agent treats it as abandoned)
+
+### Requirement: request_session_resume revives an existing inactive session through the same gate
+
+The system SHALL expose a `request_session_resume(session_id, message?)` MCP tool that requests reviving an existing, currently-inactive session (the natural complement to `send_to_session` refusing an inactive target: that session exists and was worked before but is not live now). It SHALL go through the SAME human gate as `create_worktree_session`, be gated by `agent_spawned_worktrees_enabled`, and be non-blocking (return `{ pending_request_id }`). It SHALL validate that the session exists (`unknown_session` otherwise) and is not already live (`already_live`, pointing to `send_to_session`). A resume request SHALL carry NO agent-chosen escalation inputs — it reuses the target session's own launch options. On approval the system SHALL resume the session in its existing worktree ("continue" mode, no new worktree created) and, if a `message` was given, deliver it to the revived session as a labeled, advisory relayed first turn. To avoid pasting into a not-yet-ready prompt, the target SHALL be marked busy the instant it is approved so delivery to it queues until its first idle.
+
+#### Scenario: Resume requests through the gate, never creates directly
+
+- **WHEN** an agent calls `request_session_resume` for an existing inactive session
+- **THEN** the system SHALL enqueue a pending resume request behind the human gate and return `{ pending_request_id }`, reviving nothing until the user approves
+
+#### Scenario: Unknown or already-live target
+
+- **WHEN** the target session does not exist, OR is already live
+- **THEN** the tool SHALL return `unknown_session` (does not exist) or `already_live` (use `send_to_session` instead), enqueuing nothing
+
+#### Scenario: Approved resume revives in place and delivers the message
+
+- **WHEN** the user approves a resume whose target still exists and is still not live
+- **THEN** the session SHALL be resumed in its existing worktree (no new worktree), and any provided message SHALL be delivered to it as a labeled advisory relayed turn
+
+#### Scenario: No new escalation surface
+
+- **WHEN** the gate shows a resume request
+- **THEN** it SHALL NOT present create-only escalation inputs (branch, agent, permission preset, startup_command) — a resume reuses the target's own launch options

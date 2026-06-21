@@ -960,6 +960,11 @@ fn resume_session(
         .unwrap_or_else(|_| crate::agents::AgentId::claude_code());
     agents.register_session(&session.id, agent_id);
     crate::commands::extend_plan_watcher_for_session(agents, plan_watcher, &session, &repo_path);
+    // Mark the revived session busy NOW (before the requester can send to it),
+    // closing the warmup race: until its PTY+TUI come up and it emits its first
+    // `Stop`, a `running` mode makes cross-session delivery QUEUE rather than
+    // paste into a not-yet-ready prompt (the stuck-note symptom).
+    agents.record_activity(target_session_id, "running", None);
 
     let msg = edited_prompt
         .as_deref()

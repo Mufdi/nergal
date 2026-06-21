@@ -621,11 +621,15 @@ fn process_event(
         && matches!(event, HookEvent::Stop { .. })
     {
         let bridge = crate::mcp::delivery::AppBridge::new(app.clone());
-        crate::mcp::delivery::drain_idle(db, &bridge, csid);
-        // Same working→idle point: deliver any worktree-request outcomes that
-        // resolved while this session was working (the deny/approve/timeout it
-        // could not be woken for at resolution time).
-        if let Some(gate) = app.try_state::<crate::mcp::worktree_sessions::WorktreeGateState>() {
+        // At most ONE PTY paste per idle transition: two bracketed pastes
+        // back-to-back race each other's `\r` submit (the second lands before
+        // the first's turn starts), leaving a note stuck in the prompt. So the
+        // worktree-outcome drain only runs when the cross-session drain pasted
+        // nothing this Stop; otherwise it waits for the next idle.
+        let delivered = crate::mcp::delivery::drain_idle(db, &bridge, csid);
+        if delivered == 0
+            && let Some(gate) = app.try_state::<crate::mcp::worktree_sessions::WorktreeGateState>()
+        {
             crate::mcp::worktree_sessions::drain_worktree_outcomes(&gate, &bridge, csid);
         }
     }

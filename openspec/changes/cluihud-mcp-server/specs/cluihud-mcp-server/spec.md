@@ -100,12 +100,22 @@ The system SHALL expose a `whoami` MCP tool that returns the caller's own resolv
 
 ### Requirement: Idempotent, reversible agent registration
 
-The system SHALL register the `cluihud mcp` shim in spawned agents' MCP configuration idempotently (no duplicate entries on re-run), pinning the installed absolute path `/usr/bin/cluihud` (NOT a `$PATH` resolution, which would bake in the `~/.cargo/bin` shadow per CLAUDE.md). It SHALL deregister at disable time on a best-effort basis (the app is running); it SHALL NOT attempt uninstall-time deregistration from maintainer scripts (multi-user `$HOME` is unreliable). An orphaned entry after uninstall SHALL degrade to a structured error at agent startup, not a hard agent failure.
+The system SHALL register the `cluihud mcp` shim in spawned agents' MCP configuration idempotently (no duplicate entries on re-run), pinning the installed absolute path `/usr/bin/cluihud` (NOT a `$PATH` resolution, which would bake in the `~/.cargo/bin` shadow per CLAUDE.md). It SHALL register into every agent whose MCP-server config schema is supported — Claude Code (`~/.claude.json` `mcpServers`, JSON), Codex (`~/.codex/config.toml` `[mcp_servers.cluihud]`, TOML edited format-preservingly), and OpenCode (`~/.config/opencode/opencode.json` `mcp.cluihud` `{type:"local",command,enabled}`, JSON) — and SHALL skip an agent with no MCP-server mechanism (Pi: no `mcp` CLI/config surface). Per-agent registration SHALL be best-effort: a failure for one agent (or a missing/corrupt config) SHALL be logged and SHALL NOT block the others or the enable/disable toggle. It SHALL deregister at disable time on a best-effort basis (the app is running); it SHALL NOT attempt uninstall-time deregistration from maintainer scripts (multi-user `$HOME` is unreliable). An orphaned entry after uninstall SHALL degrade to a structured error at agent startup, not a hard agent failure.
 
 #### Scenario: Registration is idempotent
 
 - **WHEN** cluihud registers the MCP server and the entry already exists
 - **THEN** it SHALL NOT create a duplicate entry
+
+#### Scenario: Per-agent registration preserves other config
+
+- **WHEN** cluihud registers into an agent config that already holds other MCP servers (and, for TOML, comments/formatting)
+- **THEN** only the `cluihud` entry SHALL be added/updated, leaving every other server, key, comment and whitespace intact
+
+#### Scenario: An unsupported agent is skipped, a failing one does not block others
+
+- **WHEN** an agent has no MCP-server config mechanism (Pi), OR one agent's config write fails
+- **THEN** that agent SHALL be skipped/logged and the remaining agents SHALL still be registered, and the enable/disable toggle SHALL still succeed
 
 #### Scenario: Deregistration on disable
 

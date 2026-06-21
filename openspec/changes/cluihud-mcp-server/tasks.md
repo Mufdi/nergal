@@ -35,7 +35,7 @@
 - [x] 4.2 Descriptor (name, workspace, branch, agent, bg-tasks/crons).
 - [x] 4.2b **LIVE (2026-06-15, commits `a3d4f4d`+`968002f`)**: `mode`/`last_activity`/`waiting_for`/`recently_touched_files:[{path,tool}]`/`last_assistant_message` now fed by a runtime activity side-map (`agents/state.rs`) mirroring the frontend `modeMapAtom`, written by `hooks/server.rs::process_event`. Root-cause fix — the DB `status`/`updated_at` columns only move on lifecycle mutations, so they read stale. `summary` stays null (reserved → section 6). Gotcha canon: PostToolUse matcher excludes `Read`, so files are captured from PreToolUse (unmatched). bg-tasks "skip empty" gate removed so an empty Stop clears a finished task.
 - [x] 4.3 `whoami` / `list_sessions(include_self?)` (self-exclusion) / `get_session(id)` (not-found error).
-- [ ] 4.4 **DEFERRED**: out-of-band `claude agents --json` cache for `waiting_for`/state enrichment (currently null). Lands with the multi-agent registrars; needs live `claude agents --json` shape verification.
+- [x] 4.4 **SUPERSEDED 2026-06-21** (live shape verified): `claude agents --json` returns `[{pid, cwd, kind, startedAt, sessionId, status}]` — it does NOT carry `waiting_for`. That field is now populated by the runtime hook side-map (descriptor-liveness work via `HookEvent::waiting_for()`), correctly `None` when nothing is blocking, so the original "waiting_for null" premise is resolved by another path. The only thing `claude agents --json` adds is a coarse CC-only `status` (busy/idle) already covered by `is_live` + the finer `mode`. Building the cache would be redundant + CC-specific, so it is intentionally NOT implemented (scope discipline).
 
 ## 5. Background tasks / crons (additive)
 
@@ -65,7 +65,7 @@
 ## 7. Registration + frontend
 
 - [x] 7.1 (CC) Idempotent registration of `cluihud mcp` into `~/.claude.json` `mcpServers`, pinned `/usr/bin/cluihud`; best-effort disable-time deregistration; startup sync; pure helper unit-tested.
-- [ ] 7.1b **DEFERRED**: Codex/Pi/OpenCode registrars — each MCP config schema needs verification against a live install before writing (avoid corrupting agent configs by guessing).
+- [x] 7.1b **DONE 2026-06-21** (formats verified live + empirically parse-tested): **Codex** registrar (`~/.codex/config.toml` `[mcp_servers.cluihud]` command+args=["mcp"], via `toml_edit` to preserve formatting/comments; idempotent; `codex mcp list` confirmed "enabled") + **OpenCode** registrar (`~/.config/opencode/opencode.json` `mcp.cluihud` `{type:"local",command:[cmd,"mcp"],enabled:true}`, JSON; `opencode mcp list` confirmed "connected"). Both best-effort (a per-agent failure is logged, never blocks the others or the toggle). **Pi** intentionally NOT registered: its CLI has no MCP-server mechanism (no `pi mcp` subcommand; settings.json has no MCP key — it uses `pi install` extensions). 7 new pure-helper unit tests.
 - [x] 7.2 (MCP toggle) Settings → MCP section: enable toggle (default off) + global-read disclosure. AI-summaries UI lands with phase 6.
 
 ## 8. Tests

@@ -1188,6 +1188,28 @@ pub(crate) fn paste_to_session(
     write_bracketed(&mut *w, text, submit).map_err(|e| e.to_string())
 }
 
+/// Write a lone `\r` (Enter) to an agent session's PTY. Used to submit a paste
+/// AFTER a short settle, separately from [`paste_to_session`] with `submit:false`
+/// — sending the Enter in the same burst as the bracketed-paste end marker races
+/// the TUI's exit from paste mode, leaving the input unsent (cross-session walk).
+pub(crate) fn submit_to_session(state: &PtyManager, session_id: &str) -> Result<(), String> {
+    if session_id.contains("::") {
+        return Err("submit_to_session accepts agent sessions only".into());
+    }
+    let pty_id = {
+        let session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
+        session_ptys
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| "no PTY for session".to_string())?
+    };
+    let instances = state.instances.lock().map_err(|e| e.to_string())?;
+    let instance = instances.get(&pty_id).ok_or("PTY instance not found")?;
+    let mut w = instance.writer.lock().map_err(|e| e.to_string())?;
+    w.write_all(b"\r").map_err(|e| e.to_string())?;
+    w.flush().map_err(|e| e.to_string())
+}
+
 /// Encode a frontend key event via wezterm-term and write the resulting
 /// bytes to the PTY. The encoder owns Kitty keyboard protocol, CSI-u,
 /// cursor-mode translations, and everything else — the frontend only

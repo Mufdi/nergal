@@ -51,8 +51,20 @@ impl SessionDelivery for AppBridge {
             .ok_or_else(|| anyhow::anyhow!("PtyManager state unavailable"))?;
         // `paste_to_session` rejects aux/quake shells (`::` in the id) and only
         // addresses the owning agent PTY — the never-corrupt-an-aux-shell guard.
-        crate::pty::paste_to_session(pty.inner(), session_id, note, true)
-            .map_err(|e| anyhow::anyhow!(e))
+        // Paste WITHOUT the Enter, then submit after a short settle: an Enter in
+        // the same write burst as the bracketed-paste end marker races the TUI's
+        // exit from paste mode and the input is left unsent (cross-session walk).
+        crate::pty::paste_to_session(pty.inner(), session_id, note, false)
+            .map_err(|e| anyhow::anyhow!(e))?;
+        let app = self.app.clone();
+        let sid = session_id.to_string();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            if let Some(pty) = app.try_state::<crate::pty::PtyManager>() {
+                let _ = crate::pty::submit_to_session(pty.inner(), &sid);
+            }
+        });
+        Ok(())
     }
 
     fn emit(&self, event: &str, payload: Value) {

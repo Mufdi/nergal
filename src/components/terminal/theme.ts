@@ -2,13 +2,14 @@
 
 /// Mutable so a theme switch can repoint `background`, `foreground`, and
 /// `cursorAccent` to the active CSS tokens without forcing every consumer
-/// to re-import. Cursor + selection are theme-stable (orange brand).
+/// to re-import. Cursor stays the orange brand; the selection uses a neutral
+/// blue (standard text-selection look) so highlighted text reads clearly.
 export const TERM_THEME = {
   background: "#0a0a0b",
   foreground: "#ededef",
   cursor: "#f97316",
   cursorAccent: "#0a0a0b",
-  selectionBackground: "rgba(249, 115, 22, 0.2)",
+  selectionBackground: "rgba(80, 130, 245, 0.35)",
 };
 
 /// Re-read `--terminal-surface`, `--terminal-foreground`, and

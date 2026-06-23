@@ -33,7 +33,10 @@ const RESERVED_SHORTCUTS: &[(&str, &str)] = &[
     ("ctrl+shift+tab", "browser:prev-tab"),
     ("f5", "browser:reload"),
     ("ctrl+r", "browser:reload"),
-    ("ctrl+shift+r", "browser:hard-reload"),
+    // NOT ctrl+shift+r: the OS-global for that 3-key chord failed to unregister
+    // cleanly (tauri global-shortcut quirk), so it stayed grabbed from other
+    // apps (e.g. Brave's hard-reload) until Nergal quit. Hard-reload remains on
+    // the browser toolbar button.
 ];
 
 const ALLOWED_SCHEMES: &[&str] = &["http", "https"];
@@ -399,16 +402,36 @@ pub fn port_process_info(port: u16) -> Option<PortProcess> {
 /// the same way `port_process_info` does, then lets the dev server shut down.
 #[tauri::command]
 pub fn kill_port(port: u16) -> Result<(), String> {
-    let inode = listen_inode_for_port(port).ok_or("no listening socket on that port")?;
-    let pid = pid_for_socket_inode(&inode).ok_or("could not resolve the owning process")?;
-    let rc = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
-    if rc != 0 {
-        return Err(format!(
-            "kill({pid}) failed: {}",
-            std::io::Error::last_os_error()
-        ));
+    // Owned process → SIGTERM. A Docker-published port has no /proc-visible
+    // owner (the listener is root `docker-proxy`), so fall back to stopping the
+    // owning container by name.
+    if let Some(inode) = listen_inode_for_port(port)
+        && let Some(pid) = pid_for_socket_inode(&inode)
+    {
+        let rc = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+        if rc != 0 {
+            return Err(format!(
+                "kill({pid}) failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        return Ok(());
     }
-    Ok(())
+    if let Some(dp) = docker_container_for_port(port) {
+        let out = std::process::Command::new("docker")
+            .args(["stop", &dp.label])
+            .output()
+            .map_err(|e| format!("docker stop {}: {e}", dp.label))?;
+        if !out.status.success() {
+            return Err(format!(
+                "docker stop {} failed: {}",
+                dp.label,
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        return Ok(());
+    }
+    Err("could not resolve the owning process or container".into())
 }
 
 /// Apply hysteresis to a raw scan result against the previous active set.

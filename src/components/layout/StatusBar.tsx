@@ -15,6 +15,7 @@ import {
 import { openTabAction, expandRightPanelAtom } from "@/stores/rightPanel";
 import { toastsAtom } from "@/stores/toast";
 import { invoke } from "@/lib/tauri";
+import { open as openShell } from "@tauri-apps/plugin-shell";
 import { confirm as swalConfirm } from "@/lib/swal";
 import { focusZoneAtom } from "@/stores/shortcuts";
 import * as terminalService from "@/components/terminal/terminalService";
@@ -418,7 +419,14 @@ function IncidentChips() {
 
   if (incidents.length === 0) return null;
 
-  async function openStatusPage(url: string) {
+  async function openStatusPage(url: string, provider: string) {
+    // status.openai.com sets frame-ancestors/CSP that the in-app iframe can't
+    // satisfy (renders a black box), so OpenAI opens externally; status.claude.com
+    // frames fine and stays in the panel.
+    if (provider !== "claude") {
+      void openShell(url).catch(() => {});
+      return;
+    }
     if (!sessionId) return;
     setMode({ sessionId, mode: "dock" });
     openTab({ tab: { id: `browser:${sessionId}`, type: "browser", label: "Browser" } });
@@ -437,8 +445,8 @@ function IncidentChips() {
       {incidents.map((s) => (
         <Tooltip key={s.provider}>
           <TooltipTrigger
-            onClick={() => void openStatusPage(s.url)}
-            disabled={!sessionId}
+            onClick={() => void openStatusPage(s.url, s.provider)}
+            disabled={s.provider === "claude" && !sessionId}
             className={`flex h-5 shrink-0 items-center gap-1 rounded px-1.5 text-[10px] font-medium leading-none whitespace-nowrap transition-colors disabled:opacity-40 ${
               s.indicator === "minor"
                 ? "bg-yellow-500/15 text-yellow-400 hover:bg-yellow-500/25"
@@ -544,7 +552,8 @@ function LocalhostPortChips() {
   // destructive-ish act — confirm with the project swal first.
   async function confirmKillPort(port: number) {
     const info = procInfo[port];
-    if (info?.pid == null) {
+    const isDocker = info?.kind === "docker";
+    if (!info || (info.pid == null && !isDocker)) {
       pushToast({
         message: "Can't free this port",
         description: "No owning process resolved (it may be a system/daemon socket).",
@@ -554,8 +563,10 @@ function LocalhostPortChips() {
     }
     const ok = await swalConfirm({
       title: `Free port :${port}?`,
-      body: `Sends SIGTERM to ${info.label} (pid ${info.pid}).`,
-      confirmLabel: "Kill",
+      body: isDocker
+        ? `Stops the Docker container ${info.label}.`
+        : `Sends SIGTERM to ${info.label} (pid ${info.pid}).`,
+      confirmLabel: isDocker ? "Stop container" : "Kill",
       destructive: true,
     });
     if (!ok) return;
@@ -655,7 +666,7 @@ function LocalhostPortChips() {
                       </span>
                     )}
                   </button>
-                  {info?.pid != null && (
+                  {(info?.pid != null || info?.kind === "docker") && (
                     <Tooltip>
                       <TooltipTrigger
                         onClick={() => void confirmKillPort(port)}
@@ -663,7 +674,9 @@ function LocalhostPortChips() {
                       >
                         <X className="size-3" />
                       </TooltipTrigger>
-                      <TooltipContent>Free this port (SIGTERM)</TooltipContent>
+                      <TooltipContent>
+                        {info?.kind === "docker" ? "Stop this container" : "Free this port (SIGTERM)"}
+                      </TooltipContent>
                     </Tooltip>
                   )}
                 </div>

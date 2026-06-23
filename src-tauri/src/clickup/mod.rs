@@ -99,6 +99,12 @@ pub fn clickup_sync_status(
     Ok(state.snapshot())
 }
 
+/// Manual "sync now": force an immediate fresh poll cycle.
+#[tauri::command]
+pub fn clickup_sync_now(app: tauri::AppHandle) {
+    poller::sync_now(&app);
+}
+
 /// Persist the team choice (Decision 9: never silently sync `teams[0]`)
 /// and restart the poller against it.
 #[tauri::command]

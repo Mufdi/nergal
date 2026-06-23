@@ -160,6 +160,20 @@ pub fn linear_sync_status(state: tauri::State<'_, LinearSyncState>) -> SyncStatu
     state.snapshot()
 }
 
+/// Manual "sync now": flips status to syncing and restarts the poll loop so it
+/// runs a fresh cycle immediately (run_loop polls before its first sleep).
+#[tauri::command]
+pub fn linear_sync_now(app: AppHandle) {
+    let mut status = app.state::<LinearSyncState>().snapshot();
+    if status.state == "no_key" {
+        return;
+    }
+    status.state = "syncing".into();
+    status.error = None;
+    set_status(&app, status);
+    restart(&app);
+}
+
 /// Persist the team selection and restart the poller.
 #[tauri::command]
 pub fn linear_select_teams(

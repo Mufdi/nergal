@@ -773,6 +773,28 @@ export function LinearPanel() {
             className="h-6 w-auto min-w-28 flex-1 px-2 py-0 text-[11px]"
           />
 
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  data-header-action
+                  onClick={() => void invoke("linear_sync_now").catch(() => {})}
+                  disabled={syncStatus?.state === "syncing" || syncStatus?.state === "no_key"}
+                  aria-label="Sync from Linear"
+                  className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+                />
+              }
+            >
+              <RefreshCw size={12} className={syncStatus?.state === "syncing" ? "animate-spin" : undefined} />
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {syncStatus?.state === "syncing" ? "Syncing…" : "Sync from Linear"}
+            </TooltipContent>
+          </Tooltip>
+
+          <span className="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden />
+
           {/* Sort: one icon per field (click active field to flip dir) + reset-to-default */}
           {SORT_FIELDS.map(({ field, label, Icon }) => {
             const active = sort.field === field;

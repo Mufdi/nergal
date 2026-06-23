@@ -1054,6 +1054,19 @@ pub fn note_team_selected(app: &AppHandle, team_id: &str) {
     set_status(app, status);
 }
 
+/// Manual "sync now": flip to syncing and restart the loop so it runs a fresh
+/// cycle immediately. No-op when no token is configured.
+pub fn sync_now(app: &AppHandle) {
+    let mut status = app.state::<ClickUpSyncState>().snapshot();
+    if status.state == "no_token" {
+        return;
+    }
+    status.state = "syncing".into();
+    status.error = None;
+    set_status(app, status);
+    restart(app);
+}
+
 pub fn note_token_set(app: &AppHandle) {
     let mut status = app.state::<ClickUpSyncState>().snapshot();
     status.state = "syncing".into();

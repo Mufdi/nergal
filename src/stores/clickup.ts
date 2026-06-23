@@ -4,6 +4,7 @@ import { invoke, listen } from "@/lib/tauri";
 import { confirm as swalConfirm } from "@/lib/swal";
 import { toastsAtom } from "./toast";
 import { openTabAction } from "./rightPanel";
+import { focusZoneAtom } from "./shortcuts";
 import {
   activeSessionIdAtom,
   activeWorkspaceAtom,
@@ -274,6 +275,19 @@ export const clickupClosedTasksAtom = atom<ClickUpTask[]>([]);
 /// Task currently open in the floating detail module (null = closed).
 export const clickupDetailTaskIdAtom = atom<string | null>(null);
 
+/// One-shot flag: when a worktree spawn closes the floating detail, its
+/// close-effect must NOT restore focus to the panel — focus belongs to the new
+/// session's terminal. Mirrors Linear's `_suppressDetailCloseFocus`.
+let _suppressDetailCloseFocus = false;
+export function suppressClickUpDetailCloseFocus(): void {
+  _suppressDetailCloseFocus = true;
+}
+export function consumeClickUpDetailCloseFocusSuppress(): boolean {
+  const v = _suppressDetailCloseFocus;
+  _suppressDetailCloseFocus = false;
+  return v;
+}
+
 /// `token_on_disk` disclosure from the last set_token of this app run; the
 /// backend only reports it at store time, so it resets on restart.
 export const clickupTokenOnDiskAtom = atom(false);
@@ -472,10 +486,11 @@ export const togglePinTaskAction = atom(null, async (get, set, taskId: string) =
 
 export const performBindTaskAction = atom(
   null,
-  async (_get, set, args: { sessionId: string; taskId: string }) => {
+  async (get, set, args: { sessionId: string; taskId: string }) => {
     try {
       await invoke("clickup_bind_task", args);
       set(clickupBindingMapAtom, (prev) => ({ ...prev, [args.sessionId]: args.taskId }));
+      if (get(clickupDetailTaskIdAtom) !== null) set(clickupDetailTaskIdAtom, null);
       // Deliver the brief to the live agent now, SUBMITTED as a turn (binding
       // is the deliberate "work on this" act — the agent must ingest it
       // immediately, not wait in the input box). Still seeds future
@@ -579,6 +594,11 @@ export const spawnWorktreeWithTaskAction = atom(null, async (get, set, taskId: s
     // Activation spawns the PTY, which consumes the backend-queued initial
     // prompt — same flow as deep-link session/new.
     set(activeSessionIdAtom, session.id);
+    if (get(clickupDetailTaskIdAtom) !== null) {
+      suppressClickUpDetailCloseFocus();
+      set(clickupDetailTaskIdAtom, null);
+      set(focusZoneAtom, "terminal");
+    }
     set(toastsAtom, {
       message: `Worktree session: ${session.name}`,
       description: "Task bound and queued as the initial prompt.",

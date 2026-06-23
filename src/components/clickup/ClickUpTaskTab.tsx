@@ -56,6 +56,19 @@ export function ClickUpTaskTab({ taskId: rootTaskId }: { taskId: string }) {
 
   const taskUrl = c.task?.url ?? null;
 
+  // The verb keys + index cursor only fire while focus is inside this subtree.
+  // The tab content remounts when it becomes the active view-panel tab, so focus
+  // the nav root on mount — otherwise focus stays on body/the tab button and the
+  // keyboard nav is dead until the user clicks into the body.
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      wrapperRef.current
+        ?.querySelector<HTMLElement>("[data-clickup-nav-root]")
+        ?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(id);
+  }, []);
+
   // Contextual verbs — same convention as the floating detail, but scoped to
   // this tab's subtree (so multiple open task tabs don't all fire). No "T":
   // converting to a tab is meaningless once you're already in one.

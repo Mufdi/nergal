@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { useAtomValue, useSetAtom } from "jotai";
+import { useEffect, useRef, useState } from "react";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { activeSessionIdAtom, activeModeAtom, activeCwdAtom, activeAgentStatusAtom } from "@/stores/workspace";
 import { activeGitInfoAtom, refreshGitInfoAtom, renameBranchSignalAtom } from "@/stores/git";
 import { loadSessionFilesAtom } from "@/stores/files";
@@ -10,10 +10,12 @@ import {
   browserNewTabAction,
   browserSetModeAction,
   localhostPortsAtom,
+  portsPopoverOpenAtom,
 } from "@/stores/browser";
-import { openTabAction, expandRightPanelAtom } from "@/stores/rightPanel";
+import { openTabAction } from "@/stores/rightPanel";
 import { toastsAtom } from "@/stores/toast";
 import { invoke } from "@/lib/tauri";
+import { open as openShell } from "@tauri-apps/plugin-shell";
 import { Badge } from "@/components/ui/badge";
 import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock, Globe, CalendarRange, Pencil, TriangleAlert, Timer, History, X } from "lucide-react";
 import { activeIncidentsAtom } from "@/stores/statusFeed";
@@ -106,11 +108,13 @@ export function StatusBar() {
     // delay={0}: status-bar hovers respond instantly, same as sidebar rows.
     <TooltipProvider delay={0}>
     <footer
-      className="flex h-7 items-center justify-between bg-card px-3 text-[11px] leading-none"
+      // 1fr/auto/1fr keeps the center cluster viewport-centered while each zone
+      // stays confined to its track (no overlap when one side grows).
+      className="grid h-7 grid-cols-[1fr_auto_1fr] items-center gap-2 bg-card px-3 text-[11px] leading-none"
       role="status"
     >
       {/* Left: git info + cwd + mode */}
-      <div className="flex items-center gap-2 text-muted-foreground">
+      <div className="flex min-w-0 items-center gap-2 text-muted-foreground">
         {agentMeta && (
           <Tooltip>
             <TooltipTrigger className="cursor-default">
@@ -122,7 +126,7 @@ export function StatusBar() {
           </Tooltip>
         )}
         {gitInfo && (
-          <div className="group flex items-center gap-1">
+          <div className="group flex min-w-0 items-center gap-1">
             <GitBranch className="size-3 shrink-0" />
             <Tooltip>
               <TooltipTrigger className="cursor-default max-w-40 truncate">
@@ -154,7 +158,7 @@ export function StatusBar() {
           </div>
         )}
         {cwd && (
-          <div className="flex items-center gap-1">
+          <div className="flex min-w-0 items-center gap-1">
             <FolderOpen className="size-3 shrink-0" />
             <Tooltip>
               <TooltipTrigger className="cursor-default max-w-32 truncate">
@@ -182,23 +186,25 @@ export function StatusBar() {
       </div>
 
       {/* Center: activity summary + localhost ports */}
-      <div className="flex items-center gap-3">
+      <div className="flex min-w-0 items-center justify-center gap-3">
         <Tooltip>
           <TooltipTrigger
             onClick={() => setDrawerOpen((prev) => !prev)}
-            className="flex items-center gap-1.5 rounded px-2 py-0.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            className="flex min-w-0 items-center gap-1.5 rounded px-2 py-0.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           >
             {summary.lastAction ? (
               <>
                 <Zap className="size-3 shrink-0 text-primary" />
-                <span className="max-w-48 truncate">{summary.lastAction}</span>
-                <span className="text-muted-foreground/60">│</span>
-                <span>{summary.actionCount} actions</span>
-                <span className="text-muted-foreground/60">│</span>
-                <span className="inline-block min-w-[3.25rem] text-right tabular-nums">{formatElapsed(summary.elapsedSeconds)}</span>
+                <span className="w-44 shrink-0 truncate">{summary.lastAction}</span>
+                <span className="shrink-0 text-muted-foreground/60">│</span>
+                <span className="shrink-0 whitespace-nowrap tabular-nums">
+                  <span className="inline-block min-w-[1.25rem] text-right">{summary.actionCount}</span> actions
+                </span>
+                <span className="shrink-0 text-muted-foreground/60">│</span>
+                <span className="inline-block min-w-[3.25rem] shrink-0 text-right tabular-nums">{formatElapsed(summary.elapsedSeconds)}</span>
               </>
             ) : (
-              <span>No activity</span>
+              <span className="shrink-0">No activity</span>
             )}
             <ChevronUp className="ml-1 size-3 shrink-0" />
           </TooltipTrigger>
@@ -212,12 +218,12 @@ export function StatusBar() {
 
       {/* Right: context %, rate limits, model, duration. Progress bars live
           in the tooltips (ASCII) — inline only the colored percentages. */}
-      <div className="flex items-center gap-2.5 text-muted-foreground">
+      <div className="flex min-w-0 items-center justify-end gap-2.5 text-muted-foreground">
         {ctxPct != null && (
           <Tooltip>
             <TooltipTrigger className="flex cursor-default items-center gap-1">
               <Gauge className="size-3 shrink-0" />
-              <span className={rateLimitColor(ctxPct)}>{ctxPct}%</span>
+              <span className={`inline-block min-w-[2.25rem] text-right tabular-nums ${rateLimitColor(ctxPct)}`}>{ctxPct}%</span>
             </TooltipTrigger>
             <TooltipContent className="flex-col items-start gap-0.5">
               <span className="font-mono text-[10px]">{asciiBar(ctxPct)} {ctxPct}%</span>
@@ -238,9 +244,9 @@ export function StatusBar() {
           <Tooltip>
             <TooltipTrigger className="flex cursor-default items-center gap-1">
               <Timer className="size-3 shrink-0" />
-              <span className={rateLimitColor(sl.rate_5h_pct)}>{Math.round(sl.rate_5h_pct)}%</span>
+              <span className={`inline-block min-w-[2.25rem] text-right tabular-nums ${rateLimitColor(sl.rate_5h_pct)}`}>{Math.round(sl.rate_5h_pct)}%</span>
               {sl.rate_5h_resets_at && (
-                <span className="text-muted-foreground/60">{new Date(sl.rate_5h_resets_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}</span>
+                <span className="tabular-nums text-muted-foreground/60">{new Date(sl.rate_5h_resets_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}</span>
               )}
             </TooltipTrigger>
             <TooltipContent className="flex-col items-start gap-0.5">
@@ -289,7 +295,7 @@ export function StatusBar() {
           <Tooltip>
             <TooltipTrigger className="flex cursor-default items-center gap-1">
               <CalendarRange className="size-3 shrink-0" />
-              <span className={rateLimitColor(sl.rate_7d_pct)}>{Math.round(sl.rate_7d_pct)}%</span>
+              <span className={`inline-block min-w-[2.25rem] text-right tabular-nums ${rateLimitColor(sl.rate_7d_pct)}`}>{Math.round(sl.rate_7d_pct)}%</span>
             </TooltipTrigger>
             <TooltipContent className="flex-col items-start gap-0.5">
               <span className="font-mono text-[10px]">{asciiBar(sl.rate_7d_pct)} {sl.rate_7d_pct.toFixed(1)}%</span>
@@ -398,42 +404,20 @@ function NotificationHistory() {
 
 /// One chip per provider with an active incident (status.claude.com /
 /// status.openai.com, polled by the Rust feed). Hidden while everything is
-/// operational. Click opens the provider's status page in the browser panel.
+/// operational. Status pages set frame-ancestors/CSP that the in-app iframe
+/// can't satisfy (renders a black box), so the chip opens them externally.
 function IncidentChips() {
   const incidents = useAtomValue(activeIncidentsAtom);
-  const sessionId = useAtomValue(activeSessionIdAtom);
-  const newTab = useSetAtom(browserNewTabAction);
-  const setMode = useSetAtom(browserSetModeAction);
-  const openTab = useSetAtom(openTabAction);
-  const expandPanel = useSetAtom(expandRightPanelAtom);
 
   if (incidents.length === 0) return null;
 
-  async function openStatusPage(url: string) {
-    if (!sessionId) return;
-    setMode({ sessionId, mode: "dock" });
-    openTab({
-      tab: { id: `browser:${sessionId}`, type: "browser", label: "Browser" },
-    });
-    // Re-clicking the chip after the right panel was hidden must re-open it —
-    // openTab only (re)activates the tab; expanding the collapsed panel needs
-    // this signal (Workspace listens and calls panel.expand()).
-    expandPanel((n) => n + 1);
-    try {
-      await newTab({ sessionId, url });
-    } catch {
-      /* status page URLs are hardcoded https — validate_url can't reject them */
-    }
-  }
-
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex shrink-0 items-center gap-1">
       {incidents.map((s) => (
         <Tooltip key={s.provider}>
           <TooltipTrigger
-            onClick={() => openStatusPage(s.url)}
-            disabled={!sessionId}
-            className={`flex shrink-0 items-center gap-1 rounded px-1.5 py-0 text-[10px] font-medium transition-colors disabled:opacity-40 ${
+            onClick={() => void openShell(s.url).catch(() => {})}
+            className={`flex h-5 shrink-0 items-center gap-1 rounded px-1.5 text-[10px] font-medium leading-none whitespace-nowrap transition-colors ${
               s.indicator === "minor"
                 ? "bg-yellow-500/15 text-yellow-400 hover:bg-yellow-500/25"
                 : "bg-red-500/15 text-red-400 hover:bg-red-500/25"
@@ -462,7 +446,8 @@ function LocalhostPortChips() {
   const newTab = useSetAtom(browserNewTabAction);
   const setMode = useSetAtom(browserSetModeAction);
   const openTab = useSetAtom(openTabAction);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useAtom(portsPopoverOpenAtom);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
   const [procInfo, setProcInfo] = useState<
     Record<number, { label: string; project: string | null; kind: string; pid: number | null } | null>
   >({});
@@ -472,7 +457,18 @@ function LocalhostPortChips() {
   // The popover must not outlive its content (last dev server dies while open).
   useEffect(() => {
     if (!hasPorts) setOpen(false);
-  }, [hasPorts]);
+  }, [hasPorts, setOpen]);
+
+  // Opened (often via the global shortcut) → focus the first row so the list is
+  // keyboard-navigable (Tab between ports, Enter to open, the kill button is
+  // revealed on focus). rAF lets the popover mount first.
+  useEffect(() => {
+    if (!open) return;
+    const id = requestAnimationFrame(() => {
+      popoverRef.current?.querySelector<HTMLElement>("button")?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [open]);
 
   // Resolve the owning process per port when the popover opens — a cheap /proc
   // walk, on-demand only so the 3s scanner stays lightweight.
@@ -549,7 +545,11 @@ function LocalhostPortChips() {
         <>
           {/* Outside-click catcher — same pattern as the TopBar/TabBar dropdowns. */}
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full left-1/2 z-50 mb-1.5 max-h-56 w-64 -translate-x-1/2 overflow-y-auto rounded-md border border-border bg-card py-1 shadow-lg">
+          <div
+            ref={popoverRef}
+            onKeyDown={(e) => { if (e.key === "Escape") setOpen(false); }}
+            className="absolute bottom-full left-1/2 z-50 mb-1.5 max-h-56 w-64 -translate-x-1/2 overflow-y-auto rounded-md border border-border bg-card py-1 shadow-lg"
+          >
             {ports.map((port) => {
               const info = procInfo[port];
               return (
@@ -562,7 +562,7 @@ function LocalhostPortChips() {
                     <span className="inline-block size-1.5 shrink-0 rounded-full bg-green-500" aria-hidden="true" />
                     <span className="shrink-0">localhost:{port}</span>
                     {info && (
-                      <span className="truncate text-muted-foreground/45">
+                      <span className="min-w-0 truncate text-muted-foreground/45">
                         {info.label}
                         {info.project ? ` · ${info.project}` : ""}
                         {info.kind === "docker" ? " · docker" : ""}
@@ -573,7 +573,7 @@ function LocalhostPortChips() {
                     <Tooltip>
                       <TooltipTrigger
                         onClick={() => killPort(port)}
-                        className="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground/40 opacity-0 transition-all hover:bg-red-500/15 hover:text-red-400 group-hover:opacity-100"
+                        className="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground/40 opacity-0 transition-all hover:bg-red-500/15 hover:text-red-400 focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
                       >
                         <X className="size-3" />
                       </TooltipTrigger>

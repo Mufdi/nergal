@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useAtomValue, useSetAtom } from "jotai";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke, listen } from "@/lib/tauri";
 import { activePanelViewAtom, activeTabAtom } from "@/stores/rightPanel";
 import { activeSessionIdAtom } from "@/stores/workspace";
@@ -126,11 +127,29 @@ export function BrowserHost() {
   // through normally) while these specific chords always reach our
   // panel. See src-tauri/src/browser.rs for the registration handlers
   // and the corresponding event payloads.
+  // OS-global shortcuts fire regardless of which window has focus, so they must
+  // only be live while Nergal actually owns OS focus — otherwise typing Ctrl+W /
+  // Ctrl+R in an external browser gets grabbed by our hidden panel.
   useEffect(() => {
     if (!visible) return;
-    void invoke("browser_register_shortcuts").catch(() => {});
+    let focused = true;
+    let unlisten: (() => void) | null = null;
+    const apply = () => {
+      if (focused) void invoke("browser_register_shortcuts").catch(() => {});
+      else void invoke("browser_unregister_shortcuts").catch(() => {});
+    };
+    apply();
+    void getCurrentWindow()
+      .onFocusChanged(({ payload }) => {
+        focused = payload;
+        apply();
+      })
+      .then((fn) => {
+        unlisten = fn;
+      });
     return () => {
       void invoke("browser_unregister_shortcuts").catch(() => {});
+      unlisten?.();
     };
   }, [visible]);
 

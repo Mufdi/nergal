@@ -1213,6 +1213,7 @@ export function ClickUpTaskBody({ c, layout }: { c: TaskController; layout: "mod
       <div
         ref={setOuterRef}
         tabIndex={0}
+        data-clickup-nav-root
         onKeyDown={c.handleNavKeyDown}
         onClick={c.handleContainerClick}
         className="h-full overflow-y-auto outline-none"

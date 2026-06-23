@@ -14,6 +14,7 @@ import {
   freshSessionsAtom,
   activeSessionAtom,
   expandedWorkspaceIdsAtom,
+  selectedWorkspaceIdAtom,
   type Workspace,
   type Session,
   type LaunchOptions,
@@ -294,14 +295,16 @@ function CollapsedSidebar() {
                 >
                   <Pencil className="size-2.5" />
                 </button>
-                <button
-                  type="button"
-                  aria-label="Delete"
-                  onClick={() => void deleteSession(s)}
-                  className="flex size-4 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-red-400 transition-colors"
-                >
-                  <Trash2 className="size-2.5" />
-                </button>
+                {s.worktree_path !== null && (
+                  <button
+                    type="button"
+                    aria-label="Delete"
+                    onClick={() => void deleteSession(s)}
+                    className="flex size-4 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-red-400 transition-colors"
+                  >
+                    <Trash2 className="size-2.5" />
+                  </button>
+                )}
               </div>
             </div>
           </TooltipContent>
@@ -367,6 +370,7 @@ function WorkspacesView() {
   const setSidebarIdxDirect = useSetAtom(sidebarSelectedIdxAtom);
   const focusedWorkspaceId = useAtomValue(focusedWorkspaceIdAtom);
   const setFocusedWorkspaceId = useSetAtom(focusedWorkspaceIdAtom);
+  const setSelectedWorkspaceId = useSetAtom(selectedWorkspaceIdAtom);
   const focusZone = useAtomValue(focusZoneAtom);
 
   // Numbers follow focus: clear the focused-workspace override as soon as the
@@ -440,6 +444,7 @@ function WorkspacesView() {
     // Move shortcut numbers onto this workspace until the user picks a session
     // or leaves the sidebar (handled by the focus-zone effect above).
     setFocusedWorkspaceId(ws.id);
+    setSelectedWorkspaceId(ws.id);
     requestAnimationFrame(() => {
       const zone = document.querySelector("[data-focus-zone='sidebar']") as HTMLElement | null;
       const el = document.querySelector(`[data-workspace-id="${ws.id}"]`) as HTMLElement | null;
@@ -455,6 +460,7 @@ function WorkspacesView() {
   }, [jumpToProject.tick]);
 
   function toggleWorkspace(id: string) {
+    setSelectedWorkspaceId(id);
     setExpandedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -470,6 +476,7 @@ function WorkspacesView() {
       .then(async (ws) => {
         setWorkspaces((prev) => [...prev, ws]);
         setExpandedIds((prev) => new Set([...prev, ws.id]));
+        setSelectedWorkspaceId(ws.id);
         try {
           const probe = await invoke<{
             vault_root: string;

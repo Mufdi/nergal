@@ -244,8 +244,12 @@ export function VaultNoteFinder({ onClose, className }: { onClose: () => void; c
                 className="flex min-w-0 flex-1 items-center gap-2 text-left"
               >
                 <FileText className="size-3.5 shrink-0 text-muted-foreground" />
-                <span className="truncate text-xs text-foreground">
-                  {hit.title ?? noteName(hit.path)}
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate text-xs text-foreground">{noteName(hit.path)}</span>
+                  {hit.lineText && hit.lineText !== noteName(hit.path) && (
+                    <span className="truncate text-[10px] text-muted-foreground">{hit.lineText}</span>
+                  )}
+                  <span className="truncate text-[9px] text-muted-foreground/50">{hit.path}</span>
                 </span>
               </button>
               <Tooltip>

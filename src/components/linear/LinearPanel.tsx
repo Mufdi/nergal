@@ -218,7 +218,10 @@ function groupIssues(issues: IssueView[], groupBy: LinearGroupBy): IssueGroup[] 
       const label = issue.projectName ?? "No project";
       push(`project:${issue.projectId ?? "none"}`, label, null, null, issue);
     } else if (groupBy === "cycle") {
-      const label = issue.cycleName ?? "No cycle";
+      // Cycles are usually unnamed; fall back to the number so each cycle gets a
+      // distinct label instead of many groups all reading "No cycle".
+      const label =
+        issue.cycleName ?? (issue.cycleNumber != null ? `Cycle ${issue.cycleNumber}` : "No cycle");
       push(`cycle:${issue.cycleId ?? "none"}`, label, null, null, issue);
     } else {
       const label = issue.assigneeName ?? "Unassigned";
@@ -255,11 +258,14 @@ function groupIssues(issues: IssueView[], groupBy: LinearGroupBy): IssueGroup[] 
       return a.label.localeCompare(b.label);
     });
   } else if (groupBy === "cycle") {
-    // Alphabetical, "No cycle" last.
+    // Current cycle first, previous cycles descending by start; "No cycle" last.
     result.sort((a, b) => {
       const aIsNone = a.key === "cycle:none";
       const bIsNone = b.key === "cycle:none";
       if (aIsNone !== bIsNone) return aIsNone ? 1 : -1;
+      const sa = a.issues[0]?.cycleStartsAt ?? 0;
+      const sb = b.issues[0]?.cycleStartsAt ?? 0;
+      if (sa !== sb) return sb - sa;
       return a.label.localeCompare(b.label);
     });
   }

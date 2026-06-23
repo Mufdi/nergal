@@ -649,24 +649,15 @@ function wireInput(entry: Entry): void {
     }
   });
 
-  entry.canvas.addEventListener("mouseup", (e) => {
-    if (!entry.isDragging) {
-      if (entry.isAltScreen && e.button === 0) {
-        const cell = mouseToCell(entry, e);
-        if (cell) sendMouseButton(entry, "left", "release", cell.col, cell.row, e);
-      }
-      return;
-    }
-    entry.isDragging = false;
-
+  // Resolve a finished selection drag: plain click → hyperlink, real drag →
+  // auto-copy. Shared by the canvas mouseup and the window-level mouseup that
+  // catches releases outside the pane (drag-to-end-of-output rolls off the edge).
+  function finishSelectionDrag(e: MouseEvent) {
     if (!entry.selection) return;
     const { anchor, head } = entry.selection;
     const isClick = anchor.col === head.col && anchor.row === head.row;
 
     if (isClick) {
-      // No drag happened — treat as a plain click. Clear the one-cell
-      // "selection" (not useful) and resolve the hyperlink if the click
-      // landed on one.
       entry.selection = null;
       const cell = mouseToCell(entry, e);
       const hyperlink = cell ? entry.grid[cell.row]?.[cell.col]?.hyperlink : null;
@@ -679,44 +670,54 @@ function wireInput(entry: Entry): void {
       return;
     }
 
-    // Real drag ended — Ghostty-style auto-copy: the selected text goes
-    // straight to the clipboard and a toast confirms. Sidesteps the
-    // Ctrl+Shift+C keyboard shortcut entirely (which cluihud binds to
-    // commit-session globally and which we can't intercept because the
-    // shortcut dispatcher listens in capture phase).
+    // Ghostty-style auto-copy: selected text goes straight to the clipboard and
+    // a toast confirms. Sidesteps the Ctrl+Shift+C shortcut (bound to
+    // commit-session globally, intercepted in capture phase before the canvas).
     const text = serializeSelection(entry);
     if (!text) return;
 
-    // The toast mounts a focusable <button> at the viewport edge; in
-    // WebKitGTK that can steal focus away from our textarea when a
-    // layout-triggered paint moves the focused element momentarily
-    // outside the hit region. Fire the toast first and schedule a
-    // follow-up refocus on the next frame. Also clipboard-write is async
-    // so typing can continue in parallel.
+    // The toast mounts a focusable <button> at the viewport edge; in WebKitGTK a
+    // layout-triggered paint can momentarily steal focus from our textarea.
     appStore.set(toastsAtom, {
       message: "Copied to clipboard",
       type: "success",
     });
-    // Own command (spawn_blocking) instead of plugin-clipboard-manager —
-    // avoids stalling the tokio runtime on Wayland systems where arboard's
-    // blocking wl-clipboard I/O would otherwise delay subsequent async
-    // commands like terminal_input.
+    // Own command (spawn_blocking) instead of plugin-clipboard-manager — avoids
+    // stalling the tokio runtime on Wayland where arboard's blocking
+    // wl-clipboard I/O would delay subsequent async commands like terminal_input.
     invoke("terminal_clipboard_write", { text }).catch((err: unknown) => {
       console.error("auto-copy failed", err);
     });
-    // Two-phase refocus: one immediately, one after a RAF (post sileo's
-    // enter animation starts). Safe to call even if focus is already on
-    // the textarea — it's a no-op in that case.
     entry.textarea.focus({ preventScroll: true });
     requestAnimationFrame(() => {
       entry.textarea.focus({ preventScroll: true });
     });
+  }
+
+  entry.canvas.addEventListener("mouseup", (e) => {
+    if (!entry.isDragging) {
+      if (entry.isAltScreen && e.button === 0) {
+        const cell = mouseToCell(entry, e);
+        if (cell) sendMouseButton(entry, "left", "release", cell.col, cell.row, e);
+      }
+      return;
+    }
+    entry.isDragging = false;
+    finishSelectionDrag(e);
   });
 
-  // Releasing outside the canvas must still end the drag so we don't get
-  // stuck with isDragging=true if the user rolls off the pane mid-drag.
+  // A drag can end with the pointer off the canvas (selecting to the bottom/right
+  // edge). Don't drop the drag on mouseleave — finish it on the window mouseup so
+  // the copy still fires. Whichever mouseup runs first flips isDragging; the
+  // other no-ops via the guard, so there's no double-copy.
   entry.canvas.addEventListener("mouseleave", () => {
-    entry.isDragging = false;
+    if (!entry.isDragging) return;
+    const onWindowUp = (e: MouseEvent) => {
+      if (!entry.isDragging) return;
+      entry.isDragging = false;
+      finishSelectionDrag(e);
+    };
+    window.addEventListener("mouseup", onWindowUp, { once: true });
   });
 
   entry.canvas.addEventListener("dblclick", (e) => {

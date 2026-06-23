@@ -30,6 +30,7 @@ import { ObsidianIcon } from "@/components/icons/ObsidianIcon";
 import { ClickUpIcon } from "@/components/icons/ClickUpIcon";
 import { LinearIcon } from "@/components/icons/LinearIcon";
 import { activeSessionPinnedNotesAtom } from "@/stores/pinnedNotes";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import type { ComponentType } from "react";
 
 const TAB_ICONS: Record<TabType, ComponentType<{ size?: number | string; className?: string }>> = {
@@ -252,43 +253,49 @@ function TabItem({
     : tab.label;
 
   return (
-    <div
-      draggable
-      data-tab-active={isActive}
-      onClick={onClick}
-      onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); onClose(); } }}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
-      className={`group flex min-w-20 max-w-40 shrink-0 cursor-pointer items-center gap-1.5 px-2.5 py-1.5 text-xs transition-colors ${
-        isActive
-          ? "bg-secondary text-foreground"
-          : "text-muted-foreground hover:text-foreground/80"
-      } ${dragOver === "left" ? "border-l-2 border-l-primary/60" : ""} ${dragOver === "right" ? "border-r-2 border-r-primary/60" : ""}`}
-      title={tooltipText}
-    >
-      <Icon size={12} className="shrink-0" />
-      <span className="truncate">{tab.label}</span>
-      {contextPinned && (
-        <Pin size={10} className="shrink-0 text-primary" aria-label="Pinned as context" />
-      )}
-      <div className="ml-auto shrink-0">
-        {tab.dirty ? (
-          <span className="block size-1 rounded-full bg-foreground" />
-        ) : (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onClose();
-            }}
-            className="flex size-4 items-center justify-center rounded opacity-0 transition-opacity group-hover:opacity-100 hover:bg-secondary"
-            aria-label={`Close ${tab.label}`}
-          >
-            <X size={10} />
-          </button>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <div
+            draggable
+            data-tab-active={isActive}
+            onClick={onClick}
+            onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); onClose(); } }}
+            onDragStart={onDragStart}
+            onDragEnd={onDragEnd}
+            onDragOver={onDragOver}
+            onDrop={onDrop}
+            className={`group flex min-w-20 max-w-40 shrink-0 cursor-pointer items-center gap-1.5 px-2.5 py-1.5 text-xs transition-colors ${
+              isActive
+                ? "bg-secondary text-foreground"
+                : "text-muted-foreground hover:text-foreground/80"
+            } ${dragOver === "left" ? "border-l-2 border-l-primary/60" : ""} ${dragOver === "right" ? "border-r-2 border-r-primary/60" : ""}`}
+          />
+        }
+      >
+        <Icon size={12} className="shrink-0" />
+        <span className="truncate">{tab.label}</span>
+        {contextPinned && (
+          <Pin size={10} className="shrink-0 text-primary" aria-label="Pinned as context" />
         )}
-      </div>
-    </div>
+        <div className="ml-auto shrink-0">
+          {tab.dirty ? (
+            <span className="block size-1 rounded-full bg-foreground" />
+          ) : (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onClose();
+              }}
+              className="flex size-4 items-center justify-center rounded opacity-0 transition-opacity group-hover:opacity-100 hover:bg-secondary"
+              aria-label={`Close ${tab.label}`}
+            >
+              <X size={10} />
+            </button>
+          )}
+        </div>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="text-[10px]">{tooltipText}</TooltipContent>
+    </Tooltip>
   );
 }

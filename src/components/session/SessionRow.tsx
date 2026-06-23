@@ -190,20 +190,24 @@ export function SessionRow({
           </TooltipTrigger>
           <TooltipContent side="top" className="text-[10px]">Rename</TooltipContent>
         </Tooltip>
-        <Tooltip>
-          <TooltipTrigger>
-            <span
-              role="button"
-              tabIndex={0}
-              aria-label="Delete"
-              onClick={(e) => { e.stopPropagation(); onDelete(); }}
-              className="flex size-4 items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <Trash2 className="size-2.5" />
-            </span>
-          </TooltipTrigger>
-          <TooltipContent side="top" className="text-[10px]">Delete</TooltipContent>
-        </Tooltip>
+        {/* Delete only for worktree sessions — the main session is the repo root,
+            not a disposable worktree, so deleting it from the sidebar is wrong. */}
+        {session.worktree_path !== null && (
+          <Tooltip>
+            <TooltipTrigger>
+              <span
+                role="button"
+                tabIndex={0}
+                aria-label="Delete"
+                onClick={(e) => { e.stopPropagation(); onDelete(); }}
+                className="flex size-4 items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <Trash2 className="size-2.5" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-[10px]">Delete</TooltipContent>
+          </Tooltip>
+        )}
       </span>
 
       {session.worktree_path !== null ? (

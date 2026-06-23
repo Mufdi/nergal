@@ -28,7 +28,7 @@ import { toastsAtom } from "./toast";
 import { softCloseSessionAction, undoSessionCloseAction, hasPendingSessionCloseAtom } from "./sessionTabs";
 import { invoke as invokeCmd } from "@/lib/tauri";
 import { scratchpadOpenAtom } from "./scratchpad";
-import { browserToggleModeAction } from "./browser";
+import { browserToggleModeAction, localhostPortsAtom, portsPopoverOpenAtom } from "./browser";
 import { obsidianEnabledAtom } from "./obsidian";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { quickCaptureOpenAtom } from "./quickCapture";
@@ -444,6 +444,14 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   // layout-dependent, so it needs key+code dual matching that parseKeys
   // can't express). Listed here for the command palette.
   { id: "toggle-quake", label: "Toggle Quake Terminal", keys: "ctrl+}", category: "navigation", keywords: ["quake", "shell", "shells", "environment", "terminal"], handler: toggleQuake },
+  { id: "toggle-ports", label: "Toggle Ports", keys: "ctrl+shift+o", category: "navigation", keywords: ["ports", "localhost", "dev", "server", "kill"], handler: () => {
+    const s = store();
+    if (s.get(localhostPortsAtom).length === 0) {
+      s.set(toastsAtom, { message: "No dev servers detected", type: "info" });
+      return;
+    }
+    s.set(portsPopoverOpenAtom, (p) => !p);
+  } },
   { id: "nav-up", label: "Navigate Up", keys: "alt+arrowup", category: "navigation", keywords: ["navigate", "up", "item"], handler: () => navigateItems("up") },
   { id: "nav-down", label: "Navigate Down", keys: "alt+arrowdown", category: "navigation", keywords: ["navigate", "down", "item"], handler: () => navigateItems("down") },
 

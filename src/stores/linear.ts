@@ -111,6 +111,8 @@ export interface IssueView {
   projectName?: string;
   cycleId?: string;
   cycleName?: string;
+  cycleNumber?: number;
+  cycleStartsAt?: number;
   parentId?: string;
   updatedAt?: number;
   createdAt?: number;
@@ -426,10 +428,11 @@ export const togglePinIssueAction = atom(null, async (get, set, issueId: string)
 
 export const performBindIssueAction = atom(
   null,
-  async (_get, set, args: { sessionId: string; issueId: string }) => {
+  async (get, set, args: { sessionId: string; issueId: string }) => {
     try {
       await invoke("linear_bind_issue", args);
       set(linearBindingMapAtom, (prev) => ({ ...prev, [args.sessionId]: args.issueId }));
+      if (get(linearDetailIssueIdAtom) !== null) set(linearDetailIssueIdAtom, null);
       // Deliver the brief to the live agent now, SUBMITTED as a turn (binding is
       // the deliberate "work on this" act). Still seeds future spawns/resumes.
       // No-op without a live PTY.

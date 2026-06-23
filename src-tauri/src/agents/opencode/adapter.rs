@@ -343,9 +343,10 @@ fn build_opencode_theme(palette: &ThemePalette) -> serde_json::Value {
     defs.insert("secondary".into(), palette.secondary.as_str().into());
     defs.insert("fg".into(), palette.foreground.as_str().into());
     defs.insert("muted".into(), palette.muted_foreground.as_str().into());
-    // opentui (OpenCode v1.16.2+) resolves a "gray" color reference; without it
-    // the TUI aborts with `Color reference "gray" not found in defs or theme`.
-    defs.insert("gray".into(), palette.muted_foreground.as_str().into());
+    // No "gray" def: opentui 1.17.7 ships a builtin "gray", and defining our own
+    // (whose value can itself be the named color "gray") makes the resolver hit a
+    // self-cycle (`muted -> gray -> gray`). The 1.16.2 "gray not found" abort that
+    // originally justified this def no longer occurs now that gray is builtin.
     defs.insert("accent".into(), palette.accent.as_str().into());
     defs.insert("success".into(), "#22c55e".into());
     defs.insert("error".into(), "#ef4444".into());

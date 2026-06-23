@@ -16,6 +16,7 @@ import {
   activeSessionClickUpTaskAtom,
   clickupClosureOfferAtom,
   clickupDetailTaskIdAtom,
+  consumeClickUpDetailCloseFocusSuppress,
   clickupTasksAtom,
   openClickUpTaskTabAction,
   reinjectTaskAction,
@@ -129,7 +130,7 @@ export function ClickUpTaskDetail() {
       wasOpenRef.current = true;
       return;
     }
-    if (suppressCloseFocusRef.current) {
+    if (suppressCloseFocusRef.current || consumeClickUpDetailCloseFocusSuppress()) {
       suppressCloseFocusRef.current = false;
       wasOpenRef.current = false;
       return;

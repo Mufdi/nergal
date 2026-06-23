@@ -19,6 +19,7 @@
 
 pub mod adapter;
 pub mod rollout_resolver;
+pub mod rollout_tail;
 pub mod setup;
 pub mod transcript;
 

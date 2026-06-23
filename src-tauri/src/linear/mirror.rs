@@ -568,6 +568,10 @@ pub struct IssueView {
     pub project_name: Option<String>,
     pub cycle_id: Option<String>,
     pub cycle_name: Option<String>,
+    /// Linear cycles are usually unnamed (numbered only); the number labels the
+    /// group and `starts_at` orders cycles current-first.
+    pub cycle_number: Option<i64>,
+    pub cycle_starts_at: Option<i64>,
     pub parent_id: Option<String>,
     pub created_at: Option<i64>,
     pub updated_at: Option<i64>,
@@ -595,7 +599,7 @@ pub fn read_issues(conn: &Connection, filter: &IssueFilter) -> Result<Vec<IssueV
                 i.assignee_id, COALESCE(u.display_name, u.name), u.avatar_url, \
                 i.project_id, p.name, i.cycle_id, c.name, i.parent_id, \
                 i.created_at, i.updated_at, i.due_date, i.url, i.stale, \
-                t.estimation_type \
+                t.estimation_type, c.number, c.starts_at \
          FROM linear_issues i \
          LEFT JOIN linear_workflow_states s ON s.id = i.state_id \
          LEFT JOIN linear_users u ON u.id = i.assignee_id \
@@ -646,6 +650,8 @@ pub fn read_issues(conn: &Connection, filter: &IssueFilter) -> Result<Vec<IssueV
                 stale: row.get::<_, i64>(24)? != 0,
                 labels: Vec::new(),
                 estimation_type: row.get(25)?,
+                cycle_number: row.get(26)?,
+                cycle_starts_at: row.get(27)?,
             })
         })?
         .collect::<std::result::Result<_, _>>()?;

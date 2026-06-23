@@ -40,7 +40,7 @@ import {
   resetObsidianDraftAtom,
   saveObsidianConfigAtom,
 } from "@/stores/obsidian";
-import { activeWorkspaceAtom, workspacesAtom, activeSessionIdAtom, openspecDirDraftAtom, type Workspace, type EnvShellDef } from "@/stores/workspace";
+import { activeWorkspaceAtom, workspacesAtom, activeSessionIdAtom, selectedWorkspaceIdAtom, openspecDirDraftAtom, type Workspace, type EnvShellDef } from "@/stores/workspace";
 import {
   clickupSyncStatusAtom,
   clickupTokenOnDiskAtom,
@@ -277,7 +277,8 @@ function OpenSpecPathField() {
   const workspaces = useAtomValue(workspacesAtom);
   const activeWorkspace = useAtomValue(activeWorkspaceAtom);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const effective = activeWorkspace ?? workspaces.find((w) => w.id === selectedId) ?? workspaces[0] ?? null;
+  const selectedWorkspaceId = useAtomValue(selectedWorkspaceIdAtom);
+  const effective = activeWorkspace ?? workspaces.find((w) => w.id === selectedId) ?? workspaces.find((w) => w.id === selectedWorkspaceId) ?? workspaces[0] ?? null;
   const [draft, setDraft] = useAtom(openspecDirDraftAtom);
 
   useEffect(() => {
@@ -291,8 +292,10 @@ function OpenSpecPathField() {
     })
       .then((info) => {
         if (cancelled) return;
-        // Prefill with the default so the user edits from a real path.
-        const initial = info.configured ?? info.default_dir;
+        // Empty = "use the default" (shown as the field's placeholder). Prefilling
+        // the default's text made a cleared path indistinguishable from a custom
+        // one, so a clear looked like it "didn't take" on reopen.
+        const initial = info.configured ?? "";
         setDraft({
           workspaceId: effective.id,
           value: initial,
@@ -347,8 +350,9 @@ function EnvShellSuggestionsField() {
   const workspaces = useAtomValue(workspacesAtom);
   const activeWorkspace = useAtomValue(activeWorkspaceAtom);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedWorkspaceId = useAtomValue(selectedWorkspaceIdAtom);
   const effective =
-    activeWorkspace ?? workspaces.find((w) => w.id === selectedId) ?? workspaces[0] ?? null;
+    activeWorkspace ?? workspaces.find((w) => w.id === selectedId) ?? workspaces.find((w) => w.id === selectedWorkspaceId) ?? workspaces[0] ?? null;
   const [items, setItems] = useState<EnvShellDef[]>([]);
 
   useEffect(() => {
@@ -462,10 +466,13 @@ function useEffectiveObsidianWorkspace(): {
   const workspaces = useAtomValue(workspacesAtom);
   const activeWorkspace = useAtomValue(activeWorkspaceAtom);
   const [selectedId, setSelectedId] = useAtom(obsidianSelectedWorkspaceIdAtom);
+  const selectedWorkspaceId = useAtomValue(selectedWorkspaceIdAtom);
 
   const effective = activeWorkspace
     ? activeWorkspace
-    : workspaces.find((w) => w.id === selectedId) ?? workspaces[0] ?? null;
+    : workspaces.find((w) => w.id === selectedId)
+      ?? workspaces.find((w) => w.id === selectedWorkspaceId)
+      ?? workspaces[0] ?? null;
 
   return { workspaces, activeWorkspace, effective, selectedId, setSelectedId };
 }
@@ -2902,7 +2909,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
-            Configure paths and preferences. Press <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Alt+1</kbd>–<kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Alt+{SECTIONS.length}</kbd> to jump between sections, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Tab</kbd> to enter the form, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+Enter</kbd> to save, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+,</kbd> to toggle.
+            Configure paths and preferences. Press <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Alt+1</kbd>–<kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Alt+9</kbd> to jump between sections, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Tab</kbd> to enter the form, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+Enter</kbd> to save, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+,</kbd> to toggle.
           </DialogDescription>
         </DialogHeader>
 
@@ -2928,7 +2935,9 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
                     <Icon size={14} className="shrink-0" />
                     <span>{section.label}</span>
                   </span>
-                  <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border border-border/40 text-muted-foreground">⌥{idx + 1}</kbd>
+                  {idx < 9 && (
+                    <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border border-border/40 text-muted-foreground">⌥{idx + 1}</kbd>
+                  )}
                 </button>
               );
             })}

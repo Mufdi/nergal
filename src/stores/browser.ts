@@ -80,6 +80,10 @@ export const browserColorSchemeForSessionAtom = atom<BrowserColorScheme>((get) =
 /// Not per-session.
 export const localhostPortsAtom = atom<number[]>([]);
 
+/// Open-state of the status-bar ports popover, lifted out of the component so a
+/// global shortcut can toggle it (and keyboard-nav/kill from there).
+export const portsPopoverOpenAtom = atom(false);
+
 /// Bounding box (viewport coords) of the active browser slot. Used by
 /// `BrowserHost` to position itself fixed-overlay so the iframe never
 /// DOM-moves between parents (which would force a reload per HTML spec).

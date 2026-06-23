@@ -99,6 +99,11 @@ export const activeWorkspaceAtom = atom<Workspace | null>((get) => {
   return workspaces.find((w) => w.id === session.workspace_id) ?? null;
 });
 
+/// The workspace the user is currently working in even when no session is
+/// active (set by the sidebar on open/expand). Settings reads it so a brand-new
+/// workspace's forms don't silently bind to workspaces[0].
+export const selectedWorkspaceIdAtom = atom<string | null>(null);
+
 /// Defaults to true while no workspace is resolved yet, so git UI doesn't
 /// flash hidden during boot.
 export const activeWorkspaceIsGitAtom = atom<boolean>((get) => {

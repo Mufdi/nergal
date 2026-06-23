@@ -4,11 +4,15 @@
 //! and the hooks.json setup helper.
 
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
+use dashmap::DashMap;
 
 use std::path::{Path, PathBuf};
 
+use super::rollout_tail::{RolloutTailHandle, start_rollout_tail};
 use super::transcript::parse_transcript_line;
 use crate::agents::{
     AdapterError, AgentAdapter, AgentCapabilities, AgentCapability, AgentId, ContextInjection,
@@ -22,6 +26,9 @@ pub struct CodexAdapter {
     /// Root of the codex user config (`~/.codex` in practice). Captured at
     /// construction so theme writes go to a hermetic location in tests.
     config_root: PathBuf,
+    /// Active rollout tails (one per live session) feeding status-bar
+    /// telemetry. Cleared on `stop_event_pump`.
+    tails: Arc<DashMap<String, RolloutTailHandle>>,
 }
 
 impl Default for CodexAdapter {
@@ -55,6 +62,7 @@ impl CodexAdapter {
                 supported_models: vec![],
             },
             config_root,
+            tails: Arc::new(DashMap::new()),
         }
     }
 }
@@ -214,13 +222,30 @@ impl AgentAdapter for CodexAdapter {
 
     async fn start_event_pump(
         &self,
-        _session_id: &str,
-        _sink: EventSink,
+        session_id: &str,
+        sink: EventSink,
     ) -> Result<(), AdapterError> {
-        // Codex hook events arrive on the shared Unix socket (same as CC).
-        // The rollout JSONL tail for cost extraction is wired through the
-        // dispatcher when it gains adapter-aware routing — for now a no-op
-        // keeps Codex's hook flow functional without spurious watchers.
+        // Idempotent: a second call (e.g. dev double-mount) must not start a
+        // second tail. Tool events still arrive on the shared hook socket; this
+        // tail only adds status-bar telemetry (model, context %, effort,
+        // duration) from the rollout JSONL.
+        if self.tails.contains_key(session_id) {
+            return Ok(());
+        }
+        let sessions_root = self.config_root.join("sessions");
+        let started_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let handle = start_rollout_tail(sessions_root, session_id.to_string(), started_at, sink);
+        self.tails.insert(session_id.to_string(), handle);
+        Ok(())
+    }
+
+    async fn stop_event_pump(&self, session_id: &str) -> Result<(), AdapterError> {
+        if let Some((_, handle)) = self.tails.remove(session_id) {
+            handle.cancel().await;
+        }
         Ok(())
     }
 

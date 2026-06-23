@@ -92,6 +92,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
           set(modeMapAtom, (prev) => ({ ...prev, [sid]: "idle" }));
           set(planReviewStatusMapAtom, (prev) => ({ ...prev, [sid]: "idle" }));
           set(pendingAttentionAtom, (prev) => clearKey(prev, sid));
+          set(pendingAsksAtom, (prev) => clearKey(prev, sid));
           set(addActivityAtom, { sessionId: sid, entry: createActivity("session", `Stopped: ${stop_reason ?? "completed"}`) });
           set(refreshGitInfoAtom, sid);
           notify("Claude stopped", stop_reason ?? "completed");
@@ -111,11 +112,15 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
           set(modeMapAtom, (prev) => ({ ...prev, [sid]: "idle" }));
           set(planReviewStatusMapAtom, (prev) => ({ ...prev, [sid]: "idle" }));
           set(pendingAttentionAtom, (prev) => clearKey(prev, sid));
+          set(pendingAsksAtom, (prev) => clearKey(prev, sid));
           set(addActivityAtom, { sessionId: sid, entry: createActivity("session", "Session ended") });
           break;
         }
         case "user_prompt_submit": {
           set(pendingAttentionAtom, (prev) => clearKey(prev, sid));
+          // "Chat about this" abandons the AskUserQuestion tool with no result, so
+          // PostToolUse never fires ask:user-resolved — clear the pending tint here.
+          set(pendingAsksAtom, (prev) => clearKey(prev, sid));
           set(addActivityAtom, { sessionId: sid, entry: createActivity("session", "User prompt submitted") });
           break;
         }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { focusZoneAtom } from "@/stores/shortcuts";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import {
   activeSessionClickUpPinsAtom,
@@ -56,18 +57,22 @@ export function ClickUpTaskTab({ taskId: rootTaskId }: { taskId: string }) {
 
   const taskUrl = c.task?.url ?? null;
 
+  const focusZone = useAtomValue(focusZoneAtom);
+
   // The verb keys + index cursor only fire while focus is inside this subtree.
-  // The tab content remounts when it becomes the active view-panel tab, so focus
-  // the nav root on mount — otherwise focus stays on body/the tab button and the
-  // keyboard nav is dead until the user clicks into the body.
+  // Whenever the panel zone (re)gains focus — initial open, or returning after
+  // the terminal/prompt stole it — pull focus to the nav root if it isn't
+  // already inside (so a clicked button keeps its own focus). The tab stays
+  // mounted across that round-trip, so a mount-only effect wasn't enough.
   useEffect(() => {
+    if (focusZone !== "panel") return;
+    const root = wrapperRef.current;
+    if (!root || root.contains(document.activeElement)) return;
     const id = requestAnimationFrame(() => {
-      wrapperRef.current
-        ?.querySelector<HTMLElement>("[data-clickup-nav-root]")
-        ?.focus({ preventScroll: true });
+      root.querySelector<HTMLElement>("[data-clickup-nav-root]")?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(id);
-  }, []);
+  }, [focusZone]);
 
   // Contextual verbs — same convention as the floating detail, but scoped to
   // this tab's subtree (so multiple open task tabs don't all fire). No "T":

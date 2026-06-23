@@ -607,16 +607,11 @@ function wireInput(entry: Entry): void {
     const cell = mouseToCell(entry, e);
     if (!cell) return;
 
-    // In alt screen, defer to the TUI app: forward the press as a mouse
-    // report (wezterm no-ops when no mode is enabled). Suppress selection
-    // bookkeeping so CC's Ink menus / fuzzy pickers receive the click
-    // intact. Shift overrides to allow text selection over a TUI.
-    const hyperlink = entry.grid[cell.row]?.[cell.col]?.hyperlink ?? null;
-    if (entry.isAltScreen && !hyperlink && !e.shiftKey) {
-      sendMouseButton(entry, "left", "press", cell.col, cell.row, e);
-      return;
-    }
-
+    // Always start selection bookkeeping, even over a TUI in alt screen. A real
+    // drag becomes an auto-copy (the plain select-to-copy the user expects); a
+    // click without movement is delivered to the TUI as a full press+release on
+    // mouseup (see finishSelectionDrag), so Ink menus / pickers still respond.
+    // Deferring the click to release means a drag never leaks stray reports.
     entry.isDragging = true;
     entry.selection = { anchor: cell, head: cell };
     entry.selectionScrollOffset = entry.scrollOffset;
@@ -665,6 +660,12 @@ function wireInput(entry: Entry): void {
         openShell(hyperlink).catch((err: unknown) => {
           console.error("shell.open hyperlink failed", err);
         });
+      } else if (entry.isAltScreen && cell) {
+        // No drag over a TUI → it was a click meant for the app. Deliver a full
+        // press+release now (a TUI with mouse reporting on responds; wezterm
+        // no-ops when it's off). Selection only happens on a real drag.
+        sendMouseButton(entry, "left", "press", cell.col, cell.row, e);
+        sendMouseButton(entry, "left", "release", cell.col, cell.row, e);
       }
       paintAll(entry);
       return;

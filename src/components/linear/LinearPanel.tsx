@@ -258,14 +258,15 @@ function groupIssues(issues: IssueView[], groupBy: LinearGroupBy): IssueGroup[] 
       return a.label.localeCompare(b.label);
     });
   } else if (groupBy === "cycle") {
-    // Current cycle first, previous cycles descending by start; "No cycle" last.
+    // Current cycle first (highest number), older cycles descending; "No cycle"
+    // last. Cycle number is the reliable recency key (starts_at can be null).
     result.sort((a, b) => {
       const aIsNone = a.key === "cycle:none";
       const bIsNone = b.key === "cycle:none";
       if (aIsNone !== bIsNone) return aIsNone ? 1 : -1;
-      const sa = a.issues[0]?.cycleStartsAt ?? 0;
-      const sb = b.issues[0]?.cycleStartsAt ?? 0;
-      if (sa !== sb) return sb - sa;
+      const na = a.issues[0]?.cycleNumber ?? -1;
+      const nb = b.issues[0]?.cycleNumber ?? -1;
+      if (na !== nb) return nb - na;
       return a.label.localeCompare(b.label);
     });
   }

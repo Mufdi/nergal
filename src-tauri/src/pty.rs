@@ -211,13 +211,27 @@ pub fn stop_compose_projects(dirs: &[String]) {
         if !has_compose {
             continue;
         }
-        let _ = std::process::Command::new("docker")
-            .args(["compose", "stop"])
+        let mut cmd = std::process::Command::new("docker");
+        cmd.args(["compose", "stop"])
             .current_dir(dir)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn();
+            .stderr(std::process::Stdio::null());
+        // `docker compose stop` SIGTERMs each container and waits up to ~10s.
+        // Detach into its own session so it outlives Nergal's exit and finishes
+        // stopping EVERY service — otherwise the app quitting mid-stop left
+        // later containers running.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            unsafe {
+                cmd.pre_exec(|| {
+                    libc::setsid();
+                    Ok(())
+                });
+            }
+        }
+        let _ = cmd.spawn();
     }
 }
 

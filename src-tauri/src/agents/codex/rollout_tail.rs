@@ -23,7 +23,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
-use super::rollout_resolver::find_rollout_after_spawn;
+use super::rollout_resolver::{find_rollout_after_spawn, find_rollout_for_cwd};
 use crate::agents::EventSink;
 use crate::hooks::events::HookEvent;
 
@@ -140,6 +140,7 @@ impl StatusAcc {
 /// captured at spawn) seeds the duration cell and bounds the resolver scan.
 pub fn start_rollout_tail(
     sessions_root: PathBuf,
+    cwd: Option<PathBuf>,
     session_id: String,
     started_at: u64,
     sink: EventSink,
@@ -147,15 +148,29 @@ pub fn start_rollout_tail(
     let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
 
     let join = tokio::spawn(async move {
-        // A 10s margin before spawn guards against clock granularity rejecting a
-        // rollout created the same instant the pump started.
-        let after = SystemTime::now()
-            .checked_sub(Duration::from_secs(10))
-            .unwrap_or(SystemTime::UNIX_EPOCH);
+        // Prefer matching the rollout by its session_meta.cwd (robust against
+        // other live/resumed codex sessions); fall back to newest-after-spawn
+        // when the cwd is unknown.
+        let resolve = async {
+            match cwd.as_deref().and_then(|p| p.to_str()) {
+                Some(cwd_str) => {
+                    find_rollout_for_cwd(&sessions_root, cwd_str, Duration::from_secs(20)).await
+                }
+                None => {
+                    let after = SystemTime::now()
+                        .checked_sub(Duration::from_secs(10))
+                        .unwrap_or(SystemTime::UNIX_EPOCH);
+                    find_rollout_after_spawn(&sessions_root, after, Duration::from_secs(20)).await
+                }
+            }
+        };
         let path = tokio::select! {
             _ = &mut cancel_rx => return,
-            r = find_rollout_after_spawn(&sessions_root, after, Duration::from_secs(15)) => match r {
-                Ok(p) => p,
+            r = resolve => match r {
+                Ok(p) => {
+                    tracing::info!(path = %p.display(), "codex rollout tail attached");
+                    p
+                }
                 Err(e) => {
                     tracing::warn!(error = %e, "codex rollout not found; status bar telemetry unavailable");
                     return;

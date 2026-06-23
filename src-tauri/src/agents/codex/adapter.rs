@@ -29,6 +29,10 @@ pub struct CodexAdapter {
     /// Active rollout tails (one per live session) feeding status-bar
     /// telemetry. Cleared on `stop_event_pump`.
     tails: Arc<DashMap<String, RolloutTailHandle>>,
+    /// cwd captured at spawn, so the rollout tail can match the right
+    /// `rollout-*.jsonl` by its `session_meta.cwd` (newest-after-spawn alone
+    /// grabs the wrong file when another codex session is around or on resume).
+    session_cwds: Arc<DashMap<String, PathBuf>>,
 }
 
 impl Default for CodexAdapter {
@@ -63,6 +67,7 @@ impl CodexAdapter {
             },
             config_root,
             tails: Arc::new(DashMap::new()),
+            session_cwds: Arc::new(DashMap::new()),
         }
     }
 }
@@ -147,6 +152,8 @@ impl AgentAdapter for CodexAdapter {
     }
 
     fn spawn(&self, ctx: &SpawnContext<'_>) -> Result<SpawnSpec, AdapterError> {
+        self.session_cwds
+            .insert(ctx.session_id.to_string(), ctx.cwd.to_path_buf());
         let binary = which::which("codex")
             .map_err(|e| AdapterError::Transport(anyhow::anyhow!("codex not on PATH: {e}")))?;
         let mut args: Vec<String> = Vec::new();
@@ -237,7 +244,9 @@ impl AgentAdapter for CodexAdapter {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let handle = start_rollout_tail(sessions_root, session_id.to_string(), started_at, sink);
+        let cwd = self.session_cwds.get(session_id).map(|r| r.clone());
+        let handle =
+            start_rollout_tail(sessions_root, cwd, session_id.to_string(), started_at, sink);
         self.tails.insert(session_id.to_string(), handle);
         Ok(())
     }
@@ -246,6 +255,7 @@ impl AgentAdapter for CodexAdapter {
         if let Some((_, handle)) = self.tails.remove(session_id) {
             handle.cancel().await;
         }
+        self.session_cwds.remove(session_id);
         Ok(())
     }
 

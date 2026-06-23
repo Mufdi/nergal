@@ -12,10 +12,12 @@ import {
   localhostPortsAtom,
   portsPopoverOpenAtom,
 } from "@/stores/browser";
-import { openTabAction } from "@/stores/rightPanel";
+import { openTabAction, expandRightPanelAtom } from "@/stores/rightPanel";
 import { toastsAtom } from "@/stores/toast";
 import { invoke } from "@/lib/tauri";
-import { open as openShell } from "@tauri-apps/plugin-shell";
+import { confirm as swalConfirm } from "@/lib/swal";
+import { focusZoneAtom } from "@/stores/shortcuts";
+import * as terminalService from "@/components/terminal/terminalService";
 import { Badge } from "@/components/ui/badge";
 import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock, Globe, CalendarRange, Pencil, TriangleAlert, Timer, History, X } from "lucide-react";
 import { activeIncidentsAtom } from "@/stores/statusFeed";
@@ -404,20 +406,40 @@ function NotificationHistory() {
 
 /// One chip per provider with an active incident (status.claude.com /
 /// status.openai.com, polled by the Rust feed). Hidden while everything is
-/// operational. Status pages set frame-ancestors/CSP that the in-app iframe
-/// can't satisfy (renders a black box), so the chip opens them externally.
+/// operational. Click opens the provider's status page in the in-app browser
+/// panel.
 function IncidentChips() {
   const incidents = useAtomValue(activeIncidentsAtom);
+  const sessionId = useAtomValue(activeSessionIdAtom);
+  const newTab = useSetAtom(browserNewTabAction);
+  const setMode = useSetAtom(browserSetModeAction);
+  const openTab = useSetAtom(openTabAction);
+  const expandPanel = useSetAtom(expandRightPanelAtom);
 
   if (incidents.length === 0) return null;
+
+  async function openStatusPage(url: string) {
+    if (!sessionId) return;
+    setMode({ sessionId, mode: "dock" });
+    openTab({ tab: { id: `browser:${sessionId}`, type: "browser", label: "Browser" } });
+    // Re-clicking after the right panel was hidden must re-open it — openTab only
+    // (re)activates the tab; expanding the collapsed panel needs this signal.
+    expandPanel((n) => n + 1);
+    try {
+      await newTab({ sessionId, url });
+    } catch {
+      /* status page URLs are hardcoded https — validate_url can't reject them */
+    }
+  }
 
   return (
     <div className="flex shrink-0 items-center gap-1">
       {incidents.map((s) => (
         <Tooltip key={s.provider}>
           <TooltipTrigger
-            onClick={() => void openShell(s.url).catch(() => {})}
-            className={`flex h-5 shrink-0 items-center gap-1 rounded px-1.5 text-[10px] font-medium leading-none whitespace-nowrap transition-colors ${
+            onClick={() => void openStatusPage(s.url)}
+            disabled={!sessionId}
+            className={`flex h-5 shrink-0 items-center gap-1 rounded px-1.5 text-[10px] font-medium leading-none whitespace-nowrap transition-colors disabled:opacity-40 ${
               s.indicator === "minor"
                 ? "bg-yellow-500/15 text-yellow-400 hover:bg-yellow-500/25"
                 : "bg-red-500/15 text-red-400 hover:bg-red-500/25"
@@ -447,7 +469,9 @@ function LocalhostPortChips() {
   const setMode = useSetAtom(browserSetModeAction);
   const openTab = useSetAtom(openTabAction);
   const [open, setOpen] = useAtom(portsPopoverOpenAtom);
+  const setFocusZone = useSetAtom(focusZoneAtom);
   const popoverRef = useRef<HTMLDivElement | null>(null);
+  const [activeIdx, setActiveIdx] = useState(0);
   const [procInfo, setProcInfo] = useState<
     Record<number, { label: string; project: string | null; kind: string; pid: number | null } | null>
   >({});
@@ -459,15 +483,15 @@ function LocalhostPortChips() {
     if (!hasPorts) setOpen(false);
   }, [hasPorts, setOpen]);
 
-  // Opened (often via the global shortcut) → focus the first row so the list is
-  // keyboard-navigable (Tab between ports, Enter to open, the kill button is
-  // revealed on focus). rAF lets the popover mount first.
+  function closeAndFocusTerminal() {
+    setOpen(false);
+    setFocusZone("terminal");
+    terminalService.focusActive();
+  }
+
+  // Opened → reset the cursor to the first port so up/down nav has an anchor.
   useEffect(() => {
-    if (!open) return;
-    const id = requestAnimationFrame(() => {
-      popoverRef.current?.querySelector<HTMLElement>("button")?.focus({ preventScroll: true });
-    });
-    return () => cancelAnimationFrame(id);
+    if (open) setActiveIdx(0);
   }, [open]);
 
   // Resolve the owning process per port when the popover opens — a cheap /proc
@@ -516,6 +540,60 @@ function LocalhostPortChips() {
     }
   }
 
+  // Killing a port is reversible (it just restarts) but still a deliberate
+  // destructive-ish act — confirm with the project swal first.
+  async function confirmKillPort(port: number) {
+    const info = procInfo[port];
+    if (info?.pid == null) {
+      pushToast({
+        message: "Can't free this port",
+        description: "No owning process resolved (it may be a system/daemon socket).",
+        type: "info",
+      });
+      return;
+    }
+    const ok = await swalConfirm({
+      title: `Free port :${port}?`,
+      body: `Sends SIGTERM to ${info.label} (pid ${info.pid}).`,
+      confirmLabel: "Kill",
+      destructive: true,
+    });
+    if (!ok) return;
+    await killPort(port);
+    closeAndFocusTerminal();
+  }
+
+  // Keyboard nav (window-capture so it works without focusing a row, mirroring
+  // the ClickUp StatusPicker): up/down move the cursor, Enter/Space free the
+  // port (swal-confirmed), Escape closes and returns focus to the terminal.
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (ports.length === 0) return;
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setActiveIdx((p) => (p + 1) % ports.length);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setActiveIdx((p) => (p - 1 + ports.length) % ports.length);
+      } else if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const port = ports[activeIdx];
+        if (port != null) void confirmKillPort(port);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        closeAndFocusTerminal();
+      }
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, ports, activeIdx]);
+
   return (
     <div className="relative flex items-center">
       <Tooltip>
@@ -544,20 +622,28 @@ function LocalhostPortChips() {
       {open && (
         <>
           {/* Outside-click catcher — same pattern as the TopBar/TabBar dropdowns. */}
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="fixed inset-0 z-40" onClick={closeAndFocusTerminal} />
           <div
             ref={popoverRef}
-            onKeyDown={(e) => { if (e.key === "Escape") setOpen(false); }}
             className="absolute bottom-full left-1/2 z-50 mb-1.5 max-h-56 w-64 -translate-x-1/2 overflow-y-auto rounded-md border border-border bg-card py-1 shadow-lg"
           >
-            {ports.map((port) => {
+            <div className="border-b border-border/40 px-2 pb-1 pt-0.5 text-[9px] text-muted-foreground/50">
+              ↑↓ move · Enter free port · click opens
+            </div>
+            {ports.map((port, idx) => {
               const info = procInfo[port];
+              const selected = idx === activeIdx;
               return (
-                <div key={port} className="group flex items-center gap-1 px-2 py-1 text-[10px] transition-colors hover:bg-secondary">
+                <div
+                  key={port}
+                  data-nav-selected={selected ? "true" : undefined}
+                  onMouseEnter={() => setActiveIdx(idx)}
+                  className={`flex items-center gap-1 px-2 py-1 text-[10px] transition-colors ${selected ? "bg-secondary" : ""}`}
+                >
                   <button
                     onClick={() => openPort(port)}
                     disabled={!sessionId}
-                    className="flex min-w-0 flex-1 items-center gap-2 text-left font-mono text-muted-foreground transition-colors group-hover:text-foreground disabled:opacity-40"
+                    className={`flex min-w-0 flex-1 items-center gap-2 text-left font-mono transition-colors disabled:opacity-40 ${selected ? "text-foreground" : "text-muted-foreground"}`}
                   >
                     <span className="inline-block size-1.5 shrink-0 rounded-full bg-green-500" aria-hidden="true" />
                     <span className="shrink-0">localhost:{port}</span>
@@ -572,12 +658,12 @@ function LocalhostPortChips() {
                   {info?.pid != null && (
                     <Tooltip>
                       <TooltipTrigger
-                        onClick={() => killPort(port)}
-                        className="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground/40 opacity-0 transition-all hover:bg-red-500/15 hover:text-red-400 focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
+                        onClick={() => void confirmKillPort(port)}
+                        className={`flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground/40 transition-all hover:bg-red-500/15 hover:text-red-400 ${selected ? "opacity-100" : "opacity-0"}`}
                       >
                         <X className="size-3" />
                       </TooltipTrigger>
-                      <TooltipContent>Kill the process on this port (SIGTERM)</TooltipContent>
+                      <TooltipContent>Free this port (SIGTERM)</TooltipContent>
                     </Tooltip>
                   )}
                 </div>

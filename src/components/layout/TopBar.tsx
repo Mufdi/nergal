@@ -501,21 +501,31 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
 
               {/* Conflict dot */}
               {(conflictedFilesMap[tabId]?.length ?? 0) > 0 && (
-                <span title={`${conflictedFilesMap[tabId].length} conflicted file(s)`} className="flex size-1.5 shrink-0 rounded-full bg-red-500 animate-pulse" />
+                <Tooltip>
+                  <TooltipTrigger
+                    render={<span className="flex size-1.5 shrink-0 rounded-full bg-red-500 animate-pulse" />}
+                  />
+                  <TooltipContent side="bottom">{conflictedFilesMap[tabId].length} conflicted file(s)</TooltipContent>
+                </Tooltip>
               )}
 
-              {/* Pinned-notes chip */}
+              {/* Pinned-notes chip — Tooltip (not native title) for the TopBar's
+                  instant delay-0 hover, same as the ClickUp/Linear chips. */}
               {(() => {
                 const count = (pinnedNotesMap[tabId] ?? entry.session.pinned_note_paths ?? []).length;
                 if (count === 0) return null;
                 return (
-                  <span
-                    title={pinnedChipTooltip(count, injectionTierMap[tabId], entry.session.agent_id)}
-                    className="flex shrink-0 items-center gap-0.5 text-[10px] text-muted-foreground/70"
-                  >
-                    <Pin className="size-2.5" />
-                    {count}
-                  </span>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={<span className="flex shrink-0 items-center gap-0.5 text-[10px] text-muted-foreground/70" />}
+                    >
+                      <Pin className="size-2.5" />
+                      {count}
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      {pinnedChipTooltip(count, injectionTierMap[tabId], entry.session.agent_id)}
+                    </TooltipContent>
+                  </Tooltip>
                 );
               })()}
 

@@ -31,6 +31,82 @@ pub async fn find_rollout_after_spawn(
     ))
 }
 
+/// Wait up to `timeout` for the `rollout-*.jsonl` whose `session_meta.cwd`
+/// matches `cwd` (newest such, when several share a cwd). More reliable than
+/// newest-after-spawn: another live codex session — or a resumed one reusing an
+/// older file — won't be mistaken for this session's rollout.
+pub async fn find_rollout_for_cwd(
+    sessions_root: &Path,
+    cwd: &str,
+    timeout: Duration,
+) -> Result<PathBuf> {
+    let start = Instant::now();
+    loop {
+        let mut candidates: Vec<(PathBuf, SystemTime)> = Vec::new();
+        collect_rollouts(sessions_root, &mut candidates).await;
+        candidates.sort_by(|a, b| b.1.cmp(&a.1));
+        for (path, _) in &candidates {
+            if rollout_cwd_matches(path, cwd).await {
+                return Ok(path.clone());
+            }
+        }
+        if start.elapsed() >= timeout {
+            return Err(anyhow!(
+                "no rollout with cwd {cwd} under {} within {:?}",
+                sessions_root.display(),
+                timeout
+            ));
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+/// Read a rollout's first line (the `session_meta` record) and compare its
+/// `payload.cwd` to `cwd`.
+async fn rollout_cwd_matches(path: &Path, cwd: &str) -> bool {
+    let Ok(content) = tokio::fs::read_to_string(path).await else {
+        return false;
+    };
+    let Some(first) = content.lines().next() else {
+        return false;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(first) else {
+        return false;
+    };
+    v.get("payload")
+        .and_then(|p| p.get("cwd"))
+        .and_then(|c| c.as_str())
+        == Some(cwd)
+}
+
+async fn collect_rollouts(root: &Path, out: &mut Vec<(PathBuf, SystemTime)>) {
+    if !root.exists() {
+        return;
+    }
+    Box::pin(collect_walk(root, out)).await;
+}
+
+async fn collect_walk(dir: &Path, out: &mut Vec<(PathBuf, SystemTime)>) {
+    let mut entries = match tokio::fs::read_dir(dir).await {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        let Ok(meta) = entry.metadata().await else {
+            continue;
+        };
+        if meta.is_dir() {
+            Box::pin(collect_walk(&path, out)).await;
+        } else if meta.is_file() {
+            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if name.starts_with("rollout-") && name.ends_with(".jsonl") {
+                out.push((path, meta.modified().unwrap_or(SystemTime::UNIX_EPOCH)));
+            }
+        }
+    }
+}
+
 /// Pull the UUID out of a rollout filename. `rollout-abc123.jsonl` → `Some("abc123")`.
 /// Returns `None` if the filename doesn't match the documented shape.
 pub fn extract_uuid_from_filename(path: &Path) -> Option<String> {

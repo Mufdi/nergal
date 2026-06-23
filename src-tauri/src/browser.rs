@@ -105,6 +105,11 @@ pub async fn browser_register_shortcuts(app: AppHandle) -> Result<(), String> {
         let shortcut: Shortcut = chord
             .parse()
             .map_err(|e| format!("invalid shortcut {chord}: {e}"))?;
+        // Unregister first so a re-entrant register (focus regained while the
+        // panel stayed open) replaces rather than stacks a stale handler — a
+        // stacked registration is why a later unregister failed to release the
+        // chord back to other apps (e.g. Ctrl+Shift+R staying grabbed).
+        let _ = manager.unregister(shortcut);
         let app_clone = app.clone();
         let event_id = (*event_id).to_string();
         if let Err(e) = manager.on_shortcut(shortcut, move |_app, _shortcut, event| {
@@ -124,8 +129,10 @@ pub async fn browser_register_shortcuts(app: AppHandle) -> Result<(), String> {
 pub async fn browser_unregister_shortcuts(app: AppHandle) -> Result<(), String> {
     let manager = app.global_shortcut();
     for (chord, _) in RESERVED_SHORTCUTS {
-        if let Ok(shortcut) = chord.parse::<Shortcut>() {
-            let _ = manager.unregister(shortcut);
+        if let Ok(shortcut) = chord.parse::<Shortcut>()
+            && let Err(e) = manager.unregister(shortcut)
+        {
+            tracing::warn!("unregister {chord} failed: {e}");
         }
     }
     Ok(())

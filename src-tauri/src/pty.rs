@@ -193,34 +193,58 @@ impl PtyManager {
 }
 
 /// Best-effort `docker compose stop` for any live-session directory holding a
-/// compose file. Non-destructive (containers stop, not removed) and detached so
-/// the window still closes immediately — mirrors the user's manual flow of
-/// stopping their compose stack before quitting. A no-op when docker isn't
-/// installed or no compose file is present.
-pub fn stop_compose_projects(dirs: &[String]) {
-    const COMPOSE_FILES: [&str; 4] = [
-        "docker-compose.yml",
-        "docker-compose.yaml",
-        "compose.yml",
-        "compose.yaml",
-    ];
-    for dir in dirs {
-        let has_compose = COMPOSE_FILES
+/// directory lives under one of `owned_dirs` (a workspace repo or a live-session
+/// cwd). Non-destructive (`stop`, not `down`) and detached so the window still
+/// closes immediately. Asking `docker compose ls` — rather than scanning session
+/// cwds for a compose file — catches projects whose launching session already
+/// died (a detached `up -d`). No-op when docker isn't installed.
+pub fn stop_compose_projects(owned_dirs: &[String]) {
+    if owned_dirs.is_empty() {
+        return;
+    }
+    let out = std::process::Command::new("docker")
+        .args(["compose", "ls", "--format", "json"])
+        .output();
+    let Ok(out) = out else { return };
+    if !out.status.success() {
+        return;
+    }
+    #[derive(serde::Deserialize)]
+    struct ComposeProject {
+        #[serde(rename = "Name")]
+        name: String,
+        #[serde(rename = "ConfigFiles")]
+        config_files: String,
+    }
+    let projects: Vec<ComposeProject> = serde_json::from_slice(&out.stdout).unwrap_or_default();
+    for p in projects {
+        // ConfigFiles is comma-separated; the first file's parent is the project
+        // root. Stop the project only when that root sits inside an owned dir, so
+        // we never touch the user's unrelated stacks.
+        let Some(dir) = p
+            .config_files
+            .split(',')
+            .next()
+            .map(str::trim)
+            .map(std::path::Path::new)
+            .and_then(|f| f.parent())
+        else {
+            continue;
+        };
+        let dir = dir.to_string_lossy();
+        let owned = owned_dirs
             .iter()
-            .any(|f| std::path::Path::new(dir).join(f).is_file());
-        if !has_compose {
+            .any(|o| dir.starts_with(o.as_str()) || o.starts_with(dir.as_ref()));
+        if !owned {
             continue;
         }
         let mut cmd = std::process::Command::new("docker");
-        cmd.args(["compose", "stop"])
-            .current_dir(dir)
+        cmd.args(["compose", "-p", &p.name, "stop"])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
-        // `docker compose stop` SIGTERMs each container and waits up to ~10s.
         // Detach into its own session so it outlives Nergal's exit and finishes
-        // stopping EVERY service — otherwise the app quitting mid-stop left
-        // later containers running.
+        // stopping EVERY service (the app quitting mid-stop left later ones up).
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;

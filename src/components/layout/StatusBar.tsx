@@ -561,6 +561,10 @@ function LocalhostPortChips() {
       });
       return;
     }
+    // Close the popover BEFORE the swal so its window-capture keydown listener
+    // detaches — otherwise Enter/Space on the swal is swallowed by the ports
+    // handler and re-fires the confirm.
+    setOpen(false);
     const ok = await swalConfirm({
       title: `Free port :${port}?`,
       body: isDocker
@@ -569,9 +573,9 @@ function LocalhostPortChips() {
       confirmLabel: isDocker ? "Stop container" : "Kill",
       destructive: true,
     });
-    if (!ok) return;
-    await killPort(port);
-    closeAndFocusTerminal();
+    if (ok) await killPort(port);
+    setFocusZone("terminal");
+    terminalService.focusActive();
   }
 
   // Keyboard nav (window-capture so it works without focusing a row, mirroring

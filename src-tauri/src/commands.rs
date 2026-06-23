@@ -3350,16 +3350,20 @@ pub fn obsidian_create_project_note(
         if own_row.is_none()
             && let Some(donor) = find_donor_cfg(&db, &workspace_id)?
         {
+            // Inherit ONLY the shared vault (root + name) — the new workspace
+            // lives in the same vault. Channels (quick capture / templates /
+            // search subdir / logs / MOC) are per-workspace and start blank, so
+            // a sibling's specific channels don't bleed in.
             let mut inherited = crate::obsidian::config::ObsidianConfig {
                 vault_root: donor.vault_root,
                 vault_name: donor.vault_name,
                 session_log_path: None,
-                quick_capture_path: donor.quick_capture_path,
+                quick_capture_path: None,
                 moc_path: None,
-                templates_path: donor.templates_path,
+                templates_path: None,
                 backlinks_enabled: donor.backlinks_enabled,
                 render_wikilinks: donor.render_wikilinks,
-                search_subdir: donor.search_subdir,
+                search_subdir: None,
             };
             crate::obsidian::config::normalize_file_channels(&mut inherited);
             db.upsert_obsidian_config(&workspace_id, &inherited)

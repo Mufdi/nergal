@@ -492,10 +492,26 @@ function ObsidianSection() {
     }
     let cancelled = false;
     invoke<ResolvedObsidianConfig>("get_obsidian_config", { workspaceId: effective.id })
-      .then((cfg) => {
+      .then(async (cfg) => {
         if (cancelled) return;
-        setResolved(cfg);
-        setDraft(cfg);
+        // A workspace with no own vault inherits the SHARED vault root from a
+        // sibling (same vault) — channels stay blank. Prefill it so the field
+        // isn't empty for a brand-new workspace.
+        let merged = cfg;
+        if (!cfg.vault_root) {
+          try {
+            const pb = await invoke<{ vault_root: string; inherited: boolean } | null>(
+              "obsidian_pre_bootstrap",
+              { workspaceId: effective.id },
+            );
+            if (!cancelled && pb?.vault_root) merged = { ...cfg, vault_root: pb.vault_root };
+          } catch {
+            /* no donor vault → stay blank */
+          }
+        }
+        if (cancelled) return;
+        setResolved(merged);
+        setDraft(merged);
       })
       .catch((err) => {
         console.warn("[obsidian-settings] load failed:", err);

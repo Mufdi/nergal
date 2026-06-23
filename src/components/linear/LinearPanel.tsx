@@ -35,6 +35,7 @@ import {
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { Select } from "@/components/ui/select";
 import { LinearStatusIcon } from "@/components/linear/LinearStatusIcon";
+import { StatePicker } from "@/components/linear/StatePicker";
 import { PriorityIcon } from "@/components/clickup/PriorityIcon";
 import { zenModeAtom } from "@/stores/zenMode";
 import { configAtom } from "@/stores/config";
@@ -43,6 +44,7 @@ import {
   LINEAR_ACTION_LABELS,
   activeSessionLinearIssueAtom,
   activeSessionLinearPinsAtom,
+  clearLinearOverlayEntry,
   copyLinearIssueAction,
   linearAssignedToMeAtom,
   linearClosedOutAtom,
@@ -50,6 +52,7 @@ import {
   linearGroupByAtom,
   linearIssuesAtom,
   linearLabelFilterAtom,
+  linearOverlayAtom,
   linearProjectFilterAtom,
   linearShowCompletedAtom,
   linearSortAtom,
@@ -59,13 +62,16 @@ import {
   reinjectIssueAction,
   requestBindIssueAction,
   requestSendIssueAction,
+  setLinearOverlayEntry,
   spawnWorktreeWithIssueAction,
   togglePinIssueAction,
   type IssueView,
   type LinearGroupBy,
   type LinearSortField,
+  type WorkflowStateView,
 } from "@/stores/linear";
 import { invoke } from "@/lib/tauri";
+import { toastsAtom } from "@/stores/toast";
 
 // ── Priority mapping: Linear int → PriorityIcon string ──
 // 0=none, 1=urgent, 2=high, 3=medium, 4=low
@@ -1297,6 +1303,41 @@ function LinearIssueRow({
   const bound = issue.id === boundIssueId;
   const [closedOutSet, setClosedOut] = useAtom(linearClosedOutAtom);
   const closedOut = closedOutSet.has(issue.id);
+  const [overlay, setOverlay] = useAtom(linearOverlayAtom);
+  const addToast = useSetAtom(toastsAtom);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [stateOptions, setStateOptions] = useState<WorkflowStateView[]>([]);
+  const [statesLoading, setStatesLoading] = useState(false);
+  const resolvedStatesRef = useRef(false);
+
+  // Lazy-load team states when the picker opens for the first time.
+  useEffect(() => {
+    if (!pickerOpen || resolvedStatesRef.current) return;
+    resolvedStatesRef.current = true;
+    setStatesLoading(true);
+    invoke<WorkflowStateView[]>("linear_read_team_states", { teamId: issue.teamId })
+      .then(setStateOptions)
+      .catch(() => {})
+      .finally(() => setStatesLoading(false));
+  }, [pickerOpen, issue.teamId]);
+
+  function handleStateChange(stateId: string) {
+    if (stateId === issue.stateId) return;
+    setLinearOverlayEntry(setOverlay, issue.id, "state", stateId);
+    invoke("linear_set_issue_state", { issueId: issue.id, stateId }).catch((err) => {
+      clearLinearOverlayEntry(setOverlay, issue.id, "state");
+      addToast({ message: "State change failed", description: String(err), type: "error" });
+    });
+  }
+
+  // Apply overlay: resolve the displayed state from the overlay or mirror.
+  const overlayEntry = overlay[`${issue.id}:state`];
+  const displayStateId = overlayEntry !== undefined ? (overlayEntry.value ?? issue.stateId) : issue.stateId;
+  const pendingState = overlayEntry !== undefined;
+  const resolvedState = stateOptions.find((s) => s.id === displayStateId);
+  const displayStateType = resolvedState?.type ?? issue.stateType;
+  const displayStateColor = resolvedState?.color ?? issue.stateColor;
+  const displayStateName = resolvedState?.name ?? issue.stateName;
 
   async function handleUncloseOut() {
     try {
@@ -1351,13 +1392,25 @@ function LinearIssueRow({
       )}
 
       <PriorityIcon priority={priorityStr} size={12} className="shrink-0" />
-      <LinearStatusIcon
-        stateType={issue.stateType}
-        color={issue.stateColor ?? null}
-        size={13}
+      {/* Stop-propagation wrapper keeps the picker's inner button from triggering row open */}
+      <span
         className="shrink-0"
-        title={issue.stateName}
-      />
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+      >
+        <StatePicker
+          currentStateId={displayStateId ?? undefined}
+          currentStateName={displayStateName}
+          currentStateType={displayStateType}
+          currentStateColor={displayStateColor}
+          states={stateOptions}
+          loading={statesLoading}
+          onSelect={handleStateChange}
+          pending={pendingState}
+          open={pickerOpen}
+          onOpenChange={setPickerOpen}
+        />
+      </span>
 
       {/* Copyable identifier — click copies (§12); Ctrl+C on the cursor row also copies */}
       {(issue.identifier ?? issue.id) && (

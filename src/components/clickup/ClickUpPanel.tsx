@@ -34,6 +34,7 @@ import { focusIfPanelZone } from "@/lib/panelFocus";
 import { configAtom } from "@/stores/config";
 import { Select } from "@/components/ui/select";
 import { StatusIcon } from "@/components/clickup/StatusIcon";
+import { StatusPicker } from "@/components/clickup/StatusPicker";
 import { PriorityIcon } from "@/components/clickup/PriorityIcon";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { PulseDots } from "@/components/ui/PulseDots";
@@ -53,6 +54,8 @@ import {
   clickupClosedTasksAtom,
   clickupClosureOfferAtom,
   clickupListStatusesAtom,
+  clickupOverlayAtom,
+  clearOverlayEntry,
   reinjectTaskAction,
   clickupDetailTaskIdAtom,
   clickupGroupByAtom,
@@ -67,6 +70,7 @@ import {
   openClickUpTaskTabAction,
   requestBindTaskAction,
   requestSendTaskAction,
+  setOverlayEntry,
   spawnWorktreeWithTaskAction,
   statusFraction,
   togglePinTaskAction,
@@ -78,6 +82,7 @@ import {
   type ClickUpTaskActions,
 } from "@/stores/clickup";
 import { activeSessionIdAtom } from "@/stores/workspace";
+import { toastsAtom } from "@/stores/toast";
 
 /// Chip-strip views: "mine" is a preset (assigned-to-me filter + grouped by
 /// status); the rest are plain group-by modes over the current filter state.
@@ -1073,6 +1078,55 @@ function TaskRow({
   const overdue = task.due_date !== null && task.due_date < Date.now() && !closed;
   const workedClosed = useAtomValue(clickupClosedOutAtom).includes(task.id);
   const listStatuses = useAtomValue(clickupListStatusesAtom);
+  const [overlay, setOverlay] = useAtom(clickupOverlayAtom);
+  const addToast = useSetAtom(toastsAtom);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [statusLoading, setStatusLoading] = useState(false);
+
+  // Lazily resolve the list's workflow when the picker opens for the first time.
+  const resolvedPickerRef = useRef(false);
+  const setListStatuses = useSetAtom(clickupListStatusesAtom);
+  useEffect(() => {
+    if (!pickerOpen || resolvedPickerRef.current || listStatuses[task.list_id]?.length) {
+      if (pickerOpen && listStatuses[task.list_id]?.length) resolvedPickerRef.current = true;
+      return;
+    }
+    resolvedPickerRef.current = true;
+    setStatusLoading(true);
+    invoke<ClickUpListStatus[]>("clickup_read_list_statuses", { listId: task.list_id })
+      .then((s) => setListStatuses((prev) => ({ ...prev, [task.list_id]: s })))
+      .catch(() => {})
+      .finally(() => setStatusLoading(false));
+  }, [pickerOpen, task.list_id, listStatuses, setListStatuses]);
+
+  async function handleStatusChange(statusName: string) {
+    const field = "status";
+    const prevStatus = task.status_name ?? null;
+    setOverlayEntry(setOverlay, task.id, field, statusName);
+    try {
+      await invoke("clickup_set_task_status", { taskId: task.id, statusName });
+      // Mirror reconcile will clear the overlay; no need to poll here.
+      clearOverlayEntry(setOverlay, task.id, field);
+    } catch (err) {
+      clearOverlayEntry(setOverlay, task.id, field);
+      addToast({ message: "Status change failed", description: String(err), type: "error" });
+      if (prevStatus !== null) {
+        setOverlayEntry(setOverlay, task.id, field, prevStatus);
+        setTimeout(() => clearOverlayEntry(setOverlay, task.id, field), 50);
+      }
+    }
+  }
+
+  // Apply overlay: show the optimistic status while the API call is in flight.
+  const overlayEntry = overlay[`${task.id}:status`];
+  const displayStatusName = overlayEntry !== undefined ? (overlayEntry.value ?? task.status_name) : task.status_name;
+  const pendingStatus = overlayEntry !== undefined;
+
+  // Resolve display color/type from the list's statuses if the overlay changed the name.
+  const resolvedStatuses = listStatuses[task.list_id] ?? [];
+  const resolvedStatus = resolvedStatuses.find((s) => s.name === displayStatusName);
+  const displayColor = resolvedStatus?.color ?? task.status_color;
+  const displayType = resolvedStatus?.status_type ?? task.status_type;
 
   return (
     <button
@@ -1104,14 +1158,25 @@ function TaskRow({
         <span className="w-3.5 shrink-0" aria-hidden />
       )}
       <PriorityIcon priority={task.priority} size={12} className="shrink-0" />
-      <StatusIcon
-        type={task.status_type}
-        color={task.status_color}
-        fraction={statusFraction(listStatuses[task.list_id], task.status_name)}
-        size={13}
+      {/* Stop-propagation wrapper keeps the picker's inner button from triggering row open */}
+      <span
         className="shrink-0"
-        title={task.status_name ?? undefined}
-      />
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+      >
+        <StatusPicker
+          currentStatus={displayStatusName ?? ""}
+          currentColor={displayColor}
+          currentType={displayType}
+          statuses={resolvedStatuses}
+          loading={statusLoading}
+          onSelect={(name) => void handleStatusChange(name)}
+          pending={pendingStatus}
+          open={pickerOpen}
+          onOpenChange={setPickerOpen}
+          navSelected={false}
+        />
+      </span>
       {(task.custom_id ?? task.id) && (
         <Tooltip>
           <TooltipTrigger

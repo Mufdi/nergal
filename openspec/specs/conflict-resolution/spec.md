@@ -79,7 +79,7 @@ The shortcut currently bound to revise-plan SHALL be converted to a contextual d
 
 #### Scenario: Active tab is conflict type
 - **WHEN** user presses the contextual shortcut while a `conflict` tab is active
-- **THEN** the system emits `cluihud:resolve-conflict-active-tab` (triggers "Ask Claude to resolve" on the active tab)
+- **THEN** the system emits `nergal:resolve-conflict-active-tab` (triggers "Ask Claude to resolve" on the active tab)
 
 #### Scenario: Git panel with conflicts but no conflict tab active
 - **WHEN** user presses the contextual shortcut while the git panel is the active tab and the session has one or more conflicted files
@@ -87,7 +87,7 @@ The shortcut currently bound to revise-plan SHALL be converted to a contextual d
 
 #### Scenario: Plan panel with pending review falls back to revise-plan
 - **WHEN** user presses the contextual shortcut while a plan panel is active and a plan review is pending
-- **THEN** the system emits `cluihud:revise-plan` (current behavior)
+- **THEN** the system emits `nergal:revise-plan` (current behavior)
 
 #### Scenario: Neither context active is a no-op
 - **WHEN** none of the above conditions apply

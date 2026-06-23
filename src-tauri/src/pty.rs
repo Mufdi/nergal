@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, State};
 
-use crate::terminal::{CluihudTerminalConfig, TerminalHandle, TerminalKeyEvent, TerminalSession};
+use crate::terminal::{NergalTerminalConfig, TerminalHandle, TerminalKeyEvent, TerminalSession};
 
 /// Shared PTY writer. wezterm-term (for answerbacks + key encoding) and the
 /// small number of command-layer writers (`start_claude_session` boot
@@ -268,7 +268,7 @@ pub struct StartClaudeResult {
 /// task, wire up the reader thread, store the instance.
 ///
 /// `agent_session` distinguishes the agent terminal from auxiliary (quake)
-/// shells: aux shells skip the `CLUIHUD_SESSION_ID` env (an agent manually
+/// shells: aux shells skip the `NERGAL_SESSION_ID` env (an agent manually
 /// launched inside one must not route hook events into the owning session's
 /// panels) and on EOF emit `shell:exited` instead of the obsidian snapshot.
 #[allow(clippy::too_many_arguments)] // Internal helper — every arg is required state for PTY init.
@@ -306,7 +306,7 @@ fn spawn_pty(
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     if agent_session {
-        cmd.env("CLUIHUD_SESSION_ID", session_id);
+        cmd.env("NERGAL_SESSION_ID", session_id);
     }
 
     let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
@@ -318,7 +318,7 @@ fn spawn_pty(
     let raw_writer = pair.master.take_writer().map_err(|e| e.to_string())?;
     let writer: SharedWriter = Arc::new(Mutex::new(raw_writer));
 
-    let config = CluihudTerminalConfig::new().with_kitty_keyboard(state.kitty_keyboard);
+    let config = NergalTerminalConfig::new().with_kitty_keyboard(state.kitty_keyboard);
     let session = TerminalSession::with_config(
         cols,
         rows,
@@ -502,7 +502,7 @@ pub async fn start_claude_session(
         //   1. In-memory cache (set on session creation; lives until app exit)
         //   2. DB session row (covers app restart — cache is gone but row persists)
         //   3. CC fallback (defensive — every legacy row has agent_id="claude-code")
-        // Without (2), resuming a Pi/OpenCode session after a cluihud restart
+        // Without (2), resuming a Pi/OpenCode session after a nergal restart
         // would silently spawn `claude --continue` because the cache miss
         // falls straight to the default.
         let agent_id = agents
@@ -536,7 +536,7 @@ pub async fn start_claude_session(
         // UUID, Codex rollout id) the adapter previously harvested and the
         // runtime persisted to the DB. Some agents' generic `--continue` flag
         // doesn't reliably resolve a session by cwd alone, so passing the
-        // exact id avoids "No conversation found" surprises after a cluihud
+        // exact id avoids "No conversation found" surprises after a nergal
         // restart.
         let resume_owned: Option<String> = match resume.as_deref() {
             Some("continue") => {
@@ -651,7 +651,7 @@ pub async fn start_claude_session(
         // JSONL header; OpenCode session id from SSE event) asynchronously,
         // so a synchronous read right after start_event_pump usually misses.
         // Spawn a background poller that waits up to ~6s and persists once
-        // the id appears. Resuming after a cluihud restart then prefers
+        // the id appears. Resuming after a nergal restart then prefers
         // `--session <id>` over the agent's `--continue` heuristic.
         {
             let adapter_for_persist = adapter.clone();

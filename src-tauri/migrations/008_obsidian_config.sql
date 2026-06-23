@@ -1,5 +1,5 @@
 -- ON DELETE CASCADE: workspace deletion drops the row; user's vault files
--- stay untouched because they live outside the cluihud config dir.
+-- stay untouched because they live outside the nergal config dir.
 
 CREATE TABLE IF NOT EXISTS obsidian_config (
     workspace_id          TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,

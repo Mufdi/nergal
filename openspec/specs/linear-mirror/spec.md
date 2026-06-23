@@ -5,12 +5,12 @@ TBD - created by archiving change linear-mirror. Update Purpose after archive.
 ## Requirements
 ### Requirement: Personal API key stored in the OS keyring, auth layer extensible for OAuth
 
-The system SHALL store the user's Linear Personal API key in the OS keyring (secret-service on Linux) under service `cluihud`, account `linear-token`. When the keyring is unavailable, the system SHALL fall back to `~/.config/cluihud/linear.toml` created **atomically with mode `0600`** (no write-then-chmod window) and SHALL surface to the UI that the key is stored on disk. The key SHALL be read only into the GraphQL client, never logged or included in any error string, and never returned to the frontend. The system SHALL expose commands to set, clear, and validate the key; validation SHALL run the `viewer { id name email }` query and return the resolved user, not the key. The authorization header SHALL be produced by an `AuthMode`-switchable builder: personal keys send `Authorization: <key>` (no `Bearer`); the builder SHALL leave an additive path for a future `Bearer <token>` OAuth mode without reworking the client or persistence.
+The system SHALL store the user's Linear Personal API key in the OS keyring (secret-service on Linux) under service `nergal`, account `linear-token`. When the keyring is unavailable, the system SHALL fall back to `~/.config/nergal/linear.toml` created **atomically with mode `0600`** (no write-then-chmod window) and SHALL surface to the UI that the key is stored on disk. The key SHALL be read only into the GraphQL client, never logged or included in any error string, and never returned to the frontend. The system SHALL expose commands to set, clear, and validate the key; validation SHALL run the `viewer { id name email }` query and return the resolved user, not the key. The authorization header SHALL be produced by an `AuthMode`-switchable builder: personal keys send `Authorization: <key>` (no `Bearer`); the builder SHALL leave an additive path for a future `Bearer <token>` OAuth mode without reworking the client or persistence.
 
 #### Scenario: Key stored in keyring on the happy path
 
 - **WHEN** the user sets an API key and the OS keyring is available
-- **THEN** the key SHALL be written to the keyring under service `cluihud` / account `linear-token`
+- **THEN** the key SHALL be written to the keyring under service `nergal` / account `linear-token`
 - **AND** no plaintext key SHALL be written to disk
 - **AND** validation SHALL return the resolved Linear user via the `viewer` query
 

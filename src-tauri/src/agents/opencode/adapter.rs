@@ -1,4 +1,4 @@
-//! OpenCode adapter — runs the `opencode` TUI inside the cluihud terminal
+//! OpenCode adapter — runs the `opencode` TUI inside the nergal terminal
 //! and listens to its embedded Hono server's SSE stream for events.
 //!
 //! The TUI binary serves the same HTTP API as `opencode serve`. We pin its
@@ -35,12 +35,12 @@ pub struct OpenCodeAdapter {
     /// Captured at construction so `apply_theme` writes into a hermetic
     /// location in tests without relying on a process-global HOME.
     config_root: PathBuf,
-    /// `cluihud_session_id` → bound port. Set in [`Self::spawn`] and read by
+    /// `nergal_session_id` → bound port. Set in [`Self::spawn`] and read by
     /// [`Self::start_event_pump`] so the SSE consumer connects to the right
     /// address without re-deriving it.
     session_ports: Arc<DashMap<String, u16>>,
     sse_clients: Arc<DashMap<String, SseClient>>,
-    /// `cluihud_session_id` → OpenCode-side session id, harvested from the
+    /// `nergal_session_id` → OpenCode-side session id, harvested from the
     /// `session.created` SSE event. Surfaced via [`Self::agent_internal_session_id`]
     /// so the runtime can persist it and resume via `--session <id>`, which
     /// is more reliable than `--continue` (the OpenCode CLI's "last session"
@@ -136,7 +136,7 @@ impl AgentAdapter for OpenCodeAdapter {
         }
     }
 
-    fn requires_cluihud_setup(&self) -> bool {
+    fn requires_nergal_setup(&self) -> bool {
         false
     }
 
@@ -216,7 +216,7 @@ impl AgentAdapter for OpenCodeAdapter {
             args.push(text);
         }
         let mut env = HashMap::new();
-        env.insert("CLUIHUD_SESSION_ID".into(), ctx.session_id.to_string());
+        env.insert("NERGAL_SESSION_ID".into(), ctx.session_id.to_string());
         Ok(SpawnSpec { binary, args, env })
     }
 
@@ -289,31 +289,31 @@ impl AgentAdapter for OpenCodeAdapter {
         Ok(())
     }
 
-    fn agent_internal_session_id(&self, cluihud_session_id: &str) -> Option<String> {
+    fn agent_internal_session_id(&self, nergal_session_id: &str) -> Option<String> {
         self.session_internal_ids
-            .get(cluihud_session_id)
+            .get(nergal_session_id)
             .map(|r| r.clone())
     }
 
     async fn apply_theme(&self, palette: &ThemePalette) -> Result<(), AdapterError> {
         let themes_dir = self.config_root.join("themes");
-        let target = themes_dir.join("cluihud-active.json");
+        let target = themes_dir.join("nergal-active.json");
         let body = serde_json::to_vec_pretty(&build_opencode_theme(palette))
             .map_err(|e| AdapterError::Transport(anyhow::anyhow!(e)))?;
         write_atomic(&target, &body).await?;
         let tui_json = self.config_root.join("tui.json");
         let pointed_at_us =
-            crate::agents::update_settings_theme_if_safe(&tui_json, "cluihud-active").await?;
+            crate::agents::update_settings_theme_if_safe(&tui_json, "nergal-active").await?;
         if !pointed_at_us {
             tracing::debug!(
-                "opencode tui.json points at a user-selected theme; cluihud-active.json written but inactive"
+                "opencode tui.json points at a user-selected theme; nergal-active.json written but inactive"
             );
             return Ok(());
         }
         for entry in self.session_ports.iter() {
             let port = *entry.value();
             let url = format!("http://127.0.0.1:{port}/tui/execute-command");
-            let body = serde_json::json!({ "command": "theme cluihud-active" });
+            let body = serde_json::json!({ "command": "theme nergal-active" });
             // Best-effort: the live-switch endpoint isn't documented as
             // accepting an argument. Failure (timeout, 4xx, connection
             // refused) falls back to next-spawn via tui.json.
@@ -331,10 +331,10 @@ impl AgentAdapter for OpenCodeAdapter {
 /// Translate a `ThemePalette` into the opencode theme schema
 /// (`https://opencode.ai/theme.json`).
 ///
-/// `defs` carries the cluihud palette as named refs; each `theme.*` token
+/// `defs` carries the nergal palette as named refs; each `theme.*` token
 /// points at one of those refs. Required tokens per schema: primary,
 /// secondary, accent, text, textMuted, background. We populate the full
-/// UI/markdown/syntax set so opencode renders coherently against cluihud's
+/// UI/markdown/syntax set so opencode renders coherently against nergal's
 /// chrome.
 fn build_opencode_theme(palette: &ThemePalette) -> serde_json::Value {
     let mut defs = serde_json::Map::new();
@@ -440,9 +440,9 @@ mod tests {
     }
 
     #[test]
-    fn requires_cluihud_setup_is_false_for_opencode() {
+    fn requires_nergal_setup_is_false_for_opencode() {
         let a = OpenCodeAdapter::new();
-        assert!(!a.requires_cluihud_setup());
+        assert!(!a.requires_nergal_setup());
     }
 
     #[test]
@@ -510,7 +510,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let adapter = OpenCodeAdapter::with_config_root(root.path().to_path_buf());
         adapter.apply_theme(&sample_palette()).await.unwrap();
-        let theme_path = root.path().join("themes/cluihud-active.json");
+        let theme_path = root.path().join("themes/nergal-active.json");
         let raw = tokio::fs::read_to_string(&theme_path).await.unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(parsed["$schema"], "https://opencode.ai/theme.json");
@@ -519,7 +519,7 @@ mod tests {
             .await
             .unwrap();
         let tui: serde_json::Value = serde_json::from_str(&tui_raw).unwrap();
-        assert_eq!(tui["theme"], "cluihud-active");
+        assert_eq!(tui["theme"], "nergal-active");
     }
 
     #[tokio::test]
@@ -535,7 +535,7 @@ mod tests {
             .await
             .unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(parsed["theme"], "cluihud-active");
+        assert_eq!(parsed["theme"], "nergal-active");
         assert_eq!(parsed["layout"], "split");
     }
 
@@ -554,7 +554,7 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(parsed["theme"], "tokyonight");
         assert!(
-            root.path().join("themes/cluihud-active.json").exists(),
+            root.path().join("themes/nergal-active.json").exists(),
             "theme file written even when user opted out"
         );
     }

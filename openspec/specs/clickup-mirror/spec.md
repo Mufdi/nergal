@@ -5,12 +5,12 @@ TBD - created by archiving change clickup-sync. Update Purpose after archive.
 ## Requirements
 ### Requirement: Personal API token stored in the OS keyring
 
-The system SHALL store the user's ClickUp Personal API token in the OS keyring (secret-service on Linux) under service `cluihud`, account `clickup-token`. When the keyring is unavailable, the system SHALL fall back to `~/.config/cluihud/clickup.toml` created **atomically with mode `0600`** (no write-then-chmod window) and SHALL surface to the UI that the token is stored on disk. The token SHALL be read only into the REST client, never logged or included in any error string, and never returned to the frontend. The system SHALL expose commands to set, clear, and validate the token; validation SHALL call `GET /user` (auth header `Authorization: <token>`, no `Bearer`) and return the resolved user, not the token.
+The system SHALL store the user's ClickUp Personal API token in the OS keyring (secret-service on Linux) under service `nergal`, account `clickup-token`. When the keyring is unavailable, the system SHALL fall back to `~/.config/nergal/clickup.toml` created **atomically with mode `0600`** (no write-then-chmod window) and SHALL surface to the UI that the token is stored on disk. The token SHALL be read only into the REST client, never logged or included in any error string, and never returned to the frontend. The system SHALL expose commands to set, clear, and validate the token; validation SHALL call `GET /user` (auth header `Authorization: <token>`, no `Bearer`) and return the resolved user, not the token.
 
 #### Scenario: Token stored in keyring on the happy path
 
 - **WHEN** the user sets a token and the OS keyring is available
-- **THEN** the token SHALL be written to the keyring under service `cluihud` / account `clickup-token`
+- **THEN** the token SHALL be written to the keyring under service `nergal` / account `clickup-token`
 - **AND** no plaintext token SHALL be written to disk
 - **AND** validation SHALL return the resolved ClickUp user
 

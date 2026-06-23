@@ -20,7 +20,7 @@ The system SHALL treat `vault_root` as the master switch for every Obsidian-touc
 - **AND** features whose channel paths are still null (e.g. `quick_capture_path = null`) SHALL show their UI affordance as disabled with a tooltip explaining which setting is missing
 
 ### Requirement: Per-workspace channel registry with global override
-The system SHALL store the Obsidian configuration per workspace in a SQLite table `obsidian_config` keyed by `workspace_id` (foreign key to `workspaces.id`, ON DELETE CASCADE). The system SHALL also support an optional TOML file at `~/.config/cluihud/obsidian.toml` whose fields override the matching SQLite columns when present.
+The system SHALL store the Obsidian configuration per workspace in a SQLite table `obsidian_config` keyed by `workspace_id` (foreign key to `workspaces.id`, ON DELETE CASCADE). The system SHALL also support an optional TOML file at `~/.config/nergal/obsidian.toml` whose fields override the matching SQLite columns when present.
 
 The columns SHALL be: `vault_root TEXT`, `vault_name TEXT`, `session_log_path TEXT`, `quick_capture_path TEXT`, `moc_path TEXT`, `templates_path TEXT`, `backlinks_enabled INTEGER NOT NULL DEFAULT 0`, `render_wikilinks INTEGER NOT NULL DEFAULT 1`, `updated_at INTEGER NOT NULL`.
 
@@ -32,7 +32,7 @@ The columns SHALL be: `vault_root TEXT`, `vault_name TEXT`, `session_log_path TE
 
 #### Scenario: Global TOML override
 
-- **WHEN** `~/.config/cluihud/obsidian.toml` contains `vault_root = "/home/user/Obsidian"` and a workspace's SQLite row has `vault_root = NULL`
+- **WHEN** `~/.config/nergal/obsidian.toml` contains `vault_root = "/home/user/Obsidian"` and a workspace's SQLite row has `vault_root = NULL`
 - **THEN** the resolved config for that workspace SHALL use `/home/user/Obsidian` as the vault root
 - **WHEN** the same workspace's SQLite row sets `vault_root = "/home/user/Other"` and the TOML still has `/home/user/Obsidian`
 - **THEN** the TOML value SHALL win (override semantics: any non-null TOML field beats the workspace field)

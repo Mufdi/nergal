@@ -153,7 +153,7 @@ export function GitFullView() {
   if (conflictsZen && sessionId) {
     return (
       <div className="fixed inset-0 z-40 flex overflow-hidden" role="dialog" aria-label="Conflict resolution full view">
-        <div className="absolute inset-0 bg-background/60 cluihud-blur-md" onClick={closeAll} />
+        <div className="absolute inset-0 bg-background/60 nergal-blur-md" onClick={closeAll} />
         <div className="relative z-10 flex min-w-0 flex-1 flex-col m-3 overflow-hidden rounded-lg bg-card/95 border-2 border-border">
           <ConflictsPanel sessionId={sessionId} inZen onToggleZen={closeAll} />
         </div>
@@ -164,12 +164,12 @@ export function GitFullView() {
   if (prZen) {
     return (
       <div className="fixed inset-0 z-40 flex overflow-hidden" role="dialog" aria-label={`PR #${prZen.prNumber} full view`}>
-        <div className="absolute inset-0 bg-background/60 cluihud-blur-md" onClick={closeAll} />
+        <div className="absolute inset-0 bg-background/60 nergal-blur-md" onClick={closeAll} />
 
         {/* Viewer */}
         <div
           onMouseDown={() => setZone("viewer")}
-          className={`relative z-10 flex min-w-0 flex-1 flex-col m-3 mr-0 overflow-hidden rounded-lg bg-card/95 border-2 cluihud-panel-focus ${
+          className={`relative z-10 flex min-w-0 flex-1 flex-col m-3 mr-0 overflow-hidden rounded-lg bg-card/95 border-2 nergal-panel-focus ${
             zone === "viewer" ? "border-primary" : "border-border"
           }`}
         >
@@ -179,7 +179,7 @@ export function GitFullView() {
         {/* PR files sidebar */}
         <div
           onMouseDown={() => setZone("sidebar")}
-          className={`relative z-10 w-72 shrink-0 flex flex-col m-3 ml-1.5 overflow-hidden rounded-lg bg-card/95 border-2 cluihud-panel-focus ${
+          className={`relative z-10 w-72 shrink-0 flex flex-col m-3 ml-1.5 overflow-hidden rounded-lg bg-card/95 border-2 nergal-panel-focus ${
             zone === "sidebar" ? "border-primary" : "border-border"
           }`}
         >
@@ -201,14 +201,14 @@ export function GitFullView() {
     >
       {/* Blur backdrop */}
       <div
-        className="absolute inset-0 bg-background/60 cluihud-blur-md"
+        className="absolute inset-0 bg-background/60 nergal-blur-md"
         onClick={close}
       />
 
       {/* Diff content area */}
       <div
         onMouseDown={() => setZone("viewer")}
-        className={`relative z-10 flex min-w-0 flex-1 flex-col m-3 mr-0 overflow-hidden rounded-lg border-2 bg-card/95 cluihud-panel-focus ${
+        className={`relative z-10 flex min-w-0 flex-1 flex-col m-3 mr-0 overflow-hidden rounded-lg border-2 bg-card/95 nergal-panel-focus ${
           zone === "viewer" ? "border-primary" : "border-border"
         }`}
       >
@@ -268,7 +268,7 @@ export function GitFullView() {
           a diff: here they only need to switch which file the viewer shows. */}
       <div
         onMouseDown={() => setZone("sidebar")}
-        className={`relative z-10 w-72 shrink-0 flex flex-col m-3 ml-1.5 overflow-hidden rounded-lg bg-card/95 border-2 cluihud-panel-focus ${
+        className={`relative z-10 w-72 shrink-0 flex flex-col m-3 ml-1.5 overflow-hidden rounded-lg bg-card/95 border-2 nergal-panel-focus ${
           zone === "sidebar" ? "border-primary" : "border-border"
         }`}
       >

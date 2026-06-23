@@ -9,7 +9,7 @@
 //!      port range, applies hysteresis (1-scan add, 2-scan remove) to
 //!      absorb transient flap, emits `localhost:ports-changed` events.
 //!
-//! Linux-only: cluihud targets Linux per CLAUDE.md. The /proc approach is
+//! Linux-only: nergal targets Linux per CLAUDE.md. The /proc approach is
 //! native, fast (sub-ms), and accurate — same source `ss`/`netstat`/`lsof`
 //! consult. No hardcoded port list, no TCP probes.
 

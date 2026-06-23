@@ -1,7 +1,7 @@
-//! cluihud MCP daemon: exposes the live session directory to the agents
-//! cluihud wraps, over a dedicated length-framed Unix socket.
+//! nergal MCP daemon: exposes the live session directory to the agents
+//! nergal wraps, over a dedicated length-framed Unix socket.
 //!
-//! Design (see `openspec/changes/cluihud-mcp-server/design.md`):
+//! Design (see `openspec/changes/nergal-mcp-server/design.md`):
 //! - Decision 1: a NEW bidirectional socket, not the fire-and-forget hook socket.
 //! - Decision 2: the **uid** is the only access boundary; identity is the
 //!   cooperative env hint the shim reports, validated against the live registry.
@@ -33,7 +33,7 @@ use crate::mcp::delivery::SessionDelivery;
 /// the shim's degraded-mode reply so they cannot drift.
 pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 
-// JSON-RPC error codes: the standard band plus one cluihud server error.
+// JSON-RPC error codes: the standard band plus one nergal server error.
 const PARSE_ERROR: i64 = -32700;
 const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
@@ -43,7 +43,7 @@ const MCP_DISABLED: i64 = -32001;
 
 /// Dedicated MCP socket path (per-user temp dir). NOT the hook socket.
 pub fn socket_path() -> PathBuf {
-    std::env::temp_dir().join("cluihud-mcp.sock")
+    std::env::temp_dir().join("nergal-mcp.sock")
 }
 
 /// Toggle the MCP server: persist the flag and (de)register the shim in agent
@@ -159,10 +159,10 @@ pub fn initialize_result() -> Value {
     json!({
         "protocolVersion": MCP_PROTOCOL_VERSION,
         "capabilities": { "tools": {} },
-        "serverInfo": { "name": "cluihud", "version": env!("CARGO_PKG_VERSION") },
+        "serverInfo": { "name": "nergal", "version": env!("CARGO_PKG_VERSION") },
         // Server-level guidance (MCP `instructions`): teach the pull workflow so
         // the agent uses the directory autonomously without asking the user.
-        "instructions": "cluihud session directory — observe the user's other agent \
+        "instructions": "nergal session directory — observe the user's other agent \
     sessions running in this app (cross-workspace, same machine). Workflow:\n\
     - `whoami` returns your own session id; pass it as `exclude`-equivalent via \
     `list_sessions`'s `include_self=false` (default) to skip yourself.\n\
@@ -191,12 +191,12 @@ pub fn tool_definitions() -> Vec<Value> {
     vec![
         json!({
             "name": "whoami",
-            "description": "Identify the calling agent's own cluihud session (or report unidentified).",
+            "description": "Identify the calling agent's own nergal session (or report unidentified).",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
         }),
         json!({
             "name": "list_sessions",
-            "description": "Discovery view: list cluihud sessions across every workspace — live sessions plus recently-ended ones (last ~7 days), each with `is_live` and a cached `summary`. Cheap and never regenerates: a `summary` may be stale (see `summary_stale`); use `get_session` to refresh one. Excludes the caller's own session unless include_self.",
+            "description": "Discovery view: list nergal sessions across every workspace — live sessions plus recently-ended ones (last ~7 days), each with `is_live` and a cached `summary`. Cheap and never regenerates: a `summary` may be stale (see `summary_stale`); use `get_session` to refresh one. Excludes the caller's own session unless include_self.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "include_self": { "type": "boolean", "description": "Include the caller's own session (default false)." } },
@@ -205,17 +205,17 @@ pub fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "get_session",
-            "description": "Drill-in: full descriptor for one cluihud session by id — live OR recently-ended (is_live=false). The ONLY call that refreshes a summary: when the session is dirty (no summary, or summary_stale=true) it regenerates in the background and returns the current value immediately; re-call to read the refreshed summary. Works for a session worked earlier this week (regenerated from its transcript on demand).",
+            "description": "Drill-in: full descriptor for one nergal session by id — live OR recently-ended (is_live=false). The ONLY call that refreshes a summary: when the session is dirty (no summary, or summary_stale=true) it regenerates in the background and returns the current value immediately; re-call to read the refreshed summary. Works for a session worked earlier this week (regenerated from its transcript on demand).",
             "inputSchema": {
                 "type": "object",
-                "properties": { "session_id": { "type": "string", "description": "The cluihud session id (from list_sessions or whoami)." } },
+                "properties": { "session_id": { "type": "string", "description": "The nergal session id (from list_sessions or whoami)." } },
                 "required": ["session_id"],
                 "additionalProperties": false,
             },
         }),
         json!({
             "name": "send_to_session",
-            "description": "Send a message to ANOTHER live cluihud session's agent (cross-session messaging). cluihud routes and delivers it; the reply arrives asynchronously as a new message you read with read_messages (you are never blocked). Pass thread_id to continue an existing conversation, omit it to start one. Returns a status: delivered/queued (sent), duplicate_suppressed (identical message already sent), hop_limit_reached (too many distinct sessions), inactive_target (session not live — revive via create_worktree_session), or cross_session_disabled. Target must be a live session id (from list_sessions/search_sessions).",
+            "description": "Send a message to ANOTHER live nergal session's agent (cross-session messaging). nergal routes and delivers it; the reply arrives asynchronously as a new message you read with read_messages (you are never blocked). Pass thread_id to continue an existing conversation, omit it to start one. Returns a status: delivered/queued (sent), duplicate_suppressed (identical message already sent), hop_limit_reached (too many distinct sessions), inactive_target (session not live — revive via create_worktree_session), or cross_session_disabled. Target must be a live session id (from list_sessions/search_sessions).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -243,7 +243,7 @@ pub fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "search_sessions",
-            "description": "Read-only search across live AND recently-ended cluihud sessions by name + summary. Each result carries is_live and messageable; messageable=false means the session is inactive (read-only) — you cannot send_to_session it, you must revive it with create_worktree_session to involve it.",
+            "description": "Read-only search across live AND recently-ended nergal sessions by name + summary. Each result carries is_live and messageable; messageable=false means the session is inactive (read-only) — you cannot send_to_session it, you must revive it with create_worktree_session to involve it.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "query": { "type": "string", "description": "Substring to match against session name + summary (empty = all)." } },
@@ -277,7 +277,7 @@ pub fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "request_session_resume",
-            "description": "REQUEST (behind the same human gate) reviving an existing but currently-INACTIVE session — e.g. yesterday's session holds context you need now and send_to_session refused it (inactive_target). Non-blocking: returns { pending_request_id }; on approval cluihud resumes the session in its own worktree and delivers your optional message to it as a labeled, advisory relayed prompt. status: pending | disabled | unknown_session | already_live (just send_to_session it) | too_many_pending_requests. Use this to revive a session; use create_worktree_session only to make a brand-new one.",
+            "description": "REQUEST (behind the same human gate) reviving an existing but currently-INACTIVE session — e.g. yesterday's session holds context you need now and send_to_session refused it (inactive_target). Non-blocking: returns { pending_request_id }; on approval nergal resumes the session in its own worktree and delivers your optional message to it as a labeled, advisory relayed prompt. status: pending | disabled | unknown_session | already_live (just send_to_session it) | too_many_pending_requests. Use this to revive a session; use create_worktree_session only to make a brand-new one.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -311,7 +311,7 @@ pub fn tool_definitions() -> Vec<Value> {
     ]
 }
 
-/// Pure JSON-RPC dispatch. `identity` is the caller's resolved cluihud session
+/// Pure JSON-RPC dispatch. `identity` is the caller's resolved nergal session
 /// id (or `None` = unidentified). `enabled` is resolved by the caller from
 /// config per request so this stays pure and unit-testable.
 pub fn dispatch(
@@ -328,9 +328,9 @@ pub fn dispatch(
                 return err(
                     req.id.clone(),
                     MCP_DISABLED,
-                    "cluihud MCP server is disabled",
+                    "nergal MCP server is disabled",
                     Some(
-                        json!({ "reason": "mcp_disabled", "hint": "enable it in cluihud Settings → MCP" }),
+                        json!({ "reason": "mcp_disabled", "hint": "enable it in nergal Settings → MCP" }),
                     ),
                 );
             }
@@ -635,7 +635,7 @@ async fn handle_connection(mut stream: tokio::net::UnixStream, ctx: DaemonContex
             && req.method == "initialize"
             && let Some(h) = req
                 .params
-                .get("_cluihud_session_hint")
+                .get("_nergal_session_hint")
                 .and_then(|v| v.as_str())
         {
             hint = Some(h.to_string());

@@ -10,7 +10,7 @@
 
 use anyhow::{Result, anyhow, bail};
 
-const KEYRING_SERVICE: &str = "cluihud";
+const KEYRING_SERVICE: &str = "nergal";
 const KEYRING_ACCOUNT: &str = "summary-api-key";
 
 fn entry() -> Result<keyring::Entry> {

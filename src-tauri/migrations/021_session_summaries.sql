@@ -1,4 +1,4 @@
--- Opt-in AI session summaries (cluihud-mcp-server change, session-summary
+-- Opt-in AI session summaries (nergal-mcp-server change, session-summary
 -- capability). One row per session, written ONLY when summaries are enabled
 -- (global or per-project). Absence of a row = never summarized / disabled.
 -- `token_cost` is the accounted output+input tokens of the summarizer call.

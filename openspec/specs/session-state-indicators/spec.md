@@ -20,7 +20,7 @@ Provide polymorphic session indicators that communicate session state at a glanc
 
 ## Implementation Notes
 
-Original spec proposed shape-shifting (circle→squircle→square→diamond). Implemented as circle-only with motion layers instead — more modern, legible at small sizes. Thinking state uses color-only (no animation) per user feedback. During implementation, discovered and fixed a critical session routing bug: all event payloads used Claude CLI session ID instead of cluihud session ID, causing cross-session state contamination.
+Original spec proposed shape-shifting (circle→squircle→square→diamond). Implemented as circle-only with motion layers instead — more modern, legible at small sizes. Thinking state uses color-only (no animation) per user feedback. During implementation, discovered and fixed a critical session routing bug: all event payloads used Claude CLI session ID instead of nergal session ID, causing cross-session state contamination.
 
 ## Requirements
 
@@ -76,8 +76,8 @@ The collapsed sidebar width SHALL be 32px to accommodate 10px indicators with an
 - **WHEN** the sidebar is collapsed
 - **THEN** it renders at 32px width with `SessionIndicator` at md size for each session
 
-### Requirement: Event payloads use cluihud session ID
-All Tauri event payloads (`plan:ready`, `cost:update`, `cwd:changed`, `file:changed`, `statusline:update`, `ask:user`, `permission:denied`) SHALL use `cluihud_session_id` (falling back to Claude CLI session ID) in the `session_id` field. Frontend listeners SHALL use `payload.session_id` to route state to the correct session.
+### Requirement: Event payloads use nergal session ID
+All Tauri event payloads (`plan:ready`, `cost:update`, `cwd:changed`, `file:changed`, `statusline:update`, `ask:user`, `permission:denied`) SHALL use `nergal_session_id` (falling back to Claude CLI session ID) in the `session_id` field. Frontend listeners SHALL use `payload.session_id` to route state to the correct session.
 
 #### Scenario: Plan ready routed to correct session
 - **WHEN** session 4 generates a plan while session 3 is active in the UI

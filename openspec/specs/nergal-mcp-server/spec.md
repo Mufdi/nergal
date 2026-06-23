@@ -1,11 +1,11 @@
-# cluihud-mcp-server Specification
+# nergal-mcp-server Specification
 
 ## Purpose
-TBD - created by archiving change cluihud-mcp-server. Update Purpose after archive.
+TBD - created by archiving change nergal-mcp-server. Update Purpose after archive.
 ## Requirements
-### Requirement: MCP daemon owned by the cluihud process
+### Requirement: MCP daemon owned by the nergal process
 
-The system SHALL run a single MCP server as part of the cluihud application process, holding the global view of all live sessions across every open workspace. The daemon SHALL be the sole authority for the session directory. A "live session" SHALL be defined as a session with an active PTY child tracked by the daemon.
+The system SHALL run a single MCP server as part of the nergal application process, holding the global view of all live sessions across every open workspace. The daemon SHALL be the sole authority for the session directory. A "live session" SHALL be defined as a session with an active PTY child tracked by the daemon.
 
 #### Scenario: Daemon answers from global state
 
@@ -33,11 +33,11 @@ The system SHALL expose a dedicated Unix socket for MCP, separate from the fire-
 
 ### Requirement: stdio MCP shim
 
-The system SHALL provide a `cluihud mcp` CLI subcommand that acts as a stdio MCP server: it speaks MCP JSON-RPC on its stdin/stdout to the spawning agent and relays requests to the daemon over the dedicated socket. The shim SHALL be agent-agnostic.
+The system SHALL provide a `nergal mcp` CLI subcommand that acts as a stdio MCP server: it speaks MCP JSON-RPC on its stdin/stdout to the spawning agent and relays requests to the daemon over the dedicated socket. The shim SHALL be agent-agnostic.
 
 #### Scenario: Shim relays a tool call
 
-- **WHEN** an agent invokes a cluihud MCP tool
+- **WHEN** an agent invokes a nergal MCP tool
 - **THEN** the shim SHALL relay the request to the daemon, await the framed response, and return it over stdio
 
 #### Scenario: Daemon unreachable — degraded mode
@@ -56,11 +56,11 @@ The MCP socket SHALL be the only access boundary, enforced by uid: mode `0600` i
 
 ### Requirement: Cooperative identity from the env hint
 
-The system SHALL identify a caller by the `CLUIHUD_SESSION_ID` (and `CLAUDE_CODE_SESSION_ID`) it reports, validated against the daemon's live session registry. Identity is cooperative (the env value is trusted within the uid boundary, not adversarially authenticated). An id that does not match a live session SHALL leave the caller unidentified. Identity SHALL be re-validated lazily on each tool call to survive a connect-before-register race, and the binding SHALL be torn down on disconnect.
+The system SHALL identify a caller by the `NERGAL_SESSION_ID` (and `CLAUDE_CODE_SESSION_ID`) it reports, validated against the daemon's live session registry. Identity is cooperative (the env value is trusted within the uid boundary, not adversarially authenticated). An id that does not match a live session SHALL leave the caller unidentified. Identity SHALL be re-validated lazily on each tool call to survive a connect-before-register race, and the binding SHALL be torn down on disconnect.
 
 #### Scenario: Valid env id resolves
 
-- **WHEN** a shim reports a `CLUIHUD_SESSION_ID` that matches a live session in the registry
+- **WHEN** a shim reports a `NERGAL_SESSION_ID` that matches a live session in the registry
 - **THEN** the daemon SHALL bind the connection to that session
 
 #### Scenario: Unknown id is unidentified
@@ -103,17 +103,17 @@ The system SHALL expose a `whoami` MCP tool that returns the caller's own resolv
 
 ### Requirement: Idempotent, reversible agent registration
 
-The system SHALL register the `cluihud mcp` shim in spawned agents' MCP configuration idempotently (no duplicate entries on re-run), pinning the installed absolute path `/usr/bin/cluihud` (NOT a `$PATH` resolution, which would bake in the `~/.cargo/bin` shadow per CLAUDE.md). It SHALL register into every agent whose MCP-server config schema is supported — Claude Code (`~/.claude.json` `mcpServers`, JSON), Codex (`~/.codex/config.toml` `[mcp_servers.cluihud]`, TOML edited format-preservingly), and OpenCode (`~/.config/opencode/opencode.json` `mcp.cluihud` `{type:"local",command,enabled}`, JSON) — and SHALL skip an agent with no MCP-server mechanism (Pi: no `mcp` CLI/config surface). Per-agent registration SHALL be best-effort: a failure for one agent (or a missing/corrupt config) SHALL be logged and SHALL NOT block the others or the enable/disable toggle. It SHALL deregister at disable time on a best-effort basis (the app is running); it SHALL NOT attempt uninstall-time deregistration from maintainer scripts (multi-user `$HOME` is unreliable). An orphaned entry after uninstall SHALL degrade to a structured error at agent startup, not a hard agent failure.
+The system SHALL register the `nergal mcp` shim in spawned agents' MCP configuration idempotently (no duplicate entries on re-run), pinning the installed absolute path `/usr/bin/nergal` (NOT a `$PATH` resolution, which would bake in the `~/.cargo/bin` shadow per CLAUDE.md). It SHALL register into every agent whose MCP-server config schema is supported — Claude Code (`~/.claude.json` `mcpServers`, JSON), Codex (`~/.codex/config.toml` `[mcp_servers.nergal]`, TOML edited format-preservingly), and OpenCode (`~/.config/opencode/opencode.json` `mcp.nergal` `{type:"local",command,enabled}`, JSON) — and SHALL skip an agent with no MCP-server mechanism (Pi: no `mcp` CLI/config surface). Per-agent registration SHALL be best-effort: a failure for one agent (or a missing/corrupt config) SHALL be logged and SHALL NOT block the others or the enable/disable toggle. It SHALL deregister at disable time on a best-effort basis (the app is running); it SHALL NOT attempt uninstall-time deregistration from maintainer scripts (multi-user `$HOME` is unreliable). An orphaned entry after uninstall SHALL degrade to a structured error at agent startup, not a hard agent failure.
 
 #### Scenario: Registration is idempotent
 
-- **WHEN** cluihud registers the MCP server and the entry already exists
+- **WHEN** nergal registers the MCP server and the entry already exists
 - **THEN** it SHALL NOT create a duplicate entry
 
 #### Scenario: Per-agent registration preserves other config
 
-- **WHEN** cluihud registers into an agent config that already holds other MCP servers (and, for TOML, comments/formatting)
-- **THEN** only the `cluihud` entry SHALL be added/updated, leaving every other server, key, comment and whitespace intact
+- **WHEN** nergal registers into an agent config that already holds other MCP servers (and, for TOML, comments/formatting)
+- **THEN** only the `nergal` entry SHALL be added/updated, leaving every other server, key, comment and whitespace intact
 
 #### Scenario: An unsupported agent is skipped, a failing one does not block others
 
@@ -123,7 +123,7 @@ The system SHALL register the `cluihud mcp` shim in spawned agents' MCP configur
 #### Scenario: Deregistration on disable
 
 - **WHEN** the MCP server is disabled
-- **THEN** the `cluihud mcp` entry SHALL be removed from agent configs so sessions do not try to spawn it
+- **THEN** the `nergal mcp` entry SHALL be removed from agent configs so sessions do not try to spawn it
 
 ### Requirement: MCP server off by default
 
@@ -131,6 +131,6 @@ The setting `mcp_server_enabled` SHALL default to off for the initial release. T
 
 #### Scenario: Default off
 
-- **WHEN** cluihud runs with no prior MCP setting
+- **WHEN** nergal runs with no prior MCP setting
 - **THEN** the MCP server SHALL be disabled and not registered into agent configs
 

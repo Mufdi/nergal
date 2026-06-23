@@ -1,6 +1,6 @@
 //! Dedicated MCP transport: length-framed JSON over a Unix socket.
 //!
-//! This is a NEW socket (`/tmp/cluihud-mcp.sock`), deliberately NOT the hook
+//! This is a NEW socket (`/tmp/nergal-mcp.sock`), deliberately NOT the hook
 //! socket (`hooks/server.rs:202`), which is fire-and-forget (newline-delimited,
 //! no response path) and cannot carry MCP request→response. Framing is a
 //! 4-byte little-endian length prefix + payload, which — unlike the hook

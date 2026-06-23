@@ -157,7 +157,7 @@ export function AnnotationsDrawer({ open, onToggle }: AnnotationsDrawerProps) {
             <TooltipTrigger
               render={
                 <button
-                  onClick={() => document.dispatchEvent(new CustomEvent("cluihud:toggle-global-comment"))}
+                  onClick={() => document.dispatchEvent(new CustomEvent("nergal:toggle-global-comment"))}
                   className="rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
                 />
               }

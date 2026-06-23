@@ -273,8 +273,8 @@ export function GitPanel({ sessionId }: GitPanelProps) {
       if (detail?.path) handleRouteToConflictChip(detail.path);
       else if (conflictedFiles[0]) handleRouteToConflictChip(conflictedFiles[0]);
     }
-    document.addEventListener("cluihud:open-first-conflict", onOpenFirst);
-    return () => document.removeEventListener("cluihud:open-first-conflict", onOpenFirst);
+    document.addEventListener("nergal:open-first-conflict", onOpenFirst);
+    return () => document.removeEventListener("nergal:open-first-conflict", onOpenFirst);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conflictedFiles]);
 

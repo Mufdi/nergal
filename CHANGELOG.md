@@ -28,7 +28,7 @@
 * Added vault search: a global search modal plus an `@@` mention picker in the terminal and scratchpad for referencing vault notes mid-prompt
 * Added vault note pinning: pinned notes persist as tabs, reload when the note changes on disk, and their content is injected as agent context at spawn/resume
 * Added an Obsidian note reading panel with wikilink rendering and a vault note finder (Ctrl+Shift+Q)
-* Added `cluihud://` deep links to open files or spawn sessions straight from Obsidian, including when Nergal isn't running yet
+* Added `nergal://` deep links to open files or spawn sessions straight from Obsidian, including when Nergal isn't running yet
 * Added Obsidian templates to the command palette: any note in the templates folder can be sent to the prompt, keyboard-navigable
 * Added non-git workspaces: any directory works — sessions share it without worktrees, the sidebar shows a badge, and the Git panel offers "Init git" to convert
 * Added branch rename from the Git panel header, the status bar, or Ctrl+Alt+R; local-only, so the remote branch and open PRs keep their name
@@ -61,13 +61,13 @@
 * Fixed `Ctrl+Shift+B` orphaning focus when the right panel collapsed and not capturing focus when it expanded; both directions now route focus deterministically (collapse → terminal, expand → panel)
 * Fixed `Ctrl+ñ` blurring the terminal when it was already focused instead of acting as a hard-focus; pressing it from any zone now reliably moves focus into the active terminal
 * Fixed the Cleanup session / Finish merge buttons in the Git panel getting pushed against the banner edge when the description grew — both banners now use proper flex sizing so the action keeps breathing room
-* Removed the legacy `plansDirectory` field from cluihud's own Settings; only the agent's `plansDirectory` matters, and existing `config.json` files keep the field silently ignored
+* Removed the legacy `plansDirectory` field from nergal's own Settings; only the agent's `plansDirectory` matters, and existing `config.json` files keep the field silently ignored
 
 ## v0.1.3 — 2026-05-20
 
-* Added per-agent theme sync: switching themes in Settings now propagates the active palette to pi (live, via its custom-theme hot-reload), OpenCode (next-launch, via `~/.config/opencode/themes/cluihud-active.json` + best-effort live API), and Codex (syntax-only, via `~/.codex/config.toml` `tui.theme`)
+* Added per-agent theme sync: switching themes in Settings now propagates the active palette to pi (live, via its custom-theme hot-reload), OpenCode (next-launch, via `~/.config/opencode/themes/nergal-active.json` + best-effort live API), and Codex (syntax-only, via `~/.codex/config.toml` `tui.theme`)
 * Added Settings → About section (Alt+7) with the running version, install source (.deb / AppImage / dev), a single "Update" button that mutates through `Checking → Up to date | Available → Downloading → Downloaded`, and an inline "What's new in v0.1.x" changelog fetched from the current release on GitHub
-* Added .deb update flow: when an update is available the new package downloads to `~/Downloads/` (respecting `xdg-user-dir DOWNLOAD`) and offers "Reveal in file manager" — cluihud never prompts for `sudo`; the user runs their own package manager
+* Added .deb update flow: when an update is available the new package downloads to `~/Downloads/` (respecting `xdg-user-dir DOWNLOAD`) and offers "Reveal in file manager" — nergal never prompts for `sudo`; the user runs their own package manager
 * Added an amber warning banner in About when running a dev build, so the check still works for testing but the install action is suppressed
 * Fixed the "Open on GitHub" icon next to each PR (PR viewer + PRs chip) doing nothing — the Tauri webview silently drops `<a target="_blank">` for security; both call sites now use `@tauri-apps/plugin-shell::open` so the click reliably opens the browser
 * Fixed the right panel forgetting its collapsed/expanded state when switching sessions; per-session memory now restores whichever pane state the user left behind

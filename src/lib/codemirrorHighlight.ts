@@ -3,7 +3,7 @@ import { HighlightStyle } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
 import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark";
 
-// Light variant tuned for cluihud's white card surface (`v1-light`).
+// Light variant tuned for nergal's white card surface (`v1-light`).
 // Token families kept to ~6-8 hue groups so syntax stays legible without
 // turning into a rainbow on long files. Greens/blues/violets sit on the
 // saturated-but-readable end of the Tailwind palette.

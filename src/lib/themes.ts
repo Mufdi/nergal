@@ -451,7 +451,7 @@ interface ThemeSnapshot {
 }
 
 /// Key under which the active theme snapshot is mirrored in localStorage.
-export const THEME_CACHE_KEY = "cluihud:theme";
+export const THEME_CACHE_KEY = "nergal:theme";
 
 function writeCacheSnapshot(snapshot: ThemeSnapshot): void {
   try {

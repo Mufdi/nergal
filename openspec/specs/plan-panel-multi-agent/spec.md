@@ -98,12 +98,12 @@ When the Plans panel renders for a `FileBased` session and the scanned directory
 - **THEN** the same empty state renders (no error)
 - **AND** the secondary hint guides the user to the configuration that controls the path
 
-### Requirement: Decorative plans_directory cluihud config field removed
+### Requirement: Decorative plans_directory nergal config field removed
 
-The `Config::plans_directory` field in `~/.config/cluihud/config.json` SHALL be removed from the active config schema. The corresponding form field in `SettingsPanel.tsx` SHALL be removed. Plan path resolution SHALL come from the agent adapter's `plan_capability()`, not from cluihud's own config.
+The `Config::plans_directory` field in `~/.config/nergal/config.json` SHALL be removed from the active config schema. The corresponding form field in `SettingsPanel.tsx` SHALL be removed. Plan path resolution SHALL come from the agent adapter's `plan_capability()`, not from nergal's own config.
 
 #### Scenario: Legacy config tolerated on load
-- **WHEN** cluihud loads a `config.json` containing a legacy `plans_directory` field from a previous version
+- **WHEN** nergal loads a `config.json` containing a legacy `plans_directory` field from a previous version
 - **THEN** the field SHALL be ignored without error
 - **AND** the config SHALL load successfully
 - **AND** on next save, the field SHALL NOT be re-emitted

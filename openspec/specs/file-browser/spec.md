@@ -50,7 +50,7 @@ The system SHALL open files in a CodeMirror 6 editor rendered as a tab in the ri
 
 #### Scenario: Editor dark theme
 - **WHEN** the editor renders
-- **THEN** it SHALL use a dark theme consistent with the cluihud color palette
+- **THEN** it SHALL use a dark theme consistent with the nergal color palette
 
 #### Scenario: File editing
 - **WHEN** user modifies content in the editor and saves (Ctrl+S)

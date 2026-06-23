@@ -134,11 +134,11 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-/// Default scratchpad directory: `~/.config/cluihud/scratchpad/`.
+/// Default scratchpad directory: `~/.config/nergal/scratchpad/`.
 pub fn default_scratchpad_dir() -> PathBuf {
     let base =
         dirs::config_dir().unwrap_or_else(|| dirs::home_dir().expect("home dir").join(".config"));
-    base.join("cluihud").join("scratchpad")
+    base.join("nergal").join("scratchpad")
 }
 
 /// Ensure the scratchpad directory exists. Creates parent dirs if needed.
@@ -396,7 +396,7 @@ mod tests {
     use std::os::unix::fs::symlink;
 
     fn tmpdir() -> PathBuf {
-        let p = std::env::temp_dir().join(format!("cluihud-scratch-test-{}", Uuid::new_v4()));
+        let p = std::env::temp_dir().join(format!("nergal-scratch-test-{}", Uuid::new_v4()));
         fs::create_dir_all(&p).unwrap();
         p
     }

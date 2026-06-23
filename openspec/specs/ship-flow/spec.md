@@ -60,7 +60,7 @@ Before creating a pull request (via Ship or explicit PR action), the system SHAL
 - **THEN** title is set to the subject of the most recent commit, body is populated with the commit subjects list + a diffstat summary, and the commits list preview shows each commit's short hash and subject
 
 #### Scenario: Dialog loads project template
-- **WHEN** `.cluihud/pr-template.md` exists in the workspace repo root
+- **WHEN** `.nergal/pr-template.md` exists in the workspace repo root
 - **THEN** the template content is appended to the body prefill after the commits list and diffstat
 
 #### Scenario: Enter confirms, Escape cancels
@@ -81,7 +81,7 @@ The system SHALL expose a `get_pr_preview_data` Tauri command that returns the s
 - **THEN** the returned commits list has 4 entries ordered newest-first, duplicates removed by subject
 
 #### Scenario: Returns null template when file absent
-- **WHEN** `.cluihud/pr-template.md` does not exist
+- **WHEN** `.nergal/pr-template.md` does not exist
 - **THEN** the response's template field is null (or empty)
 
 ### Requirement: CI status polling for active session

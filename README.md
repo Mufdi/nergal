@@ -36,7 +36,7 @@ The result is a keyboard-first HUD where the agent stays in the centerpiece term
 - **Vault as agent context** — Pin vault notes to a session and their content is injected as agent context at spawn/resume. Pinned notes persist as tabs and reload when the note changes on disk.
 - **Vault search + `@@` mentions** — Global search modal over the vault, plus an `@@` mention picker in the terminal and scratchpad for referencing notes mid-prompt. A reading panel renders notes with wikilinks.
 - **Passive knowledge growth** — Quick capture into an inbox note, a per-session session log, and automatic MOC notes with backlinks written when a session ends.
-- **Deep links + templates** — `cluihud://` links open files or spawn sessions straight from Obsidian (cold-start included), and vault templates are sendable to the prompt from the command palette.
+- **Deep links + templates** — `nergal://` links open files or spawn sessions straight from Obsidian (cold-start included), and vault templates are sendable to the prompt from the command palette.
 
 ### ClickUp integration
 
@@ -120,11 +120,11 @@ pnpm tauri build
 # Bundles in src-tauri/target/release/bundle/{deb,rpm,appimage}/
 ```
 
-The agent CLI's hook entries point at the `cluihud` binary (the internal name — see *Status* below). Install it on your `PATH` and let Nergal write the hook config:
+The agent CLI's hook entries point at the `nergal` binary (the internal name — see *Status* below). Install it on your `PATH` and let Nergal write the hook config:
 
 ```bash
 cargo install --path src-tauri --force
-cluihud setup
+nergal setup
 ```
 
 ## Scope
@@ -137,7 +137,7 @@ cluihud setup
 
 **Active development.** Features land in [OpenSpec changes](./openspec/changes/) before they ship as [specs](./openspec/specs/). Expect iteration; the surface is not yet stable.
 
-**Naming.** The user-facing brand is **Nergal**. Internally — the binary, hook subcommands (`cluihud hook ...`), env vars (`CLUIHUD_SESSION_ID`), IPC paths (`/tmp/cluihud.sock`), and config (`~/.config/cluihud/`) — the project keeps the original name `cluihud` for backward compatibility with developer machines already running it. Both names refer to the same project.
+**Naming.** The user-facing brand is **Nergal**. Internally — the binary, hook subcommands (`nergal hook ...`), env vars (`NERGAL_SESSION_ID`), IPC paths (`/tmp/nergal.sock`), and config (`~/.config/nergal/`) — the project keeps the original name `nergal` for backward compatibility with developer machines already running it. Both names refer to the same project.
 
 ## Inspiration
 

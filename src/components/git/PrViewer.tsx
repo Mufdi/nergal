@@ -684,8 +684,8 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
         return !open;
       });
     }
-    document.addEventListener("cluihud:toggle-file-picker", onToggle);
-    return () => document.removeEventListener("cluihud:toggle-file-picker", onToggle);
+    document.addEventListener("nergal:toggle-file-picker", onToggle);
+    return () => document.removeEventListener("nergal:toggle-file-picker", onToggle);
   }, [isActive, listenerActive, selectedFile, prFiles]);
 
   // Ctrl+Shift+R routes here when the user is on the PRs chip (see the
@@ -695,8 +695,8 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
   useEffect(() => {
     if (!isActive || !listenerActive) return;
     function onApply() { applyWithClaude(); }
-    document.addEventListener("cluihud:apply-pr-annotations", onApply);
-    return () => document.removeEventListener("cluihud:apply-pr-annotations", onApply);
+    document.addEventListener("nergal:apply-pr-annotations", onApply);
+    return () => document.removeEventListener("nergal:apply-pr-annotations", onApply);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive, listenerActive, annotations.length, owningSessionId, isOwningSessionActive]);
 
@@ -1046,7 +1046,7 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
         {pickerOpen && prFiles.length > 0 && (
           <>
             <div
-              className="absolute inset-0 z-30 bg-scrim cluihud-blur-sm"
+              className="absolute inset-0 z-30 bg-scrim nergal-blur-sm"
               onClick={() => setPickerOpen(false)}
             />
             <div className="absolute inset-0 z-40 flex items-start justify-center px-6 pt-12 pointer-events-none">

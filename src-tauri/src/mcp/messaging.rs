@@ -3,7 +3,7 @@
 //! ([`super::router`]), the message store ([`crate::db`]), and state-aware
 //! delivery ([`super::delivery`]).
 //!
-//! Delivery posture (Decision 4): cluihud labels relayed context advisory and
+//! Delivery posture (Decision 4): nergal labels relayed context advisory and
 //! cannot attribute a downstream autonomous action to it — there is no
 //! provenance gate, by design. The kill-switch + labeling are the whole
 //! enforceable surface.
@@ -49,7 +49,7 @@ pub fn send_to_session(
     if !cfg.enabled {
         return Ok(json!({
             "status": "cross_session_disabled",
-            "hint": "cross-session messaging is off — enable it in cluihud Settings → MCP",
+            "hint": "cross-session messaging is off — enable it in nergal Settings → MCP",
         }));
     }
     if message.trim().is_empty() {
@@ -197,7 +197,7 @@ pub fn send_to_session(
     let delivery_status = if target_busy || just_idled {
         "queued"
     } else {
-        delivery::drain_idle(&ctx.db, ctx.delivery.as_ref(), to);
+        delivery::drain_idle(&ctx.db, ctx.delivery.as_ref(), to, cfg.enabled);
         "delivered"
     };
 

@@ -68,7 +68,7 @@ export function Select({
           focusables[nextIdx].scrollIntoView({ block: "nearest" });
         }}
         className={cn(
-          "cluihud-focus-ring flex h-9 w-full items-center justify-between rounded-md border border-input bg-secondary text-foreground px-3 py-1 text-sm shadow-xs transition-colors",
+          "nergal-focus-ring flex h-9 w-full items-center justify-between rounded-md border border-input bg-secondary text-foreground px-3 py-1 text-sm shadow-xs transition-colors",
           "disabled:cursor-not-allowed disabled:opacity-60",
           className,
         )}

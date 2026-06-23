@@ -58,7 +58,7 @@ The system SHALL surface a native confirmation UI for each pending request, show
 #### Scenario: Auto-mode cannot bypass the gate
 
 - **WHEN** an agent runs under any bypass/auto permission mode and raises a request
-- **THEN** the gate SHALL still require explicit human action — no agent permission mode can reach the cluihud gate, by construction
+- **THEN** the gate SHALL still require explicit human action — no agent permission mode can reach the nergal gate, by construction
 
 #### Scenario: User edits before approving
 
@@ -86,7 +86,7 @@ A pending request SHALL have a configurable timeout (default ~1 hour, with an up
 
 ### Requirement: Approval reuses existing creation with a uniqueness check; no setup-runner
 
-On approval, the system SHALL resolve `workspace_id → repo_path`, verify the target slug does NOT collide with an existing `.worktrees/cluihud/{slug}`, create the worktree via the existing machinery, apply the existing `LaunchOptions` (permission preset + short `startup_command` prelude), submit the dedicated prompt as the first turn via `pending_prompts`, then transfer control to the user. The system SHALL NOT run a project setup-runner (none exists; "Workspace presets" is a separate unimplemented backlog item) and SHALL NOT claim to.
+On approval, the system SHALL resolve `workspace_id → repo_path`, verify the target slug does NOT collide with an existing `.worktrees/nergal/{slug}`, create the worktree via the existing machinery, apply the existing `LaunchOptions` (permission preset + short `startup_command` prelude), submit the dedicated prompt as the first turn via `pending_prompts`, then transfer control to the user. The system SHALL NOT run a project setup-runner (none exists; "Workspace presets" is a separate unimplemented backlog item) and SHALL NOT claim to.
 
 #### Scenario: Approved spawn runs the dedicated prompt
 
@@ -95,13 +95,13 @@ On approval, the system SHALL resolve `workspace_id → repo_path`, verify the t
 
 #### Scenario: Slug collision is refused, never injected into a live worktree
 
-- **WHEN** the target slug collides with an existing `.worktrees/cluihud/{slug}`
+- **WHEN** the target slug collides with an existing `.worktrees/nergal/{slug}`
 - **THEN** the system SHALL refuse the create (surfacing it in the gate / requiring a branch edit) and SHALL NOT inject the prompt into or spawn a second PTY on the existing worktree
 
 #### Scenario: Control passes to the user
 
 - **WHEN** the dedicated initial prompt has been delivered
-- **THEN** control of the new session SHALL belong to the user and cluihud SHALL NOT drive it further
+- **THEN** control of the new session SHALL belong to the user and nergal SHALL NOT drive it further
 
 #### Scenario: Create failure resolves as failed
 
@@ -113,14 +113,14 @@ On approval, the system SHALL resolve `workspace_id → repo_path`, verify the t
 - **WHEN** `create_worktree` succeeds but the subsequent PTY/session spawn fails
 - **THEN** the system SHALL roll back the just-created worktree via `remove_worktree` before resolving `failed{reason}`, leaving no orphan worktree on disk (if rollback itself fails, the orphan path SHALL be named in the reason)
 
-### Requirement: Worktree lifecycle via cluihud tooling, no auto-delete
+### Requirement: Worktree lifecycle via nergal tooling, no auto-delete
 
-The created worktree SHALL use the existing `.worktrees/cluihud/{slug}` convention and be removable via cluihud's own `remove_worktree`. The system SHALL NOT auto-delete an approved worktree; the user owns its removal. The system SHALL NOT rely on CC's own `/worktree` unlock-on-finish behavior for externally-created worktrees.
+The created worktree SHALL use the existing `.worktrees/nergal/{slug}` convention and be removable via nergal's own `remove_worktree`. The system SHALL NOT auto-delete an approved worktree; the user owns its removal. The system SHALL NOT rely on CC's own `/worktree` unlock-on-finish behavior for externally-created worktrees.
 
 #### Scenario: User owns cleanup
 
 - **WHEN** an approved worktree session is later idle or finished
-- **THEN** the system SHALL NOT auto-delete it, and it SHALL remain removable by the user via cluihud's worktree tooling
+- **THEN** the system SHALL NOT auto-delete it, and it SHALL remain removable by the user via nergal's worktree tooling
 
 ### Requirement: Kill-switch and volatile-queue behavior
 

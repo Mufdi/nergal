@@ -45,7 +45,7 @@ The system SHALL fetch the cost from `db.get_cost(session_id)`, the file count f
 
 #### Scenario: Header captures agent metadata
 
-- **WHEN** `SessionStart` fires for a Codex session named "auth-refactor" in workspace "cluihud"
+- **WHEN** `SessionStart` fires for a Codex session named "auth-refactor" in workspace "nergal"
 - **THEN** the header SHALL include `Agent: codex (gpt-5-codex)` (or whatever the resolved model_name is)
 - **AND** the workspace name SHALL match the user-visible workspace label
 

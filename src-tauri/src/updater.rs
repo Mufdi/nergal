@@ -1,6 +1,6 @@
 //! In-app update flow.
 //!
-//! Source-aware on purpose: cluihud must never trigger a sudo prompt, so
+//! Source-aware on purpose: nergal must never trigger a sudo prompt, so
 //! `.deb` installs only ever stage the new package in `~/Downloads/` and
 //! defer the elevation to the user's own package-manager UI. AppImage
 //! signed auto-install is a future addition; today both paths share the
@@ -37,7 +37,7 @@ pub fn detect_install_source() -> InstallSource {
     }
     if matches!(
         exe_str.as_ref(),
-        "/usr/bin/cluihud" | "/usr/local/bin/cluihud"
+        "/usr/bin/nergal" | "/usr/local/bin/nergal"
     ) {
         return InstallSource::Deb;
     }
@@ -111,7 +111,7 @@ pub struct UpdateCheckResult {
 const GITHUB_RELEASES_URL: &str = "https://api.github.com/repos/Mufdi/nergal/releases/latest";
 
 /// GitHub rejects unauthenticated requests without a User-Agent header.
-const USER_AGENT: &str = concat!("cluihud-updater/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("nergal-updater/", env!("CARGO_PKG_VERSION"));
 
 /// Distinct from `check_app_update`: this is always-on "what's new in
 /// what you have", so dev builds and up-to-date installs still see a
@@ -204,7 +204,7 @@ pub async fn check_app_update() -> Result<UpdateCheckResult, String> {
     })
 }
 
-/// Numeric-segments-only on purpose: cluihud's tag space is `0.1.x`.
+/// Numeric-segments-only on purpose: nergal's tag space is `0.1.x`.
 /// A future `1.0.0-rc.1` will fail the numeric parse and fall back to
 /// the string-inequality branch, which is still safer than blindly
 /// trusting `latest != current` (mis-ordered tags wouldn't false-flag
@@ -375,8 +375,8 @@ fn default_app_for_mime(mime: &str) -> Option<String> {
 pub fn open_log_file() -> Result<(), String> {
     let log_path = dirs::cache_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("cluihud")
-        .join("cluihud.log");
+        .join("nergal")
+        .join("nergal.log");
     if !log_path.is_file() {
         return Err(format!(
             "no log file at {} (only written when launched from the app launcher)",
@@ -413,8 +413,8 @@ fn read_os_pretty_name() -> Option<String> {
 fn read_log_tail(n: usize) -> String {
     let log_path = dirs::cache_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("cluihud")
-        .join("cluihud.log");
+        .join("nergal")
+        .join("nergal.log");
     match std::fs::read_to_string(&log_path) {
         Ok(content) => {
             let lines: Vec<&str> = content.lines().collect();
@@ -478,7 +478,7 @@ mod tests {
 
     #[test]
     fn install_source_recognizes_dev_build_path() {
-        let exe = "/home/user/projects/cluihud/src-tauri/target/release/cluihud";
+        let exe = "/home/user/projects/nergal/src-tauri/target/release/nergal";
         assert!(exe.contains("/target/release/"));
     }
 

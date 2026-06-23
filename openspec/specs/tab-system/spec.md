@@ -138,8 +138,8 @@ When a Files or Diff tab is active, a narrow sidebar SHALL appear on the right e
 The status bar SHALL display the active session's git branch name, dirty indicator (dot), and commits-ahead count. This data SHALL refresh on session switch and after tool-use hook events.
 
 #### Scenario: Status bar shows branch info
-- **WHEN** active session is on branch "cluihud/fix-auth" with uncommitted changes and 3 commits ahead
-- **THEN** status bar shows "⎇ cluihud/fix-auth ● +3"
+- **WHEN** active session is on branch "nergal/fix-auth" with uncommitted changes and 3 commits ahead
+- **THEN** status bar shows "⎇ nergal/fix-auth ● +3"
 
 #### Scenario: Main branch session shows no worktree info
 - **WHEN** active session has no worktree (first session, uses repo root)

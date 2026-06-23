@@ -100,7 +100,7 @@ impl AgentAdapter for PiAdapter {
         }
     }
 
-    fn requires_cluihud_setup(&self) -> bool {
+    fn requires_nergal_setup(&self) -> bool {
         false
     }
 
@@ -175,7 +175,7 @@ impl AgentAdapter for PiAdapter {
             args.push(context.to_string());
         }
         let mut env = HashMap::new();
-        env.insert("CLUIHUD_SESSION_ID".into(), ctx.session_id.to_string());
+        env.insert("NERGAL_SESSION_ID".into(), ctx.session_id.to_string());
         Ok(SpawnSpec { binary, args, env })
     }
 
@@ -246,36 +246,34 @@ impl AgentAdapter for PiAdapter {
         Ok(())
     }
 
-    fn agent_internal_session_id(&self, cluihud_session_id: &str) -> Option<String> {
-        self.session_uuids
-            .get(cluihud_session_id)
-            .map(|r| r.clone())
+    fn agent_internal_session_id(&self, nergal_session_id: &str) -> Option<String> {
+        self.session_uuids.get(nergal_session_id).map(|r| r.clone())
     }
 
     async fn apply_theme(&self, palette: &ThemePalette) -> Result<(), AdapterError> {
         let themes_dir = self.state_dir.join("themes");
-        let target = themes_dir.join("cluihud-active.json");
+        let target = themes_dir.join("nergal-active.json");
         let body = serde_json::to_vec_pretty(&build_pi_theme(palette))
             .map_err(|e| AdapterError::Transport(anyhow::anyhow!(e)))?;
         write_atomic(&target, &body).await?;
         let settings = self.state_dir.join("settings.json");
         let pointed_at_us =
-            crate::agents::update_settings_theme_if_safe(&settings, "cluihud-active").await?;
+            crate::agents::update_settings_theme_if_safe(&settings, "nergal-active").await?;
         if !pointed_at_us {
             tracing::debug!(
-                "pi settings.json points at a user-selected theme; cluihud-active.json written but inactive"
+                "pi settings.json points at a user-selected theme; nergal-active.json written but inactive"
             );
         }
         Ok(())
     }
 }
 
-/// Translate cluihud's `ThemePalette` into the 51-token pi theme schema.
+/// Translate nergal's `ThemePalette` into the 51-token pi theme schema.
 ///
-/// `vars` carries the cluihud palette as named refs; `colors` is a semantic
+/// `vars` carries the nergal palette as named refs; `colors` is a semantic
 /// indirection layer (`"accent"` references `vars.accent`). Tokens set to
 /// `""` inherit the terminal default foreground so pi messages pick up
-/// cluihud's `--terminal-foreground` automatically.
+/// nergal's `--terminal-foreground` automatically.
 fn build_pi_theme(palette: &ThemePalette) -> serde_json::Value {
     let mut vars = serde_json::Map::new();
     vars.insert("accent".into(), palette.accent.as_str().into());
@@ -356,7 +354,7 @@ fn build_pi_theme(palette: &ThemePalette) -> serde_json::Value {
         "$schema".into(),
         "https://raw.githubusercontent.com/badlogic/pi-mono/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json".into(),
     );
-    root.insert("name".into(), "cluihud-active".into());
+    root.insert("name".into(), "nergal-active".into());
     root.insert("vars".into(), serde_json::Value::Object(vars));
     root.insert("colors".into(), serde_json::Value::Object(colors));
     root.insert("export".into(), serde_json::Value::Object(export));
@@ -407,9 +405,9 @@ mod tests {
     }
 
     #[test]
-    fn requires_cluihud_setup_is_false_for_pi() {
+    fn requires_nergal_setup_is_false_for_pi() {
         let a = PiAdapter::new();
-        assert!(!a.requires_cluihud_setup());
+        assert!(!a.requires_nergal_setup());
     }
 
     fn sample_palette() -> ThemePalette {
@@ -491,20 +489,20 @@ mod tests {
             assert!(colors.contains_key(*key), "missing pi color token: {key}");
         }
         assert_eq!(colors.len(), required.len());
-        assert_eq!(json["name"], "cluihud-active");
+        assert_eq!(json["name"], "nergal-active");
         assert_eq!(json["vars"]["accent"], "#7aa2f7");
         assert_eq!(json["export"]["pageBg"], "#1a1b26");
     }
 
     #[tokio::test]
-    async fn apply_theme_writes_cluihud_active_json() {
+    async fn apply_theme_writes_nergal_active_json() {
         let state = tempfile::tempdir().unwrap();
         let adapter = PiAdapter::with_state_dir(state.path().to_path_buf());
         adapter.apply_theme(&sample_palette()).await.unwrap();
-        let theme_path = state.path().join("themes/cluihud-active.json");
+        let theme_path = state.path().join("themes/nergal-active.json");
         let raw = tokio::fs::read_to_string(&theme_path).await.unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(parsed["name"], "cluihud-active");
+        assert_eq!(parsed["name"], "nergal-active");
         assert_eq!(parsed["vars"]["accent"], "#7aa2f7");
     }
 
@@ -526,7 +524,7 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(parsed["theme"], "my-custom");
         assert_eq!(parsed["defaultModel"], "sonnet");
-        let theme_path = state.path().join("themes/cluihud-active.json");
+        let theme_path = state.path().join("themes/nergal-active.json");
         assert!(
             theme_path.exists(),
             "theme file written even when user opted out"
@@ -549,7 +547,7 @@ mod tests {
             .await
             .unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(parsed["theme"], "cluihud-active");
+        assert_eq!(parsed["theme"], "nergal-active");
         assert_eq!(parsed["defaultModel"], "sonnet");
         assert_eq!(parsed["lastChangelogVersion"], "0.72.1");
     }

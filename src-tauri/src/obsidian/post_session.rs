@@ -56,7 +56,7 @@ pub struct Marker {
 fn config_dir() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| dirs::home_dir().expect("home dir").join(".config"))
-        .join("cluihud")
+        .join("nergal")
 }
 
 fn pending_dir() -> PathBuf {
@@ -108,15 +108,15 @@ fn write_marker_in(
     Ok(())
 }
 
-/// Spawn `cluihud post-session` detached so it outlives the GUI process.
+/// Spawn `nergal post-session` detached so it outlives the GUI process.
 #[cfg(target_os = "linux")]
 pub fn spawn_runner_detached() -> Result<()> {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
 
     // Re-exec the running binary (dev or installed), not a PATH lookup that
-    // could hit a stale `cluihud` lacking the post-session subcommand.
-    let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("cluihud"));
+    // could hit a stale `nergal` lacking the post-session subcommand.
+    let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("nergal"));
     let mut cmd = Command::new(exe);
     cmd.arg("post-session")
         .stdin(Stdio::null())
@@ -132,7 +132,7 @@ pub fn spawn_runner_detached() -> Result<()> {
         });
     }
     cmd.spawn()
-        .context("spawning detached cluihud post-session")?;
+        .context("spawning detached nergal post-session")?;
     Ok(())
 }
 
@@ -152,7 +152,7 @@ pub fn probe_spawn_health() -> bool {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
 
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("cluihud"));
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("nergal"));
     let mut cmd = Command::new(exe);
     cmd.arg("post-session")
         .stdin(Stdio::null())

@@ -521,7 +521,7 @@ pub fn linear_spawn_worktree_with_issue(
 
         let base = slug.as_deref().unwrap_or(&issue_title);
         let slug = crate::commands::derive_worktree_slug(base, ts);
-        let worktree_dir = repo_path.join(".worktrees").join("cluihud").join(&slug);
+        let worktree_dir = repo_path.join(".worktrees").join("nergal").join(&slug);
         if worktree_dir.exists() {
             return Err(format!("a worktree already exists for slug '{slug}'"));
         }
@@ -541,7 +541,7 @@ pub fn linear_spawn_worktree_with_issue(
             name: issue_title,
             workspace_id: workspace_id.clone(),
             worktree_path: Some(wt_path),
-            worktree_branch: Some(format!("cluihud/{slug}")),
+            worktree_branch: Some(format!("nergal/{slug}")),
             merge_target: None,
             status: crate::models::SessionStatus::Idle,
             created_at: ts,

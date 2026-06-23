@@ -47,7 +47,7 @@ pub fn list_branches(repo_path: &Path) -> Result<Vec<String>> {
 pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str) -> Result<()> {
     let tmp_dir = repo_path
         .join(".worktrees")
-        .join("cluihud")
+        .join("nergal")
         .join("_merge_tmp");
 
     // Clean up any leftover temp worktree
@@ -254,13 +254,13 @@ pub fn is_worktree_dirty(path: &Path) -> Result<bool> {
     Ok(!stdout.trim().is_empty())
 }
 
-/// Create a git worktree at `<repo>/.worktrees/cluihud/<slug>/` with branch `cluihud/<slug>`.
+/// Create a git worktree at `<repo>/.worktrees/nergal/<slug>/` with branch `nergal/<slug>`.
 ///
 /// If the branch already exists, reuses it. If the worktree directory already exists, returns it.
 /// Returns the absolute path to the created worktree directory.
 pub fn create_worktree(repo_path: &Path, slug: &str) -> Result<PathBuf> {
-    let worktree_path = repo_path.join(".worktrees").join("cluihud").join(slug);
-    let branch_name = format!("cluihud/{slug}");
+    let worktree_path = repo_path.join(".worktrees").join("nergal").join(slug);
+    let branch_name = format!("nergal/{slug}");
 
     // Already exists on disk — reuse
     if worktree_path.exists() {
@@ -861,7 +861,7 @@ pub fn pr_preview_data(cwd: &Path, base: &str, head: &str) -> Result<PrPreviewDa
         }
     }
 
-    let template_path = cwd.join(".cluihud").join("pr-template.md");
+    let template_path = cwd.join(".nergal").join("pr-template.md");
     let template = std::fs::read_to_string(&template_path).ok();
 
     let staged = staged_files(cwd).unwrap_or_default();

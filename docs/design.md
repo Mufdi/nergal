@@ -3,7 +3,7 @@
 # YAML front matter for agents, Markdown prose for rationale). Runtime source
 # of truth is src/styles/globals.css; this block mirrors it for agent
 # consumption. Update both together.
-name: Nergal (cluihud)
+name: Nergal (nergal)
 identity: >-
   Linear dark + factory.ai orange + JetBrains Air islands. Keyboard-first
   desktop wrapper for agent CLIs. Dense, IDE-like, dark-only.
@@ -52,7 +52,7 @@ signature-patterns:
 interaction-patterns: ./patterns.md
 ---
 
-# cluihud — Design System
+# nergal — Design System
 
 > **Identity**: Linear dark + factory.ai orange + JetBrains Air islands.
 > A keyboard-first desktop wrapper for Claude Code. Dense, IDE-like, dark-only. Surfaces nest in three tiers; orange (`#f97316`) is reserved for affirmative state and the user's path of action.
@@ -177,7 +177,7 @@ only for modal surfaces. Use `rounded-4xl` only for badges/pills.
 
 ## 2. Surface system
 
-cluihud has **three** background tiers. New surfaces must fit into one of them.
+nergal has **three** background tiers. New surfaces must fit into one of them.
 
 ```
 ┌─ bg-background  #141415 ──────────────────────────────────┐
@@ -370,7 +370,7 @@ confirm `Dialog` — `confirm()` from `@/lib/swal` is the canonical yes/no.
 > code has NO visible effect for any user who has already opened that panel.**
 > To actually change an existing panel's size you must ALSO clear/reset its
 > persisted row (`DELETE`/`UPDATE … WHERE panel_id='<id>'` in
-> `~/.config/cluihud/cluihud.db`). Sibling panels that should match (e.g. the
+> `~/.config/nergal/nergal.db`). Sibling panels that should match (e.g. the
 > ClickUp and Linear detail modals) drift purely from independent user resizes,
 > not code — their `DEFAULT_GEOMETRY`/`MIN_*` constants are already identical.
 > `[error] modal size change "didn't apply". Fix: reset the persisted row in floating_panel_geometry, don't only edit DEFAULT_GEOMETRY.`
@@ -487,7 +487,7 @@ holds inline actions: `Open as Tab` (text + ExternalLink icon), close (X).
 >
 ```
 
-**Active-row treatment** is the cluihud signature: an **inset 2-px orange
+**Active-row treatment** is the nergal signature: an **inset 2-px orange
 left bar** via `box-shadow`, not a full background highlight. This is the
 "current row in a list of peers" pattern.
 

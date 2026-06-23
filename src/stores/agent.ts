@@ -32,7 +32,7 @@ export const FULL_CAPABILITY_SET: ReadonlySet<AgentCapability> = new Set<AgentCa
 ]);
 
 /// Detection result for a single registered adapter, emitted by the backend
-/// on startup and on `cluihud rescan-agents` via the `agents:detected` event.
+/// on startup and on `nergal rescan-agents` via the `agents:detected` event.
 export interface AgentDetection {
   id: string;
   installed: boolean;

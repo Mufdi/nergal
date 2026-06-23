@@ -16,7 +16,7 @@ export function PulseDots({
       {Array.from({ length: count }, (_, i) => (
         <span
           key={i}
-          className={`cluihud-dot shrink-0 rounded-full bg-current ${dotClassName}`}
+          className={`nergal-dot shrink-0 rounded-full bg-current ${dotClassName}`}
           style={{ animationDelay: `${i * 150}ms` }}
         />
       ))}

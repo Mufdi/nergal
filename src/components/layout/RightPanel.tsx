@@ -74,8 +74,8 @@ export function RightPanel({ collapsed }: RightPanelProps) {
     function handleToggle() {
       setAnnotationsDrawerOpen((prev) => !prev);
     }
-    document.addEventListener("cluihud:toggle-annotations-drawer", handleToggle);
-    return () => document.removeEventListener("cluihud:toggle-annotations-drawer", handleToggle);
+    document.addEventListener("nergal:toggle-annotations-drawer", handleToggle);
+    return () => document.removeEventListener("nergal:toggle-annotations-drawer", handleToggle);
   }, []);
 
   useEffect(() => {
@@ -97,8 +97,8 @@ export function RightPanel({ collapsed }: RightPanelProps) {
   useEffect(() => {
     if (activeTab?.type === "plan" || activeTab?.type === "spec") {
       const handleAnnotationAdded = () => setAnnotationsDrawerOpen(true);
-      document.addEventListener("cluihud:annotation-added", handleAnnotationAdded);
-      return () => document.removeEventListener("cluihud:annotation-added", handleAnnotationAdded);
+      document.addEventListener("nergal:annotation-added", handleAnnotationAdded);
+      return () => document.removeEventListener("nergal:annotation-added", handleAnnotationAdded);
     }
   }, [activeTab?.type]);
   const tabOpenedSignal = useAtomValue(tabOpenedSignalAtom);
@@ -126,10 +126,10 @@ export function RightPanel({ collapsed }: RightPanelProps) {
         setPickerOpen(false);
       }
     }
-    document.addEventListener("cluihud:toggle-file-picker", handlePickerToggle);
+    document.addEventListener("nergal:toggle-file-picker", handlePickerToggle);
     window.addEventListener("keydown", handleKeyDown, true);
     return () => {
-      document.removeEventListener("cluihud:toggle-file-picker", handlePickerToggle);
+      document.removeEventListener("nergal:toggle-file-picker", handlePickerToggle);
       window.removeEventListener("keydown", handleKeyDown, true);
     };
   }, [pickerOpen]);
@@ -179,7 +179,7 @@ export function RightPanel({ collapsed }: RightPanelProps) {
     // theme's card surface instead of letting the workspace canvas
     // (--background) bleed through. Without this, light theme leaks a gray
     // vertical strip across the right column.
-    return <div className="h-full w-full rounded-lg border-2 border-border bg-card cluihud-panel-focus" />;
+    return <div className="h-full w-full rounded-lg border-2 border-border bg-card nergal-panel-focus" />;
   }
 
   const hasPicker = activeTab && PICKER_TYPES.includes(activeTab.type);
@@ -188,7 +188,7 @@ export function RightPanel({ collapsed }: RightPanelProps) {
     const showAnnotationsDrawer = activeTab.type === "plan" || activeTab.type === "spec";
     const cardBaseHeight = showAnnotationsDrawer ? "flex-1" : "h-full";
     const card = (
-      <div className={`relative flex ${cardBaseHeight} flex-col overflow-hidden rounded-lg border-2 ${borderClass} bg-card cluihud-panel-focus`} data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus} onKeyDown={handlePanelKeyDown}>
+      <div className={`relative flex ${cardBaseHeight} flex-col overflow-hidden rounded-lg border-2 ${borderClass} bg-card nergal-panel-focus`} data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus} onKeyDown={handlePanelKeyDown}>
         <div className="flex shrink-0 items-center border-b border-border/50">
           <div className="flex-1 overflow-hidden">
             <TabBar />
@@ -250,7 +250,7 @@ export function RightPanel({ collapsed }: RightPanelProps) {
   if (activePanelView) {
     const hasPanelPicker = PICKER_TYPES.includes(activePanelView);
     return (
-      <div className={`relative flex h-full flex-col overflow-hidden rounded-lg border-2 ${borderClass} bg-card cluihud-panel-focus`} data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
+      <div className={`relative flex h-full flex-col overflow-hidden rounded-lg border-2 ${borderClass} bg-card nergal-panel-focus`} data-focus-zone="panel" tabIndex={-1} onMouseDown={handlePanelFocus}>
         {tabs.length > 0 ? (
           <div className="flex shrink-0 items-center border-b border-border/50">
             <div className="flex-1 overflow-hidden">
@@ -282,7 +282,7 @@ export function RightPanel({ collapsed }: RightPanelProps) {
   }
 
   return (
-    <div className={`flex h-full flex-col rounded-lg border-2 ${borderClass} bg-card cluihud-panel-focus`}>
+    <div className={`flex h-full flex-col rounded-lg border-2 ${borderClass} bg-card nergal-panel-focus`}>
       {tabs.length > 0 && (
         <div className="flex shrink-0 items-center border-b border-border/50">
           <div className="flex-1 overflow-hidden">
@@ -370,7 +370,7 @@ function NavigablePickerContainer({ type, className }: { type: TabType; classNam
   return (
     <div
       ref={containerRef}
-      className={`cluihud-glow w-full max-w-xs max-h-[70%] overflow-y-auto rounded-lg border-2 border-primary bg-card shadow-lg outline-none ${className ?? ""}`}
+      className={`nergal-glow w-full max-w-xs max-h-[70%] overflow-y-auto rounded-lg border-2 border-primary bg-card shadow-lg outline-none ${className ?? ""}`}
       data-nav-container
       tabIndex={-1}
       onKeyDown={handleKeyDown}
@@ -383,7 +383,7 @@ function NavigablePickerContainer({ type, className }: { type: TabType; classNam
 function FilePickerOverlay({ type, onClose }: { type: TabType; onClose: () => void }) {
   return (
     <>
-      <div className="absolute inset-0 z-30 bg-scrim cluihud-blur-md" onClick={onClose} />
+      <div className="absolute inset-0 z-30 bg-scrim nergal-blur-md" onClick={onClose} />
       <div className="absolute inset-0 z-40 flex items-center justify-center px-6 pointer-events-none">
         <NavigablePickerContainer type={type} className="pointer-events-auto" />
       </div>
@@ -396,7 +396,7 @@ function FilePickerOverlay({ type, onClose }: { type: TabType; onClose: () => vo
 function VaultPickerOverlay({ onClose }: { onClose: () => void }) {
   return (
     <>
-      <div className="absolute inset-0 z-30 bg-scrim cluihud-blur-md" onClick={onClose} />
+      <div className="absolute inset-0 z-30 bg-scrim nergal-blur-md" onClick={onClose} />
       <div className="absolute inset-0 z-40 flex items-center justify-center px-6 pointer-events-none">
         <VaultNoteFinder onClose={onClose} className="pointer-events-auto" />
       </div>
@@ -566,8 +566,8 @@ function GitPanelWrapper() {
       if (paths.length === 0) return;
       setZenMode({ filePath: paths[0], sessionId, files: paths });
     }
-    document.addEventListener("cluihud:expand-zen-git", onExpandGit);
-    return () => document.removeEventListener("cluihud:expand-zen-git", onExpandGit);
+    document.addEventListener("nergal:expand-zen-git", onExpandGit);
+    return () => document.removeEventListener("nergal:expand-zen-git", onExpandGit);
   }, [sessionId, files, setZenMode]);
   return sessionId ? <GitPanel sessionId={sessionId} /> : null;
 }
@@ -590,11 +590,11 @@ function DiffWithExpand({ tabId, filePath, sessionId }: { tabId: string; filePat
         setZenMode({ filePath: filePaths[0], sessionId, files: filePaths });
       }
     }
-    document.addEventListener("cluihud:expand-zen", onExpand);
-    document.addEventListener("cluihud:expand-zen-git", onExpandGit);
+    document.addEventListener("nergal:expand-zen", onExpand);
+    document.addEventListener("nergal:expand-zen-git", onExpandGit);
     return () => {
-      document.removeEventListener("cluihud:expand-zen", onExpand);
-      document.removeEventListener("cluihud:expand-zen-git", onExpandGit);
+      document.removeEventListener("nergal:expand-zen", onExpand);
+      document.removeEventListener("nergal:expand-zen-git", onExpandGit);
     };
   }, [filePath, sessionId, filePaths, setZenMode]);
 

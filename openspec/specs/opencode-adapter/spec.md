@@ -21,17 +21,17 @@ The system SHALL ship an `OpenCodeAdapter` in `src-tauri/src/agents/opencode/mod
 
 ### Requirement: Each session runs its own opencode serve instance
 
-For every cluihud session bound to OpenCode, the system SHALL spawn a dedicated `opencode serve` child process on a per-session ephemeral port. Sessions SHALL NOT share a single `opencode serve` instance.
+For every nergal session bound to OpenCode, the system SHALL spawn a dedicated `opencode serve` child process on a per-session ephemeral port. Sessions SHALL NOT share a single `opencode serve` instance.
 
 #### Scenario: Two concurrent OpenCode sessions
 
-- **WHEN** the user has two simultaneous OpenCode sessions in cluihud
+- **WHEN** the user has two simultaneous OpenCode sessions in nergal
 - **THEN** the supervisor SHALL spawn two `opencode serve` processes on two distinct ports
 - **AND** each session's SSE client SHALL connect to its own server's `/event` endpoint
 
 #### Scenario: Server lifecycle tied to session
 
-- **WHEN** a cluihud OpenCode session is destroyed
+- **WHEN** a nergal OpenCode session is destroyed
 - **THEN** the supervisor SHALL SIGTERM the corresponding `opencode serve` child within 5 seconds
 - **AND** SHALL SIGKILL if it remains alive past the SIGTERM grace window
 
@@ -53,7 +53,7 @@ The supervisor SHALL request an ephemeral port from `opencode serve` (via `--por
 
 ### Requirement: SSE consumer normalizes events to the trait's TranscriptEvent
 
-The SSE client SHALL parse events from `opencode serve`'s `/event` stream and translate them to `TranscriptEvent` and `BackendEvent` shapes consumed by the cluihud `EventSink`. The frontend SHALL NOT see SSE-specific shapes.
+The SSE client SHALL parse events from `opencode serve`'s `/event` stream and translate them to `TranscriptEvent` and `BackendEvent` shapes consumed by the nergal `EventSink`. The frontend SHALL NOT see SSE-specific shapes.
 
 #### Scenario: tool.execute.before mapped to ToolUse
 
@@ -108,9 +108,9 @@ The SSE client SHALL parse events from `opencode serve`'s `/event` stream and tr
 - **AND** the agent picker shows OpenCode as available
 - **AND** the settings panel shows a banner instructing the user to run `opencode auth login`
 
-### Requirement: BYO credentials — cluihud does not store API keys
+### Requirement: BYO credentials — nergal does not store API keys
 
-The OpenCode settings panel SHALL NOT contain inputs for provider API keys or tokens. Cluihud SHALL delegate credential management entirely to `opencode auth login` (executed by the user from a terminal).
+The OpenCode settings panel SHALL NOT contain inputs for provider API keys or tokens. Nergal SHALL delegate credential management entirely to `opencode auth login` (executed by the user from a terminal).
 
 #### Scenario: Settings panel guidance
 
@@ -135,27 +135,27 @@ The frontend Workspace SHALL route the central content area based on `agent_id`.
 
 ### Requirement: Orphaned opencode serve cleanup at startup
 
-At app startup, the system SHALL scan `~/.local/state/cluihud/opencode-pids/` for PID files of `opencode serve` instances whose parent cluihud process is no longer alive, and SHALL kill those orphans.
+At app startup, the system SHALL scan `~/.local/state/nergal/opencode-pids/` for PID files of `opencode serve` instances whose parent nergal process is no longer alive, and SHALL kill those orphans.
 
-#### Scenario: Cluihud crashed leaving opencode serve alive
+#### Scenario: Nergal crashed leaving opencode serve alive
 
-- **WHEN** a previous cluihud run crashed without graceful shutdown
+- **WHEN** a previous nergal run crashed without graceful shutdown
 - **AND** an `opencode serve` child process is still running with its PID file present
-- **THEN** at next cluihud startup, the supervisor SHALL detect the orphan and kill it before initializing new sessions
+- **THEN** at next nergal startup, the supervisor SHALL detect the orphan and kill it before initializing new sessions
 
 ### Requirement: opencode adapter advertises and implements THEME_SYNC
 
 The opencode adapter SHALL declare `AgentCapability::THEME_SYNC` in its capabilities bitset and SHALL implement `apply_theme(palette)` such that:
 
-1. A theme JSON derived from `palette` is written atomically to `~/.config/opencode/themes/cluihud-active.json`. The file SHALL declare `"$schema": "https://opencode.ai/theme.json"` and SHALL include `defs` + a `theme` map covering at minimum the tokens: `primary`, `secondary`, `accent`, `text`, `textMuted`, `background` (the schema-required set).
-2. `~/.config/opencode/tui.json` SHALL be reconciled: if `"theme"` is absent or already `"cluihud-active"`, set it to `"cluihud-active"`; otherwise leave it untouched.
+1. A theme JSON derived from `palette` is written atomically to `~/.config/opencode/themes/nergal-active.json`. The file SHALL declare `"$schema": "https://opencode.ai/theme.json"` and SHALL include `defs` + a `theme` map covering at minimum the tokens: `primary`, `secondary`, `accent`, `text`, `textMuted`, `background` (the schema-required set).
+2. `~/.config/opencode/tui.json` SHALL be reconciled: if `"theme"` is absent or already `"nergal-active"`, set it to `"nergal-active"`; otherwise leave it untouched.
 3. The directory `~/.config/opencode/themes/` SHALL be created if missing.
-4. For each opencode session whose port is registered in the adapter's `session_ports` map, the adapter SHOULD POST `{"command": "theme cluihud-active"}` to `http://127.0.0.1:<port>/tui/execute-command` with a 1.5s timeout. Failures fall back to next-spawn via `tui.json`.
+4. For each opencode session whose port is registered in the adapter's `session_ports` map, the adapter SHOULD POST `{"command": "theme nergal-active"}` to `http://127.0.0.1:<port>/tui/execute-command` with a 1.5s timeout. Failures fall back to next-spawn via `tui.json`.
 
 #### Scenario: Apply theme writes the JSON file
 
 - **WHEN** `apply_theme(palette)` is called
-- **THEN** `~/.config/opencode/themes/cluihud-active.json` SHALL be written atomically
+- **THEN** `~/.config/opencode/themes/nergal-active.json` SHALL be written atomically
 - **AND** the `defs` section SHALL include hex values derived from `palette`
 - **AND** the `theme` map SHALL reference those defs by name
 
@@ -163,7 +163,7 @@ The opencode adapter SHALL declare `AgentCapability::THEME_SYNC` in its capabili
 
 - **WHEN** `~/.config/opencode/tui.json` contains `"theme": "tokyonight"`
 - **THEN** the `theme` key SHALL remain `"tokyonight"`
-- **AND** `cluihud-active.json` SHALL still be written
+- **AND** `nergal-active.json` SHALL still be written
 
 #### Scenario: Live HTTP switch is best-effort
 

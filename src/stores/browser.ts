@@ -31,7 +31,7 @@ export interface BrowserSessionState {
 const DEFAULT_URL = "about:blank";
 
 function emptyState(): BrowserSessionState {
-  // Default `dark` matches cluihud's chrome aesthetic. Sites that respect
+  // Default `dark` matches nergal's chrome aesthetic. Sites that respect
   // `prefers-color-scheme: dark` will render dark; light-only sites stay
   // light. User can flip via the Sun/Moon toolbar button.
   return { tabs: [], activeTabId: null, mode: "dock", colorScheme: "dark" };

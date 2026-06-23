@@ -69,7 +69,7 @@ pub fn suggested_layout_paths(
 fn render_template(name: &str, workspace_path: &Path) -> String {
     let abs = workspace_path.display().to_string();
     let encoded = encode_uri_component(&abs);
-    let link = format!("cluihud://open-workspace?path={encoded}");
+    let link = format!("nergal://open-workspace?path={encoded}");
     format!(
         "# {name}\n\n## Workspace\n\n[Open in Nergal]({link})\n\n`{abs}`\n\n## Decisions\n\n## Log\n"
     )
@@ -148,7 +148,7 @@ mod tests {
         let body = std::fs::read_to_string(&out.path).unwrap();
         assert!(body.contains("# demo"));
         assert!(body.contains("`/home/user/demo`"));
-        assert!(body.contains("cluihud://open-workspace?path=%2Fhome%2Fuser%2Fdemo"));
+        assert!(body.contains("nergal://open-workspace?path=%2Fhome%2Fuser%2Fdemo"));
         assert!(body.contains("[Open in Nergal]"));
         assert!(body.contains("## Workspace"));
         assert!(body.contains("## Decisions"));

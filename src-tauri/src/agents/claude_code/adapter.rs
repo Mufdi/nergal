@@ -9,9 +9,9 @@
 //! Two pieces of state live here, populated by the hook dispatcher when the
 //! corresponding hook event fires for a CC session:
 //! - `pending_plan_fifos`: maps `session_id` → FIFO path written by
-//!   `cluihud hook plan-review`. [`Self::submit_plan_decision`] reads this
+//!   `nergal hook plan-review`. [`Self::submit_plan_decision`] reads this
 //!   to know where to unblock the CLI.
-//! - `pending_ask_fifos`: same, for `cluihud hook ask-user`.
+//! - `pending_ask_fifos`: same, for `nergal hook ask-user`.
 //!
 //! Until the hook dispatcher is rewired (commit 4), these maps stay empty
 //! and `submit_*` returns [`AdapterError::SessionLocked`] on miss. The
@@ -129,7 +129,7 @@ impl AgentAdapter for ClaudeCodeAdapter {
         }
     }
 
-    fn requires_cluihud_setup(&self) -> bool {
+    fn requires_nergal_setup(&self) -> bool {
         true
     }
 
@@ -235,7 +235,7 @@ impl AgentAdapter for ClaudeCodeAdapter {
             args.push(prompt.to_string());
         }
         let mut env = HashMap::new();
-        env.insert("CLUIHUD_SESSION_ID".into(), ctx.session_id.to_string());
+        env.insert("NERGAL_SESSION_ID".into(), ctx.session_id.to_string());
         Ok(SpawnSpec { binary, args, env })
     }
 
@@ -375,7 +375,7 @@ mod tests {
     }
 
     #[test]
-    fn spawn_includes_cluihud_session_id_env() {
+    fn spawn_includes_nergal_session_id_env() {
         let a = ClaudeCodeAdapter::new();
         let cwd = Path::new("/tmp");
         let ctx = SpawnContext {
@@ -391,7 +391,7 @@ mod tests {
         // is a contract we can assert on the success path only.
         if let Ok(spec) = a.spawn(&ctx) {
             assert_eq!(
-                spec.env.get("CLUIHUD_SESSION_ID").map(String::as_str),
+                spec.env.get("NERGAL_SESSION_ID").map(String::as_str),
                 Some("abc-123")
             );
         }

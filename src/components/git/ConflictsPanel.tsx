@@ -111,15 +111,15 @@ const cmTheme = EditorView.theme({
   // pairing was too close on the wheel and washed out at low alpha. Stronger
   // unfocused alpha (0.18 vs 0.10) so the bands read at a glance; focused
   // ramps further (0.32) so the active region pops without strobing.
-  ".cluihud-conflict-line.tone-ours": { backgroundColor: "rgba(59, 130, 246, 0.18)" },
-  ".cluihud-conflict-line.tone-ours.is-focused": { backgroundColor: "rgba(59, 130, 246, 0.32)" },
-  ".cluihud-conflict-line.tone-theirs": { backgroundColor: "rgba(244, 63, 94, 0.18)" },
-  ".cluihud-conflict-line.tone-theirs.is-focused": { backgroundColor: "rgba(244, 63, 94, 0.32)" },
-  ".cluihud-conflict-line.tone-marker": { backgroundColor: "rgba(245, 158, 11, 0.14)", color: "rgba(245, 158, 11, 0.95)" },
-  ".cluihud-conflict-line.tone-marker.is-focused": { backgroundColor: "rgba(245, 158, 11, 0.26)" },
+  ".nergal-conflict-line.tone-ours": { backgroundColor: "rgba(59, 130, 246, 0.18)" },
+  ".nergal-conflict-line.tone-ours.is-focused": { backgroundColor: "rgba(59, 130, 246, 0.32)" },
+  ".nergal-conflict-line.tone-theirs": { backgroundColor: "rgba(244, 63, 94, 0.18)" },
+  ".nergal-conflict-line.tone-theirs.is-focused": { backgroundColor: "rgba(244, 63, 94, 0.32)" },
+  ".nergal-conflict-line.tone-marker": { backgroundColor: "rgba(245, 158, 11, 0.14)", color: "rgba(245, 158, 11, 0.95)" },
+  ".nergal-conflict-line.tone-marker.is-focused": { backgroundColor: "rgba(245, 158, 11, 0.26)" },
   // Inline action bar widget — block decoration sitting above each <<<<<<<
   // line. The button row gives one-click accept without leaving the editor.
-  ".cluihud-accept-bar": {
+  ".nergal-accept-bar": {
     display: "flex", alignItems: "center", gap: "6px",
     padding: "3px 8px",
     borderTop: "1px solid rgba(245, 158, 11, 0.25)",
@@ -128,18 +128,18 @@ const cmTheme = EditorView.theme({
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
     fontSize: "10px",
   },
-  ".cluihud-accept-bar.is-focused": { backgroundColor: "rgba(245, 158, 11, 0.14)" },
-  ".cluihud-accept-bar .label": { color: "rgba(245, 158, 11, 0.9)", marginRight: "auto" },
-  ".cluihud-accept-bar button": {
+  ".nergal-accept-bar.is-focused": { backgroundColor: "rgba(245, 158, 11, 0.14)" },
+  ".nergal-accept-bar .label": { color: "rgba(245, 158, 11, 0.9)", marginRight: "auto" },
+  ".nergal-accept-bar button": {
     padding: "1px 7px", borderRadius: "3px", border: "none", cursor: "pointer",
     fontFamily: "inherit", fontSize: "10px", fontWeight: "500",
   },
-  ".cluihud-accept-bar .btn-ours": { backgroundColor: "rgba(59, 130, 246, 0.20)", color: "#93c5fd" },
-  ".cluihud-accept-bar .btn-ours:hover": { backgroundColor: "rgba(59, 130, 246, 0.35)" },
-  ".cluihud-accept-bar .btn-theirs": { backgroundColor: "rgba(244, 63, 94, 0.22)", color: "#fda4af" },
-  ".cluihud-accept-bar .btn-theirs:hover": { backgroundColor: "rgba(244, 63, 94, 0.40)" },
-  ".cluihud-accept-bar .btn-both": { backgroundColor: "rgba(34, 197, 94, 0.20)", color: "#86efac" },
-  ".cluihud-accept-bar .btn-both:hover": { backgroundColor: "rgba(34, 197, 94, 0.35)" },
+  ".nergal-accept-bar .btn-ours": { backgroundColor: "rgba(59, 130, 246, 0.20)", color: "#93c5fd" },
+  ".nergal-accept-bar .btn-ours:hover": { backgroundColor: "rgba(59, 130, 246, 0.35)" },
+  ".nergal-accept-bar .btn-theirs": { backgroundColor: "rgba(244, 63, 94, 0.22)", color: "#fda4af" },
+  ".nergal-accept-bar .btn-theirs:hover": { backgroundColor: "rgba(244, 63, 94, 0.40)" },
+  ".nergal-accept-bar .btn-both": { backgroundColor: "rgba(34, 197, 94, 0.20)", color: "#86efac" },
+  ".nergal-accept-bar .btn-both:hover": { backgroundColor: "rgba(34, 197, 94, 0.35)" },
 });
 
 /// Block widget rendered above each `<<<<<<<` line in the merged pane. The
@@ -166,7 +166,7 @@ class AcceptActionsWidget extends WidgetType {
 
   toDOM(): HTMLElement {
     const root = document.createElement("div");
-    root.className = `cluihud-accept-bar${this.focused ? " is-focused" : ""}`;
+    root.className = `nergal-accept-bar${this.focused ? " is-focused" : ""}`;
     const label = document.createElement("span");
     label.className = "label";
     label.textContent = `region ${this.regionIdx + 1} · -${this.oursCount} / +${this.theirsCount}`;
@@ -837,8 +837,8 @@ function ConflictView({
         return !open;
       });
     }
-    document.addEventListener("cluihud:toggle-file-picker", onToggle);
-    return () => document.removeEventListener("cluihud:toggle-file-picker", onToggle);
+    document.addEventListener("nergal:toggle-file-picker", onToggle);
+    return () => document.removeEventListener("nergal:toggle-file-picker", onToggle);
   }, [listenerActiveInner, files, path]);
 
   useEffect(() => {
@@ -925,10 +925,10 @@ function ConflictView({
     }
     function onResolveActive() { askClaude(); }
     window.addEventListener("keydown", onKey, true);
-    document.addEventListener("cluihud:resolve-conflict-active-tab", onResolveActive);
+    document.addEventListener("nergal:resolve-conflict-active-tab", onResolveActive);
     return () => {
       window.removeEventListener("keydown", onKey, true);
-      document.removeEventListener("cluihud:resolve-conflict-active-tab", onResolveActive);
+      document.removeEventListener("nergal:resolve-conflict-active-tab", onResolveActive);
     };
   }, [regions, focusedRegion, applyRegion, acceptAll, resetMerged, saveResolution, askClaude, listenerActiveInner, onNavFile, pickerOpen, pickerCursor, files, onPickFile]);
 
@@ -1224,7 +1224,7 @@ function ConflictView({
       {pickerOpen && files.length > 0 && (
         <>
           <div
-            className="absolute inset-0 z-30 bg-scrim cluihud-blur-sm"
+            className="absolute inset-0 z-30 bg-scrim nergal-blur-sm"
             onClick={() => setPickerOpen(false)}
           />
           <div className="absolute inset-0 z-40 flex items-start justify-center px-6 pt-12 pointer-events-none">
@@ -1552,7 +1552,7 @@ function CodePane({ title, accent, value, onChange, readOnly, hint, filePath, wr
         entries.push({
           kind: "line",
           from: lineFrom,
-          cls: `cluihud-conflict-line tone-${h.tone}${h.focused ? " is-focused" : ""}`,
+          cls: `nergal-conflict-line tone-${h.tone}${h.focused ? " is-focused" : ""}`,
         });
       }
     }

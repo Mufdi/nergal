@@ -1,7 +1,7 @@
 # session-summary Specification
 
 ## Purpose
-TBD - created by archiving change cluihud-mcp-server. Update Purpose after archive.
+TBD - created by archiving change nergal-mcp-server. Update Purpose after archive.
 ## Requirements
 ### Requirement: Opt-in AI session summaries (net-new machinery)
 

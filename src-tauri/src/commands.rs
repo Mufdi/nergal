@@ -575,7 +575,7 @@ pub fn load_plan(
 #[tauri::command]
 pub fn send_notification(title: String, body: String) -> Result<(), String> {
     std::process::Command::new("notify-send")
-        .arg("--app-name=cluihud")
+        .arg("--app-name=nergal")
         .arg("--expire-time=4000")
         .arg("--urgency=normal")
         .arg(&title)
@@ -859,12 +859,10 @@ pub fn delete_workspace(db: State<'_, SharedDb>, workspace_id: String) -> Result
 }
 
 #[tauri::command]
-pub fn reorder_workspaces(
-    ordered_ids: Vec<String>,
-    db: State<'_, SharedDb>,
-) -> Result<(), String> {
+pub fn reorder_workspaces(ordered_ids: Vec<String>, db: State<'_, SharedDb>) -> Result<(), String> {
     let db = db.lock().map_err(|e| e.to_string())?;
-    db.set_workspace_order(&ordered_ids).map_err(|e| e.to_string())
+    db.set_workspace_order(&ordered_ids)
+        .map_err(|e| e.to_string())
 }
 
 // -- Session commands --
@@ -908,7 +906,7 @@ pub fn create_session(
         let slug = derive_worktree_slug(&name, ts);
         let wt_path =
             crate::worktree::create_worktree(&repo_path, &slug).map_err(|e| e.to_string())?;
-        let branch = format!("cluihud/{slug}");
+        let branch = format!("nergal/{slug}");
         (Some(wt_path), Some(branch))
     };
     let session_id = format!("{}-{ts}", &workspace_id[..6.min(workspace_id.len())]);
@@ -1291,7 +1289,7 @@ pub struct CleanupResult {
 /// non-blocking toast.
 ///
 /// Transcript files (`~/.claude/projects/<encoded-cwd>/*.jsonl`) are owned
-/// by the Claude Code CLI itself, not cluihud. We do not delete them — the
+/// by the Claude Code CLI itself, not nergal. We do not delete them — the
 /// CLI manages its own transcript lifecycle and we'd be overstepping.
 #[tauri::command]
 pub fn cleanup_merged_session(
@@ -2107,7 +2105,7 @@ pub fn open_in_editor(
 
     let mut command = std::process::Command::new(&cmd);
     // Spawn cwd matches the session — relative file paths from list_directory
-    // would otherwise resolve against cluihud's launch dir and the editor
+    // would otherwise resolve against nergal's launch dir and the editor
     // would report "failed to load".
     command.current_dir(&cwd);
     command.arg(cwd_str.as_ref());
@@ -3116,7 +3114,7 @@ pub async fn list_available_agents(
     Ok(out)
 }
 
-/// Push cluihud's active palette to every adapter that advertises
+/// Push nergal's active palette to every adapter that advertises
 /// `THEME_SYNC`. Invoked from the frontend `applyTheme` flow after the DOM
 /// `data-theme` mutation commits. Failures are logged inside the registry
 /// dispatcher — the command always returns `Ok(())` so the UI never surfaces
@@ -3198,7 +3196,7 @@ pub fn obsidian_enabled(db: State<'_, SharedDb>, workspace_id: String) -> Result
 // command never spawns xdg-open with anything outside our scheme allowlist.
 #[tauri::command]
 pub fn obsidian_open_uri(uri: String) -> Result<(), String> {
-    if !uri.starts_with("obsidian://") && !uri.starts_with("cluihud://") {
+    if !uri.starts_with("obsidian://") && !uri.starts_with("nergal://") {
         return Err(format!("refusing to open unknown scheme: {uri}"));
     }
     std::process::Command::new("xdg-open")

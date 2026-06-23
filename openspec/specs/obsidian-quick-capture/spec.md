@@ -11,7 +11,7 @@ The system SHALL expose a global keyboard shortcut `Ctrl+Alt+Q` that toggles a f
 - **WHEN** the user presses `Ctrl+Alt+Q` while the active workspace has a configured `quick_capture_path`
 - **THEN** the panel SHALL appear with the textarea focused
 - **WHEN** the user types text and presses `Enter` (no Shift modifier)
-- **THEN** the system SHALL append the text to the configured file with a leading `## <ISO timestamp>` header and a trailing `#<tag>` line (tag default `cluihud-inbox`)
+- **THEN** the system SHALL append the text to the configured file with a leading `## <ISO timestamp>` header and a trailing `#<tag>` line (tag default `nergal-inbox`)
 - **AND** the panel SHALL close with a Sileo toast "Captured to <basename>"
 
 #### Scenario: Cancel without save

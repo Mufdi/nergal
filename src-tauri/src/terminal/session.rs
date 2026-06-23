@@ -6,7 +6,7 @@ use wezterm_term::TerminalConfiguration;
 use wezterm_term::color::ColorPalette;
 use wezterm_term::{Terminal, TerminalSize};
 
-use super::config::CluihudTerminalConfig;
+use super::config::NergalTerminalConfig;
 use super::input::map_event;
 use super::types::{CellSnapshot, CursorSnapshot, GridSnapshot, TerminalKeyEvent};
 
@@ -63,14 +63,14 @@ impl TerminalSession {
     /// In tests pass a `Vec<u8>` or `std::io::sink()`; in production this
     /// will be wired to the `portable-pty` master writer.
     pub fn new(cols: u16, rows: u16, writer: Box<dyn Write + Send>) -> Self {
-        Self::with_config(cols, rows, writer, CluihudTerminalConfig::new())
+        Self::with_config(cols, rows, writer, NergalTerminalConfig::new())
     }
 
     pub fn with_config(
         cols: u16,
         rows: u16,
         writer: Box<dyn Write + Send>,
-        config: CluihudTerminalConfig,
+        config: NergalTerminalConfig,
     ) -> Self {
         let size = TerminalSize {
             rows: rows as usize,
@@ -83,7 +83,7 @@ impl TerminalSession {
         let terminal = Terminal::new(
             size,
             Arc::new(config),
-            "cluihud",
+            "nergal",
             env!("CARGO_PKG_VERSION"),
             writer,
         );
@@ -571,9 +571,9 @@ mod tests {
     fn title_updates_via_osc_sequence() {
         let mut s = session(20, 3);
         // OSC 0 sets icon and window title
-        s.advance_bytes(b"\x1b]0;cluihud test\x07");
+        s.advance_bytes(b"\x1b]0;nergal test\x07");
         let grid = s.grid_snapshot();
-        assert_eq!(grid.title.as_deref(), Some("cluihud test"));
+        assert_eq!(grid.title.as_deref(), Some("nergal test"));
     }
 
     #[test]
@@ -621,7 +621,7 @@ mod tests {
         // With Kitty disabled, CSI-u kicks in as the fallback and now
         // Shift+Enter encodes as a distinct CSI-u sequence.
         let w = CapturedWriter::new();
-        let cfg = CluihudTerminalConfig::new().with_kitty_keyboard(false);
+        let cfg = NergalTerminalConfig::new().with_kitty_keyboard(false);
         let mut s = TerminalSession::with_config(80, 24, Box::new(w.clone()), cfg);
 
         s.key_down(&evt("Enter", "Enter")).unwrap();

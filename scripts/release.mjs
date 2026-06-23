@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Release script for Nergal/cluihud. See openspec/changes/release-script/ for the contract.
+// Release script for Nergal/nergal. See openspec/changes/release-script/ for the contract.
 // 2-step ship flow: Claude writes CHANGELOG section in session → this script verifies + bumps + commits + tags + pushes.
 
 import fs from 'node:fs';

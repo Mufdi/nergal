@@ -1,12 +1,12 @@
--- cross-session-messaging: cluihud-owned agent-to-agent message store.
+-- cross-session-messaging: nergal-owned agent-to-agent message store.
 --
--- Renumbered from the planned `015` (tasks §1.1): change 1 (cluihud-mcp-server)
+-- Renumbered from the planned `015` (tasks §1.1): change 1 (nergal-mcp-server)
 -- and the Linear changes consumed 015..027, so the next free version is 028.
 --
 -- Two tables, schema byte-aligned with tasks §1.1 (iprev round 4):
 --   - cross_session_threads: one row per conversation. Budget is a message-count
 --     cap (msg_budget) + a wall-clock deadline (deadline_at) — NOT tokens, which
---     cluihud cannot measure inside an agent turn. `participants` is a JSON array
+--     nergal cannot measure inside an agent turn. `participants` is a JSON array
 --     of session ids; `max_hops` bounds REACH (new participants), not turns.
 --   - cross_session_messages: one row per relayed message. `depth` is per-message
 --     reach (computed sender_depth + new-participant?1:0), not a thread scalar.

@@ -7,8 +7,8 @@
 //! a `SessionCostAggregator` and calls `legacy_usd_for_sonnet4` on the
 //! totals. This test verifies both pipelines produce the same USD result.
 
-use cluihud::agents::claude_code::cost::{parse_cost_from_transcript, parse_cost_line};
-use cluihud::agents::cost_aggregator::{SessionCostAggregator, SessionCostTotals};
+use nergal::agents::claude_code::cost::{parse_cost_from_transcript, parse_cost_line};
+use nergal::agents::cost_aggregator::{SessionCostAggregator, SessionCostTotals};
 
 // Mirror of the private legacy_usd_for_sonnet4 in cost.rs. Kept inline in the
 // test so the bridge stays `pub(crate)` (external callers should consume the

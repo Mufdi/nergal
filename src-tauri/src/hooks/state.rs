@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 /// IPC state file for communication between the GUI app and hook CLI subcommands.
-/// Lives at `~/.claude/cluihud-state.json`.
+/// Lives at `~/.claude/nergal-state.json`.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct HookState {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -17,7 +17,7 @@ pub struct HookState {
 impl HookState {
     fn state_path() -> Result<PathBuf> {
         let home = dirs::home_dir().context("home directory must exist")?;
-        Ok(home.join(".claude").join("cluihud-state.json"))
+        Ok(home.join(".claude").join("nergal-state.json"))
     }
 
     /// Reads the state file. Returns default if file doesn't exist.
@@ -29,7 +29,7 @@ impl HookState {
         let contents = std::fs::read_to_string(&path)
             .with_context(|| format!("reading state: {}", path.display()))?;
         let state: Self =
-            serde_json::from_str(&contents).with_context(|| "parsing cluihud-state.json")?;
+            serde_json::from_str(&contents).with_context(|| "parsing nergal-state.json")?;
         Ok(state)
     }
 

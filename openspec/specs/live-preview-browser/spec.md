@@ -52,7 +52,7 @@ The browser content SHALL be rendered using a `<iframe>` element with restrictiv
 - **AND** user opens the command palette (Cmd+K) or any other React modal
 - **THEN** the modal SHALL render above the iframe (DOM-natural z-order)
 
-#### Scenario: cluihud shortcuts continue to function
+#### Scenario: nergal shortcuts continue to function
 - **WHEN** the browser tab is active and the iframe is visible
 - **AND** user presses Cmd+K, alt+left/right, or ctrl+shift+0
 - **THEN** the shortcuts SHALL behave as in any other tab (the iframe SHALL NOT capture global focus)
@@ -123,7 +123,7 @@ The browser SHALL expose a keyboard shortcut to focus the URL bar when the brows
 - **AND** other panels' shortcuts SHALL behave as before
 
 ### Requirement: Panel expansion via existing ctrl+shift+0
-The browser panel SHALL integrate transparently with cluihud's existing `ctrl+shift+0` shortcut for expanding right panels. No new shortcut wiring SHALL be required.
+The browser panel SHALL integrate transparently with nergal's existing `ctrl+shift+0` shortcut for expanding right panels. No new shortcut wiring SHALL be required.
 
 #### Scenario: ctrl+shift+0 expands the browser panel like other right panels
 - **WHEN** the browser tab is the active tab in the right panel and user presses ctrl+shift+0

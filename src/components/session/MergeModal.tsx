@@ -42,8 +42,8 @@ export function MergeModal({
     setMerging(false);
     invoke<string[]>("list_branches", { workspaceId })
       .then((result) => {
-        // Filter out cluihud/* worktree branches
-        const filtered = result.filter((b) => !b.startsWith("cluihud/"));
+        // Filter out nergal/* worktree branches
+        const filtered = result.filter((b) => !b.startsWith("nergal/"));
         setBranches(filtered);
         if (filtered.length > 0 && !targetBranch) {
           setTargetBranch(filtered[0]);

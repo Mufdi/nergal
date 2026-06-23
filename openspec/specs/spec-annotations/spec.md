@@ -124,7 +124,7 @@ While in annotation mode, the `SpecPanel` toolbar SHALL expose:
 1. A "Global comment" button (and `Ctrl+Shift+O` shortcut) that opens an input for free-form feedback NOT anchored to a specific element. Submitted entries SHALL be stored with `target: "[global]"`.
 2. A "Clear all" button (and `Ctrl+Shift+X` shortcut) that drops all annotations for the current scope (in-memory + SQLite for that `spec_key`) and shows a toast confirmation.
 
-These are post-MVP additions discovered during implementation; they replace the original "explicit Edit directly escape hatch" requirement (which was deferred indefinitely — direct file editing happens in the user's external editor, not in cluihud's spec panel).
+These are post-MVP additions discovered during implementation; they replace the original "explicit Edit directly escape hatch" requirement (which was deferred indefinitely — direct file editing happens in the user's external editor, not in nergal's spec panel).
 
 #### Scenario: Global comment captures non-anchored feedback
 

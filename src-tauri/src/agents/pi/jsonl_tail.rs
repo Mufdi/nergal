@@ -63,7 +63,7 @@ impl Drop for JsonlTailHandle {
 pub fn start_tail(
     path: PathBuf,
     cwd: PathBuf,
-    cluihud_session_id: String,
+    nergal_session_id: String,
     sink: EventSink,
     parse_line: LineParser,
 ) -> JsonlTailHandle {
@@ -85,7 +85,7 @@ pub fn start_tail(
             &parse_line,
             &sink,
             &cwd,
-            &cluihud_session_id,
+            &nergal_session_id,
         )
         .await;
 
@@ -114,7 +114,7 @@ pub fn start_tail(
             tokio::select! {
                 _ = &mut cancel_rx => break,
                 Some(_) = notify_rx.recv() => {
-                    last_offset = read_appended(&mut file, last_offset, &parse_line, &sink, &cwd, &cluihud_session_id).await;
+                    last_offset = read_appended(&mut file, last_offset, &parse_line, &sink, &cwd, &nergal_session_id).await;
                 }
             }
         }
@@ -134,7 +134,7 @@ async fn read_appended(
     parse_line: &LineParser,
     sink: &EventSink,
     cwd: &Path,
-    cluihud_session_id: &str,
+    nergal_session_id: &str,
 ) -> u64 {
     if file.seek(std::io::SeekFrom::Start(offset)).await.is_err() {
         return offset;
@@ -147,7 +147,7 @@ async fn read_appended(
             continue;
         }
         if let Some(ev) = parse_line(line)
-            && let Some(hook_event) = wrap(cluihud_session_id, cwd, ev)
+            && let Some(hook_event) = wrap(nergal_session_id, cwd, ev)
             && sink.send(hook_event).is_err()
         {
             return new_offset;

@@ -193,7 +193,7 @@ export function WorktreeGate() {
   // (keep the requested/project default). Fetched lazily on first request.
   // Pi is excluded: it has no MCP-server mechanism, so a Pi worktree session
   // could not participate in the cross-session/MCP coordination this gate exists
-  // for (it can't call the cluihud tools or be revived via them).
+  // for (it can't call the nergal tools or be revived via them).
   const agentOptions = useMemo<PickerOption[]>(
     () => [
       { value: "default", label: "default" },

@@ -27,7 +27,7 @@ export function dispatchDeepLink(rawUrl: string): void {
     console.warn("[deeplink] invalid url:", rawUrl);
     return;
   }
-  if (parsed.protocol !== "cluihud:") {
+  if (parsed.protocol !== "nergal:") {
     console.warn("[deeplink] unknown protocol:", parsed.protocol);
     return;
   }
@@ -58,7 +58,7 @@ async function handleOpenWorkspace(path: string | null): Promise<void> {
     appStore.set(toastsAtom, {
       type: "error",
       message: "Deep link missing path",
-      description: "cluihud://open-workspace requires ?path=",
+      description: "nergal://open-workspace requires ?path=",
     });
     return;
   }
@@ -117,7 +117,7 @@ async function handleSessionRoute(parsed: URL): Promise<void> {
     appStore.set(toastsAtom, {
       type: "info",
       message: "Deep link received",
-      description: `cluihud://session/${sub || "?"} is not a known action`,
+      description: `nergal://session/${sub || "?"} is not a known action`,
     });
     return;
   }
@@ -147,7 +147,7 @@ async function handleSessionNew(cwd: string | null, prompt: string | null): Prom
     appStore.set(toastsAtom, {
       type: "error",
       message: "Deep link missing cwd",
-      description: "cluihud://session/new requires ?cwd=",
+      description: "nergal://session/new requires ?cwd=",
     });
     return;
   }
@@ -208,7 +208,7 @@ async function handleOpenFile(path: string | null, lineRaw: string | null): Prom
     appStore.set(toastsAtom, {
       type: "error",
       message: "Deep link missing path",
-      description: "cluihud://open-file requires ?path=",
+      description: "nergal://open-file requires ?path=",
     });
     return;
   }

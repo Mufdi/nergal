@@ -8,7 +8,7 @@ const HOOKS: &[HookDef] = &[
     HookDef {
         event: "SessionStart",
         matcher: None,
-        command: "cluihud hook send session-start",
+        command: "nergal hook send session-start",
         is_async: true,
         timeout: None,
         if_condition: None,
@@ -16,7 +16,7 @@ const HOOKS: &[HookDef] = &[
     HookDef {
         event: "SessionEnd",
         matcher: None,
-        command: "cluihud hook send session-end",
+        command: "nergal hook send session-end",
         is_async: true,
         timeout: None,
         if_condition: None,
@@ -24,7 +24,7 @@ const HOOKS: &[HookDef] = &[
     HookDef {
         event: "PermissionRequest",
         matcher: Some("ExitPlanMode"),
-        command: "cluihud hook plan-review",
+        command: "nergal hook plan-review",
         is_async: false,
         timeout: Some(86400),
         if_condition: None,
@@ -32,7 +32,7 @@ const HOOKS: &[HookDef] = &[
     HookDef {
         event: "PreToolUse",
         matcher: None,
-        command: "cluihud hook send pre-tool",
+        command: "nergal hook send pre-tool",
         is_async: true,
         timeout: None,
         if_condition: None,
@@ -42,7 +42,7 @@ const HOOKS: &[HookDef] = &[
         matcher: Some(
             "Write|Edit|MultiEdit|Bash|TaskCreate|TaskUpdate|TodoWrite|NotebookEdit|Create|AskUserQuestion",
         ),
-        command: "cluihud hook send tool-done",
+        command: "nergal hook send tool-done",
         is_async: true,
         timeout: None,
         if_condition: None,
@@ -50,7 +50,7 @@ const HOOKS: &[HookDef] = &[
     HookDef {
         event: "PreToolUse",
         matcher: Some("AskUserQuestion"),
-        command: "cluihud hook ask-user",
+        command: "nergal hook ask-user",
         is_async: false,
         timeout: Some(86400),
         if_condition: None,
@@ -58,7 +58,7 @@ const HOOKS: &[HookDef] = &[
     HookDef {
         event: "Notification",
         matcher: Some("permission_prompt"),
-        command: "cluihud hook notification",
+        command: "nergal hook notification",
         is_async: true,
         timeout: None,
         if_condition: None,
@@ -66,7 +66,7 @@ const HOOKS: &[HookDef] = &[
     HookDef {
         event: "Stop",
         matcher: None,
-        command: "cluihud hook send stop",
+        command: "nergal hook send stop",
         is_async: true,
         timeout: None,
         if_condition: None,
@@ -74,7 +74,7 @@ const HOOKS: &[HookDef] = &[
     HookDef {
         event: "UserPromptSubmit",
         matcher: None,
-        command: "cluihud hook inject-edits",
+        command: "nergal hook inject-edits",
         is_async: false,
         timeout: None,
         if_condition: None,
@@ -94,39 +94,39 @@ struct HookDef {
 const OBSOLETE_HOOKS: &[ObsoleteHook] = &[
     ObsoleteHook {
         event: "PreToolUse",
-        command: "cluihud hook send plan-ready",
+        command: "nergal hook send plan-ready",
         only_without_matcher: false,
     },
     // PostToolUse without matcher replaced by filtered version
     ObsoleteHook {
         event: "PostToolUse",
-        command: "cluihud hook send tool-done",
+        command: "nergal hook send tool-done",
         only_without_matcher: true,
     },
     // CC never shipped these hook events; CC v2.1.138+ rejects the keys as invalid.
     ObsoleteHook {
         event: "CwdChanged",
-        command: "cluihud hook send cwd-changed",
+        command: "nergal hook send cwd-changed",
         only_without_matcher: false,
     },
     ObsoleteHook {
         event: "FileChanged",
-        command: "cluihud hook send file-changed",
+        command: "nergal hook send file-changed",
         only_without_matcher: false,
     },
     ObsoleteHook {
         event: "PermissionDenied",
-        command: "cluihud hook send permission-denied",
+        command: "nergal hook send permission-denied",
         only_without_matcher: false,
     },
     ObsoleteHook {
         event: "TaskCompleted",
-        command: "cluihud hook send task-done",
+        command: "nergal hook send task-done",
         only_without_matcher: false,
     },
     ObsoleteHook {
         event: "TaskCreated",
-        command: "cluihud hook send task-created",
+        command: "nergal hook send task-created",
         only_without_matcher: false,
     },
     // Send-gate Running edge, removed with the guard (2026-06-11): CC queues
@@ -134,7 +134,7 @@ const OBSOLETE_HOOKS: &[ObsoleteHook] = &[
     // settings while only working for Claude Code.
     ObsoleteHook {
         event: "UserPromptSubmit",
-        command: "cluihud hook send user-prompt",
+        command: "nergal hook send user-prompt",
         only_without_matcher: false,
     },
 ];
@@ -180,14 +180,14 @@ pub fn run() -> Result<()> {
     }
 
     if added.is_empty() && removed.is_empty() {
-        println!("All cluihud hooks already configured. Nothing to do.");
+        println!("All nergal hooks already configured. Nothing to do.");
         return Ok(());
     }
 
     backup_settings(&settings_path)?;
     save_settings(&settings_path, &settings)?;
 
-    println!("Configured cluihud hooks in {}", settings_path.display());
+    println!("Configured nergal hooks in {}", settings_path.display());
     println!();
     for cmd in &removed {
         println!("  - {cmd} (obsolete, removed)");
@@ -204,16 +204,16 @@ pub fn run() -> Result<()> {
     Ok(())
 }
 
-/// Match a configured hook command against a target `cluihud hook …` command,
+/// Match a configured hook command against a target `nergal hook …` command,
 /// accepting both the bare binary form and the user-installed
-/// `cluihud-conditional.sh` wrapper form (see `docs/hooks.md`). Without this,
+/// `nergal-conditional.sh` wrapper form (see `docs/hooks.md`). Without this,
 /// settings.json entries that route through the wrapper are invisible to
-/// `cluihud hook setup` cleanup and merge logic.
+/// `nergal hook setup` cleanup and merge logic.
 fn matches_hook_command(cmd: &str, target: &str) -> bool {
     if cmd == target {
         return true;
     }
-    if let Some(args) = target.strip_prefix("cluihud hook ")
+    if let Some(args) = target.strip_prefix("nergal hook ")
         && cmd.contains(WRAPPER_MARKER)
     {
         return cmd.ends_with(args);
@@ -221,20 +221,20 @@ fn matches_hook_command(cmd: &str, target: &str) -> bool {
     false
 }
 
-const WRAPPER_MARKER: &str = "/cluihud-conditional.sh ";
+const WRAPPER_MARKER: &str = "/nergal-conditional.sh ";
 
 /// Wrapper prefix (full script path + trailing space) of one configured
-/// command, if it routes through `cluihud-conditional.sh`.
+/// command, if it routes through `nergal-conditional.sh`.
 fn wrapper_prefix_of(cmd: &str) -> Option<String> {
     let pos = cmd.find(WRAPPER_MARKER)?;
     Some(cmd[..pos + WRAPPER_MARKER.len()].to_string())
 }
 
-/// Scan every configured hook command for the `cluihud-conditional.sh`
+/// Scan every configured hook command for the `nergal-conditional.sh`
 /// wrapper. Deterministic rule for new entries: any existing wrapper-form
-/// cluihud entry ⇒ install new entries wrapped (a bare entry on a wrapper
+/// nergal entry ⇒ install new entries wrapped (a bare entry on a wrapper
 /// machine would spawn-and-fail on every prompt of every CC session outside
-/// cluihud); none ⇒ install bare.
+/// nergal); none ⇒ install bare.
 fn detect_wrapper_prefix(hooks_map: &Map<String, Value>) -> Option<String> {
     for entries in hooks_map.values() {
         let Some(arr) = entries.as_array() else {
@@ -259,9 +259,9 @@ fn detect_wrapper_prefix(hooks_map: &Map<String, Value>) -> Option<String> {
 }
 
 /// Synthesize the on-disk command for a new entry: wrapper form when the
-/// settings already route cluihud hooks through the wrapper, bare otherwise.
+/// settings already route nergal hooks through the wrapper, bare otherwise.
 fn synthesize_command(def_command: &str, wrapper_prefix: Option<&str>) -> String {
-    match (wrapper_prefix, def_command.strip_prefix("cluihud hook ")) {
+    match (wrapper_prefix, def_command.strip_prefix("nergal hook ")) {
         (Some(prefix), Some(args)) => format!("{prefix}{args}"),
         _ => def_command.to_string(),
     }
@@ -424,16 +424,16 @@ mod tests {
     #[test]
     fn matcher_accepts_bare_form() {
         assert!(matches_hook_command(
-            "cluihud hook send tool-done",
-            "cluihud hook send tool-done",
+            "nergal hook send tool-done",
+            "nergal hook send tool-done",
         ));
     }
 
     #[test]
     fn matcher_accepts_wrapper_form() {
         assert!(matches_hook_command(
-            "/home/felipe/.claude/hooks/cluihud-conditional.sh send tool-done",
-            "cluihud hook send tool-done",
+            "/home/felipe/.claude/hooks/nergal-conditional.sh send tool-done",
+            "nergal hook send tool-done",
         ));
     }
 
@@ -441,23 +441,23 @@ mod tests {
     fn matcher_rejects_unrelated_command() {
         assert!(!matches_hook_command(
             "echo send tool-done",
-            "cluihud hook send tool-done",
+            "nergal hook send tool-done",
         ));
     }
 
     #[test]
     fn matcher_rejects_wrong_args_via_wrapper() {
         assert!(!matches_hook_command(
-            "/home/felipe/.claude/hooks/cluihud-conditional.sh send cwd-changed",
-            "cluihud hook send tool-done",
+            "/home/felipe/.claude/hooks/nergal-conditional.sh send cwd-changed",
+            "nergal hook send tool-done",
         ));
     }
 
     #[test]
     fn matcher_rejects_lookalike_script_name() {
         assert!(!matches_hook_command(
-            "/usr/bin/not-cluihud-conditional.sh send tool-done",
-            "cluihud hook send tool-done",
+            "/usr/bin/not-nergal-conditional.sh send tool-done",
+            "nergal hook send tool-done",
         ));
     }
 
@@ -469,7 +469,7 @@ mod tests {
             json!([{
                 "hooks": [{
                     "type": "command",
-                    "command": "/home/felipe/.claude/hooks/cluihud-conditional.sh send cwd-changed",
+                    "command": "/home/felipe/.claude/hooks/nergal-conditional.sh send cwd-changed",
                     "async": true,
                 }]
             }]),
@@ -477,7 +477,7 @@ mod tests {
 
         let obs = ObsoleteHook {
             event: "CwdChanged",
-            command: "cluihud hook send cwd-changed",
+            command: "nergal hook send cwd-changed",
             only_without_matcher: false,
         };
 
@@ -493,7 +493,7 @@ mod tests {
             json!([{
                 "hooks": [{
                     "type": "command",
-                    "command": "/home/felipe/.claude/hooks/cluihud-conditional.sh send tool-done",
+                    "command": "/home/felipe/.claude/hooks/nergal-conditional.sh send tool-done",
                     "async": true,
                 }],
                 "matcher": "Write|Edit"
@@ -503,7 +503,7 @@ mod tests {
         let def = HookDef {
             event: "PostToolUse",
             matcher: Some("Write|Edit|Bash|AskUserQuestion"),
-            command: "cluihud hook send tool-done",
+            command: "nergal hook send tool-done",
             is_async: true,
             timeout: None,
             if_condition: None,
@@ -519,7 +519,7 @@ mod tests {
         );
         let cmd = arr[0]["hooks"][0]["command"].as_str().unwrap();
         assert!(
-            cmd.contains("/cluihud-conditional.sh "),
+            cmd.contains("/nergal-conditional.sh "),
             "wrapper command must be preserved through matcher upgrade"
         );
     }
@@ -532,7 +532,7 @@ mod tests {
             json!([{
                 "hooks": [{
                     "type": "command",
-                    "command": "/home/felipe/.claude/hooks/cluihud-conditional.sh send session-start",
+                    "command": "/home/felipe/.claude/hooks/nergal-conditional.sh send session-start",
                     "async": true,
                 }]
             }]),
@@ -541,7 +541,7 @@ mod tests {
         let def = HookDef {
             event: "SessionStart",
             matcher: None,
-            command: "cluihud hook send session-start",
+            command: "nergal hook send session-start",
             is_async: true,
             timeout: None,
             if_condition: None,
@@ -558,7 +558,7 @@ mod tests {
 
     // Generic async fixture for merge/wrapper-synthesis tests; the command is
     // hypothetical on purpose — the logic under test is command-agnostic.
-    const ASYNC_TEST_COMMAND: &str = "cluihud hook send user-prompt";
+    const ASYNC_TEST_COMMAND: &str = "nergal hook send user-prompt";
 
     fn send_user_prompt_def() -> HookDef {
         HookDef {
@@ -579,7 +579,7 @@ mod tests {
             json!([{
                 "hooks": [{
                     "type": "command",
-                    "command": "/home/felipe/.claude/hooks/cluihud-conditional.sh send stop",
+                    "command": "/home/felipe/.claude/hooks/nergal-conditional.sh send stop",
                     "async": true,
                 }]
             }]),
@@ -588,7 +588,7 @@ mod tests {
         let prefix = detect_wrapper_prefix(&hooks_map);
         assert_eq!(
             prefix.as_deref(),
-            Some("/home/felipe/.claude/hooks/cluihud-conditional.sh ")
+            Some("/home/felipe/.claude/hooks/nergal-conditional.sh ")
         );
 
         let def = send_user_prompt_def();
@@ -597,7 +597,7 @@ mod tests {
         assert_eq!(arr.len(), 1);
         assert_eq!(
             arr[0]["hooks"][0]["command"].as_str().unwrap(),
-            "/home/felipe/.claude/hooks/cluihud-conditional.sh send user-prompt",
+            "/home/felipe/.claude/hooks/nergal-conditional.sh send user-prompt",
         );
         assert_eq!(arr[0]["hooks"][0]["async"], Value::Bool(true));
     }
@@ -605,14 +605,14 @@ mod tests {
     #[test]
     fn insertion_synthesizes_wrapper_form_with_mixed_existing_forms() {
         // One bare + one wrapper entry: ANY wrapper entry wins (a bare entry
-        // on a wrapper machine would spawn-and-fail outside cluihud).
+        // on a wrapper machine would spawn-and-fail outside nergal).
         let mut hooks_map = Map::new();
         hooks_map.insert(
             "SessionStart".into(),
             json!([{
                 "hooks": [{
                     "type": "command",
-                    "command": "cluihud hook send session-start",
+                    "command": "nergal hook send session-start",
                     "async": true,
                 }]
             }]),
@@ -622,7 +622,7 @@ mod tests {
             json!([{
                 "hooks": [{
                     "type": "command",
-                    "command": "/home/felipe/.claude/hooks/cluihud-conditional.sh send stop",
+                    "command": "/home/felipe/.claude/hooks/nergal-conditional.sh send stop",
                     "async": true,
                 }]
             }]),
@@ -635,7 +635,7 @@ mod tests {
             hooks_map["UserPromptSubmit"][0]["hooks"][0]["command"]
                 .as_str()
                 .unwrap(),
-            "/home/felipe/.claude/hooks/cluihud-conditional.sh send user-prompt",
+            "/home/felipe/.claude/hooks/nergal-conditional.sh send user-prompt",
         );
     }
 
@@ -664,7 +664,7 @@ mod tests {
             json!([{
                 "hooks": [{
                     "type": "command",
-                    "command": "/home/x/.claude/hooks/cluihud-conditional.sh send stop",
+                    "command": "/home/x/.claude/hooks/nergal-conditional.sh send stop",
                     "async": true,
                 }]
             }]),
@@ -689,7 +689,7 @@ mod tests {
         let inject = HookDef {
             event: "UserPromptSubmit",
             matcher: None,
-            command: "cluihud hook inject-edits",
+            command: "nergal hook inject-edits",
             is_async: false,
             timeout: None,
             if_condition: None,

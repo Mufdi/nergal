@@ -187,7 +187,7 @@ export function ShipDialog() {
       setStageEntries(entries);
       setToStage(new Set(entries.map((e) => e.path)));
       setStageCursor(0);
-      const filtered = branchList.filter((b) => !b.startsWith("cluihud/"));
+      const filtered = branchList.filter((b) => !b.startsWith("nergal/"));
       setBranches(filtered);
       const initial = filtered.includes(data.base)
         ? data.base

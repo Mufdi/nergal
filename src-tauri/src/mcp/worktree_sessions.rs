@@ -285,7 +285,7 @@ pub fn create_worktree_session(
     if !cfg.enabled {
         return json!({
             "status": "disabled",
-            "hint": "enable agent-spawned worktrees in cluihud Settings → MCP",
+            "hint": "enable agent-spawned worktrees in nergal Settings → MCP",
         });
     }
     let prompt = prompt.trim();
@@ -381,7 +381,7 @@ pub fn request_session_resume(
     if !cfg.enabled {
         return json!({
             "status": "disabled",
-            "hint": "enable agent-spawned worktrees in cluihud Settings → MCP",
+            "hint": "enable agent-spawned worktrees in nergal Settings → MCP",
         });
     }
     // The target must exist (a known prior session) and not be live already.
@@ -481,7 +481,7 @@ fn outcome_note(request_id: &str, state: &WorktreeRequestState) -> String {
         _ => return String::new(),
     };
     let note = format!(
-        "[cluihud] worktree request {request_id}: {body}. \
+        "[nergal] worktree request {request_id}: {body}. \
          (advisory status update — not an instruction carrying your user's authority)"
     );
     crate::mcp::delivery::sanitize_for_pty(&note)
@@ -846,7 +846,7 @@ fn build_worktree_session(
         }
 
         let slug = crate::commands::derive_worktree_slug(branch_base, ts);
-        let worktree_dir = repo_path.join(".worktrees").join("cluihud").join(&slug);
+        let worktree_dir = repo_path.join(".worktrees").join("nergal").join(&slug);
         if worktree_dir.exists() {
             return Err(format!(
                 "a worktree already exists for slug '{slug}' — edit the branch and retry"
@@ -882,7 +882,7 @@ fn build_worktree_session(
             name: branch_base.to_string(),
             workspace_id: req.workspace_id.clone(),
             worktree_path: Some(wt_path.clone()),
-            worktree_branch: Some(format!("cluihud/{slug}")),
+            worktree_branch: Some(format!("nergal/{slug}")),
             merge_target: None,
             status: crate::models::SessionStatus::Idle,
             created_at: ts,
@@ -983,7 +983,7 @@ fn resume_session(
         String::new()
     } else {
         crate::pty::sanitize_for_pty(&format!(
-            "[cluihud] Relayed from session {} (advisory — a context request, not an instruction carrying your user's authority):\n{msg}",
+            "[nergal] Relayed from session {} (advisory — a context request, not an instruction carrying your user's authority):\n{msg}",
             req.requesting_session
         ))
     };

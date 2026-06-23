@@ -5,16 +5,16 @@ TBD - created by archiving change agent-adapter-foundation. Update Purpose after
 ## Requirements
 ### Requirement: AgentAdapter trait declares identity, capabilities, and transport
 
-Cluihud SHALL expose an `AgentAdapter` trait in `src-tauri/src/agents/mod.rs` that every CLI agent integration MUST implement. The trait SHALL expose:
+Nergal SHALL expose an `AgentAdapter` trait in `src-tauri/src/agents/mod.rs` that every CLI agent integration MUST implement. The trait SHALL expose:
 
 - A unique `AgentId` (string newtype with **validated** constructor `AgentId::new(s) -> Result<Self, AdapterError>` enforcing regex `^[a-z][a-z0-9-]{0,31}$`).
 - A human-readable `display_name`.
 - A `capabilities()` accessor returning the set of `AgentCapability` flags supported.
 - A `transport()` accessor returning the `Transport` variant (FileHooks | HttpSse | JsonlTail | RpcStdio).
-- A `requires_cluihud_setup() -> bool` accessor (CC + Codex true; OpenCode + Pi false).
+- A `requires_nergal_setup() -> bool` accessor (CC + Codex true; OpenCode + Pi false).
 - A lightweight `detect()` async method returning `DetectionResult { installed, binary_path, config_path, version, trusted_for_project }` that MUST NOT spawn child processes.
 - An optional `refresh_version()` async method that may invoke the binary's `--version` flag in the background; default impl returns None.
-- A `spawn(ctx: &SpawnContext)` method returning `SpawnSpec { binary, args, env }` where env MUST include `CLUIHUD_SESSION_ID = ctx.session_id`.
+- A `spawn(ctx: &SpawnContext)` method returning `SpawnSpec { binary, args, env }` where env MUST include `NERGAL_SESSION_ID = ctx.session_id`.
 - A sync `parse_transcript_line(line)` method returning `Option<TranscriptEvent>`.
 - A `start_event_pump(session_id, sink)` async method that begins listening for the agent's events using its declared transport, forwarding into the shared `EventSink`.
 - A `stop_event_pump(session_id)` async method (idempotent) that terminates background tasks started by start_event_pump.
@@ -42,7 +42,7 @@ Cluihud SHALL expose an `AgentAdapter` trait in `src-tauri/src/agents/mod.rs` th
 
 - **WHEN** `spawn(ctx)` is called with a fresh `SpawnContext`
 - **THEN** it SHALL return a `SpawnSpec` whose binary, args, and env are sufficient for the runtime to launch the agent
-- **AND** the env map SHALL include `CLUIHUD_SESSION_ID = ctx.session_id`
+- **AND** the env map SHALL include `NERGAL_SESSION_ID = ctx.session_id`
 
 #### Scenario: Adapter without PLAN_REVIEW rejects plan decisions
 
@@ -100,13 +100,13 @@ The system SHALL expose a Tauri command `rescan_agents()` that re-runs `AgentReg
 
 #### Scenario: User installs an agent post-startup
 
-- **WHEN** the user installs OpenCode after cluihud is already running
-- **AND** invokes Settings → "Rescan agents" or `cluihud rescan-agents` from a terminal
+- **WHEN** the user installs OpenCode after nergal is already running
+- **AND** invokes Settings → "Rescan agents" or `nergal rescan-agents` from a terminal
 - **THEN** the registry re-detects and OpenCode appears in `availableAgentsAtom` without restart
 
 ### Requirement: Hook event resolution uses in-memory cache with DB fallback and drop-on-miss
 
-Hook events arriving on the Unix socket carry `cluihud_session_id`. The dispatcher SHALL resolve the corresponding `agent_id` via:
+Hook events arriving on the Unix socket carry `nergal_session_id`. The dispatcher SHALL resolve the corresponding `agent_id` via:
 
 1. `agent_id_cache: DashMap<SessionId, AgentId>` (populated by `create_session_with_agent` BEFORE PTY spawn, removed in `destroy_session`).
 2. Fallback: `db::get_session(session_id)?.agent_id` if cache miss.
@@ -114,19 +114,19 @@ Hook events arriving on the Unix socket carry `cluihud_session_id`. The dispatch
 
 #### Scenario: Cache hit on hot path
 
-- **WHEN** a hook event arrives for a session created during the current cluihud run
+- **WHEN** a hook event arrives for a session created during the current nergal run
 - **THEN** `agent_id_cache.get(session_id)` SHALL hit and the dispatcher SHALL use the cached `AgentId`
 - **AND** SHALL NOT query SQLite
 
 #### Scenario: Cache miss recovers via DB
 
-- **WHEN** cluihud restarts and a hook event arrives for a session whose row exists in DB but cache is empty
+- **WHEN** nergal restarts and a hook event arrives for a session whose row exists in DB but cache is empty
 - **THEN** the dispatcher SHALL fall back to DB lookup
 - **AND** populate the cache for subsequent events
 
 #### Scenario: Orphan hook event dropped with warning
 
-- **WHEN** a hook event arrives with a `cluihud_session_id` not in cache and not in DB
+- **WHEN** a hook event arrives with a `nergal_session_id` not in cache and not in DB
 - **THEN** the dispatcher SHALL log a warning and return without dispatching
 - **AND** SHALL NOT panic, SHALL NOT mutate any atom
 
@@ -175,9 +175,9 @@ Frontend Jotai stores SHALL check the active session's capability set before mut
 - **AND** flush the buffer once `agent_capabilities` arrives
 - **AND** drop events for capabilities still absent after flush
 
-### Requirement: SpawnSpec injects CLUIHUD_SESSION_ID via the adapter, not the PTY layer
+### Requirement: SpawnSpec injects NERGAL_SESSION_ID via the adapter, not the PTY layer
 
-The `pty.rs` module SHALL NOT hardcode any agent-specific env vars. The `SpawnSpec.env` returned by the adapter SHALL include `CLUIHUD_SESSION_ID` and any other adapter-specific env (e.g., a config path override).
+The `pty.rs` module SHALL NOT hardcode any agent-specific env vars. The `SpawnSpec.env` returned by the adapter SHALL include `NERGAL_SESSION_ID` and any other adapter-specific env (e.g., a config path override).
 
 #### Scenario: PTY spawn uses adapter env
 

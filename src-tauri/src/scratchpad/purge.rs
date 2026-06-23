@@ -65,7 +65,7 @@ mod tests {
     use uuid::Uuid;
 
     fn tmpdir() -> std::path::PathBuf {
-        let p = std::env::temp_dir().join(format!("cluihud-purge-{}", Uuid::new_v4()));
+        let p = std::env::temp_dir().join(format!("nergal-purge-{}", Uuid::new_v4()));
         fs::create_dir_all(p.join(".trash")).unwrap();
         p
     }

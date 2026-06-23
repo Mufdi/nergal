@@ -243,7 +243,7 @@ function ScratchpadPathField() {
           type="text"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder="~/.config/cluihud/scratchpad/"
+          placeholder="~/.config/nergal/scratchpad/"
           className="flex-1"
         />
         <Button
@@ -921,7 +921,7 @@ function ClickUpSection() {
         <p className="flex items-start gap-1.5 rounded-md border border-yellow-500/30 bg-yellow-500/10 px-2 py-1.5 text-xs text-yellow-400">
           <AlertTriangle size={13} className="mt-0.5 shrink-0" />
           No OS keyring available — the token was written to
-          ~/.config/cluihud/clickup.toml (mode 0600). Any process running as
+          ~/.config/nergal/clickup.toml (mode 0600). Any process running as
           your user can read it.
         </p>
       )}
@@ -1182,7 +1182,7 @@ function LinearSection() {
         <p className="flex items-start gap-1.5 rounded-md border border-yellow-500/30 bg-yellow-500/10 px-2 py-1.5 text-xs text-yellow-400">
           <AlertTriangle size={13} className="mt-0.5 shrink-0" />
           No OS keyring available — keys were written to
-          ~/.config/cluihud/linear-*.toml (mode 0600). Any process running as
+          ~/.config/nergal/linear-*.toml (mode 0600). Any process running as
           your user can read them.
         </p>
       )}
@@ -1596,7 +1596,7 @@ function ThemeEditor({
                 aria-label={p.label}
                 title={p.label}
                 data-accent-swatch
-                className={`cluihud-focus-ring size-6 rounded-full border-2 transition-transform ${active ? "scale-110 border-foreground" : "border-border hover:scale-105"}`}
+                className={`nergal-focus-ring size-6 rounded-full border-2 transition-transform ${active ? "scale-110 border-foreground" : "border-border hover:scale-105"}`}
                 style={{ backgroundColor: p.value }}
               />
             );
@@ -1621,7 +1621,7 @@ function ThemeEditor({
             react-colorful is keyboard-accessible (Tab into pad, arrows
             move within it). The wrapper class scopes our local sizing
             overrides. */}
-        <div className="cluihud-color-picker mt-2 px-2">
+        <div className="nergal-color-picker mt-2 px-2">
           <HexColorPicker
             color={normalizeHexForPicker(custom.primary)}
             onChange={(hex) => patch({ primary: hex })}
@@ -2586,7 +2586,7 @@ function renderUpdateSupplementary({
         <p className="text-xs text-muted-foreground">
           <CheckCircle2 size={11} className="inline align-text-bottom text-emerald-500" />{" "}
           Saved to <code className="rounded bg-muted px-1 font-mono text-[10px]">{state.path}</code>.
-          Open it with your package manager to install — cluihud keeps running on the current version.
+          Open it with your package manager to install — nergal keeps running on the current version.
         </p>
       );
     case "appimage_downloading":

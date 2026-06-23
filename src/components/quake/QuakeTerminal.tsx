@@ -157,7 +157,7 @@ export function QuakeTerminal() {
       style={{ height }}
       // z-[45]: above the BrowserHost iframe (portaled to body at z-40),
       // below dialogs/zen (z-50+).
-      className={`${closing ? "quake-exit" : "quake-enter"} absolute inset-x-2 top-0 z-[45] flex flex-col overflow-hidden rounded-b-lg border-2 ${borderClass} bg-terminal-surface shadow-xl cluihud-panel-focus`}
+      className={`${closing ? "quake-exit" : "quake-enter"} absolute inset-x-2 top-0 z-[45] flex flex-col overflow-hidden rounded-b-lg border-2 ${borderClass} bg-terminal-surface shadow-xl nergal-panel-focus`}
       onMouseDown={() => {
         setFocusZone("quake");
         terminalService.focusActive("quake");

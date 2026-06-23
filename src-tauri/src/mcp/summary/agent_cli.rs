@@ -36,7 +36,7 @@ impl AgentCliBackend {
 fn unique_message_path() -> std::path::PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("cluihud-summary-{}-{n}.txt", std::process::id()))
+    std::env::temp_dir().join(format!("nergal-summary-{}-{n}.txt", std::process::id()))
 }
 
 #[async_trait]

@@ -37,7 +37,7 @@ impl QuickCaptureWriter {
         // Only the first write seeds the deep link, so captures don't repeat it.
         if is_new && let Some(repo) = project_path.filter(|p| !p.is_empty()) {
             let header = format!(
-                "# Inbox\n\n[Open in Nergal](cluihud://open-workspace?path={})\n",
+                "# Inbox\n\n[Open in Nergal](nergal://open-workspace?path={})\n",
                 crate::obsidian::bootstrap::encode_uri_component(repo)
             );
             file.write_all(header.as_bytes())
@@ -359,7 +359,7 @@ mod tests {
         assert!(contents.contains("#nergal-inbox"));
         // Fresh inbox gets the one-time Open-in-Nergal deep link.
         assert!(contents.starts_with("# Inbox"));
-        assert!(contents.contains("cluihud://open-workspace?path=%2Fhome%2Fme%2Fproj"));
+        assert!(contents.contains("nergal://open-workspace?path=%2Fhome%2Fme%2Fproj"));
     }
 
     #[test]

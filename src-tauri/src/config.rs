@@ -48,7 +48,7 @@ pub struct Config {
     #[serde(default)]
     pub panel_glow: bool,
     /// Path where scratchpad notes (`.md` files) live. Defaults to
-    /// `~/.config/cluihud/scratchpad/`. Can be changed at runtime via
+    /// `~/.config/nergal/scratchpad/`. Can be changed at runtime via
     /// `scratchpad_set_path`; the new value is persisted here.
     #[serde(default)]
     pub scratchpad_path: Option<PathBuf>,
@@ -170,7 +170,7 @@ impl Default for AgentWorktreesConfig {
 }
 
 /// Tuning + kill-switch for cross-session messaging. Budget is a message-count
-/// cap + a wall-clock deadline — NEVER tokens (cluihud cannot measure agent-side
+/// cap + a wall-clock deadline — NEVER tokens (nergal cannot measure agent-side
 /// tokens). All fields have explicit defaults.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrossSessionConfig {
@@ -302,7 +302,7 @@ impl Default for Config {
         Self {
             claude_binary: "claude".into(),
             transcripts_directory: claude_dir.join("projects"),
-            hook_socket_path: std::env::temp_dir().join("cluihud.sock"),
+            hook_socket_path: std::env::temp_dir().join("nergal.sock"),
             default_shell: shell,
             theme_mode: "v1-dark".into(),
             preferred_editor: String::new(),
@@ -333,7 +333,7 @@ impl Config {
     fn config_path() -> PathBuf {
         let config_dir = dirs::config_dir()
             .unwrap_or_else(|| dirs::home_dir().expect("home dir").join(".config"));
-        config_dir.join("cluihud").join("config.json")
+        config_dir.join("nergal").join("config.json")
     }
 
     /// Load config from disk, falling back to defaults. The legacy

@@ -15,7 +15,7 @@ use crate::plan_state::SharedPlanState;
 #[derive(Clone, serde::Serialize)]
 struct FrontendHookEvent {
     session_id: String,
-    cluihud_session_id: Option<String>,
+    nergal_session_id: Option<String>,
     event_type: String,
     tool_name: Option<String>,
     tool_input: Option<serde_json::Value>,
@@ -178,7 +178,7 @@ impl FrontendHookEvent {
             };
         Self {
             session_id,
-            cluihud_session_id: None,
+            nergal_session_id: None,
             event_type: event_type.into(),
             tool_name,
             tool_input,
@@ -238,11 +238,11 @@ pub async fn start_hook_server(
                     continue;
                 }
 
-                // Treat empty string the same as missing: an empty CLUIHUD_SESSION_ID
+                // Treat empty string the same as missing: an empty NERGAL_SESSION_ID
                 // env var is functionally equivalent to no env var, and registering
                 // "" as a session would silently swallow every later event for it.
-                let cluihud_sid = parsed.as_ref().and_then(|v| {
-                    v.get("cluihud_session_id")
+                let nergal_sid = parsed.as_ref().and_then(|v| {
+                    v.get("nergal_session_id")
                         .and_then(|s| s.as_str())
                         .filter(|s| !s.is_empty())
                         .map(String::from)
@@ -256,7 +256,7 @@ pub async fn start_hook_server(
                             &db,
                             &plan_state,
                             &agent_state,
-                            cluihud_sid.as_deref(),
+                            nergal_sid.as_deref(),
                         );
                     }
                     Err(e) => {
@@ -314,7 +314,7 @@ async fn process_control_message(
 
 /// Drains the EventSink that adapters feed (OpenCode SSE, Pi JSONL tail).
 /// Each translated [`HookEvent`] is routed through [`process_event`] using
-/// the event's own session_id as the cluihud_session_id (adapters embed it
+/// the event's own session_id as the nergal_session_id (adapters embed it
 /// when they construct the event). The task runs for the lifetime of the
 /// app and exits when all senders drop.
 pub fn spawn_adapter_event_consumer(
@@ -508,12 +508,12 @@ fn process_event(
     db: &SharedDb,
     plan_state: &SharedPlanState,
     agent_state: &AgentRuntimeState,
-    cluihud_session_id: Option<&str>,
+    nergal_session_id: Option<&str>,
 ) {
-    if cluihud_session_id.is_none() {
+    if nergal_session_id.is_none() {
         tracing::warn!(
             event_type = ?std::any::type_name_of_val(event),
-            "dropping hook event: missing cluihud_session_id (env var not propagated through PTY shell?)",
+            "dropping hook event: missing nergal_session_id (env var not propagated through PTY shell?)",
         );
         return;
     }
@@ -531,7 +531,7 @@ fn process_event(
         ..
     } = event
     {
-        let csid = cluihud_session_id.unwrap_or(session_id);
+        let csid = nergal_session_id.unwrap_or(session_id);
         agent_state.set_session_background(csid, background_tasks.clone(), session_crons.clone());
         agent_state.set_session_last_message(csid, last_assistant_message.clone());
         // Pull-based summaries (Revision 1): `Stop` only writes the cheap,
@@ -564,11 +564,11 @@ fn process_event(
     // lands once the DB schema carries agent_id; until then unknown sessions
     // are tagged claude-code defensively to preserve current behavior). Drop
     // events whose session is fully unknown — they are orphans.
-    if let Some(csid) = cluihud_session_id
+    if let Some(csid) = nergal_session_id
         && agent_state.resolve(csid).is_none()
     {
         tracing::warn!(
-            cluihud_session_id = %csid,
+            nergal_session_id = %csid,
             event_type = ?std::any::type_name_of_val(event),
             "hook event for session not in agent cache; assuming claude-code (foundation transitional)"
         );
@@ -578,7 +578,7 @@ fn process_event(
     // Mirror the frontend `modeMapAtom` into the runtime side-map so the MCP
     // descriptor reports live mode + last_activity instead of the frozen DB
     // row. Telemetry-only events (`mcp_mode` → None) leave the prior state.
-    if let Some(csid) = cluihud_session_id {
+    if let Some(csid) = nergal_session_id {
         if let Some(mode) = event.mcp_mode() {
             agent_state.record_activity(csid, mode, event.waiting_for().as_deref());
         }
@@ -614,19 +614,21 @@ fn process_event(
     // Cross-session delivery liveness drain (cross-session-messaging, finding 3):
     // a `Stop` is the working→idle transition, so deliver any messages that
     // queued while this session was working — for ALL agents, not just CC.
-    // `drain_idle` gates on the kill-switch and only wakes when the pending queue
-    // is non-empty, so this is a no-op when the feature is off or nothing queued.
-    // Gated to `Stop` (not `SessionEnd`) so a teardown never wakes a dying PTY.
-    if let Some(csid) = cluihud_session_id
+    // `drain_idle` gates on the kill-switch (passed in) and only wakes when the
+    // pending queue is non-empty, so this is a no-op when the feature is off or
+    // nothing queued. Gated to `Stop` (not `SessionEnd`) so a teardown never
+    // wakes a dying PTY.
+    if let Some(csid) = nergal_session_id
         && matches!(event, HookEvent::Stop { .. })
     {
         let bridge = crate::mcp::delivery::AppBridge::new(app.clone());
+        let cross_session_enabled = crate::config::Config::load().cross_session.enabled;
         // At most ONE PTY paste per idle transition: two bracketed pastes
         // back-to-back race each other's `\r` submit (the second lands before
         // the first's turn starts), leaving a note stuck in the prompt. So the
         // worktree-outcome drain only runs when the cross-session drain pasted
         // nothing this Stop; otherwise it waits for the next idle.
-        let delivered = crate::mcp::delivery::drain_idle(db, &bridge, csid);
+        let delivered = crate::mcp::delivery::drain_idle(db, &bridge, csid, cross_session_enabled);
         if delivered == 0
             && let Some(gate) = app.try_state::<crate::mcp::worktree_sessions::WorktreeGateState>()
         {
@@ -635,12 +637,12 @@ fn process_event(
     }
 
     let mut frontend_event = FrontendHookEvent::from_hook(event);
-    frontend_event.cluihud_session_id = cluihud_session_id.map(String::from);
+    frontend_event.nergal_session_id = nergal_session_id.map(String::from);
     let _ = app.emit("hook:event", &frontend_event);
 
     // #2 continuous session log — best-effort append for loggable events.
     if let Some(line) = session_log_line(event)
-        && let Some((cfg, _)) = session_log_cfg(db, cluihud_session_id)
+        && let Some((cfg, _)) = session_log_cfg(db, nergal_session_id)
     {
         let _ = crate::obsidian::channels::SessionLogWriter::append_event(&cfg, &line);
     }
@@ -665,7 +667,7 @@ fn process_event(
                 },
             );
 
-            if let Some((cfg, session)) = session_log_cfg(db, cluihud_session_id) {
+            if let Some((cfg, session)) = session_log_cfg(db, nergal_session_id) {
                 // Worktree sessions log their worktree; direct sessions fall back
                 // to the workspace repo path so Cwd is never a bare "?".
                 let log_cwd = session
@@ -680,7 +682,7 @@ fn process_event(
                             })
                             .map(|p| p.display().to_string())
                     });
-                let model = cluihud_session_id.and_then(cached_model);
+                let model = nergal_session_id.and_then(cached_model);
                 let _ = crate::obsidian::channels::SessionLogWriter::start_session(
                     &cfg,
                     &session.name,
@@ -693,7 +695,7 @@ fn process_event(
 
         HookEvent::SessionEnd { session_id } => {
             let _ = app.emit("session:end", session_id);
-            finalize_session_obsidian(db, cluihud_session_id);
+            finalize_session_obsidian(db, nergal_session_id);
         }
 
         HookEvent::PreToolUse {
@@ -713,7 +715,7 @@ fn process_event(
                     .map(std::path::PathBuf::from)
                     .or_else(|| {
                         // Fallback: find latest plan in project-local .claude/plans/
-                        if let Some(csid) = cluihud_session_id
+                        if let Some(csid) = nergal_session_id
                             && let Ok(db_guard) = db.lock()
                             && let Ok(Some(session)) = db_guard.find_session(csid)
                         {
@@ -754,7 +756,7 @@ fn process_event(
                             PlanReady {
                                 path: path.display().to_string(),
                                 content: content.to_string(),
-                                session_id: cluihud_session_id.unwrap_or(session_id).to_string(),
+                                session_id: nergal_session_id.unwrap_or(session_id).to_string(),
                             },
                         );
                     }
@@ -769,7 +771,7 @@ fn process_event(
             ..
         } => {
             tracing::debug!("PostToolUse: tool_name={tool_name}");
-            let csid = cluihud_session_id.unwrap_or(session_id);
+            let csid = nergal_session_id.unwrap_or(session_id);
             if tool_name == "AskUserQuestion" {
                 #[derive(Clone, serde::Serialize)]
                 struct AskUserResolvedPayload {
@@ -811,7 +813,7 @@ fn process_event(
             let _ = app.emit(
                 "cost:update",
                 CostUpdate {
-                    session_id: cluihud_session_id.unwrap_or(session_id).to_string(),
+                    session_id: nergal_session_id.unwrap_or(session_id).to_string(),
                     input_tokens: cost.input_tokens,
                     output_tokens: cost.output_tokens,
                     cache_read: cost.cache_read_tokens,
@@ -833,13 +835,13 @@ fn process_event(
             tool_input,
             ..
         } => {
-            let csid = cluihud_session_id.unwrap_or(session_id);
+            let csid = nergal_session_id.unwrap_or(session_id);
             process_task_event(app, "TaskCreate", tool_input, csid, db);
         }
 
         // Tolerated no-op: the send-gate was removed (2026-06-11), but a
-        // stale `cluihud hook send user-prompt` entry may keep firing until
-        // `cluihud hook setup` purges it from the user's settings.
+        // stale `nergal hook send user-prompt` entry may keep firing until
+        // `nergal hook setup` purges it from the user's settings.
         HookEvent::UserPromptSubmit { .. } => {}
 
         HookEvent::PlanReview {
@@ -856,7 +858,7 @@ fn process_event(
             // the legacy commands::submit_plan_decision (which receives the
             // FIFO from the frontend); this registration is the seam used
             // when the call site flips to the trait method.
-            if let Some(csid) = cluihud_session_id {
+            if let Some(csid) = nergal_session_id {
                 agent_state
                     .claude_code
                     .register_pending_plan_fifo(csid, std::path::PathBuf::from(fifo_path));
@@ -869,7 +871,7 @@ fn process_event(
                     .and_then(|v| v.as_str())
                     .map(std::path::PathBuf::from)
                     .or_else(|| {
-                        if let Some(csid) = cluihud_session_id
+                        if let Some(csid) = nergal_session_id
                             && let Ok(db_guard) = db.lock()
                             && let Ok(Some(session)) = db_guard.find_session(csid)
                         {
@@ -910,7 +912,7 @@ fn process_event(
                             PlanReady {
                                 path: path.display().to_string(),
                                 content: content.to_string(),
-                                session_id: cluihud_session_id.unwrap_or(session_id).to_string(),
+                                session_id: nergal_session_id.unwrap_or(session_id).to_string(),
                                 decision_path: fifo_path.clone(),
                             },
                         );
@@ -931,7 +933,7 @@ fn process_event(
                 let _ = app.emit(
                     "cwd:changed",
                     CwdChangedPayload {
-                        session_id: cluihud_session_id.unwrap_or(session_id).to_string(),
+                        session_id: nergal_session_id.unwrap_or(session_id).to_string(),
                         cwd: dir.clone(),
                     },
                 );
@@ -955,7 +957,7 @@ fn process_event(
                 let _ = app.emit(
                     "file:changed",
                     FileChangedPayload {
-                        session_id: cluihud_session_id.unwrap_or(session_id).to_string(),
+                        session_id: nergal_session_id.unwrap_or(session_id).to_string(),
                         path: path.clone(),
                         change_type: event_type.clone().unwrap_or_default(),
                     },
@@ -980,7 +982,7 @@ fn process_event(
             let _ = app.emit(
                 "permission:denied",
                 PermissionDeniedPayload {
-                    session_id: cluihud_session_id.unwrap_or(session_id).to_string(),
+                    session_id: nergal_session_id.unwrap_or(session_id).to_string(),
                     tool_name: tool_name.clone(),
                     reason: reason.clone(),
                 },
@@ -1003,11 +1005,11 @@ fn process_event(
             // AgentStatus shape so the frontend has a single listener. Kept
             // for back-compat while installed statusline scripts still emit
             // the old hook_event_name.
-            cache_model(cluihud_session_id, model_name);
+            cache_model(nergal_session_id, model_name);
             emit_agent_status(
                 app,
                 AgentStatusEmit {
-                    session_id: cluihud_session_id.unwrap_or(session_id),
+                    session_id: nergal_session_id.unwrap_or(session_id),
                     agent_id: Some("claude-code"),
                     model_id: model_id.clone(),
                     model_name: model_name.clone(),
@@ -1037,11 +1039,11 @@ fn process_event(
             rate_7d_resets_at,
             effort_level,
         } => {
-            cache_model(cluihud_session_id, model_name);
+            cache_model(nergal_session_id, model_name);
             emit_agent_status(
                 app,
                 AgentStatusEmit {
-                    session_id: cluihud_session_id.unwrap_or(session_id),
+                    session_id: nergal_session_id.unwrap_or(session_id),
                     agent_id: agent_id.as_deref(),
                     model_id: model_id.clone(),
                     model_name: model_name.clone(),
@@ -1069,7 +1071,7 @@ fn process_event(
             let _ = app.emit(
                 "ask:user-pending",
                 AskUserPendingPayload {
-                    session_id: cluihud_session_id.unwrap_or(session_id).to_string(),
+                    session_id: nergal_session_id.unwrap_or(session_id).to_string(),
                 },
             );
         }
@@ -1089,7 +1091,7 @@ fn process_event(
             let _ = app.emit(
                 "attention:pending",
                 AttentionPendingPayload {
-                    session_id: cluihud_session_id.unwrap_or(session_id).to_string(),
+                    session_id: nergal_session_id.unwrap_or(session_id).to_string(),
                     notification_type: notification_type.clone(),
                     message: message.clone(),
                 },

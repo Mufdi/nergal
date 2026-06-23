@@ -96,10 +96,10 @@ export function expandGitZen(sessionId: string) {
     const workspaces = s.get(workspacesAtom);
     const ws = workspaces.find((w) => w.sessions.some((sx) => sx.id === sessionId));
     if (!ws) return;
-    document.dispatchEvent(new CustomEvent("cluihud:expand-zen-pr", { detail: { workspaceId: ws.id } }));
+    document.dispatchEvent(new CustomEvent("nergal:expand-zen-pr", { detail: { workspaceId: ws.id } }));
     return;
   }
-  document.dispatchEvent(new CustomEvent("cluihud:expand-zen-git", { detail: { sessionId } }));
+  document.dispatchEvent(new CustomEvent("nergal:expand-zen-git", { detail: { sessionId } }));
 }
 
 /// Workspace whose sessions currently show shortcut numbers. Prefers the
@@ -489,7 +489,7 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   { id: "next-tab", label: "Next Tab", keys: "ctrl+tab", category: "panel", keywords: ["tab", "next", "session"], handler: nextTab },
   { id: "prev-tab", label: "Previous Tab", keys: "ctrl+shift+tab", category: "panel", keywords: ["tab", "previous", "prev", "session"], handler: prevTab },
   { id: "save-file", label: "Save File", keys: "ctrl+s", category: "action", keywords: ["save", "file", "write"], handler: () => {
-    document.dispatchEvent(new CustomEvent("cluihud:save-file"));
+    document.dispatchEvent(new CustomEvent("nergal:save-file"));
   }},
   { id: "close-tab", label: "Close Active Tab (panel tab or session, by focused zone)", keys: "ctrl+w", category: "panel", keywords: ["tab", "close", "session"], handler: closeCurrentTab },
   { id: "reopen-tab", label: "Reopen Last Closed (session if pending, else panel tab)", keys: "ctrl+shift+t", category: "panel", keywords: ["tab", "reopen", "undo", "session"], handler: reopenLastTab },
@@ -537,10 +537,10 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     togglePanel("clickup", "ClickUp");
   }},
   { id: "browser-focus-url", label: "Focus Browser URL Bar", keys: "ctrl+l", category: "panel", keywords: ["browser", "url", "focus", "address"], handler: () => {
-    document.dispatchEvent(new CustomEvent("cluihud:browser-focus-url"));
+    document.dispatchEvent(new CustomEvent("nergal:browser-focus-url"));
   }},
   { id: "toggle-file-picker", label: "Toggle File Picker", keys: "ctrl+shift+k", category: "panel", keywords: ["file", "picker", "browse", "explorer"], handler: () => {
-    document.dispatchEvent(new CustomEvent("cluihud:toggle-file-picker"));
+    document.dispatchEvent(new CustomEvent("nergal:toggle-file-picker"));
   }},
   { id: "toggle-activity", label: "Toggle Activity Drawer", keys: "ctrl+shift+l", category: "panel", keywords: ["activity", "log", "timeline", "drawer"], handler: () => store().set(activityDrawerOpenAtom, (prev: boolean) => !prev) },
   { id: "open-linear", label: "Open Linear Panel", keys: "ctrl+shift+i", category: "panel", keywords: ["linear", "issues", "tracker", "panel"], handler: () => {
@@ -615,7 +615,7 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     s.set(searchModalOpenAtom, true);
   }},
   { id: "toggle-annotations", label: "Toggle Annotations Drawer", keys: "ctrl+shift+j", category: "panel", keywords: ["annotations", "drawer", "comments", "plan"], handler: () => {
-    document.dispatchEvent(new CustomEvent("cluihud:toggle-annotations-drawer"));
+    document.dispatchEvent(new CustomEvent("nergal:toggle-annotations-drawer"));
   }},
 
   // -- Plan review (contextual — only active during pending_review) --
@@ -635,12 +635,12 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
       const currentChip = chipMap[sid] ?? "files";
       // Already on the Conflicts chip → forward to the panel's own resolver.
       if (currentChip === "conflicts" && activeTab?.type === "git") {
-        document.dispatchEvent(new CustomEvent("cluihud:resolve-conflict-active-tab"));
+        document.dispatchEvent(new CustomEvent("nergal:resolve-conflict-active-tab"));
         return;
       }
       s.set(selectedConflictFileMapAtom, (prev) => ({ ...prev, [sid]: conflicted[0] }));
       s.set(gitChipModeAtom, (prev) => ({ ...prev, [sid]: "conflicts" }));
-      document.dispatchEvent(new CustomEvent("cluihud:open-first-conflict", { detail: { path: conflicted[0] } }));
+      document.dispatchEvent(new CustomEvent("nergal:open-first-conflict", { detail: { path: conflicted[0] } }));
       return;
     }
     // PR context — dispatch apply-pr-annotations so the active PrViewer (chip
@@ -651,7 +651,7 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
       const chipMap = s.get(gitChipModeAtom);
       const currentChip = chipMap[sid] ?? "files";
       if (currentChip === "prs") {
-        document.dispatchEvent(new CustomEvent("cluihud:apply-pr-annotations"));
+        document.dispatchEvent(new CustomEvent("nergal:apply-pr-annotations"));
         return;
       }
     }
@@ -663,11 +663,11 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
       activeTab?.type === "plan" || activeTab?.type === "spec"
       || panelView === "plan" || panelView === "spec"
     ) {
-      document.dispatchEvent(new CustomEvent("cluihud:revise-plan"));
+      document.dispatchEvent(new CustomEvent("nergal:revise-plan"));
     }
   }},
   { id: "toggle-annotation-mode", label: "Toggle Annotation Mode", keys: "ctrl+shift+h", category: "action", keywords: ["annotate", "annotation", "keyboard", "plan", "review", "highlight"], handler: () => {
-    document.dispatchEvent(new CustomEvent("cluihud:toggle-annotation-mode"));
+    document.dispatchEvent(new CustomEvent("nergal:toggle-annotation-mode"));
   }},
 
   { id: "expand-zen", label: "Expand active panel to Zen", keys: "ctrl+shift+0", category: "navigation", keywords: ["zen", "expand", "maximize", "fullscreen", "browser", "floating"], handler: () => {
@@ -688,7 +688,7 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     }
     if (panelType === "diff" || panelType === "file") {
       const filePath = tab?.data?.path as string | undefined;
-      if (filePath) document.dispatchEvent(new CustomEvent("cluihud:expand-zen", { detail: { filePath, sessionId } }));
+      if (filePath) document.dispatchEvent(new CustomEvent("nergal:expand-zen", { detail: { filePath, sessionId } }));
       return;
     }
     if (panelType === "git") {

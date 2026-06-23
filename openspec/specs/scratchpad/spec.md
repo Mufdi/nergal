@@ -159,7 +159,7 @@ The scratchpad directory path SHALL be configurable via the application settings
 #### Scenario: Reset to default
 
 - **WHEN** the user clicks "Reset to default" in settings
-- **THEN** the path SHALL be set to `~/.config/cluihud/scratchpad/`
+- **THEN** the path SHALL be set to `~/.config/nergal/scratchpad/`
 
 #### Scenario: Reveal in file manager
 

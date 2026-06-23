@@ -1,7 +1,7 @@
 //! Locate the rollout JSONL Codex writes for a session.
 //!
 //! Codex's session directory layout is `~/.codex/sessions/<yyyy>/<mm>/<dd>/`,
-//! and each rollout filename is `rollout-<uuid>.jsonl`. After cluihud
+//! and each rollout filename is `rollout-<uuid>.jsonl`. After nergal
 //! spawns Codex, the rollout file appears within seconds; we poll for the
 //! newest `rollout-*.jsonl` whose mtime is after the spawn timestamp.
 

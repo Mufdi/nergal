@@ -11,7 +11,7 @@ The prompt SHALL contain a checkbox "Apply suggested layout" (default unchecked)
 #### Scenario: Workspace created with vault configured globally
 
 - **WHEN** the user adds a new workspace
-- **AND** `~/.config/cluihud/obsidian.toml` provides `vault_root = /home/user/Obsidian`
+- **AND** `~/.config/nergal/obsidian.toml` provides `vault_root = /home/user/Obsidian`
 - **THEN** after `create_workspace` resolves, a modal SHALL appear titled "Create matching vault note?"
 - **AND** the modal SHALL show the target path `/home/user/Obsidian/Projects/<workspace name>/index.md`
 - **AND** the modal SHALL include the "Apply suggested layout" checkbox
@@ -33,7 +33,7 @@ The prompt SHALL contain a checkbox "Apply suggested layout" (default unchecked)
 On confirmation, the system SHALL write a markdown file at `<vault_root>/Projects/<workspace name>/index.md` (creating intermediate directories if needed). The file MUST contain:
 
 - A `# <workspace name>` heading.
-- A `## Links` section with a bullet pointing back at the workspace via `cluihud://open-workspace?path=<abs path>`.
+- A `## Links` section with a bullet pointing back at the workspace via `nergal://open-workspace?path=<abs path>`.
 - A `## Decisions` section (empty placeholder).
 - A `## Log` section (empty placeholder).
 

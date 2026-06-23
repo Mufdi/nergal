@@ -8,6 +8,7 @@ mod feeds;
 pub mod hooks;
 pub mod linear;
 pub mod mcp;
+mod migrate_legacy;
 mod models;
 pub mod obsidian;
 mod openspec;
@@ -52,12 +53,12 @@ fn redirect_journald_stdio_to_logfile() {
     }
     let log_path = dirs::cache_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("cluihud")
-        .join("cluihud.log");
+        .join("nergal")
+        .join("nergal.log");
     if let Some(parent) = log_path.parent()
         && let Err(e) = std::fs::create_dir_all(parent)
     {
-        eprintln!("cluihud: log dir {} unavailable: {e}", parent.display());
+        eprintln!("nergal: log dir {} unavailable: {e}", parent.display());
         return;
     }
     let file = match std::fs::OpenOptions::new()
@@ -68,7 +69,7 @@ fn redirect_journald_stdio_to_logfile() {
     {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("cluihud: cannot open log {}: {e}", log_path.display());
+            eprintln!("nergal: cannot open log {}: {e}", log_path.display());
             return;
         }
     };
@@ -79,13 +80,13 @@ fn redirect_journald_stdio_to_logfile() {
     unsafe {
         if libc::dup2(fd, libc::STDOUT_FILENO) < 0 {
             eprintln!(
-                "cluihud: dup2 stdout failed: {}",
+                "nergal: dup2 stdout failed: {}",
                 std::io::Error::last_os_error()
             );
         }
         if libc::dup2(fd, libc::STDERR_FILENO) < 0 {
             eprintln!(
-                "cluihud: dup2 stderr failed: {}",
+                "nergal: dup2 stderr failed: {}",
                 std::io::Error::last_os_error()
             );
         }
@@ -97,9 +98,9 @@ fn redirect_journald_stdio_to_logfile() {
 #[cfg(not(target_os = "linux"))]
 fn redirect_journald_stdio_to_logfile() {}
 
-/// File written to `~/.cluihud-active` while the app is running, so the
-/// `cluihud-conditional.sh` hook wrapper can detect whether forwarding
-/// hook events to `cluihud hook ...` is worth doing. Removed on Drop.
+/// File written to `~/.nergal-active` while the app is running, so the
+/// `nergal-conditional.sh` hook wrapper can detect whether forwarding
+/// hook events to `nergal hook ...` is worth doing. Removed on Drop.
 struct SentinelGuard {
     path: PathBuf,
 }
@@ -108,7 +109,7 @@ impl SentinelGuard {
     fn new() -> Self {
         let path = dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join(".cluihud-active");
+            .join(".nergal-active");
         if let Err(e) = std::fs::write(&path, std::process::id().to_string()) {
             tracing::warn!("failed to write sentinel {}: {e}", path.display());
         }
@@ -191,6 +192,10 @@ pub fn run() {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
+
+    // Rename any legacy `cluihud` machine-local state to `nergal` before config
+    // and DB load read the new paths. Idempotent + non-destructive (see module).
+    migrate_legacy::run();
 
     augment_path_from_user_shell();
 

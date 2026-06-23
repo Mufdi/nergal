@@ -383,7 +383,7 @@ export function Workspace() {
                 className={
                   terminalFullscreen
                     ? "fixed inset-0 z-[60] overflow-hidden bg-terminal-surface p-2"
-                    : `flex-1 overflow-hidden rounded-lg border-2 ${terminalBorderClass} bg-terminal-surface p-2 cluihud-panel-focus`
+                    : `flex-1 overflow-hidden rounded-lg border-2 ${terminalBorderClass} bg-terminal-surface p-2 nergal-panel-focus`
                 }
                 data-focus-zone="terminal"
                 onMouseDown={() => {

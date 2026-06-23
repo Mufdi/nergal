@@ -1,4 +1,4 @@
-# cluihud — Interaction Patterns
+# nergal — Interaction Patterns
 
 Canonical interaction patterns: keyboard navigation, selection flows, and
 reusable UI behaviors. Visual styling (colors, typography, surfaces, motion)
@@ -168,7 +168,7 @@ cancel`). Rules:
 
 ## 5. Keyboard navigation primitives
 
-cluihud is keyboard-first. Two systems collaborate (moved here from
+nergal is keyboard-first. Two systems collaborate (moved here from
 `design.md` §5 — behavior, not styling):
 
 ### 5.1 Focus zones
@@ -217,7 +217,7 @@ and (where ≤9 options) `1–9`.
 ### 5.4 Terminal interception
 
 The canvas terminal intercepts `keydown` at the React-pane layer **before**
-forwarding input to wezterm-term. cluihud shortcuts swallow the event there;
+forwarding input to wezterm-term. nergal shortcuts swallow the event there;
 anything unclaimed reaches the agent TUI. Adding a global shortcut therefore
 changes what the terminal *doesn't* receive — another reason collisions in
 `shortcuts.ts` must be checked first.
@@ -375,7 +375,7 @@ programmatic `.focus()`, and WebKitGTK draws the native focus outline as a
 **rectangle that ignores `border-radius`** — illegible on a 24px rounded icon
 button, so the keyboard cursor looks "lost". The fix is global, not per-button:
 `[data-header-action]:focus` in `globals.css` pins the same box-shadow ring as
-`.cluihud-focus-ring`. Any new toolbar button gets it for free by carrying the
+`.nergal-focus-ring`. Any new toolbar button gets it for free by carrying the
 `data-header-action` marker — don't rely on the native outline.
 
 ### 10.1 Keyboard-navigable multi-select popover (label/tag filter)
@@ -489,7 +489,7 @@ Two indeterminate indicators; **never a raw lucide `Loader2` spinner**.
   marker) → `<PulseDots>` (dots pulsing in a wave; `bg-current` so they inherit
   the surrounding text tone). Label form: `Posting <PulseDots/>`; icon-slot /
   status form: `<PulseDots count={1} dotClassName="size-…"/>`. Canonical:
-  `PulseDots.tsx` + the `cluihud-dot-pulse` keyframes in `globals.css`.
+  `PulseDots.tsx` + the `nergal-dot-pulse` keyframes in `globals.css`.
 
 Rule of thumb: if it fills a region while content loads → ProgressBar; if it
 sits inline next to (or replaces) a glyph while an action runs → PulseDots.

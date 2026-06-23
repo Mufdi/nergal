@@ -1,8 +1,8 @@
 //! Linear Personal API key storage + the OAuth-extensible auth header.
 //!
 //! Primary store is the OS keyring (secret-service on Linux) under service
-//! `cluihud` / account `linear-token`. When the keyring is unavailable the key
-//! falls back to `~/.config/cluihud/linear.toml`, created atomically at mode
+//! `nergal` / account `linear-token`. When the keyring is unavailable the key
+//! falls back to `~/.config/nergal/linear.toml`, created atomically at mode
 //! 0600 (temp file opened with the final mode + rename — no write-then-chmod
 //! window), and the `on_disk` flag is surfaced so the UI can disclose it.
 //!
@@ -16,7 +16,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow, bail};
 
-const KEYRING_SERVICE: &str = "cluihud";
+const KEYRING_SERVICE: &str = "nergal";
 const KEYRING_ACCOUNT: &str = "linear-token";
 const FALLBACK_FILE: &str = "linear.toml";
 
@@ -79,7 +79,7 @@ fn config_dir() -> PathBuf {
                 .unwrap_or_else(|| PathBuf::from("/tmp"))
                 .join(".config")
         })
-        .join("cluihud")
+        .join("nergal")
 }
 
 fn fallback_path() -> PathBuf {

@@ -161,7 +161,7 @@ export function VaultNoteFinder({ onClose, className }: { onClose: () => void; c
 
   if (!cfg?.vault_root) {
     return (
-      <div className={`cluihud-glow rounded-lg border-2 border-primary bg-card px-4 py-3 text-xs text-muted-foreground ${className ?? ""}`}>
+      <div className={`nergal-glow rounded-lg border-2 border-primary bg-card px-4 py-3 text-xs text-muted-foreground ${className ?? ""}`}>
         Configure a vault in Settings → Obsidian.
       </div>
     );
@@ -171,7 +171,7 @@ export function VaultNoteFinder({ onClose, className }: { onClose: () => void; c
     <div
       role="dialog"
       aria-label="Find a vault note"
-      className={`cluihud-glow flex max-h-[70%] w-full max-w-sm flex-col rounded-lg border-2 border-primary bg-card shadow-lg ${className ?? ""}`}
+      className={`nergal-glow flex max-h-[70%] w-full max-w-sm flex-col rounded-lg border-2 border-primary bg-card shadow-lg ${className ?? ""}`}
       onClick={(e) => e.stopPropagation()}
     >
       <div className="flex items-center gap-2 border-b border-border/50 px-3 py-2">

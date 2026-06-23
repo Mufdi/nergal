@@ -49,7 +49,7 @@ export function MentionPickerOverlay({
       // Focus stays in the textarea/editor driving the picker; the listbox is
       // navigated remotely, so it must not steal the tab sequence.
       tabIndex={-1}
-      className="cluihud-glow fixed z-[60] flex max-h-60 w-72 flex-col overflow-hidden rounded-lg border-2 border-primary bg-card shadow-lg"
+      className="nergal-glow fixed z-[60] flex max-h-60 w-72 flex-col overflow-hidden rounded-lg border-2 border-primary bg-card shadow-lg"
       style={{ left: position.left, top: position.top }}
     >
       {hint && (

@@ -34,7 +34,7 @@ The system SHALL expose a `read_messages(thread_id?)` MCP tool returning the mes
 
 ### Requirement: Threads with per-message hop cap, dedup, and count/time budget
 
-A thread SHALL be `{ id, originator_session, participants, status, max_hops, msg_count, msg_budget, deadline_at }`; each message SHALL carry its own `depth` representing **reach**. `depth = sender_message_depth + (target is a new thread participant ? 1 : 0)` — pulling in a new participant increments reach; a reply between existing participants does not. The router SHALL bound **reach** by `max_hops` and **conversation length** separately by `msg_budget` (a message-count cap) plus a wall-clock `deadline_at` (NOT a token budget — cluihud cannot measure tokens spent inside agent turns). It SHALL deduplicate via `hash(from, to, normalize(body))` (`normalize` = trim + collapse whitespace). The originator SHALL NOT block; replies arrive asynchronously tagged with the thread id.
+A thread SHALL be `{ id, originator_session, participants, status, max_hops, msg_count, msg_budget, deadline_at }`; each message SHALL carry its own `depth` representing **reach**. `depth = sender_message_depth + (target is a new thread participant ? 1 : 0)` — pulling in a new participant increments reach; a reply between existing participants does not. The router SHALL bound **reach** by `max_hops` and **conversation length** separately by `msg_budget` (a message-count cap) plus a wall-clock `deadline_at` (NOT a token budget — nergal cannot measure tokens spent inside agent turns). It SHALL deduplicate via `hash(from, to, normalize(body))` (`normalize` = trim + collapse whitespace). The originator SHALL NOT block; replies arrive asynchronously tagged with the thread id.
 
 #### Scenario: Two-party dialogue is not capped by reach
 
@@ -73,7 +73,7 @@ A thread SHALL be `{ id, originator_session, participants, status, max_hops, msg
 
 ### Requirement: Hybrid state-aware delivery
 
-The system SHALL wake a target according to its mode, through a `SessionDelivery` abstraction. An idle target SHALL receive a PTY stdin wake note (via the existing PTY writer, only the owning agent PTY, with every embedded relayed string sanitized) that **embeds the pending message bodies directly** — the wake IS the read, so no separate `read_messages` round-trip is needed; once the wake lands the system SHALL mark those messages `agent_consumed_at` (delivery == consume for the wake path). `read_messages` remains as a catch-up / full-history fallback. A working target's delivery SHALL be queued; on the target's next `Stop`, the `cluihud hook stop` CLI command SHALL query for pending deliveries and emit `hookSpecificOutput.additionalContext` on its stdout (the hook socket is fire-and-forget and cannot return data). Delivery SHALL key off `agent_consumed_at` (set by the wake path or `read_messages`), never `human_seen_at`. If the wake fails to land the messages SHALL be left unconsumed so the next idle flip retries — never stranded.
+The system SHALL wake a target according to its mode, through a `SessionDelivery` abstraction. An idle target SHALL receive a PTY stdin wake note (via the existing PTY writer, only the owning agent PTY, with every embedded relayed string sanitized) that **embeds the pending message bodies directly** — the wake IS the read, so no separate `read_messages` round-trip is needed; once the wake lands the system SHALL mark those messages `agent_consumed_at` (delivery == consume for the wake path). `read_messages` remains as a catch-up / full-history fallback. A working target's delivery SHALL be queued; on the target's next `Stop`, the `nergal hook stop` CLI command SHALL query for pending deliveries and emit `hookSpecificOutput.additionalContext` on its stdout (the hook socket is fire-and-forget and cannot return data). Delivery SHALL key off `agent_consumed_at` (set by the wake path or `read_messages`), never `human_seen_at`. If the wake fails to land the messages SHALL be left unconsumed so the next idle flip retries — never stranded.
 
 Every working→idle transition with a non-empty pending queue SHALL trigger a PTY wake, and a send to an **already-settled** idle target SHALL wake it immediately — the `additionalContext` path is a best-effort fast layer, never the sole delivery path, so a message sent just after a `Stop` is never stranded.
 
@@ -99,7 +99,7 @@ Every working→idle transition with a non-empty pending queue SHALL trigger a P
 #### Scenario: Deliver to a working target via Stop CLI stdout
 
 - **WHEN** a message is recorded for a working target and that target next emits a `Stop`
-- **THEN** the `cluihud hook stop` CLI SHALL emit `hookSpecificOutput.additionalContext` on stdout notifying it of pending messages, without a hook error
+- **THEN** the `nergal hook stop` CLI SHALL emit `hookSpecificOutput.additionalContext` on stdout notifying it of pending messages, without a hook error
 
 #### Scenario: Message sent just after Stop is not stranded
 
@@ -113,7 +113,7 @@ Every working→idle transition with a non-empty pending queue SHALL trigger a P
 
 ### Requirement: Relayed context is non-authoritative (labeling + documented limits only)
 
-Cross-session relayed context SHALL be treated as carrying no user authority, scoped to what cluihud can actually enforce. cluihud CANNOT attribute a downstream autonomous action to a relayed message (the agent's reasoning is unobservable), so a provenance flag on cluihud's gates is NOT used. The enforceable controls are: (1) injected wake/`additionalContext` SHALL be labeled as relayed and advisory, naming the origin session; (2) the system SHALL document that cluihud's own gates (plan-review FIFO, the `agent-spawned-worktrees` human gate) are human-decided by construction (a relayed message cannot auto-satisfy them), and that cluihud cannot override the target agent's own `--permission-mode`.
+Cross-session relayed context SHALL be treated as carrying no user authority, scoped to what nergal can actually enforce. nergal CANNOT attribute a downstream autonomous action to a relayed message (the agent's reasoning is unobservable), so a provenance flag on nergal's gates is NOT used. The enforceable controls are: (1) injected wake/`additionalContext` SHALL be labeled as relayed and advisory, naming the origin session; (2) the system SHALL document that nergal's own gates (plan-review FIFO, the `agent-spawned-worktrees` human gate) are human-decided by construction (a relayed message cannot auto-satisfy them), and that nergal cannot override the target agent's own `--permission-mode`.
 
 #### Scenario: Injected context is framed as non-authoritative
 
@@ -122,13 +122,13 @@ Cross-session relayed context SHALL be treated as carrying no user authority, sc
 
 #### Scenario: No provenance flag is claimed
 
-- **WHEN** a session acts on a relayed message and later reaches a cluihud gate
+- **WHEN** a session acts on a relayed message and later reaches a nergal gate
 - **THEN** the system SHALL rely on the gate's existing human decision (not a provenance flag), since the action cannot be attributed to the relayed message
 
 #### Scenario: Agent permission-mode limitation is documented
 
 - **WHEN** the target agent runs under a bypass/auto `--permission-mode`
-- **THEN** the design SHALL document that cluihud cannot override that posture, rather than implying an enforcement it does not have
+- **THEN** the design SHALL document that nergal cannot override that posture, rather than implying an enforcement it does not have
 
 ### Requirement: search_sessions tool (read-only over active and inactive)
 

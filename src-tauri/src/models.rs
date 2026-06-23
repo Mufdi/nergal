@@ -38,7 +38,7 @@ impl SessionStatus {
 /// Codex, …). `agent_capabilities` is the wire-form bitset emitted by the
 /// adapter so the frontend can gate UI synchronously without a separate
 /// invoke (Decision 7). `agent_internal_session_id` carries the agent's own
-/// session token when distinct from cluihud's id (Pi/Codex UUIDs); CC
+/// session token when distinct from nergal's id (Pi/Codex UUIDs); CC
 /// resumes via `--continue` and so leaves it `None`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {

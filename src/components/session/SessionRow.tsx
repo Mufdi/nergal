@@ -82,7 +82,7 @@ export function SessionRow({
         isActive
           ? "bg-secondary/60 text-foreground shadow-[inset_2px_0_0_0_var(--color-primary)]"
           : "hover:bg-secondary/60 hover:text-foreground text-foreground/70"
-      } ${isCompleted ? "opacity-50" : ""} ${isAwaiting ? "cluihud-ask-pending" : ""}`}
+      } ${isCompleted ? "opacity-50" : ""} ${isAwaiting ? "nergal-ask-pending" : ""}`}
     >
       {shortcutNumber != null && (
         <Tooltip>

@@ -1,4 +1,4 @@
--- Pull-based lazy summaries (cluihud-mcp-server Revision 1).
+-- Pull-based lazy summaries (nergal-mcp-server Revision 1).
 --
 -- Two changes:
 --   1. session_transcripts — durable per-session marker (transcript path +

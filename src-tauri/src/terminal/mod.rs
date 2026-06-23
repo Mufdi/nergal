@@ -3,7 +3,7 @@
 //! Each [`TerminalSession`] owns a wezterm `Terminal` and a PTY writer;
 //! the [`TerminalHandle`] wraps it with a [`GridDiffer`] and an async
 //! emitter task that ships `terminal:grid-update` events to the frontend.
-//! [`CluihudTerminalConfig`] is the [`TerminalConfiguration`] impl — it
+//! [`NergalTerminalConfig`] is the [`TerminalConfiguration`] impl — it
 //! defaults to Kitty keyboard protocol on and bumps scrollback to 10k
 //! rows.
 
@@ -16,7 +16,7 @@ mod input;
 mod session;
 mod types;
 
-pub use config::CluihudTerminalConfig;
+pub use config::NergalTerminalConfig;
 pub use differ::GridDiffer;
 pub use emitter::TerminalHandle;
 pub use input::map_event;

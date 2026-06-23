@@ -2,11 +2,9 @@
 
 Linux desktop wrapper for the Claude Code CLI. Tauri 2 + React 19. The agent CLI runs in a real PTY; React panels mirror state via Jotai atoms fed by the hook pipeline and transcript watchers.
 
-## Naming — IMPORTANT
+## Naming
 
-User-facing brand: **Nergal** (productName, identifier `com.nergal.app`, GitHub repo `Mufdi/nergal`).
-
-Internal name **cluihud** is preserved everywhere else for backward compatibility with the developer machine: binary `cluihud`, hook subcommands (`cluihud hook ...`), env vars (`CLUIHUD_SESSION_ID`, `CLUIHUD_AGENT_ID`), IPC paths (`/tmp/cluihud.sock`, `/tmp/cluihud-plan-*.fifo`, `/tmp/cluihud-ask-*.fifo`), sentinel (`~/.cluihud-active`), config dir (`~/.config/cluihud/`), local repo dir name (`cluihud/`). **Do NOT rename internal `cluihud` references.**
+**Nergal** end to end — brand AND internal. The legacy internal name `cluihud` was fully renamed to `nergal` (binary `nergal`, hook subcommands `nergal hook ...`, env vars `NERGAL_SESSION_ID`/`NERGAL_AGENT_ID`, IPC paths `/tmp/nergal*.sock` + `/tmp/nergal-plan-*.fifo` + `/tmp/nergal-ask-*.fifo`, sentinel `~/.nergal-active`, config dir `~/.config/nergal/`, deep-link scheme `nergal://`, MCP server key `nergal`). A one-time startup migration (`src-tauri/src/migrate_legacy.rs`) moves any pre-existing `cluihud` local state (config dir, `~/.claude/settings.json` hook commands, sentinel, `nergal-state.json`, the conditional-hook wrapper, codex/opencode MCP registrations) to the new names so upgrading users lose nothing. `cluihud` survives only as the source-side literals inside that migration module and in archived `openspec/changes/archive/` records (historical, intentionally untouched). The local repo dir on the dev machine is still named `cluihud/` — that is just a filesystem path, not in-repo content.
 
 ## Scope — qué es y qué no es Nergal
 
@@ -18,7 +16,7 @@ Nergal corre **alrededor** del agente CLI, no en su lugar. Esto define el filtro
 
 **Abierto (evolutivo):**
 - **Multi-agent / agent-agnostic** ya es estable (4 OpenSpec changes archivados 2026-05-04). BYOA, coordinator patterns, parallel agent comparisons, switching entre CC / Codex / Gemini → bienvenidos.
-- **Surfaces alrededor del ecosistema del agente**: skills marketplace para discovery/install, MCP server propio para que el agente consulte cluihud, usage dashboards, deep-link protocol — todos válidos. La línea está en "no reescribir lo que el agente ya hace", no en "ignorar el ecosistema".
+- **Surfaces alrededor del ecosistema del agente**: skills marketplace para discovery/install, MCP server propio para que el agente consulte nergal, usage dashboards, deep-link protocol — todos válidos. La línea está en "no reescribir lo que el agente ya hace", no en "ignorar el ecosistema".
 - **Workflow integrations** (issue trackers, design tools, browser preview, voice input, Docker isolation) son evoluciones naturales si reducen fricción en el loop agente↔humano.
 
 **Filtro para evaluar inspiración:**
@@ -47,7 +45,7 @@ Nergal corre **alrededor** del agente CLI, no en su lugar. Esto define el filtro
 | Rust format | `cd src-tauri && cargo fmt --check` |
 | TS check | `npx tsc --noEmit` |
 | Full check | `cd src-tauri && cargo clippy -- -D warnings && cargo test && cargo fmt --check && cd .. && npx tsc --noEmit` |
-| Reinstall installed app | `pnpm tauri build && sudo dpkg -i src-tauri/target/release/bundle/deb/Nergal_*.deb` — covers Rust + frontend + bundled hook CLI in one shot. Do NOT use `cargo install --path src-tauri --force`: it puts a binary in `~/.cargo/bin/` that shadows `/usr/bin/cluihud` for the GNOME launcher (user PATH is inherited) and skips the Tauri frontend bundling step, producing ghost windows. |
+| Reinstall installed app | `pnpm tauri build && sudo dpkg -i src-tauri/target/release/bundle/deb/Nergal_*.deb` — covers Rust + frontend + bundled hook CLI in one shot. Do NOT use `cargo install --path src-tauri --force`: it puts a binary in `~/.cargo/bin/` that shadows `/usr/bin/nergal` for the GNOME launcher (user PATH is inherited) and skips the Tauri frontend bundling step, producing ghost windows. |
 
 Run the full check after significant changes.
 

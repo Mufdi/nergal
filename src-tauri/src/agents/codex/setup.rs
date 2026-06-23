@@ -1,13 +1,13 @@
-//! Conservative merge of cluihud's hook entries into `~/.codex/hooks.json`.
+//! Conservative merge of nergal's hook entries into `~/.codex/hooks.json`.
 //!
-//! Mirrors the CC `cluihud setup` flow but targets Codex's hook config file.
+//! Mirrors the CC `nergal setup` flow but targets Codex's hook config file.
 //! Behavior:
 //! 1. Read existing `~/.codex/hooks.json` (or start blank).
-//! 2. For each event Codex supports, ensure cluihud's `command` entry
-//!    exists in the array, identified by a marker substring (`cluihud hook`).
-//! 3. Drop any obsolete cluihud entries (matchers we no longer use) so old
+//! 2. For each event Codex supports, ensure nergal's `command` entry
+//!    exists in the array, identified by a marker substring (`nergal hook`).
+//! 3. Drop any obsolete nergal entries (matchers we no longer use) so old
 //!    installs don't accumulate stale rows.
-//! 4. Preserve every non-cluihud entry verbatim so user customisations
+//! 4. Preserve every non-nergal entry verbatim so user customisations
 //!    remain untouched.
 //!
 //! Atomic write: write to a temp file in the same directory, then rename.
@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
 
-const CLUIHUD_MARKER: &str = "cluihud hook";
+const NERGAL_MARKER: &str = "nergal hook";
 
 /// Run the setup. Idempotent.
 pub async fn run_codex_setup() -> Result<()> {
@@ -32,13 +32,13 @@ pub async fn run_codex_setup() -> Result<()> {
         Err(_) => json!({}),
     };
 
-    let merged = merge_cluihud_entries(existing);
+    let merged = merge_nergal_entries(existing);
     let body = serde_json::to_string_pretty(&merged)?;
     write_atomic(&path, &body).await?;
     Ok(())
 }
 
-fn merge_cluihud_entries(existing: Value) -> Value {
+fn merge_nergal_entries(existing: Value) -> Value {
     // Normalise to an object before mutating so we don't double-borrow.
     let mut root = match existing {
         Value::Object(map) => Value::Object(map),
@@ -52,7 +52,7 @@ fn merge_cluihud_entries(existing: Value) -> Value {
         .as_object_mut()
         .unwrap();
 
-    for (event_name, cluihud_command) in cluihud_event_commands() {
+    for (event_name, nergal_command) in nergal_event_commands() {
         let event_array = hooks_inner
             .entry(event_name.to_string())
             .or_insert_with(|| Value::Array(vec![]));
@@ -64,35 +64,35 @@ fn merge_cluihud_entries(existing: Value) -> Value {
             }
         };
 
-        // 1) Drop obsolete cluihud entries (any cluihud-marked matcher that
+        // 1) Drop obsolete nergal entries (any nergal-marked matcher that
         //    isn't the current shape). For now the rule is simple: keep the
-        //    canonical entry shape, drop any other cluihud entry.
+        //    canonical entry shape, drop any other nergal entry.
         arr.retain(|entry| {
-            !is_cluihud_entry(entry) || matches_canonical_shape(entry, cluihud_command)
+            !is_nergal_entry(entry) || matches_canonical_shape(entry, nergal_command)
         });
 
         // 2) Insert canonical entry if missing.
         let already_present = arr
             .iter()
-            .any(|entry| matches_canonical_shape(entry, cluihud_command));
+            .any(|entry| matches_canonical_shape(entry, nergal_command));
         if !already_present {
-            arr.push(canonical_entry(cluihud_command));
+            arr.push(canonical_entry(nergal_command));
         }
     }
 
     root
 }
 
-fn cluihud_event_commands() -> Vec<(&'static str, &'static str)> {
+fn nergal_event_commands() -> Vec<(&'static str, &'static str)> {
     // Codex's hook event names line up with CC's. Map each to the
-    // corresponding `cluihud hook ...` invocation.
+    // corresponding `nergal hook ...` invocation.
     vec![
-        ("SessionStart", "cluihud hook send session-start"),
-        ("SessionEnd", "cluihud hook send session-end"),
-        ("PreToolUse", "cluihud hook send pre-tool"),
-        ("PostToolUse", "cluihud hook send post-tool"),
-        ("Stop", "cluihud hook send stop"),
-        ("UserPromptSubmit", "cluihud hook inject-edits"),
+        ("SessionStart", "nergal hook send session-start"),
+        ("SessionEnd", "nergal hook send session-end"),
+        ("PreToolUse", "nergal hook send pre-tool"),
+        ("PostToolUse", "nergal hook send post-tool"),
+        ("Stop", "nergal hook send stop"),
+        ("UserPromptSubmit", "nergal hook inject-edits"),
     ]
 }
 
@@ -107,7 +107,7 @@ fn canonical_entry(command: &str) -> Value {
     })
 }
 
-fn is_cluihud_entry(entry: &Value) -> bool {
+fn is_nergal_entry(entry: &Value) -> bool {
     let hooks = match entry.get("hooks").and_then(|v| v.as_array()) {
         Some(a) => a,
         None => return false,
@@ -115,7 +115,7 @@ fn is_cluihud_entry(entry: &Value) -> bool {
     hooks.iter().any(|h| {
         h.get("command")
             .and_then(|v| v.as_str())
-            .is_some_and(|c| c.contains(CLUIHUD_MARKER))
+            .is_some_and(|c| c.contains(NERGAL_MARKER))
     })
 }
 
@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn merge_into_empty_object_creates_canonical_entries() {
-        let merged = merge_cluihud_entries(json!({}));
+        let merged = merge_nergal_entries(json!({}));
         let entries = merged
             .pointer("/hooks/PreToolUse")
             .and_then(|v| v.as_array())
@@ -153,7 +153,7 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert!(matches_canonical_shape(
             &entries[0],
-            "cluihud hook send pre-tool"
+            "nergal hook send pre-tool"
         ));
     }
 
@@ -164,32 +164,32 @@ mod tests {
             "hooks": [{ "type": "command", "command": "echo bash" }]
         });
         let existing = json!({ "hooks": { "PreToolUse": [user_entry.clone()] } });
-        let merged = merge_cluihud_entries(existing);
+        let merged = merge_nergal_entries(existing);
         let entries = merged
             .pointer("/hooks/PreToolUse")
             .and_then(|v| v.as_array())
             .unwrap();
-        assert_eq!(entries.len(), 2, "user entry preserved + cluihud added");
+        assert_eq!(entries.len(), 2, "user entry preserved + nergal added");
         assert_eq!(&entries[0], &user_entry, "user entry first, untouched");
     }
 
     #[test]
     fn merge_is_idempotent() {
-        let once = merge_cluihud_entries(json!({}));
-        let twice = merge_cluihud_entries(once.clone());
+        let once = merge_nergal_entries(json!({}));
+        let twice = merge_nergal_entries(once.clone());
         assert_eq!(once, twice);
     }
 
     #[test]
-    fn merge_drops_obsolete_cluihud_entries() {
+    fn merge_drops_obsolete_nergal_entries() {
         // An old shape that no longer matches the canonical list should be
         // pruned on next setup run.
         let stale = json!({
             "matcher": "*",
-            "hooks": [{ "type": "command", "command": "cluihud hook send obsolete-event" }]
+            "hooks": [{ "type": "command", "command": "nergal hook send obsolete-event" }]
         });
         let existing = json!({ "hooks": { "PreToolUse": [stale] } });
-        let merged = merge_cluihud_entries(existing);
+        let merged = merge_nergal_entries(existing);
         let entries = merged
             .pointer("/hooks/PreToolUse")
             .and_then(|v| v.as_array())
@@ -198,7 +198,7 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert!(matches_canonical_shape(
             &entries[0],
-            "cluihud hook send pre-tool"
+            "nergal hook send pre-tool"
         ));
     }
 }

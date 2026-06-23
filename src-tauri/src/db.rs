@@ -35,7 +35,7 @@ pub struct SessionTranscript {
 /// One cross-session conversation thread (cross-session-messaging). `participants`
 /// is the ordered set of session ids that have taken part; `max_hops` bounds
 /// REACH (pulling in a new participant), while `msg_budget`/`deadline_at` bound
-/// conversation length + wall-clock — budget is NEVER tokens (cluihud cannot
+/// conversation length + wall-clock — budget is NEVER tokens (nergal cannot
 /// measure agent-side tokens).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CrossSessionThread {
@@ -206,9 +206,9 @@ impl Database {
     pub fn open() -> Result<Self> {
         let config_dir = dirs::config_dir()
             .unwrap_or_else(|| dirs::home_dir().expect("home dir").join(".config"));
-        let db_dir = config_dir.join("cluihud");
+        let db_dir = config_dir.join("nergal");
         std::fs::create_dir_all(&db_dir)?;
-        let db_path = db_dir.join("cluihud.db");
+        let db_path = db_dir.join("nergal.db");
 
         let conn = Connection::open(&db_path)
             .with_context(|| format!("opening database: {}", db_path.display()))?;
@@ -288,7 +288,7 @@ impl Database {
     fn migrate_from_json(&self) -> Result<()> {
         let config_dir = dirs::config_dir()
             .unwrap_or_else(|| dirs::home_dir().expect("home dir").join(".config"));
-        let json_path = config_dir.join("cluihud").join("state.json");
+        let json_path = config_dir.join("nergal").join("state.json");
 
         if !json_path.exists() {
             return Ok(());
@@ -978,7 +978,7 @@ impl Database {
     }
 
     /// Persist the agent-internal session id (e.g. Pi UUID, Codex rollout id)
-    /// so resume flows can pass it back via `--session <id>` after a cluihud
+    /// so resume flows can pass it back via `--session <id>` after a nergal
     /// restart. Idempotent.
     pub fn update_agent_internal_session_id(&self, id: &str, internal_id: &str) -> Result<()> {
         self.conn.execute(

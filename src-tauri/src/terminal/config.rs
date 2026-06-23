@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use wezterm_term::TerminalConfiguration;
 use wezterm_term::color::ColorPalette;
 
-/// cluihud's [`TerminalConfiguration`] implementation.
+/// nergal's [`TerminalConfiguration`] implementation.
 ///
 /// Differences from the wezterm-term defaults:
 /// - **CSI-u key encoding off** (same as wezterm default). We previously
@@ -15,17 +15,17 @@ use wezterm_term::color::ColorPalette;
 /// - **Kitty keyboard protocol on by default**. Applications can still
 ///   opt into the richer protocol via `CSI > 1 u`; Kitty supersedes CSI-u
 ///   when the running app enables it.
-/// - Scrollback defaults to 10_000 rows (wezterm default is 3_500; cluihud
+/// - Scrollback defaults to 10_000 rows (wezterm default is 3_500; nergal
 ///   sessions tend to produce longer tool-output transcripts).
 #[derive(Debug)]
-pub struct CluihudTerminalConfig {
+pub struct NergalTerminalConfig {
     generation: AtomicUsize,
     kitty_keyboard: bool,
     scrollback_size: usize,
     color_palette: ColorPalette,
 }
 
-impl CluihudTerminalConfig {
+impl NergalTerminalConfig {
     pub fn new() -> Self {
         Self {
             generation: AtomicUsize::new(0),
@@ -48,13 +48,13 @@ impl CluihudTerminalConfig {
     }
 }
 
-impl Default for CluihudTerminalConfig {
+impl Default for NergalTerminalConfig {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl TerminalConfiguration for CluihudTerminalConfig {
+impl TerminalConfiguration for NergalTerminalConfig {
     fn generation(&self) -> usize {
         self.generation.load(Ordering::Relaxed)
     }

@@ -64,7 +64,7 @@ impl AgentRegistry {
         out
     }
 
-    /// Push cluihud's active theme to every adapter that advertises
+    /// Push nergal's active theme to every adapter that advertises
     /// [`AgentCapability::THEME_SYNC`]. Sequential — the set is tiny (≤4)
     /// and each write is cheap. Per-adapter failures are logged at `warn!`
     /// and never propagated: theme sync is a UX nicety, not load-bearing.
@@ -173,7 +173,7 @@ mod tests {
                 hook_event_names: vec![],
             }
         }
-        fn requires_cluihud_setup(&self) -> bool {
+        fn requires_nergal_setup(&self) -> bool {
             false
         }
         async fn detect(&self) -> DetectionResult {

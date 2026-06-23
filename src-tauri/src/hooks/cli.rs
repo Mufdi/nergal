@@ -8,8 +8,8 @@ use anyhow::{Context, Result};
 use crate::hooks::state::HookState;
 
 /// Send a `{"kind":"control","op":"rescan_agents"}` control message to the
-/// hook socket. The running cluihud picks it up and re-scans the registry,
-/// updating the available agents view. No-op (best effort) if cluihud isn't
+/// hook socket. The running nergal picks it up and re-scans the registry,
+/// updating the available agents view. No-op (best effort) if nergal isn't
 /// running — the connection error is surfaced to the caller.
 pub fn send_rescan_agents(socket_path: &Path) -> Result<()> {
     let payload = r#"{"kind":"control","op":"rescan_agents"}"#;
@@ -34,11 +34,11 @@ pub fn send_hook_event(socket_path: &Path) -> Result<()> {
         serde_json::from_str(input.trim()).context("stdin is not valid JSON")?;
 
     if let Some(obj) = json.as_object_mut()
-        && let Ok(cluihud_id) = std::env::var("CLUIHUD_SESSION_ID")
+        && let Ok(nergal_id) = std::env::var("NERGAL_SESSION_ID")
     {
         obj.insert(
-            "cluihud_session_id".to_string(),
-            serde_json::Value::String(cluihud_id),
+            "nergal_session_id".to_string(),
+            serde_json::Value::String(nergal_id),
         );
     }
 
@@ -131,15 +131,15 @@ pub fn plan_review(socket_path: &Path) -> Result<()> {
     let stdin_json: serde_json::Value =
         serde_json::from_str(input.trim()).context("stdin is not valid JSON")?;
 
-    let cluihud_id = std::env::var("CLUIHUD_SESSION_ID").unwrap_or_default();
-    if cluihud_id.is_empty() {
+    let nergal_id = std::env::var("NERGAL_SESSION_ID").unwrap_or_default();
+    if nergal_id.is_empty() {
         // No session — allow by default so we don't block Claude
         output_allow()?;
         return Ok(());
     }
 
     // Create FIFO for blocking communication
-    let fifo_path = PathBuf::from(format!("/tmp/cluihud-plan-{}.fifo", std::process::id()));
+    let fifo_path = PathBuf::from(format!("/tmp/nergal-plan-{}.fifo", std::process::id()));
     if fifo_path.exists() {
         std::fs::remove_file(&fifo_path)?;
     }
@@ -171,7 +171,7 @@ pub fn plan_review(socket_path: &Path) -> Result<()> {
         "tool_name": tool_name,
         "tool_input": tool_input,
         "fifo_path": fifo_path.display().to_string(),
-        "cluihud_session_id": cluihud_id,
+        "nergal_session_id": nergal_id,
     });
 
     let payload = serde_json::to_string(&socket_msg).context("serializing socket message")?;
@@ -219,8 +219,8 @@ pub fn notification(socket_path: &Path) -> Result<()> {
     let stdin_json: serde_json::Value =
         serde_json::from_str(input.trim()).context("stdin is not valid JSON")?;
 
-    let cluihud_id = std::env::var("CLUIHUD_SESSION_ID").unwrap_or_default();
-    if cluihud_id.is_empty() {
+    let nergal_id = std::env::var("NERGAL_SESSION_ID").unwrap_or_default();
+    if nergal_id.is_empty() {
         return Ok(());
     }
 
@@ -243,7 +243,7 @@ pub fn notification(socket_path: &Path) -> Result<()> {
         "session_id": session_id,
         "notification_type": notification_type,
         "message": message,
-        "cluihud_session_id": cluihud_id,
+        "nergal_session_id": nergal_id,
     });
 
     let payload = serde_json::to_string(&socket_msg).context("serializing socket message")?;
@@ -258,7 +258,7 @@ pub fn notification(socket_path: &Path) -> Result<()> {
 
 /// AskUserQuestion notifier (non-blocking).
 ///
-/// CC's TUI handles the prompt natively; cluihud only fires a socket message
+/// CC's TUI handles the prompt natively; nergal only fires a socket message
 /// so the GUI can highlight the session tab needing attention. Returns
 /// immediately with empty stdout so CC proceeds.
 pub fn ask_user(socket_path: &Path) -> Result<()> {
@@ -270,8 +270,8 @@ pub fn ask_user(socket_path: &Path) -> Result<()> {
     let stdin_json: serde_json::Value =
         serde_json::from_str(input.trim()).context("stdin is not valid JSON")?;
 
-    let cluihud_id = std::env::var("CLUIHUD_SESSION_ID").unwrap_or_default();
-    if cluihud_id.is_empty() {
+    let nergal_id = std::env::var("NERGAL_SESSION_ID").unwrap_or_default();
+    if nergal_id.is_empty() {
         return Ok(());
     }
 
@@ -285,7 +285,7 @@ pub fn ask_user(socket_path: &Path) -> Result<()> {
         "hook_event_name": "AskUser",
         "session_id": session_id,
         "tool_input": serde_json::Value::Object(serde_json::Map::new()),
-        "cluihud_session_id": cluihud_id,
+        "nergal_session_id": nergal_id,
     });
 
     let payload = serde_json::to_string(&socket_msg).context("serializing socket message")?;

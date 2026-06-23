@@ -3,7 +3,7 @@
 //! Emits Tauri events:
 //! - `scratchpad:tab-changed` `{ tab_id, hash_hex }` when a note's content
 //!   on disk has a hash NOT in the per-file own-write ring buffer (i.e. the
-//!   change came from outside cluihud).
+//!   change came from outside nergal).
 //! - `scratchpad:tab-deleted` `{ tab_id }` when a tracked note disappears.
 //! - `scratchpad:dir-missing` when the watched root itself is removed.
 

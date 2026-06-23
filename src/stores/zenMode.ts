@@ -5,7 +5,7 @@ export type ZenZone = "viewer" | "sidebar";
 /// PR Zen target. When non-null, ZenMode renders PrViewer fullscreen instead
 /// of DiffView — mirroring how `conflictsZenOpenAtom` swaps in ConflictsPanel.
 /// We carry the full PR row so the viewer can render its merge button, CI
-/// pill, etc. without re-querying. Set via `cluihud:expand-zen-pr` from the
+/// pill, etc. without re-querying. Set via `nergal:expand-zen-pr` from the
 /// PRs chip; cleared by closing Zen.
 export interface PrZenTarget {
   workspaceId: string;

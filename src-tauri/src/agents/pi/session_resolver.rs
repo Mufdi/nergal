@@ -1,4 +1,4 @@
-//! Map cluihud session metadata onto Pi's session-file convention.
+//! Map nergal session metadata onto Pi's session-file convention.
 //!
 //! Pi stores sessions under `~/.pi/agent/sessions/<encoded>/<uuid>.jsonl`,
 //! where `<encoded>` is the absolute working directory with `/` → `-`,

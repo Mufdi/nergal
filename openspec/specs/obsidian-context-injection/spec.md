@@ -15,7 +15,7 @@ The default trait impl SHALL be `Unsupported` so adapters that do not opt in are
 #### Scenario: Claude Code injects via system-prompt file
 
 - **WHEN** a Claude Code session spawns with a non-empty `injected_context`
-- **THEN** the adapter SHALL write the block to a per-session file under `~/.config/cluihud/spawn-context/`
+- **THEN** the adapter SHALL write the block to a per-session file under `~/.config/nergal/spawn-context/`
 - **AND** push `--append-system-prompt-file <path>` into the launch args
 - **AND** the user's `initial_prompt`, if any, SHALL remain a separate positional argument
 

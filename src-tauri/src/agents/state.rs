@@ -1,9 +1,9 @@
 //! Runtime state shared between the hook dispatcher, session lifecycle
 //! commands, and (eventually) the frontend bridge: a registry of installed
-//! adapters plus a cache of `cluihud_session_id → AgentId` mappings.
+//! adapters plus a cache of `nergal_session_id → AgentId` mappings.
 //!
 //! The cache is the hot-path resolution mechanism. Hook events arrive with a
-//! `cluihud_session_id` and the dispatcher needs to know which adapter the
+//! `nergal_session_id` and the dispatcher needs to know which adapter the
 //! session belongs to without round-tripping the DB on every event. The cache
 //! is populated by [`SessionLifecycle::register_session`] **before** the PTY
 //! spawn (Decision 9), so the SessionStart hook never races the entry.
@@ -50,7 +50,7 @@ pub struct SessionActivity {
 #[derive(Clone)]
 pub struct AgentRuntimeState {
     pub registry: Arc<AgentRegistry>,
-    /// `cluihud_session_id` (the UUID cluihud assigns to a session) → adapter id.
+    /// `nergal_session_id` (the UUID nergal assigns to a session) → adapter id.
     pub agent_id_cache: Arc<DashMap<String, AgentId>>,
     /// Typed handle to the CC adapter. The hook dispatcher and a few CC-
     /// specific commands need to call CC-only methods (registering pending
@@ -69,18 +69,18 @@ pub struct AgentRuntimeState {
     /// One-shot slot holding the receiver until the runtime takes it. Wrapped
     /// in a sync mutex (rare access, no need for tokio::Mutex).
     event_receiver: Arc<Mutex<Option<UnboundedReceiver<HookEvent>>>>,
-    /// `claude_code_session_id → cluihud_session_id` side map for MCP identity
+    /// `claude_code_session_id → nergal_session_id` side map for MCP identity
     /// resolution (a shim may know only CC's own id). Torn down alongside
     /// [`Self::forget_session`]. Empty until a CC id is learned; the primary
-    /// path is the inherited `CLUIHUD_SESSION_ID` env hint validated directly
+    /// path is the inherited `NERGAL_SESSION_ID` env hint validated directly
     /// against `agent_id_cache`.
     pub cc_session_map: Arc<DashMap<String, String>>,
-    /// `cluihud_session_id → (background_tasks, session_crons)` captured from
+    /// `nergal_session_id → (background_tasks, session_crons)` captured from
     /// CC `Stop`/`SubagentStop` payloads (v2.1.150). Stored as raw JSON values
     /// (pass-through, tolerant of CC shape drift) and surfaced in the MCP
     /// session descriptor. Cleared on [`Self::forget_session`].
     session_background: Arc<DashMap<String, SessionBackground>>,
-    /// `cluihud_session_id → (live_mode, last_activity_epoch_secs)`. The hook
+    /// `nergal_session_id → (live_mode, last_activity_epoch_secs)`. The hook
     /// dispatcher records here on every agent-meaningful event; the MCP
     /// descriptor reads it for freshness. The DB `Session.status`/`updated_at`
     /// columns only move on lifecycle mutations (creation, rename, branch) and
@@ -88,13 +88,13 @@ pub struct AgentRuntimeState {
     /// now". Mirrors the frontend `modeMapAtom`. Cleared on
     /// [`Self::forget_session`].
     session_activity: Arc<DashMap<String, SessionActivity>>,
-    /// `cluihud_session_id → recently touched file paths`, most-recent-first,
+    /// `nergal_session_id → recently touched file paths`, most-recent-first,
     /// deduped, bounded to [`Self::RECENT_FILES_CAP`]. Fed from tool events that
     /// name a file (reads included — cross-session awareness wants "what is the
     /// other agent looking at"). Surfaced as the descriptor's
     /// `recently_touched_files`. Cleared on [`Self::forget_session`].
     session_files: Arc<DashMap<String, Vec<TouchedFile>>>,
-    /// `cluihud_session_id → last assistant message` (CC's
+    /// `nergal_session_id → last assistant message` (CC's
     /// `last_assistant_message` from the Stop payload). Surfaced verbatim as the
     /// descriptor's `last_assistant_message` — NOT the `summary` field, which
     /// stays reserved for the phase-6 AI recap. Cleared on
@@ -134,22 +134,22 @@ impl AgentRuntimeState {
 
     /// Record the agent that owns a session. Call this **before** the PTY
     /// spawn so the SessionStart hook always finds the entry.
-    pub fn register_session(&self, cluihud_session_id: &str, agent_id: AgentId) {
+    pub fn register_session(&self, nergal_session_id: &str, agent_id: AgentId) {
         self.agent_id_cache
-            .insert(cluihud_session_id.to_string(), agent_id);
+            .insert(nergal_session_id.to_string(), agent_id);
     }
 
     /// Drop the cache entry for a session. Idempotent. Also tears down any
-    /// `claude_code_session_id → cluihud_session_id` side-map entries pointing
+    /// `claude_code_session_id → nergal_session_id` side-map entries pointing
     /// at this session so MCP identity can't resolve a dead session.
-    pub fn forget_session(&self, cluihud_session_id: &str) {
-        self.agent_id_cache.remove(cluihud_session_id);
+    pub fn forget_session(&self, nergal_session_id: &str) {
+        self.agent_id_cache.remove(nergal_session_id);
         self.cc_session_map
-            .retain(|_cc, csid| csid != cluihud_session_id);
-        self.session_background.remove(cluihud_session_id);
-        self.session_activity.remove(cluihud_session_id);
-        self.session_files.remove(cluihud_session_id);
-        self.session_last_message.remove(cluihud_session_id);
+            .retain(|_cc, csid| csid != nergal_session_id);
+        self.session_background.remove(nergal_session_id);
+        self.session_activity.remove(nergal_session_id);
+        self.session_files.remove(nergal_session_id);
+        self.session_last_message.remove(nergal_session_id);
     }
 
     /// Snapshot of the live session id set (the directory's liveness source:
@@ -173,20 +173,20 @@ impl AgentRuntimeState {
     /// payload for a session (overwrites the previous snapshot).
     pub fn set_session_background(
         &self,
-        cluihud_session_id: &str,
+        nergal_session_id: &str,
         background_tasks: Vec<serde_json::Value>,
         session_crons: Vec<serde_json::Value>,
     ) {
         self.session_background.insert(
-            cluihud_session_id.to_string(),
+            nergal_session_id.to_string(),
             (background_tasks, session_crons),
         );
     }
 
     /// `(background_tasks, session_crons)` for a session; empty when none seen.
-    pub fn session_background(&self, cluihud_session_id: &str) -> SessionBackground {
+    pub fn session_background(&self, nergal_session_id: &str) -> SessionBackground {
         self.session_background
-            .get(cluihud_session_id)
+            .get(nergal_session_id)
             .map(|r| r.clone())
             .unwrap_or_default()
     }
@@ -196,13 +196,13 @@ impl AgentRuntimeState {
     /// moment. Called by the hook dispatcher for every agent-meaningful event
     /// so the MCP descriptor reflects work as it happens rather than the frozen
     /// DB row.
-    pub fn record_activity(&self, cluihud_session_id: &str, mode: &str, waiting_for: Option<&str>) {
+    pub fn record_activity(&self, nergal_session_id: &str, mode: &str, waiting_for: Option<&str>) {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
         self.session_activity.insert(
-            cluihud_session_id.to_string(),
+            nergal_session_id.to_string(),
             SessionActivity {
                 mode: mode.to_string(),
                 last_activity: now,
@@ -214,9 +214,9 @@ impl AgentRuntimeState {
     /// Live activity snapshot for a session, or `None` when no event has been
     /// recorded since the daemon started (the descriptor then falls back to the
     /// persisted DB row).
-    pub fn session_activity(&self, cluihud_session_id: &str) -> Option<SessionActivity> {
+    pub fn session_activity(&self, nergal_session_id: &str) -> Option<SessionActivity> {
         self.session_activity
-            .get(cluihud_session_id)
+            .get(nergal_session_id)
             .map(|r| r.clone())
     }
 
@@ -226,10 +226,10 @@ impl AgentRuntimeState {
     /// Record a file a session just touched, with the tool that touched it
     /// (read or wrote). Moves an existing path to the front (most-recent-first,
     /// refreshing its tool) and caps the list.
-    pub fn record_touched_file(&self, cluihud_session_id: &str, path: &str, tool: &str) {
+    pub fn record_touched_file(&self, nergal_session_id: &str, path: &str, tool: &str) {
         let mut entry = self
             .session_files
-            .entry(cluihud_session_id.to_string())
+            .entry(nergal_session_id.to_string())
             .or_default();
         entry.retain(|f| f.path != path);
         entry.insert(
@@ -243,43 +243,43 @@ impl AgentRuntimeState {
     }
 
     /// Recently touched files for a session, most-recent-first; empty when none.
-    pub fn session_files(&self, cluihud_session_id: &str) -> Vec<TouchedFile> {
+    pub fn session_files(&self, nergal_session_id: &str) -> Vec<TouchedFile> {
         self.session_files
-            .get(cluihud_session_id)
+            .get(nergal_session_id)
             .map(|r| r.clone())
             .unwrap_or_default()
     }
 
     /// Record (or clear) a session's last assistant message. An empty/absent
     /// message clears any prior value so a stale line can't linger.
-    pub fn set_session_last_message(&self, cluihud_session_id: &str, message: Option<String>) {
+    pub fn set_session_last_message(&self, nergal_session_id: &str, message: Option<String>) {
         match message.filter(|s| !s.trim().is_empty()) {
             Some(s) => {
                 self.session_last_message
-                    .insert(cluihud_session_id.to_string(), s);
+                    .insert(nergal_session_id.to_string(), s);
             }
             None => {
-                self.session_last_message.remove(cluihud_session_id);
+                self.session_last_message.remove(nergal_session_id);
             }
         }
     }
 
     /// A session's last assistant message, or `None` when none captured.
-    pub fn session_last_message(&self, cluihud_session_id: &str) -> Option<String> {
+    pub fn session_last_message(&self, nergal_session_id: &str) -> Option<String> {
         self.session_last_message
-            .get(cluihud_session_id)
+            .get(nergal_session_id)
             .map(|r| r.clone())
     }
 
-    /// Record a `claude_code_session_id → cluihud_session_id` mapping for MCP
+    /// Record a `claude_code_session_id → nergal_session_id` mapping for MCP
     /// identity resolution. No-op overwrite if already present.
-    pub fn map_cc_session(&self, cc_session_id: &str, cluihud_session_id: &str) {
+    pub fn map_cc_session(&self, cc_session_id: &str, nergal_session_id: &str) {
         self.cc_session_map
-            .insert(cc_session_id.to_string(), cluihud_session_id.to_string());
+            .insert(cc_session_id.to_string(), nergal_session_id.to_string());
     }
 
-    /// Resolve an MCP-reported env hint to a live `cluihud_session_id`. Tries
-    /// the hint as a cluihud id (the primary, inherited `CLUIHUD_SESSION_ID`
+    /// Resolve an MCP-reported env hint to a live `nergal_session_id`. Tries
+    /// the hint as a nergal id (the primary, inherited `NERGAL_SESSION_ID`
     /// path), then the CC side map. Returns `None` for an unknown id
     /// (unidentified caller).
     pub fn resolve_session_hint(&self, hint: &str) -> Option<String> {
@@ -292,9 +292,9 @@ impl AgentRuntimeState {
     /// Resolve a session to its agent id. Cache-only — the DB-fallback path
     /// belongs to the dispatcher (which has access to `SharedDb`); putting it
     /// here would muddy the separation between agent state and DB state.
-    pub fn resolve(&self, cluihud_session_id: &str) -> Option<AgentId> {
+    pub fn resolve(&self, nergal_session_id: &str) -> Option<AgentId> {
         self.agent_id_cache
-            .get(cluihud_session_id)
+            .get(nergal_session_id)
             .map(|r| r.clone())
     }
 }
@@ -331,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn hint_resolves_registered_cluihud_id() {
+    fn hint_resolves_registered_nergal_id() {
         let state = AgentRuntimeState::bootstrap().unwrap();
         state.register_session("clui-1", AgentId::claude_code());
         assert_eq!(
@@ -347,7 +347,7 @@ mod tests {
     }
 
     #[test]
-    fn cc_side_map_resolves_to_cluihud_id() {
+    fn cc_side_map_resolves_to_nergal_id() {
         let state = AgentRuntimeState::bootstrap().unwrap();
         state.register_session("clui-1", AgentId::claude_code());
         state.map_cc_session("cc-abc", "clui-1");

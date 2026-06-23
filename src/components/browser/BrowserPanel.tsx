@@ -17,7 +17,7 @@ const BLANK_URLS = new Set(["", "about:blank"]);
 /// Live-preview browser. Renders an `<iframe>` per tab; only the active
 /// tab's iframe is visible (others are `display:none`) so SPA state
 /// survives tab switches and mode switches. `color-scheme` is only set on
-/// the iframe element so the panel chrome (toolbar, tabs) keeps cluihud's
+/// the iframe element so the panel chrome (toolbar, tabs) keeps nergal's
 /// theming and doesn't cascade an inconsistent scheme.
 export function BrowserPanel() {
   const sessionId = useAtomValue(activeSessionIdAtom);
@@ -112,7 +112,7 @@ function BlankHomepage({ sessionId }: { sessionId: string }) {
 
   // Auto-focus the container so arrow keys work without a manual click.
   // Also re-focuses every time the host transitions from hidden to visible
-  // (BrowserHost dispatches `cluihud:browser-became-visible`) — important
+  // (BrowserHost dispatches `nergal:browser-became-visible`) — important
   // because the panel mount-once architecture means this useEffect doesn't
   // re-run across mode/tab switches; we'd otherwise lose arrow nav after
   // the first render.
@@ -121,9 +121,9 @@ function BlankHomepage({ sessionId }: { sessionId: string }) {
       containerRef.current?.focus({ preventScroll: true });
     }
     focus();
-    document.addEventListener("cluihud:browser-became-visible", focus);
+    document.addEventListener("nergal:browser-became-visible", focus);
     return () =>
-      document.removeEventListener("cluihud:browser-became-visible", focus);
+      document.removeEventListener("nergal:browser-became-visible", focus);
   }, []);
 
   async function open(port: number) {

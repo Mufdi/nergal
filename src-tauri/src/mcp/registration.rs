@@ -1,8 +1,8 @@
-//! Idempotent registration of the `cluihud mcp` shim into agent MCP configs.
+//! Idempotent registration of the `nergal mcp` shim into agent MCP configs.
 //!
 //! Design Decision 7: the registered command pins the **installed absolute
-//! path** `/usr/bin/cluihud` (not a `$PATH` lookup, which would bake in the
-//! `~/.cargo/bin/cluihud` shadow CLAUDE.md documents). Registration is
+//! path** `/usr/bin/nergal` (not a `$PATH` lookup, which would bake in the
+//! `~/.cargo/bin/nergal` shadow CLAUDE.md documents). Registration is
 //! idempotent (no duplicate entries); deregistration is best-effort at disable
 //! time. An orphaned entry after uninstall degrades to a structured error when
 //! the agent tries to spawn the missing binary — not a hard failure.
@@ -23,27 +23,27 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
 
-/// The MCP server key cluihud owns inside an agent config.
-const SERVER_KEY: &str = "cluihud";
+/// The MCP server key nergal owns inside an agent config.
+const SERVER_KEY: &str = "nergal";
 
-/// Absolute command the agent spawns for the shim. Pins `/usr/bin/cluihud`
+/// Absolute command the agent spawns for the shim. Pins `/usr/bin/nergal`
 /// (the `.deb`/`.rpm` location) when present; falls back to the running
 /// executable so a dev build still registers a working path.
 fn shim_command() -> String {
-    let installed = PathBuf::from("/usr/bin/cluihud");
+    let installed = PathBuf::from("/usr/bin/nergal");
     if installed.exists() {
         return installed.to_string_lossy().into_owned();
     }
     std::env::current_exe()
         .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| "cluihud".to_string())
+        .unwrap_or_else(|_| "nergal".to_string())
 }
 
 fn cc_config_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".claude.json"))
 }
 
-/// Mutate a parsed agent-config root in place: add or remove the `cluihud`
+/// Mutate a parsed agent-config root in place: add or remove the `nergal`
 /// entry under `mcpServers`. Returns true if the document changed. Pure (no
 /// I/O) so it is unit-tested directly.
 fn apply_cc_registration(root: &mut Value, command: &str, register: bool) -> bool {
@@ -100,7 +100,7 @@ fn rewrite_cc_config(register: bool) -> Result<()> {
         let pretty = serde_json::to_string_pretty(&root)?;
         std::fs::write(&path, pretty).with_context(|| format!("writing {}", path.display()))?;
         tracing::info!(
-            "mcp: {} cluihud in {}",
+            "mcp: {} nergal in {}",
             if register {
                 "registered"
             } else {
@@ -118,7 +118,7 @@ fn codex_config_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".codex").join("config.toml"))
 }
 
-/// Add/remove `[mcp_servers.cluihud]` in a parsed Codex TOML doc, preserving
+/// Add/remove `[mcp_servers.nergal]` in a parsed Codex TOML doc, preserving
 /// every other table, key, comment and whitespace. Returns true if it changed.
 fn apply_codex_registration(
     doc: &mut toml_edit::DocumentMut,
@@ -188,7 +188,7 @@ fn rewrite_codex_config(register: bool) -> Result<()> {
         std::fs::write(&path, doc.to_string())
             .with_context(|| format!("writing {}", path.display()))?;
         tracing::info!(
-            "mcp: {} cluihud in {}",
+            "mcp: {} nergal in {}",
             if register {
                 "registered"
             } else {
@@ -206,7 +206,7 @@ fn opencode_config_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".config").join("opencode").join("opencode.json"))
 }
 
-/// Add/remove the `cluihud` entry under `mcp` in a parsed OpenCode config.
+/// Add/remove the `nergal` entry under `mcp` in a parsed OpenCode config.
 /// OpenCode's local-server shape (verified live): `{type:"local", command:[cmd,
 /// args...], enabled:true}` with `command` a single array. Returns true if changed.
 fn apply_opencode_registration(root: &mut Value, command: &str, register: bool) -> bool {
@@ -262,7 +262,7 @@ fn rewrite_opencode_config(register: bool) -> Result<()> {
         let pretty = serde_json::to_string_pretty(&root)?;
         std::fs::write(&path, pretty).with_context(|| format!("writing {}", path.display()))?;
         tracing::info!(
-            "mcp: {} cluihud in {}",
+            "mcp: {} nergal in {}",
             if register {
                 "registered"
             } else {
@@ -305,48 +305,48 @@ mod tests {
     #[test]
     fn register_adds_entry() {
         let mut root = json!({});
-        assert!(apply_cc_registration(&mut root, "/usr/bin/cluihud", true));
-        assert_eq!(root["mcpServers"]["cluihud"]["command"], "/usr/bin/cluihud");
-        assert_eq!(root["mcpServers"]["cluihud"]["args"][0], "mcp");
+        assert!(apply_cc_registration(&mut root, "/usr/bin/nergal", true));
+        assert_eq!(root["mcpServers"]["nergal"]["command"], "/usr/bin/nergal");
+        assert_eq!(root["mcpServers"]["nergal"]["args"][0], "mcp");
     }
 
     #[test]
     fn register_is_idempotent() {
         let mut root = json!({});
-        apply_cc_registration(&mut root, "/usr/bin/cluihud", true);
+        apply_cc_registration(&mut root, "/usr/bin/nergal", true);
         // Second identical registration reports no change.
-        assert!(!apply_cc_registration(&mut root, "/usr/bin/cluihud", true));
+        assert!(!apply_cc_registration(&mut root, "/usr/bin/nergal", true));
     }
 
     #[test]
     fn register_preserves_other_servers() {
         let mut root = json!({ "mcpServers": { "other": { "command": "x" } }, "foo": 1 });
-        apply_cc_registration(&mut root, "/usr/bin/cluihud", true);
+        apply_cc_registration(&mut root, "/usr/bin/nergal", true);
         assert_eq!(root["mcpServers"]["other"]["command"], "x");
         assert_eq!(root["foo"], 1);
-        assert!(root["mcpServers"]["cluihud"].is_object());
+        assert!(root["mcpServers"]["nergal"].is_object());
     }
 
     #[test]
-    fn deregister_removes_only_cluihud() {
+    fn deregister_removes_only_nergal() {
         let mut root =
-            json!({ "mcpServers": { "cluihud": { "command": "c" }, "other": { "command": "x" } } });
-        assert!(apply_cc_registration(&mut root, "/usr/bin/cluihud", false));
-        assert!(root["mcpServers"].get("cluihud").is_none());
+            json!({ "mcpServers": { "nergal": { "command": "c" }, "other": { "command": "x" } } });
+        assert!(apply_cc_registration(&mut root, "/usr/bin/nergal", false));
+        assert!(root["mcpServers"].get("nergal").is_none());
         assert_eq!(root["mcpServers"]["other"]["command"], "x");
     }
 
     #[test]
     fn deregister_missing_is_noop() {
         let mut root = json!({ "mcpServers": { "other": {} } });
-        assert!(!apply_cc_registration(&mut root, "/usr/bin/cluihud", false));
+        assert!(!apply_cc_registration(&mut root, "/usr/bin/nergal", false));
     }
 
     #[test]
     fn register_into_non_object_root_resets() {
         let mut root = json!("garbage");
-        assert!(apply_cc_registration(&mut root, "/usr/bin/cluihud", true));
-        assert!(root["mcpServers"]["cluihud"].is_object());
+        assert!(apply_cc_registration(&mut root, "/usr/bin/nergal", true));
+        assert!(root["mcpServers"]["nergal"].is_object());
     }
 
     // ── Codex (TOML) ──
@@ -357,13 +357,13 @@ mod tests {
             "[mcp_servers.other]\ncommand = \"x\"\nargs = [\"mcp\"]\n\n[tui]\ntheme = \"mono\"\n"
                 .parse()
                 .unwrap();
-        assert!(apply_codex_registration(&mut doc, "/usr/bin/cluihud", true));
+        assert!(apply_codex_registration(&mut doc, "/usr/bin/nergal", true));
         assert_eq!(
-            doc["mcp_servers"]["cluihud"]["command"].as_str(),
-            Some("/usr/bin/cluihud")
+            doc["mcp_servers"]["nergal"]["command"].as_str(),
+            Some("/usr/bin/nergal")
         );
         assert_eq!(
-            doc["mcp_servers"]["cluihud"]["args"][0].as_str(),
+            doc["mcp_servers"]["nergal"]["args"][0].as_str(),
             Some("mcp")
         );
         // Untouched: the other server + the unrelated [tui] table.
@@ -374,26 +374,18 @@ mod tests {
     #[test]
     fn codex_register_is_idempotent() {
         let mut doc: toml_edit::DocumentMut = String::new().parse().unwrap();
-        assert!(apply_codex_registration(&mut doc, "/usr/bin/cluihud", true));
-        assert!(!apply_codex_registration(
-            &mut doc,
-            "/usr/bin/cluihud",
-            true
-        ));
+        assert!(apply_codex_registration(&mut doc, "/usr/bin/nergal", true));
+        assert!(!apply_codex_registration(&mut doc, "/usr/bin/nergal", true));
     }
 
     #[test]
-    fn codex_deregister_removes_only_cluihud() {
+    fn codex_deregister_removes_only_nergal() {
         let mut doc: toml_edit::DocumentMut =
-            "[mcp_servers.cluihud]\ncommand = \"c\"\nargs = [\"mcp\"]\n\n[mcp_servers.other]\ncommand = \"x\"\n"
+            "[mcp_servers.nergal]\ncommand = \"c\"\nargs = [\"mcp\"]\n\n[mcp_servers.other]\ncommand = \"x\"\n"
                 .parse()
                 .unwrap();
-        assert!(apply_codex_registration(
-            &mut doc,
-            "/usr/bin/cluihud",
-            false
-        ));
-        assert!(doc["mcp_servers"].get("cluihud").is_none());
+        assert!(apply_codex_registration(&mut doc, "/usr/bin/nergal", false));
+        assert!(doc["mcp_servers"].get("nergal").is_none());
         assert_eq!(doc["mcp_servers"]["other"]["command"].as_str(), Some("x"));
     }
 
@@ -402,7 +394,7 @@ mod tests {
         let mut doc: toml_edit::DocumentMut = "[tui]\ntheme = \"m\"\n".parse().unwrap();
         assert!(!apply_codex_registration(
             &mut doc,
-            "/usr/bin/cluihud",
+            "/usr/bin/nergal",
             false
         ));
     }
@@ -414,13 +406,13 @@ mod tests {
         let mut root = json!({ "$schema": "https://opencode.ai/config.json", "mcp": {} });
         assert!(apply_opencode_registration(
             &mut root,
-            "/usr/bin/cluihud",
+            "/usr/bin/nergal",
             true
         ));
-        assert_eq!(root["mcp"]["cluihud"]["type"], "local");
-        assert_eq!(root["mcp"]["cluihud"]["command"][0], "/usr/bin/cluihud");
-        assert_eq!(root["mcp"]["cluihud"]["command"][1], "mcp");
-        assert_eq!(root["mcp"]["cluihud"]["enabled"], true);
+        assert_eq!(root["mcp"]["nergal"]["type"], "local");
+        assert_eq!(root["mcp"]["nergal"]["command"][0], "/usr/bin/nergal");
+        assert_eq!(root["mcp"]["nergal"]["command"][1], "mcp");
+        assert_eq!(root["mcp"]["nergal"]["enabled"], true);
     }
 
     #[test]
@@ -428,27 +420,27 @@ mod tests {
         let mut root = json!({ "mcp": { "other": { "type": "local", "command": ["x"] } } });
         assert!(apply_opencode_registration(
             &mut root,
-            "/usr/bin/cluihud",
+            "/usr/bin/nergal",
             true
         ));
         assert!(!apply_opencode_registration(
             &mut root,
-            "/usr/bin/cluihud",
+            "/usr/bin/nergal",
             true
         ));
         assert_eq!(root["mcp"]["other"]["command"][0], "x");
     }
 
     #[test]
-    fn opencode_deregister_removes_only_cluihud() {
+    fn opencode_deregister_removes_only_nergal() {
         let mut root =
-            json!({ "mcp": { "cluihud": { "type": "local" }, "other": { "type": "local" } } });
+            json!({ "mcp": { "nergal": { "type": "local" }, "other": { "type": "local" } } });
         assert!(apply_opencode_registration(
             &mut root,
-            "/usr/bin/cluihud",
+            "/usr/bin/nergal",
             false
         ));
-        assert!(root["mcp"].get("cluihud").is_none());
+        assert!(root["mcp"].get("nergal").is_none());
         assert!(root["mcp"]["other"].is_object());
     }
 }

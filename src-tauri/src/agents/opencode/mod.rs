@@ -1,4 +1,4 @@
-//! OpenCode adapter — runs the `opencode` TUI inside the cluihud terminal.
+//! OpenCode adapter — runs the `opencode` TUI inside the nergal terminal.
 //!
 //! Earlier versions wrapped `opencode serve` (HTTP+SSE) and routed the UI
 //! through a chat panel; that's been removed in favor of the terminal flow

@@ -116,7 +116,7 @@ impl AgentAdapter for CodexAdapter {
         }
     }
 
-    fn requires_cluihud_setup(&self) -> bool {
+    fn requires_nergal_setup(&self) -> bool {
         true
     }
 
@@ -203,7 +203,7 @@ impl AgentAdapter for CodexAdapter {
             args.push(text);
         }
         let mut env = HashMap::new();
-        env.insert("CLUIHUD_SESSION_ID".into(), ctx.session_id.to_string());
+        env.insert("NERGAL_SESSION_ID".into(), ctx.session_id.to_string());
         Ok(SpawnSpec { binary, args, env })
     }
 
@@ -267,7 +267,7 @@ impl AgentAdapter for CodexAdapter {
     }
 }
 
-/// Map cluihud's light/dark variant to a codex `tui.theme` name. Codex
+/// Map nergal's light/dark variant to a codex `tui.theme` name. Codex
 /// today exposes a single syntax theme name (`monochrome`) regardless of
 /// variant — known limitation, documented in the spec delta. Returning a
 /// constant lets the mapping evolve when codex CLI widens its theme keys.
@@ -314,7 +314,7 @@ async fn read_trust_for_cwd() -> Option<bool> {
 }
 
 /// Re-export of [`super::setup::run_codex_setup`] for use by the
-/// `cluihud setup` flow when the Codex adapter is selected.
+/// `nergal setup` flow when the Codex adapter is selected.
 pub use super::setup::run_codex_setup;
 
 #[cfg(test)]
@@ -364,9 +364,9 @@ mod tests {
     }
 
     #[test]
-    fn requires_cluihud_setup_is_true_for_codex() {
+    fn requires_nergal_setup_is_true_for_codex() {
         let a = CodexAdapter::new();
-        assert!(a.requires_cluihud_setup());
+        assert!(a.requires_nergal_setup());
     }
 
     fn sample_palette() -> ThemePalette {

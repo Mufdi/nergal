@@ -16,7 +16,7 @@ import { FLOATING_SLOT_ATTR } from "./BrowserHost";
 const BROWSER_PANEL_ID = "browser-v4";
 
 /// Compute the default geometry on demand (not at module load) so
-/// `window.innerWidth/Height` reflect the actual cluihud window size at
+/// `window.innerWidth/Height` reflect the actual nergal window size at
 /// the moment the floating browser is first opened.
 function computeDefaultGeometry(): FloatingGeometry {
   const vw = typeof window !== "undefined" ? window.innerWidth : 1920;

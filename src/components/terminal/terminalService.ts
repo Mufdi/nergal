@@ -543,7 +543,7 @@ function wireInput(entry: Entry): void {
       return;
     }
 
-    // Ctrl+Shift+C stays with cluihud's global `commit-session` binding —
+    // Ctrl+Shift+C stays with nergal's global `commit-session` binding —
     // we cannot block it here anyway because `useKeyboardShortcuts` listens
     // in capture phase, ahead of our bubble-phase listener. Instead, copy
     // is triggered automatically on selection release (see mouseup).
@@ -999,7 +999,7 @@ function isModifierOrDead(e: KeyboardEvent): boolean {
 
 function shouldPassThrough(e: KeyboardEvent): boolean {
   // Same shortcut set the legacy terminalService.wireIMEFix filters — these
-  // are handled by cluihud globally, not by the terminal.
+  // are handled by nergal globally, not by the terminal.
   if (e.type !== "keydown") return true;
   if (e.ctrlKey && !e.shiftKey && !e.altKey) {
     if (

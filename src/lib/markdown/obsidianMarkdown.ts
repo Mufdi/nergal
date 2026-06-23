@@ -10,7 +10,7 @@ import { remarkObsidianLinks, type RemarkObsidianOptions } from "./remarkObsidia
 // webview). Override the transform to whitelist our two custom schemes
 // while keeping the default safety for everything else.
 export function obsidianUrlTransform(uri: string): string {
-  if (uri.startsWith("obsidian://") || uri.startsWith("cluihud://")) {
+  if (uri.startsWith("obsidian://") || uri.startsWith("nergal://")) {
     return uri;
   }
   return defaultUrlTransform(uri);

@@ -31,7 +31,7 @@ function DialogOverlay({
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
       className={cn(
-        "fixed inset-0 isolate z-50 bg-black/10 cluihud-blur-xs duration-100 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "fixed inset-0 isolate z-50 bg-black/10 nergal-blur-xs duration-100 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className
       )}
       {...props}
@@ -57,7 +57,7 @@ function DialogContent({
           // free vertical space across implicit rows; combined with `inset-0 +
           // m-auto + h-fit` it blows up scrollable children when the resolved
           // height exceeds the content (AgentPicker stretching, AskUser void).
-          "cluihud-glow fixed inset-0 z-50 m-auto flex h-fit w-fit max-w-[calc(100%-2rem)] max-h-[calc(100%-2rem)] flex-col gap-4 rounded-lg border-2 border-primary bg-card p-4 text-sm shadow-lg duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+          "nergal-glow fixed inset-0 z-50 m-auto flex h-fit w-fit max-w-[calc(100%-2rem)] max-h-[calc(100%-2rem)] flex-col gap-4 rounded-lg border-2 border-primary bg-card p-4 text-sm shadow-lg duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
           className
         )}
         {...props}

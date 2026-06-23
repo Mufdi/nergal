@@ -100,8 +100,8 @@ export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
       if (!target || !workspaceId) return;
       setPrZen(summaryToData(workspaceId, target));
     }
-    document.addEventListener("cluihud:expand-zen-pr", onExpand);
-    return () => document.removeEventListener("cluihud:expand-zen-pr", onExpand);
+    document.addEventListener("nergal:expand-zen-pr", onExpand);
+    return () => document.removeEventListener("nergal:expand-zen-pr", onExpand);
   }, [workspaceId, selected, prs, cursor, setPrZen]);
 
   /// Revalidate on mount only when the cache is absent or stale. GitPanel's

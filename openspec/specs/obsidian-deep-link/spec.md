@@ -28,51 +28,51 @@ The system SHALL expose this outbound navigation as: (a) a context-menu entry "O
 - **WHEN** the user presses `Ctrl+Shift+V` while the active tab is the terminal (no file context)
 - **THEN** the handler SHALL no-op with a quiet toast "No file in focus to open in Obsidian"
 
-### Requirement: Inbound `cluihud://` scheme registration
-The system SHALL register `cluihud://` as a custom URI scheme via `tauri-plugin-deep-link` (version 2). Registration MUST be declared in `tauri.conf.json` under `plugins.deep-link.desktop.schemes` and MUST be effective on Linux via the generated `.desktop` file's `MimeType=x-scheme-handler/cluihud;` entry.
+### Requirement: Inbound `nergal://` scheme registration
+The system SHALL register `nergal://` as a custom URI scheme via `tauri-plugin-deep-link` (version 2). Registration MUST be declared in `tauri.conf.json` under `plugins.deep-link.desktop.schemes` and MUST be effective on Linux via the generated `.desktop` file's `MimeType=x-scheme-handler/nergal;` entry.
 
 When a URL matching the scheme is opened from any external application, the system MUST receive it via the plugin's `on_open_url` callback and emit a Tauri event `deeplink:received` to the frontend.
 
 #### Scenario: External invocation focuses existing instance
 
 - **WHEN** Nergal is already running
-- **AND** the user (or another app) invokes `xdg-open "cluihud://session/new?cwd=$HOME/Projects/foo&prompt=hi"`
+- **AND** the user (or another app) invokes `xdg-open "nergal://session/new?cwd=$HOME/Projects/foo&prompt=hi"`
 - **THEN** the existing Nergal window SHALL gain focus (single-instance behavior provided by the plugin)
 - **AND** the URL SHALL be delivered to the frontend via `deeplink:received`
 
 #### Scenario: Cold-start invocation
 
 - **WHEN** Nergal is NOT running
-- **AND** the user invokes a `cluihud://` URL
+- **AND** the user invokes a `nergal://` URL
 - **THEN** Nergal SHALL launch
 - **AND** the URL SHALL be queued and dispatched to `deeplink:received` after frontend setup completes
 
-### Requirement: Supported `cluihud://` actions (v1)
+### Requirement: Supported `nergal://` actions (v1)
 The frontend router SHALL handle the following actions, dispatched on incoming `deeplink:received` events:
 
-- `cluihud://session/new?cwd=<abs path>&agent=<optional id>&prompt=<optional url-encoded text>` — opens (or creates) the workspace containing `cwd`, spawns a new session with the optional agent override, and writes the prompt to the PTY if present.
-- `cluihud://open-file?workspace=<workspace id>&path=<relative path>&line=<optional integer>` — switches to the workspace, opens the file in the right panel, scrolls to the line if provided.
-- `cluihud://open-workspace?path=<abs path>` — opens or creates the workspace at the given path.
+- `nergal://session/new?cwd=<abs path>&agent=<optional id>&prompt=<optional url-encoded text>` — opens (or creates) the workspace containing `cwd`, spawns a new session with the optional agent override, and writes the prompt to the PTY if present.
+- `nergal://open-file?workspace=<workspace id>&path=<relative path>&line=<optional integer>` — switches to the workspace, opens the file in the right panel, scrolls to the line if provided.
+- `nergal://open-workspace?path=<abs path>` — opens or creates the workspace at the given path.
 
-Unknown actions SHALL produce a Sileo toast "Unknown cluihud:// action: …" and SHALL NOT crash the router.
+Unknown actions SHALL produce a Sileo toast "Unknown nergal:// action: …" and SHALL NOT crash the router.
 
 #### Scenario: New session action with prompt
 
-- **WHEN** `cluihud://session/new?cwd=$HOME/Projects/foo&prompt=Implement+auth` is received
+- **WHEN** `nergal://session/new?cwd=$HOME/Projects/foo&prompt=Implement+auth` is received
 - **AND** a workspace at `$HOME/Projects/foo` already exists
 - **THEN** the system SHALL spawn a new session in that workspace
 - **AND** the literal text `Implement auth` SHALL be written to the new session's PTY after spawn-ready
 
 #### Scenario: Open-file action with line
 
-- **WHEN** `cluihud://open-file?workspace=abc123&path=src/foo.rs&line=42` is received
+- **WHEN** `nergal://open-file?workspace=abc123&path=src/foo.rs&line=42` is received
 - **THEN** the system SHALL switch to workspace `abc123`
 - **AND** open `src/foo.rs` in the right panel
 - **AND** scroll the viewer to line 42
 
 #### Scenario: Unknown action
 
-- **WHEN** `cluihud://teleport?destination=mars` is received
-- **THEN** the router SHALL emit a Sileo toast "Unknown cluihud:// action: teleport"
+- **WHEN** `nergal://teleport?destination=mars` is received
+- **THEN** the router SHALL emit a Sileo toast "Unknown nergal:// action: teleport"
 - **AND** SHALL NOT throw
 

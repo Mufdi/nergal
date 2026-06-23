@@ -209,12 +209,12 @@ export function VaultSearchModal() {
 
   return (
     <div className="fixed inset-0 z-50 flex justify-center pt-[20vh]" onClick={close}>
-      <div className="fixed inset-0 bg-scrim cluihud-blur-md" />
+      <div className="fixed inset-0 bg-scrim nergal-blur-md" />
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Search the vault"
-        className="cluihud-glow relative z-10 flex max-h-[70vh] w-full max-w-lg flex-col rounded-lg border-2 border-primary bg-card shadow-lg"
+        className="nergal-glow relative z-10 flex max-h-[70vh] w-full max-w-lg flex-col rounded-lg border-2 border-primary bg-card shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-border/50 px-3 py-2">

@@ -320,7 +320,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
     ? available.find((e) => e.id === config.preferred_editor)
     : available[0];
 
-  const workspaceName = workspace?.name ?? "cluihud";
+  const workspaceName = workspace?.name ?? "nergal";
 
   const sessionMap = new Map<string, { session: import("@/stores/workspace").Session; workspaceName: string }>();
   for (const ws of workspaces) {
@@ -490,7 +490,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
                 isActive
                   ? "bg-secondary text-foreground"
                   : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground/80"
-              } ${dragOverId === tabId && dropSideRef.current === "left" ? "border-l-2 border-l-primary/60" : ""} ${dragOverId === tabId && dropSideRef.current === "right" ? "border-r-2 border-r-primary/60" : ""} ${isAwaiting ? "cluihud-ask-pending" : ""}`}
+              } ${dragOverId === tabId && dropSideRef.current === "left" ? "border-l-2 border-l-primary/60" : ""} ${dragOverId === tabId && dropSideRef.current === "right" ? "border-r-2 border-r-primary/60" : ""} ${isAwaiting ? "nergal-ask-pending" : ""}`}
             >
               {/* Status indicator */}
               <SessionIndicator sessionId={tabId} sessionStatus={entry.session.status} size="xs" />

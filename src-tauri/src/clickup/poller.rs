@@ -34,7 +34,7 @@ pub const STALE_RETENTION_SECS: i64 = 7 * 24 * 60 * 60;
 /// Synthetic container ids embed a `:` (impossible in real ClickUp ids) so
 /// the hierarchy-tombstone sweep can recognize and exempt placeholders —
 /// they were never in a hierarchy fetch by definition (Decision 6).
-pub const PLACEHOLDER_FOLDER_PREFIX: &str = "cluihud:placeholder:";
+pub const PLACEHOLDER_FOLDER_PREFIX: &str = "nergal:placeholder:";
 
 /// Cap on poll-driven comment refreshes per cycle so a burst of edited
 /// tasks cannot blow the rate budget; the remainder catches up on later
@@ -924,7 +924,7 @@ impl SyncEffects for TauriEffects {
         // send_notification). tauri_plugin_notification's `.show()` is
         // unreliable under WebKitGTK and was failing silently here.
         if let Err(e) = std::process::Command::new("notify-send")
-            .arg("--app-name=cluihud")
+            .arg("--app-name=nergal")
             .arg("--expire-time=5000")
             .arg("--urgency=normal")
             .arg(title)
@@ -1640,7 +1640,7 @@ mod tests {
         assert_eq!(folder_id, "901310888888");
         let placeholder_count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM clickup_folders WHERE id LIKE 'cluihud:placeholder:%'",
+                "SELECT COUNT(*) FROM clickup_folders WHERE id LIKE 'nergal:placeholder:%'",
                 [],
                 |r| r.get(0),
             )

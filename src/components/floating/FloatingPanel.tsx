@@ -214,7 +214,7 @@ export function FloatingPanel({
         ref={cardRef}
         data-state={visible ? "open" : "closed"}
         className={`pointer-events-auto absolute flex flex-col overflow-hidden rounded-lg shadow-lg outline-none focus:outline-none focus-visible:outline-none transition-[opacity,transform] duration-100 ease-out data-[state=closed]:opacity-0 data-[state=closed]:scale-[0.97] data-[state=open]:opacity-100 data-[state=open]:scale-100 ${
-          accent ? "border-2 border-primary cluihud-glow" : "border border-border"
+          accent ? "border-2 border-primary nergal-glow" : "border border-border"
         }`}
         style={{
           left: effective.x,

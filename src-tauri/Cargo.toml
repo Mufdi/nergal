@@ -1,5 +1,5 @@
 [package]
-name = "cluihud"
+name = "nergal"
 version = "0.3.0"
 edition = "2024"
 
@@ -93,7 +93,7 @@ termwiz = { git = "https://github.com/wezterm/wezterm.git", tag = "20240203-1108
 toml_edit = "0.22"
 toml = "0.8"
 
-# obsidian-bridge: tauri-plugin-deep-link registers `cluihud://`;
+# obsidian-bridge: tauri-plugin-deep-link registers `nergal://`;
 # tauri-plugin-single-instance forwards URI launches to the running app
 # on Linux (without it every xdg-open spawns a new process).
 # fs2 guards the post-session bg runner against concurrent invocations.

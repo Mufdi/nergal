@@ -1,11 +1,11 @@
 # session-directory Specification
 
 ## Purpose
-TBD - created by archiving change cluihud-mcp-server. Update Purpose after archive.
+TBD - created by archiving change nergal-mcp-server. Update Purpose after archive.
 ## Requirements
 ### Requirement: list_sessions tool
 
-The system SHALL expose a `list_sessions` MCP tool returning a descriptor for every live session known to the daemon, plus every **recently-dead** session (one whose `last_stop_at` falls within the configured recency window), optionally filtered. Each descriptor SHALL carry `is_live` so a caller can distinguish a running session from a recalled one. The result SHALL be assembled from data cluihud already holds, with no AI and no transcript parse on the hot path. `list_sessions` SHALL serve cached summaries only and SHALL NOT trigger summary generation for any session (only `get_session` does), so a directory listing never fans out into per-session inference.
+The system SHALL expose a `list_sessions` MCP tool returning a descriptor for every live session known to the daemon, plus every **recently-dead** session (one whose `last_stop_at` falls within the configured recency window), optionally filtered. Each descriptor SHALL carry `is_live` so a caller can distinguish a running session from a recalled one. The result SHALL be assembled from data nergal already holds, with no AI and no transcript parse on the hot path. `list_sessions` SHALL serve cached summaries only and SHALL NOT trigger summary generation for any session (only `get_session` does), so a directory listing never fans out into per-session inference.
 
 #### Scenario: Enumerate sibling sessions across workspaces
 

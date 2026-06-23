@@ -1,7 +1,7 @@
-//! `cluihud mcp` — the stdio MCP shim each agent spawns. It is a pure relay:
+//! `nergal mcp` — the stdio MCP shim each agent spawns. It is a pure relay:
 //! newline-delimited JSON-RPC on stdio ↔ length-framed JSON-RPC on the daemon
 //! socket. It injects the cooperative session hint into `initialize` from its
-//! own env (inherited `CLUIHUD_SESSION_ID`, or CC's `CLAUDE_CODE_SESSION_ID`).
+//! own env (inherited `NERGAL_SESSION_ID`, or CC's `CLAUDE_CODE_SESSION_ID`).
 //!
 //! Degraded mode (daemon unreachable): `initialize` and `tools/list` are
 //! answered locally from the SAME daemon-owned source (`initialize_result` /
@@ -15,7 +15,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use super::transport;
 
-/// Entry point for the `cluihud mcp` subcommand. Builds a runtime and runs the
+/// Entry point for the `nergal mcp` subcommand. Builds a runtime and runs the
 /// stdio relay loop until stdin EOF.
 pub fn run() -> anyhow::Result<()> {
     let rt = tokio::runtime::Runtime::new().context("mcp shim runtime")?;
@@ -23,7 +23,7 @@ pub fn run() -> anyhow::Result<()> {
 }
 
 async fn run_async() -> anyhow::Result<()> {
-    let hint = std::env::var("CLUIHUD_SESSION_ID")
+    let hint = std::env::var("NERGAL_SESSION_ID")
         .ok()
         .filter(|s| !s.is_empty())
         .or_else(|| {
@@ -32,7 +32,7 @@ async fn run_async() -> anyhow::Result<()> {
                 .filter(|s| !s.is_empty())
         })
         // Fallback: some agents (Codex) spawn MCP servers with a SANITIZED env,
-        // so our own `CLUIHUD_SESSION_ID` is missing — but an ancestor process
+        // so our own `NERGAL_SESSION_ID` is missing — but an ancestor process
         // (the agent itself, spawned by the PTY with the var set) still has it.
         // Walk the parent chain via /proc and recover it (Linux only).
         .or_else(session_hint_from_ancestors);
@@ -71,9 +71,9 @@ async fn run_async() -> anyhow::Result<()> {
         {
             match msg.get_mut("params").and_then(|p| p.as_object_mut()) {
                 Some(obj) => {
-                    obj.insert("_cluihud_session_hint".into(), json!(h));
+                    obj.insert("_nergal_session_hint".into(), json!(h));
                 }
-                None => msg["params"] = json!({ "_cluihud_session_hint": h }),
+                None => msg["params"] = json!({ "_nergal_session_hint": h }),
             }
         }
 
@@ -131,7 +131,7 @@ fn degraded_response(msg: &Value) -> Value {
         "tools/call" => json!({
             "jsonrpc": "2.0",
             "id": id,
-            "error": { "code": -32001, "message": "cluihud MCP daemon unreachable", "data": { "reason": "daemon_down" } },
+            "error": { "code": -32001, "message": "nergal MCP daemon unreachable", "data": { "reason": "daemon_down" } },
         }),
         other => json!({
             "jsonrpc": "2.0",
@@ -174,7 +174,7 @@ fn session_hint_from_ancestors() -> Option<String> {
         let Ok(data) = std::fs::read(format!("/proc/{pid}/environ")) else {
             continue;
         };
-        if let Some(v) = find_in_environ(&data, "CLUIHUD_SESSION_ID") {
+        if let Some(v) = find_in_environ(&data, "NERGAL_SESSION_ID") {
             return Some(v);
         }
         if let Some(v) = find_in_environ(&data, "CLAUDE_CODE_SESSION_ID") {
@@ -195,15 +195,15 @@ mod tests {
 
     #[test]
     fn find_in_environ_extracts_value() {
-        let buf = b"PATH=/usr/bin\0CLUIHUD_SESSION_ID=abc-123\0HOME=/home/x\0";
+        let buf = b"PATH=/usr/bin\0NERGAL_SESSION_ID=abc-123\0HOME=/home/x\0";
         assert_eq!(
-            find_in_environ(buf, "CLUIHUD_SESSION_ID"),
+            find_in_environ(buf, "NERGAL_SESSION_ID"),
             Some("abc-123".to_string())
         );
         assert_eq!(find_in_environ(buf, "MISSING"), None);
         // An empty value is treated as absent.
         assert_eq!(
-            find_in_environ(b"CLUIHUD_SESSION_ID=\0", "CLUIHUD_SESSION_ID"),
+            find_in_environ(b"NERGAL_SESSION_ID=\0", "NERGAL_SESSION_ID"),
             None
         );
     }

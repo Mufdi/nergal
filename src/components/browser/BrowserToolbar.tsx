@@ -67,8 +67,8 @@ export function BrowserToolbar({ sessionId, inputRef }: Props) {
       node.focus();
       node.select();
     }
-    document.addEventListener("cluihud:browser-focus-url", focusUrl);
-    return () => document.removeEventListener("cluihud:browser-focus-url", focusUrl);
+    document.addEventListener("nergal:browser-focus-url", focusUrl);
+    return () => document.removeEventListener("nergal:browser-focus-url", focusUrl);
   }, [ref]);
 
   useEffect(() => {

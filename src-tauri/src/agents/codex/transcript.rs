@@ -6,7 +6,7 @@
 //! token usage: `prompt_tokens`, `completion_tokens`, with optional
 //! `prompt_cache_read_tokens` and `prompt_cache_write_tokens` extensions.
 //!
-//! The parser only extracts what cluihud needs for the foundation:
+//! The parser only extracts what nergal needs for the foundation:
 //! - cost (per-message tokens → [`RawCost`])
 //! - tool calls + results (→ [`TranscriptEvent::ToolUse`] / `ToolResult`)
 //! - assistant messages (→ [`TranscriptEvent::Message`])

@@ -11,7 +11,7 @@ Tauri 2 backend ↔ React 19 frontend over an IPC bridge. The agent CLI runs in 
 - **wezterm-term + termwiz** — VT emulator, pinned to the 2024-02-03 wezterm tag
 - **rusqlite** — bundled SQLite for sessions, annotations, panel geometry
 - **notify** + **notify-debouncer-full** — inotify file watching
-- **clap** — `cluihud hook` subcommands
+- **clap** — `nergal hook` subcommands
 - **tracing** + **tracing-subscriber** — structured logging
 - **reqwest** + **eventsource-stream** — OpenCode SSE adapter
 - **bitflags** + **async-trait** + **dashmap** + **parking_lot** — agent registry
@@ -69,7 +69,7 @@ src-tauri/src/                    # Rust backend
 ## Event flow
 
 1. Agent CLI runs inside a PTY spawned by the app.
-2. The CLI's hooks (async) write events to `/tmp/cluihud.sock` via `cluihud hook send`.
+2. The CLI's hooks (async) write events to `/tmp/nergal.sock` via `nergal hook send`.
 3. The app listens on the socket and watches transcript files via inotify.
 4. Events flow through tokio channels → Tauri `emit()` → Jotai atom updates.
 5. React components re-render on atom changes.

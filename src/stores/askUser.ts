@@ -14,7 +14,7 @@ export interface AskUserState {
 }
 
 // Retained as a stub to keep the now-hidden AskUserModal and SessionIndicator
-// imports compiling. CC's TUI owns the question UX; cluihud only signals
+// imports compiling. CC's TUI owns the question UX; nergal only signals
 // which session is waiting via `pendingAsksAtom` below.
 export const askUserAtom = atom<AskUserState | null>(null);
 

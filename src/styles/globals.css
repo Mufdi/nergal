@@ -680,7 +680,7 @@ body,
 /* ── Dot-grid background — subtle texture for sidebar/rails. Dots use
    --border so the pattern auto-adapts to each theme. Use on top of
    bg-card via stacking. */
-.cluihud-dot-grid {
+.nergal-dot-grid {
   background-image: radial-gradient(circle at 1px 1px, var(--border) 1px, transparent 0);
   background-size: 14px 14px;
   background-position: 0 0;
@@ -701,7 +701,7 @@ body,
    the container receives programmatic focus (e.g. opening a plan triggers
    `panel.focus()` on a `tabIndex={-1}` div). The `border-2 border-primary`
    already communicates focus visually for the active zone. */
-.cluihud-panel-focus {
+.nergal-panel-focus {
   transition: border-color 200ms ease-out, box-shadow 200ms ease-out;
   outline: none;
 }
@@ -709,7 +709,7 @@ body,
 /* ── react-colorful sizing overrides for the custom-theme editor. The
    library renders an SV pad + hue slider as fixed 200x200; we shrink
    to fit the Settings dialog and round corners to match panels. */
-.cluihud-color-picker .react-colorful {
+.nergal-color-picker .react-colorful {
   width: 100%;
   max-width: 240px;
   height: 160px;
@@ -717,14 +717,14 @@ body,
   overflow: hidden;
   border: 1px solid var(--border);
 }
-.cluihud-color-picker .react-colorful__saturation {
+.nergal-color-picker .react-colorful__saturation {
   border-radius: 0;
   border-bottom: 1px solid var(--border);
 }
-.cluihud-color-picker .react-colorful__hue {
+.nergal-color-picker .react-colorful__hue {
   height: 16px;
 }
-.cluihud-color-picker .react-colorful__pointer {
+.nergal-color-picker .react-colorful__pointer {
   width: 14px;
   height: 14px;
   border-width: 2px;
@@ -740,10 +740,10 @@ body,
    shadow draws a 2px gap (in background color) followed by a 2px
    foreground ring — visually identical to an offset outline but
    respects the host element's `border-radius`. */
-.cluihud-focus-ring {
+.nergal-focus-ring {
   outline: none;
 }
-.cluihud-focus-ring:focus {
+.nergal-focus-ring:focus {
   box-shadow:
     0 0 0 2px var(--background),
     0 0 0 4px var(--foreground);
@@ -751,7 +751,7 @@ body,
 
 /* ── Panel header-action buttons (ClickUp/Linear toolbars: sort, expand-all,
    filters, label/tag popover triggers) are advanced via programmatic `.focus()`
-   during ←/→ keyboard nav. Pin the same box-shadow ring as `.cluihud-focus-ring`
+   during ←/→ keyboard nav. Pin the same box-shadow ring as `.nergal-focus-ring`
    so the keyboard cursor stays visible — the WebKitGTK native outline renders as
    a rectangle that ignores the buttons' `border-radius`. Applied via the shared
    `[data-header-action]` marker so both panels (and any future toolbar button)
@@ -776,17 +776,17 @@ body,
    panel block before the halo gets cut at the app boundary, plus
    plenty of inter-column space at the seams.
 
-   Modals / command palette / file picker (`.cluihud-glow` targets)
+   Modals / command palette / file picker (`.nergal-glow` targets)
    live on top of the workspace at `position: fixed`, outside that
    clip chain, so they get a wider halo. */
-:root[data-panel-glow="on"] .cluihud-panel-focus.border-primary {
+:root[data-panel-glow="on"] .nergal-panel-focus.border-primary {
   box-shadow:
     0 0 0 1px var(--primary),
     0 0 6px 1px color-mix(in srgb, var(--primary) 100%, transparent),
     0 0 14px 3px color-mix(in srgb, var(--primary) 70%, transparent),
     0 0 28px 6px color-mix(in srgb, var(--primary) 35%, transparent);
 }
-:root[data-panel-glow="on"] .cluihud-glow {
+:root[data-panel-glow="on"] .nergal-glow {
   box-shadow:
     0 0 0 1px var(--primary),
     0 0 6px 0 color-mix(in srgb, var(--primary) 100%, transparent),
@@ -794,13 +794,13 @@ body,
     0 0 30px 6px color-mix(in srgb, var(--primary) 35%, transparent);
 }
 
-/* ── SweetAlert2 surface overrides — match the cluihud panel/modal
+/* ── SweetAlert2 surface overrides — match the nergal panel/modal
    aesthetic (rounded-lg, border-2 border-primary, bg-card) and use the
    theme-aware tokens so swals look native in every theme. The library's
    default icon ring is replaced with our pixel-art SVGs (set via
    `iconHtml` in `lib/swal.ts`); we hide the legacy `.swal2-icon` chrome
    here and align the custom icon container. */
-.cluihud-swal-popup {
+.nergal-swal-popup {
   background: var(--card) !important;
   color: var(--foreground) !important;
   border: 2px solid var(--primary) !important;
@@ -808,43 +808,43 @@ body,
   font-family: var(--theme-font-interface) !important;
   padding: 1.5rem !important;
 }
-.cluihud-swal-title {
+.nergal-swal-title {
   color: var(--foreground) !important;
   font-size: 1.05rem !important;
   font-weight: 600 !important;
   padding: 0 0 0.5rem !important;
 }
-.cluihud-swal-body {
+.nergal-swal-body {
   color: var(--muted-foreground) !important;
   font-size: 0.85rem !important;
   line-height: 1.4 !important;
 }
-.cluihud-swal-icon {
+.nergal-swal-icon {
   border: none !important;
   width: auto !important;
   height: auto !important;
   margin: 0 auto 1rem !important;
 }
-.cluihud-swal-icon .swal2-icon-content,
-.cluihud-swal-icon .swal2-icon-success,
-.cluihud-swal-icon .swal2-icon-error,
-.cluihud-swal-icon .swal2-icon-warning,
-.cluihud-swal-icon .swal2-icon-info,
-.cluihud-swal-icon .swal2-icon-question {
+.nergal-swal-icon .swal2-icon-content,
+.nergal-swal-icon .swal2-icon-success,
+.nergal-swal-icon .swal2-icon-error,
+.nergal-swal-icon .swal2-icon-warning,
+.nergal-swal-icon .swal2-icon-info,
+.nergal-swal-icon .swal2-icon-question {
   display: none !important;
 }
-.cluihud-swal-icon svg {
+.nergal-swal-icon svg {
   display: block;
   margin: 0 auto;
   image-rendering: pixelated;
 }
-.cluihud-swal-actions {
+.nergal-swal-actions {
   gap: 0.5rem !important;
   margin-top: 1rem !important;
 }
-.cluihud-swal-confirm,
-.cluihud-swal-cancel,
-.cluihud-swal-deny {
+.nergal-swal-confirm,
+.nergal-swal-cancel,
+.nergal-swal-deny {
   border-radius: 6px !important;
   font-weight: 500 !important;
   padding: 0.4rem 0.9rem !important;
@@ -852,30 +852,30 @@ body,
   transition: background 150ms ease-out, color 150ms ease-out !important;
   outline: none !important;
 }
-.cluihud-swal-confirm {
+.nergal-swal-confirm {
   background: var(--primary) !important;
   color: var(--primary-foreground) !important;
 }
-.cluihud-swal-confirm:hover {
+.nergal-swal-confirm:hover {
   background: color-mix(in srgb, var(--primary) 85%, black) !important;
 }
-.cluihud-swal-confirm-destructive {
+.nergal-swal-confirm-destructive {
   background: var(--destructive) !important;
   color: #ffffff !important;
 }
-.cluihud-swal-confirm-destructive:hover {
+.nergal-swal-confirm-destructive:hover {
   background: color-mix(in srgb, var(--destructive) 85%, black) !important;
 }
-.cluihud-swal-cancel {
+.nergal-swal-cancel {
   background: var(--secondary) !important;
   color: var(--foreground) !important;
 }
-.cluihud-swal-cancel:hover {
+.nergal-swal-cancel:hover {
   background: color-mix(in srgb, var(--secondary) 80%, white 6%) !important;
 }
-.cluihud-swal-confirm:focus-visible,
-.cluihud-swal-cancel:focus-visible,
-.cluihud-swal-deny:focus-visible {
+.nergal-swal-confirm:focus-visible,
+.nergal-swal-cancel:focus-visible,
+.nergal-swal-deny:focus-visible {
   outline: 2px solid var(--foreground) !important;
   outline-offset: 2px !important;
 }
@@ -893,15 +893,15 @@ body,
    anywhere the wrapper might layer over interactive content (modals,
    pickers, zen overlays). Keep both vendor-prefixed and unprefixed for
    older WebKit. */
-.cluihud-blur-xs {
+.nergal-blur-xs {
   backdrop-filter: blur(2px);
   -webkit-backdrop-filter: blur(2px);
 }
-.cluihud-blur-sm {
+.nergal-blur-sm {
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
 }
-.cluihud-blur-md {
+.nergal-blur-md {
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
@@ -969,12 +969,12 @@ body,
   .animate-session-thinking,
   .animate-session-working::after,
   .animate-session-attention::after,
-  .cluihud-ask-pending {
+  .nergal-ask-pending {
     animation: none;
   }
 }
 
-@keyframes cluihud-ask-pulse {
+@keyframes nergal-ask-pulse {
   0%, 100% { background-color: color-mix(in srgb, var(--color-primary) 35%, transparent); }
   50% { background-color: color-mix(in srgb, var(--color-primary) 10%, transparent); }
 }
@@ -982,8 +982,8 @@ body,
 /* Continuous (infinite) instead of the previous 2-cycle blink — attention
    needs to keep nagging until the user actually addresses it, otherwise a
    row that pulsed for 0.8s and then went solid blends into "active". */
-.cluihud-ask-pending {
-  animation: cluihud-ask-pulse 1.4s ease-in-out infinite;
+.nergal-ask-pending {
+  animation: nergal-ask-pulse 1.4s ease-in-out infinite;
 }
 
 /* ── Plan annotation ── */
@@ -1154,20 +1154,20 @@ mark[data-ws-hidden] {
 
 /* Indeterminate progress sliver (ProgressBar). Travels left→right on loop;
    keyframes (not a transition) so it animates reliably under WebKitGTK. */
-@keyframes cluihud-progress-indeterminate {
+@keyframes nergal-progress-indeterminate {
   0% { transform: translateX(-100%); }
   100% { transform: translateX(300%); }
 }
-.cluihud-progress-indeterminate {
-  animation: cluihud-progress-indeterminate 1.1s ease-in-out infinite;
+.nergal-progress-indeterminate {
+  animation: nergal-progress-indeterminate 1.1s ease-in-out infinite;
 }
 
 /* Pulsing-dots in-progress indicator (replaces the spinner in action labels +
    icon slots). Each dot carries a staggered animation-delay for the wave. */
-@keyframes cluihud-dot-pulse {
+@keyframes nergal-dot-pulse {
   0%, 80%, 100% { opacity: 0.3; transform: scale(0.7); }
   40% { opacity: 1; transform: scale(1); }
 }
-.cluihud-dot {
-  animation: cluihud-dot-pulse 1.1s ease-in-out infinite;
+.nergal-dot {
+  animation: nergal-dot-pulse 1.1s ease-in-out infinite;
 }

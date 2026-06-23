@@ -15,7 +15,7 @@ Define focus zone tracking, terminal bypass, and a central shortcut registry for
 ## Implementation Notes
 
 All requirements implemented. Known deviations:
-- **Terminal bypass**: Shortcuts still fire when terminal is focused (no focusZone gate in handler). Only Ctrl+Ñ/Ctrl+; are explicitly handled via `attachCustomKeyEventHandler`. Practical impact minimal since xterm.js `attachCustomKeyEventHandler` returns false for cluihud shortcuts.
+- **Terminal bypass**: Shortcuts still fire when terminal is focused (no focusZone gate in handler). Only Ctrl+Ñ/Ctrl+; are explicitly handled via `attachCustomKeyEventHandler`. Practical impact minimal since xterm.js `attachCustomKeyEventHandler` returns false for nergal shortcuts.
 - **Ctrl+K in terminal**: No explicit terminal zone check — toggle happens regardless of focus zone.
 ## Requirements
 ### Requirement: Focus zone tracking
@@ -30,7 +30,7 @@ The system SHALL track the current focus zone as one of: sidebar, terminal, pane
 - **THEN** focusZoneAtom is set to "panel"
 
 ### Requirement: Terminal focus bypass
-When focus zone is "terminal", ALL keyboard events SHALL pass through to the PTY via xterm.js. No cluihud shortcuts SHALL be intercepted in terminal zone EXCEPT the terminal escape shortcut (Ctrl+Ñ / Ctrl+; on US layout).
+When focus zone is "terminal", ALL keyboard events SHALL pass through to the PTY via xterm.js. No nergal shortcuts SHALL be intercepted in terminal zone EXCEPT the terminal escape shortcut (Ctrl+Ñ / Ctrl+; on US layout).
 
 #### Scenario: Ctrl+Shift+P in terminal passes to PTY
 - **WHEN** focus is in terminal and user presses Ctrl+Shift+P
@@ -145,11 +145,11 @@ The system SHALL provide shortcuts for common actions.
 
 #### Scenario: Contextual revise/resolve
 - **WHEN** user presses Ctrl+Shift+R and a conflict tab is active
-- **THEN** the system emits `cluihud:resolve-conflict-active-tab`
+- **THEN** the system emits `nergal:resolve-conflict-active-tab`
 - **WHEN** user presses Ctrl+Shift+R while the git panel is active and the session has conflicted files
 - **THEN** the system opens or focuses the conflict tab for the first conflicted file
 - **WHEN** user presses Ctrl+Shift+R while a plan/spec panel is active with a pending review
-- **THEN** the system emits `cluihud:revise-plan` (prior behavior preserved)
+- **THEN** the system emits `nergal:revise-plan` (prior behavior preserved)
 
 ### Requirement: Shortcut registry
 All shortcuts SHALL be defined in a central registry (`stores/shortcuts.ts`) as an array of action objects containing: id, label, shortcut key combination, category, handler function, and optional keywords for command palette search.

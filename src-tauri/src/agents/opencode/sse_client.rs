@@ -2,7 +2,7 @@
 //!
 //! The TUI runs the same HTTP server as `opencode serve`; spawning with
 //! `--port <X>` pins it to a known address. This module connects to
-//! `http://127.0.0.1:<X>/event`, listens for the events cluihud cares about
+//! `http://127.0.0.1:<X>/event`, listens for the events nergal cares about
 //! (tool/file-edit lifecycle), and forwards them as [`HookEvent`]s onto the
 //! adapter event sink. Translated events flow through the same dispatcher
 //! that handles CC's socket hooks, so panels (Modified Files, Activity)
@@ -23,7 +23,7 @@ use crate::agents::EventSink;
 use crate::hooks::events::HookEvent;
 
 /// Shared map populated by the SSE consumer when it observes a
-/// `session.created` / `session.updated` event. Keyed by the cluihud session
+/// `session.created` / `session.updated` event. Keyed by the nergal session
 /// id so the adapter can look up the OpenCode-side id for resume.
 pub type SessionIdMap = Arc<DashMap<String, String>>;
 
@@ -48,7 +48,7 @@ impl SseClient {
     /// stays usable in the terminal independently of this task.
     pub fn spawn(
         base_url: String,
-        cluihud_session_id: String,
+        nergal_session_id: String,
         sink: EventSink,
         session_ids: SessionIdMap,
     ) -> Self {
@@ -76,7 +76,7 @@ impl SseClient {
                     _ = &mut cancel_rx => break,
                     next = stream.next() => {
                         let Some(item) = next else {
-                            tracing::debug!(session = %cluihud_session_id, "opencode SSE stream ended");
+                            tracing::debug!(session = %nergal_session_id, "opencode SSE stream ended");
                             break;
                         };
                         let event = match item {
@@ -88,7 +88,7 @@ impl SseClient {
                                 // recovering. The next session creation
                                 // will spawn a fresh client.
                                 tracing::warn!(
-                                    session = %cluihud_session_id,
+                                    session = %nergal_session_id,
                                     error = %e,
                                     "opencode SSE stream error; ending consumer",
                                 );
@@ -100,10 +100,10 @@ impl SseClient {
                         // adapter can persist it for resume via `--session <id>`.
                         if let Some(oc_id) = extract_session_id(&event.data) {
                             session_ids
-                                .entry(cluihud_session_id.clone())
+                                .entry(nergal_session_id.clone())
                                 .or_insert(oc_id);
                         }
-                        if let Some(hook_event) = translate_event(&cluihud_session_id, &event.data)
+                        if let Some(hook_event) = translate_event(&nergal_session_id, &event.data)
                             && sink.send(hook_event).is_err() {
                                 // Receiver dropped — runtime is shutting down.
                                 break;
@@ -199,7 +199,7 @@ fn extract_session_id(raw: &str) -> Option<String> {
 /// - `message.updated` → `{ info: Message, ... }` where `info.modelID`
 ///   identifies the assistant model. Surfaced as `AgentStatus` so the
 ///   status bar shows the model.
-fn translate_event(cluihud_session_id: &str, raw: &str) -> Option<HookEvent> {
+fn translate_event(nergal_session_id: &str, raw: &str) -> Option<HookEvent> {
     let ev: OpenCodeEvent = serde_json::from_str(raw).ok()?;
     match ev.event_type.as_str() {
         // Direct file-modification signal — the cleanest source for the
@@ -208,7 +208,7 @@ fn translate_event(cluihud_session_id: &str, raw: &str) -> Option<HookEvent> {
         "file.edited" => {
             let path = ev.properties.get("file").and_then(|v| v.as_str())?;
             Some(HookEvent::PostToolUse {
-                session_id: cluihud_session_id.into(),
+                session_id: nergal_session_id.into(),
                 tool_name: "Edit".into(),
                 tool_input: serde_json::json!({ "file_path": path }),
                 tool_result: None,
@@ -233,7 +233,7 @@ fn translate_event(cluihud_session_id: &str, raw: &str) -> Option<HookEvent> {
                 .to_string();
             let input = state.get("input").cloned().unwrap_or(Value::Null);
             Some(HookEvent::PostToolUse {
-                session_id: cluihud_session_id.into(),
+                session_id: nergal_session_id.into(),
                 tool_name,
                 tool_input: input,
                 tool_result: None,
@@ -247,7 +247,7 @@ fn translate_event(cluihud_session_id: &str, raw: &str) -> Option<HookEvent> {
                 .and_then(|v| v.as_str())?
                 .to_string();
             Some(HookEvent::AgentStatus {
-                session_id: cluihud_session_id.into(),
+                session_id: nergal_session_id.into(),
                 agent_id: Some("opencode".into()),
                 model_id: Some(model.clone()),
                 model_name: Some(model),

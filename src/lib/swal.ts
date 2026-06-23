@@ -67,9 +67,9 @@ const PIXEL_QUESTION = `
   <rect x="5" y="9" width="2" height="1" fill="#ffffff"/>
 </svg>`.trim();
 
-type CluihudSwalKind = "warning" | "error" | "success" | "info" | "question";
+type NergalSwalKind = "warning" | "error" | "success" | "info" | "question";
 
-const ICON_HTML: Record<CluihudSwalKind, string> = {
+const ICON_HTML: Record<NergalSwalKind, string> = {
   warning: PIXEL_WARNING,
   error: PIXEL_ERROR,
   success: PIXEL_SUCCESS,
@@ -78,11 +78,11 @@ const ICON_HTML: Record<CluihudSwalKind, string> = {
 };
 
 /**
- * Theme-matched defaults for every cluihud Swal. We disable the library's
+ * Theme-matched defaults for every nergal Swal. We disable the library's
  * default icon set, inject a pixel-art SVG via `iconHtml`, and let the
  * `customClass` overrides in `globals.css` do the surface/typography work.
  */
-function baseOptions(kind: CluihudSwalKind, opts: SweetAlertOptions): SweetAlertOptions {
+function baseOptions(kind: NergalSwalKind, opts: SweetAlertOptions): SweetAlertOptions {
   return {
     icon: undefined,
     iconHtml: ICON_HTML[kind],
@@ -94,14 +94,14 @@ function baseOptions(kind: CluihudSwalKind, opts: SweetAlertOptions): SweetAlert
     showClass: { popup: "" },
     hideClass: { popup: "" },
     customClass: {
-      popup: "cluihud-swal-popup",
-      title: "cluihud-swal-title",
-      htmlContainer: "cluihud-swal-body",
-      actions: "cluihud-swal-actions",
-      icon: "cluihud-swal-icon",
-      confirmButton: "cluihud-swal-confirm",
-      cancelButton: "cluihud-swal-cancel",
-      denyButton: "cluihud-swal-deny",
+      popup: "nergal-swal-popup",
+      title: "nergal-swal-title",
+      htmlContainer: "nergal-swal-body",
+      actions: "nergal-swal-actions",
+      icon: "nergal-swal-icon",
+      confirmButton: "nergal-swal-confirm",
+      cancelButton: "nergal-swal-cancel",
+      denyButton: "nergal-swal-deny",
     },
     ...opts,
   };
@@ -128,15 +128,15 @@ export async function confirm(opts: ConfirmOptions): Promise<boolean> {
       reverseButtons: true,
       focusCancel: true,
       customClass: {
-        popup: "cluihud-swal-popup",
-        title: "cluihud-swal-title",
-        htmlContainer: "cluihud-swal-body",
-        actions: "cluihud-swal-actions",
-        icon: "cluihud-swal-icon",
+        popup: "nergal-swal-popup",
+        title: "nergal-swal-title",
+        htmlContainer: "nergal-swal-body",
+        actions: "nergal-swal-actions",
+        icon: "nergal-swal-icon",
         confirmButton: opts.destructive
-          ? "cluihud-swal-confirm cluihud-swal-confirm-destructive"
-          : "cluihud-swal-confirm",
-        cancelButton: "cluihud-swal-cancel",
+          ? "nergal-swal-confirm nergal-swal-confirm-destructive"
+          : "nergal-swal-confirm",
+        cancelButton: "nergal-swal-cancel",
       },
     }),
   );

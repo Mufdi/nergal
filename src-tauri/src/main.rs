@@ -3,7 +3,7 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "cluihud", about = "Desktop wrapper for Claude Code CLI")]
+#[command(name = "nergal", about = "Desktop wrapper for Claude Code CLI")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -17,13 +17,13 @@ enum Commands {
         action: HookAction,
     },
     /// Re-run filesystem detection for installed agents and refresh the
-    /// running cluihud's view of available adapters. Sends a `control`
-    /// message to the hook socket; no effect if cluihud is not running.
+    /// running nergal's view of available adapters. Sends a `control`
+    /// message to the hook socket; no effect if nergal is not running.
     RescanAgents,
     /// Detached background runner: drain pending session-end markers (MOC +
     /// reverse backlinks). Spawned by the app, not invoked by hand.
     PostSession,
-    /// stdio MCP shim: relays JSON-RPC between an agent and the cluihud MCP
+    /// stdio MCP shim: relays JSON-RPC between an agent and the nergal MCP
     /// daemon. Registered into agent MCP configs; not invoked by hand.
     Mcp,
 }
@@ -53,54 +53,54 @@ fn main() {
     // tauri-plugin-{deep-link,single-instance} consuman la URL desde env::args.
     if std::env::args()
         .nth(1)
-        .is_some_and(|a| a.starts_with("cluihud://"))
+        .is_some_and(|a| a.starts_with("nergal://"))
     {
-        cluihud::run();
+        nergal::run();
         return;
     }
 
     let cli = Cli::parse();
 
     match cli.command {
-        None => cluihud::run(),
+        None => nergal::run(),
 
         Some(Commands::Hook { action }) => {
-            let config = cluihud::config::Config::load();
+            let config = nergal::config::Config::load();
 
             match action {
                 HookAction::Send { .. } => {
-                    if let Err(e) = cluihud::hooks::cli::send_hook_event(&config.hook_socket_path) {
-                        eprintln!("cluihud hook send: {e:#}");
+                    if let Err(e) = nergal::hooks::cli::send_hook_event(&config.hook_socket_path) {
+                        eprintln!("nergal hook send: {e:#}");
                         std::process::exit(1);
                     }
                 }
                 HookAction::InjectEdits => {
-                    if let Err(e) = cluihud::hooks::cli::inject_edits() {
-                        eprintln!("cluihud hook inject-edits: {e:#}");
+                    if let Err(e) = nergal::hooks::cli::inject_edits() {
+                        eprintln!("nergal hook inject-edits: {e:#}");
                         std::process::exit(1);
                     }
                 }
                 HookAction::PlanReview => {
-                    if let Err(e) = cluihud::hooks::cli::plan_review(&config.hook_socket_path) {
-                        eprintln!("cluihud hook plan-review: {e:#}");
+                    if let Err(e) = nergal::hooks::cli::plan_review(&config.hook_socket_path) {
+                        eprintln!("nergal hook plan-review: {e:#}");
                         std::process::exit(1);
                     }
                 }
                 HookAction::AskUser => {
-                    if let Err(e) = cluihud::hooks::cli::ask_user(&config.hook_socket_path) {
-                        eprintln!("cluihud hook ask-user: {e:#}");
+                    if let Err(e) = nergal::hooks::cli::ask_user(&config.hook_socket_path) {
+                        eprintln!("nergal hook ask-user: {e:#}");
                         std::process::exit(1);
                     }
                 }
                 HookAction::Notification => {
-                    if let Err(e) = cluihud::hooks::cli::notification(&config.hook_socket_path) {
-                        eprintln!("cluihud hook notification: {e:#}");
+                    if let Err(e) = nergal::hooks::cli::notification(&config.hook_socket_path) {
+                        eprintln!("nergal hook notification: {e:#}");
                         std::process::exit(1);
                     }
                 }
                 HookAction::Setup => {
-                    if let Err(e) = cluihud::setup::run() {
-                        eprintln!("cluihud hook setup: {e:#}");
+                    if let Err(e) = nergal::setup::run() {
+                        eprintln!("nergal hook setup: {e:#}");
                         std::process::exit(1);
                     }
                 }
@@ -108,23 +108,23 @@ fn main() {
         }
 
         Some(Commands::RescanAgents) => {
-            let config = cluihud::config::Config::load();
-            if let Err(e) = cluihud::hooks::cli::send_rescan_agents(&config.hook_socket_path) {
-                eprintln!("cluihud rescan-agents: {e:#}");
+            let config = nergal::config::Config::load();
+            if let Err(e) = nergal::hooks::cli::send_rescan_agents(&config.hook_socket_path) {
+                eprintln!("nergal rescan-agents: {e:#}");
                 std::process::exit(1);
             }
         }
 
         Some(Commands::PostSession) => {
-            if let Err(e) = cluihud::obsidian::post_session::run() {
-                eprintln!("cluihud post-session: {e:#}");
+            if let Err(e) = nergal::obsidian::post_session::run() {
+                eprintln!("nergal post-session: {e:#}");
                 std::process::exit(1);
             }
         }
 
         Some(Commands::Mcp) => {
-            if let Err(e) = cluihud::mcp::shim::run() {
-                eprintln!("cluihud mcp: {e:#}");
+            if let Err(e) = nergal::mcp::shim::run() {
+                eprintln!("nergal mcp: {e:#}");
                 std::process::exit(1);
             }
         }

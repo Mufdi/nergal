@@ -1,6 +1,6 @@
 //! Agent-agnostic foundation.
 //!
-//! Cluihud was originally a Claude Code (CC) wrapper. This module introduces
+//! Nergal was originally a Claude Code (CC) wrapper. This module introduces
 //! the [`AgentAdapter`] trait and supporting types so that other agent CLIs
 //! (OpenCode, Pi, Codex, …) can plug in without duplicating the integration
 //! per-agent. CC remains first-class as the first adapter.
@@ -46,7 +46,7 @@ pub enum AdapterError {
 /// Stable string identifier for an agent adapter.
 ///
 /// Validated against `^[a-z][a-z0-9-]{0,31}$` (1-32 chars, must start with a
-/// lowercase letter). Used in DB rows, env vars (`CLUIHUD_AGENT_ID`), FIFO
+/// lowercase letter). Used in DB rows, env vars (`NERGAL_AGENT_ID`), FIFO
 /// filenames and state-directory paths — the conservative charset closes the
 /// injection surface for future plugin adapters.
 #[derive(Clone, Eq, PartialEq, Hash, Debug, serde::Serialize, serde::Deserialize)]
@@ -103,7 +103,7 @@ bitflags::bitflags! {
         /// session". CC/Pi/Codex do; OpenCode doesn't. Distinct from
         /// SESSION_RESUME, which only says the agent can resume by id.
         const SESSION_PICKER        = 1 << 8;
-        /// The adapter can write cluihud's active theme palette into the
+        /// The adapter can write nergal's active theme palette into the
         /// agent's native theme subsystem (pi hot-reload, opencode custom
         /// theme, codex tui.theme). See `AgentAdapter::apply_theme`.
         const THEME_SYNC            = 1 << 9;
@@ -188,11 +188,11 @@ pub struct AgentCapabilities {
     pub supported_models: Vec<String>,
 }
 
-/// Cluihud theme snapshot crossed to each [`AgentAdapter::apply_theme`] call.
+/// Nergal theme snapshot crossed to each [`AgentAdapter::apply_theme`] call.
 ///
 /// Derived in the frontend from `getComputedStyle` on `<html>` after
 /// `applyTheme` commits, so the source of truth stays in CSS and adapters
-/// don't need to know cluihud's theme catalog.
+/// don't need to know nergal's theme catalog.
 ///
 /// `border` may carry an rgba string (e.g. `rgba(255,255,255,0.08)`); each
 /// adapter converts to its own native color shape.
@@ -348,7 +348,7 @@ pub fn spawn_context_dir() -> PathBuf {
             .unwrap_or_else(|| PathBuf::from("/"))
             .join(".config")
     });
-    config_root.join("cluihud").join("spawn-context")
+    config_root.join("nergal").join("spawn-context")
 }
 
 pub fn spawn_context_file(session_id: &str) -> PathBuf {
@@ -383,7 +383,7 @@ pub fn fold_prompt_preamble(
 }
 
 /// Spawn descriptor returned by an adapter; the runtime hands it to the PTY
-/// layer. `env` MUST include `CLUIHUD_SESSION_ID` so hooks can route events.
+/// layer. `env` MUST include `NERGAL_SESSION_ID` so hooks can route events.
 #[derive(Clone, Debug)]
 pub struct SpawnSpec {
     pub binary: PathBuf,
@@ -499,7 +499,7 @@ impl From<PlanCapability> for PlanCapabilityWire {
     }
 }
 
-/// Sink that adapters call to forward translated events into the cluihud
+/// Sink that adapters call to forward translated events into the nergal
 /// event bus. The runtime owns the receiver; adapters only emit.
 pub type EventSink = tokio::sync::mpsc::UnboundedSender<crate::hooks::events::HookEvent>;
 
@@ -544,10 +544,10 @@ pub trait AgentAdapter: Send + Sync {
     fn capabilities(&self) -> &AgentCapabilities;
     fn transport(&self) -> Transport;
 
-    /// Whether `cluihud setup` should write filesystem config for this
+    /// Whether `nergal setup` should write filesystem config for this
     /// adapter (e.g. `~/.claude/settings.json`). CC + Codex: true.
     /// OpenCode + Pi: false (no file-config hooks).
-    fn requires_cluihud_setup(&self) -> bool;
+    fn requires_nergal_setup(&self) -> bool;
 
     /// Lightweight detection. MUST NOT spawn child processes — only filesystem
     /// checks (config dir exists, binary on PATH, etc.). Use
@@ -632,9 +632,9 @@ pub trait AgentAdapter: Send + Sync {
     /// Agent-internal session id harvested by the adapter (e.g. Pi's session
     /// UUID extracted from the JSONL header). Returned for the runtime to
     /// persist on the session row so resume can pass it back via
-    /// `--session <id>` after a cluihud restart. Default returns `None` for
+    /// `--session <id>` after a nergal restart. Default returns `None` for
     /// adapters that don't surface a separate id.
-    fn agent_internal_session_id(&self, _cluihud_session_id: &str) -> Option<String> {
+    fn agent_internal_session_id(&self, _nergal_session_id: &str) -> Option<String> {
         None
     }
 
@@ -650,10 +650,10 @@ pub trait AgentAdapter: Send + Sync {
         ))
     }
 
-    /// Apply cluihud's active theme to the agent's native theming subsystem.
+    /// Apply nergal's active theme to the agent's native theming subsystem.
     ///
     /// Best-effort by contract: implementations write namespaced files
-    /// (`cluihud-active.*`) and only flip the agent's pointer when it is
+    /// (`nergal-active.*`) and only flip the agent's pointer when it is
     /// absent or already ours, so a user-authored theme never gets clobbered.
     /// Returned errors are logged at the registry dispatcher and never
     /// surfaced as user-facing notifications.
@@ -698,9 +698,9 @@ mod tests {
     }
 
     #[test]
-    fn spawn_context_file_is_under_cluihud_config() {
+    fn spawn_context_file_is_under_nergal_config() {
         let p = spawn_context_file("sess-1");
-        assert!(p.ends_with("cluihud/spawn-context/sess-1.md"));
+        assert!(p.ends_with("nergal/spawn-context/sess-1.md"));
     }
 
     #[test]
@@ -812,13 +812,13 @@ mod tests {
     async fn update_settings_theme_creates_missing_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        let touched = update_settings_theme_if_safe(&path, "cluihud-active")
+        let touched = update_settings_theme_if_safe(&path, "nergal-active")
             .await
             .unwrap();
         assert!(touched);
         let v: serde_json::Value =
             serde_json::from_str(&tokio::fs::read_to_string(&path).await.unwrap()).unwrap();
-        assert_eq!(v["theme"], "cluihud-active");
+        assert_eq!(v["theme"], "nergal-active");
     }
 
     #[tokio::test]
@@ -828,13 +828,13 @@ mod tests {
         tokio::fs::write(&path, br#"{"defaultModel":"sonnet","other":42}"#)
             .await
             .unwrap();
-        let touched = update_settings_theme_if_safe(&path, "cluihud-active")
+        let touched = update_settings_theme_if_safe(&path, "nergal-active")
             .await
             .unwrap();
         assert!(touched);
         let v: serde_json::Value =
             serde_json::from_str(&tokio::fs::read_to_string(&path).await.unwrap()).unwrap();
-        assert_eq!(v["theme"], "cluihud-active");
+        assert_eq!(v["theme"], "nergal-active");
         assert_eq!(v["defaultModel"], "sonnet");
         assert_eq!(v["other"], 42);
     }
@@ -846,7 +846,7 @@ mod tests {
         tokio::fs::write(&path, br#"{"theme":"tokyonight"}"#)
             .await
             .unwrap();
-        let touched = update_settings_theme_if_safe(&path, "cluihud-active")
+        let touched = update_settings_theme_if_safe(&path, "nergal-active")
             .await
             .unwrap();
         assert!(!touched);
@@ -859,17 +859,17 @@ mod tests {
     async fn update_settings_theme_idempotent_when_already_ours() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        tokio::fs::write(&path, br#"{"theme":"cluihud-active","x":1}"#)
+        tokio::fs::write(&path, br#"{"theme":"nergal-active","x":1}"#)
             .await
             .unwrap();
-        let touched = update_settings_theme_if_safe(&path, "cluihud-active")
+        let touched = update_settings_theme_if_safe(&path, "nergal-active")
             .await
             .unwrap();
         assert!(touched);
         let raw = tokio::fs::read_to_string(&path).await.unwrap();
         // No-op path: file is left untouched (we asserted equality, didn't
         // rewrite), so the original compact form survives.
-        assert_eq!(raw, r#"{"theme":"cluihud-active","x":1}"#);
+        assert_eq!(raw, r#"{"theme":"nergal-active","x":1}"#);
     }
 
     #[tokio::test]
@@ -877,7 +877,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
         tokio::fs::write(&path, b"not valid json").await.unwrap();
-        let touched = update_settings_theme_if_safe(&path, "cluihud-active")
+        let touched = update_settings_theme_if_safe(&path, "nergal-active")
             .await
             .unwrap();
         assert!(!touched);

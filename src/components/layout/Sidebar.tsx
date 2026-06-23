@@ -57,7 +57,7 @@ export function Sidebar({ collapsed }: SidebarProps) {
   const isPulsing = useFocusPulse(isActive);
   const showAccent = config.panel_focus_pulse ? isPulsing : isActive;
   const borderClass = showAccent ? "border-primary" : "border-border";
-  const dotGridClass = config.sidebar_dot_grid ? "cluihud-dot-grid" : "";
+  const dotGridClass = config.sidebar_dot_grid ? "nergal-dot-grid" : "";
 
   function handleSidebarFocus() {
     setFocusZone("sidebar");
@@ -158,7 +158,7 @@ export function Sidebar({ collapsed }: SidebarProps) {
               height — without it, a sidebar with many sessions grows past
               the viewport and pushes TasksIsland off-screen instead of
               activating the inner overflow-y-auto. */}
-          <div className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border-2 ${borderClass} bg-card ${dotGridClass} cluihud-panel-focus`}>
+          <div className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border-2 ${borderClass} bg-card ${dotGridClass} nergal-panel-focus`}>
             <div className="flex h-20 shrink-0 items-center px-3 pt-2">
               <NergalLogo />
             </div>
@@ -182,8 +182,8 @@ export function Sidebar({ collapsed }: SidebarProps) {
   );
 }
 
-// Maps the cluihud "rename" action to the per-agent slash command sent into
-// the live PTY. Returning `null` means cluihud should only persist the new
+// Maps the nergal "rename" action to the per-agent slash command sent into
+// the live PTY. Returning `null` means nergal should only persist the new
 // name in its own DB without poking the agent's TUI (used for OpenCode,
 // which only supports rename via a Ctrl+R modal that's not safe to drive
 // by injecting keystrokes mid-session).
@@ -256,7 +256,7 @@ function CollapsedSidebar() {
   const isPulsing = useFocusPulse(isActive);
   const showAccent = config.panel_focus_pulse ? isPulsing : isActive;
   const borderClass = showAccent ? "border-primary" : "border-border";
-  const dotGridClass = config.sidebar_dot_grid ? "cluihud-dot-grid" : "";
+  const dotGridClass = config.sidebar_dot_grid ? "nergal-dot-grid" : "";
   const { renameSession, deleteSession } = useSessionActions();
   const [renameTarget, setRenameTarget] = useState<Session | null>(null);
 
@@ -268,7 +268,7 @@ function CollapsedSidebar() {
 
   return (
     <TooltipProvider delay={0}>
-    <div className={`flex h-full w-full flex-col items-center gap-0.5 rounded-lg border-2 ${borderClass} bg-card ${dotGridClass} py-1 cluihud-panel-focus`}>
+    <div className={`flex h-full w-full flex-col items-center gap-0.5 rounded-lg border-2 ${borderClass} bg-card ${dotGridClass} py-1 nergal-panel-focus`}>
       <div className="mb-2 mt-1 flex shrink-0 items-center justify-center px-1.5">
         <NergalN size={20} />
       </div>

@@ -10,8 +10,8 @@ The session name SHALL be slugified: diacritics stripped (using a deterministic 
 
 #### Scenario: Build MOC for completed session
 
-- **WHEN** the runner picks up a marker for session "Refactor auth (auth-ref-#3)" in workspace W with `moc_path = ~/Obsidian/Projects/cluihud/MOCs/`
-- **THEN** the builder SHALL produce `~/Obsidian/Projects/cluihud/MOCs/refactor-auth-auth-ref-3-2026-05-26.md`
+- **WHEN** the runner picks up a marker for session "Refactor auth (auth-ref-#3)" in workspace W with `moc_path = ~/Obsidian/Projects/nergal/MOCs/`
+- **THEN** the builder SHALL produce `~/Obsidian/Projects/nergal/MOCs/refactor-auth-auth-ref-3-2026-05-26.md`
 - **AND** the file SHALL contain the template populated with session-specific data
 
 #### Scenario: Idempotent overwrite
@@ -35,7 +35,7 @@ The MOC file SHALL contain (in order):
 3. `## Activity` section: chronological list of event lines copied from the session_log block.
 4. `## Files touched` section: bullet list. Each file is rendered as `[[<vault-relative path>]]` if it resolves inside the vault, else as a plain `\`<workspace-relative path>\``. Each bullet shows the tool that touched it (e.g. `Edit · ` prefix).
 5. `## Decisions` section: bullets from `db.get_annotations(session_id)` filtered to type=`global-comment` or `revision-feedback`.
-6. `## Links` section: PR URLs from `db` (if any recorded), workspace cluihud URI `cluihud://open-workspace?path=<abs>`.
+6. `## Links` section: PR URLs from `db` (if any recorded), workspace nergal URI `nergal://open-workspace?path=<abs>`.
 7. `## Git diff stats` section: output of `git diff --stat <merge-base>..HEAD` for the worktree.
 
 The template SHALL be a constant string in `obsidian/moc.rs`, with substitution via `format!` calls — no external templating dependency.

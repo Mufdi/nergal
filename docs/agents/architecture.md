@@ -1,6 +1,6 @@
 # Agent-agnostic architecture
 
-Cluihud was built as a Claude Code (CC) wrapper. The `agent-adapter-foundation`
+Nergal was built as a Claude Code (CC) wrapper. The `agent-adapter-foundation`
 change extracts the CC integration into an `AgentAdapter` trait so other CLI
 agents (OpenCode, Pi, Codex, …) can plug in without duplicating the
 hooks/transcript/plan/cost integration per-agent.
@@ -41,7 +41,7 @@ src-tauri/src/
 - **`AgentAdapter`** (trait, in `agents/mod.rs`): every adapter implements this.
   Methods grouped by purpose:
   - Identity & advertising: `id`, `display_name`, `capabilities`, `transport`,
-    `requires_cluihud_setup`.
+    `requires_nergal_setup`.
   - Detection: `detect` (lightweight, no spawn), `refresh_version` (async,
     background — the version probe is slow because it shells out).
   - Lifecycle: `spawn(ctx) -> SpawnSpec`, `start_event_pump(session_id, sink)`,
@@ -68,7 +68,7 @@ src-tauri/src/
   stable codified default order: CC > Codex > OpenCode > Pi (Decision 10).
 
 - **`AgentRuntimeState`** (Tauri-managed): `Arc<AgentRegistry>` + a
-  `DashMap<cluihud_session_id, AgentId>` cache + a typed
+  `DashMap<nergal_session_id, AgentId>` cache + a typed
   `Arc<ClaudeCodeAdapter>` for CC-specific side-channels (FIFO registration).
   Clone is cheap. Bootstrapped at app startup from `bootstrap()`.
 
@@ -98,7 +98,7 @@ src-tauri/src/
               registry.get(agent_id) → adapter.spawn(ctx)
                                     │
                                     ▼
-              shell PTY spawned with CLUIHUD_SESSION_ID env;
+              shell PTY spawned with NERGAL_SESSION_ID env;
               composed `<binary> <args> \n` written into the shell
                                     │
               ┌─────────────────────┼─────────────────────┐
@@ -154,7 +154,7 @@ without UX regression for existing CC users.
 - **No DB downgrade**. SQLite < 3.35 can't `DROP COLUMN`; the migration is
   forward-only. CHANGELOG documents the recovery path (restore backup).
 - **No cross-adapter session resume**. Each agent has its own resume
-  semantics; cluihud doesn't try to unify them.
+  semantics; nergal doesn't try to unify them.
 
 ## Adding a new adapter (preview for opencode/pi/codex)
 

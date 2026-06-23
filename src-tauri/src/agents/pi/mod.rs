@@ -3,7 +3,7 @@
 //! Pi has neither file-config hooks (CC) nor an HTTP server (OpenCode).
 //! Its model is "drop a JSONL transcript per session into
 //! `~/.pi/agent/sessions/--<encoded-cwd>--/<uuid>.jsonl` while the agent
-//! runs". cluihud observes those files via [`jsonl_tail`] and translates
+//! runs". nergal observes those files via [`jsonl_tail`] and translates
 //! entries to [`crate::agents::TranscriptEvent`] via [`transcript`].
 //!
 //! Pi is observation-only by design: there is no plan-mode equivalent,

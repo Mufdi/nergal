@@ -107,7 +107,7 @@ export function McpSection() {
             Lets the agents you run discover their sibling sessions
             (<code className="text-[11px]">whoami</code>, <code className="text-[11px]">list_sessions</code>,
             {" "}<code className="text-[11px]">get_session</code>) over a local, uid-restricted socket, and
-            registers a <code className="text-[11px]">cluihud mcp</code> server with Claude Code.
+            registers a <code className="text-[11px]">nergal mcp</code> server with Claude Code.
           </span>
         </label>
       </div>
@@ -129,7 +129,7 @@ export function McpSection() {
           <span className="text-xs text-muted-foreground">
             Lets a live session's agent message another live session
             (<code className="text-[11px]">send_to_session</code>, <code className="text-[11px]">read_messages</code>).
-            cluihud routes delivery by waking the target's terminal. Relayed context is labeled advisory,
+            nergal routes delivery by waking the target's terminal. Relayed context is labeled advisory,
             never carrying your authority. This is the master kill-switch — off halts all delivery.
             Requires the MCP server above to be enabled.
           </span>

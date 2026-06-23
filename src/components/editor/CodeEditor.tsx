@@ -7,7 +7,7 @@ import { basicSetup } from "codemirror";
 import { syntaxHighlighting } from "@codemirror/language";
 import { currentHighlightStyle, useThemeName } from "@/lib/codemirrorHighlight";
 
-const cluihudTheme = EditorView.theme({
+const nergalTheme = EditorView.theme({
   "&": {
     backgroundColor: "var(--card)",
     color: "var(--foreground)",
@@ -110,8 +110,8 @@ export function CodeEditor({ filePath, sessionId, readOnly = false, gotoLine = n
       const view = viewRef.current;
       if (view) saveFromView(view);
     }
-    document.addEventListener("cluihud:save-file", handler);
-    return () => document.removeEventListener("cluihud:save-file", handler);
+    document.addEventListener("nergal:save-file", handler);
+    return () => document.removeEventListener("nergal:save-file", handler);
   });
 
   useEffect(() => {
@@ -145,7 +145,7 @@ export function CodeEditor({ filePath, sessionId, readOnly = false, gotoLine = n
         extensions: [
           saveKeymap,
           basicSetup,
-          cluihudTheme,
+          nergalTheme,
           syntaxHighlighting(currentHighlightStyle()),
           getLanguageExtension(filePath),
           keymap.of([indentWithTab, ...searchKeymap]),

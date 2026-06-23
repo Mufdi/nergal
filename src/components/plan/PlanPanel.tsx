@@ -78,8 +78,8 @@ export function PlanPanel({ path }: PlanPanelProps) {
 
   useEffect(() => {
     function handleToggleGlobal() { setShowGlobalInput((prev) => !prev); }
-    document.addEventListener("cluihud:toggle-global-comment", handleToggleGlobal);
-    return () => document.removeEventListener("cluihud:toggle-global-comment", handleToggleGlobal);
+    document.addEventListener("nergal:toggle-global-comment", handleToggleGlobal);
+    return () => document.removeEventListener("nergal:toggle-global-comment", handleToggleGlobal);
   }, []);
 
   useEffect(() => {
@@ -87,8 +87,8 @@ export function PlanPanel({ path }: PlanPanelProps) {
       if (!canEnterAnnotationMode) return;
       setAnnotationMode((prev) => !prev);
     }
-    document.addEventListener("cluihud:toggle-annotation-mode", handleToggleAnnotationMode);
-    return () => document.removeEventListener("cluihud:toggle-annotation-mode", handleToggleAnnotationMode);
+    document.addEventListener("nergal:toggle-annotation-mode", handleToggleAnnotationMode);
+    return () => document.removeEventListener("nergal:toggle-annotation-mode", handleToggleAnnotationMode);
   }, [canEnterAnnotationMode, setAnnotationMode]);
 
   function handleRevise() {
@@ -151,13 +151,13 @@ export function PlanPanel({ path }: PlanPanelProps) {
     function onApprove() { handleApprove(); }
     function onRevise() { if (annotations.length > 0) handleRevise(); }
 
-    document.addEventListener("cluihud:clear-annotations", onClear);
-    document.addEventListener("cluihud:approve-plan", onApprove);
-    document.addEventListener("cluihud:revise-plan", onRevise);
+    document.addEventListener("nergal:clear-annotations", onClear);
+    document.addEventListener("nergal:approve-plan", onApprove);
+    document.addEventListener("nergal:revise-plan", onRevise);
     return () => {
-      document.removeEventListener("cluihud:clear-annotations", onClear);
-      document.removeEventListener("cluihud:approve-plan", onApprove);
-      document.removeEventListener("cluihud:revise-plan", onRevise);
+      document.removeEventListener("nergal:clear-annotations", onClear);
+      document.removeEventListener("nergal:approve-plan", onApprove);
+      document.removeEventListener("nergal:revise-plan", onRevise);
     };
   }, [canAnnotate, annotations.length, backendSessionId, decisionPath]);
 
@@ -180,14 +180,14 @@ export function PlanPanel({ path }: PlanPanelProps) {
       if (!t?.closest("[data-focus-zone='panel']")) return;
       if (e.code === "KeyA") {
         e.preventDefault();
-        document.dispatchEvent(new CustomEvent("cluihud:approve-plan"));
+        document.dispatchEvent(new CustomEvent("nergal:approve-plan"));
       } else if (e.code === "KeyC") {
         e.preventDefault();
-        document.dispatchEvent(new CustomEvent("cluihud:toggle-global-comment"));
+        document.dispatchEvent(new CustomEvent("nergal:toggle-global-comment"));
       } else if (e.code === "KeyR") {
         if (annotations.length === 0) return;
         e.preventDefault();
-        document.dispatchEvent(new CustomEvent("cluihud:revise-plan"));
+        document.dispatchEvent(new CustomEvent("nergal:revise-plan"));
       } else if (e.code === "KeyX") {
         if (annotations.length === 0) return;
         e.preventDefault();
@@ -198,7 +198,7 @@ export function PlanPanel({ path }: PlanPanelProps) {
           body: `Remove all ${annotations.length} annotation${annotations.length === 1 ? "" : "s"} on this plan?`,
           confirmLabel: "Clear",
         }).then((ok) => {
-          if (ok) document.dispatchEvent(new CustomEvent("cluihud:clear-annotations"));
+          if (ok) document.dispatchEvent(new CustomEvent("nergal:clear-annotations"));
         });
       }
     }

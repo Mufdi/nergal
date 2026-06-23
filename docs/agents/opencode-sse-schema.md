@@ -94,7 +94,7 @@ The reply (`POST /session/{sessionID}/permissions/{id}`) takes a body with:
 ```
 
 So OpenCode resolves USD server-side; the adapter forwards it directly
-without needing the cluihud `pricing` module.
+without needing the nergal `pricing` module.
 
 ## Capability mapping (this informs `OpenCodeAdapter::capabilities()`)
 

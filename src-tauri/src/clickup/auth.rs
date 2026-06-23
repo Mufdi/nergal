@@ -1,8 +1,8 @@
 //! ClickUp Personal API token storage.
 //!
 //! Primary store is the OS keyring (secret-service on Linux) under service
-//! `cluihud` / account `clickup-token`. When the keyring is unavailable the
-//! token falls back to `~/.config/cluihud/clickup.toml`, created atomically
+//! `nergal` / account `clickup-token`. When the keyring is unavailable the
+//! token falls back to `~/.config/nergal/clickup.toml`, created atomically
 //! at mode 0600 (temp file opened with the final mode + rename — no
 //! write-then-chmod window), and the `on_disk` flag is surfaced so the UI
 //! can disclose it.
@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow, bail};
 
-const KEYRING_SERVICE: &str = "cluihud";
+const KEYRING_SERVICE: &str = "nergal";
 const KEYRING_ACCOUNT: &str = "clickup-token";
 const FALLBACK_FILE: &str = "clickup.toml";
 
@@ -58,7 +58,7 @@ fn config_dir() -> PathBuf {
                 .unwrap_or_else(|| PathBuf::from("/tmp"))
                 .join(".config")
         })
-        .join("cluihud")
+        .join("nergal")
 }
 
 fn fallback_path() -> PathBuf {

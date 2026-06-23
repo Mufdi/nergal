@@ -245,15 +245,15 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
       if (isAnnotatingThis && annotations.length > 0) handleSendToClaude();
     }
 
-    document.addEventListener("cluihud:toggle-annotation-mode", handleToggleAnnotation);
-    document.addEventListener("cluihud:toggle-global-comment", handleToggleGlobal);
-    document.addEventListener("cluihud:clear-annotations", handleClear);
-    document.addEventListener("cluihud:revise-plan", handleRevise);
+    document.addEventListener("nergal:toggle-annotation-mode", handleToggleAnnotation);
+    document.addEventListener("nergal:toggle-global-comment", handleToggleGlobal);
+    document.addEventListener("nergal:clear-annotations", handleClear);
+    document.addEventListener("nergal:revise-plan", handleRevise);
     return () => {
-      document.removeEventListener("cluihud:toggle-annotation-mode", handleToggleAnnotation);
-      document.removeEventListener("cluihud:toggle-global-comment", handleToggleGlobal);
-      document.removeEventListener("cluihud:clear-annotations", handleClear);
-      document.removeEventListener("cluihud:revise-plan", handleRevise);
+      document.removeEventListener("nergal:toggle-annotation-mode", handleToggleAnnotation);
+      document.removeEventListener("nergal:toggle-global-comment", handleToggleGlobal);
+      document.removeEventListener("nergal:clear-annotations", handleClear);
+      document.removeEventListener("nergal:revise-plan", handleRevise);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditable, specScopeKey, isAnnotatingThis, annotations.length]);
@@ -276,11 +276,11 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
       if (!t?.closest("[data-focus-zone='panel']")) return;
       if (e.code === "KeyC") {
         e.preventDefault();
-        document.dispatchEvent(new CustomEvent("cluihud:toggle-global-comment"));
+        document.dispatchEvent(new CustomEvent("nergal:toggle-global-comment"));
       } else if (e.code === "KeyR") {
         if (annotations.length === 0) return;
         e.preventDefault();
-        document.dispatchEvent(new CustomEvent("cluihud:revise-plan"));
+        document.dispatchEvent(new CustomEvent("nergal:revise-plan"));
       } else if (e.code === "KeyX") {
         if (annotations.length === 0) return;
         e.preventDefault();
@@ -291,7 +291,7 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
           body: `Remove all ${annotations.length} annotation${annotations.length === 1 ? "" : "s"} on this spec?`,
           confirmLabel: "Clear",
         }).then((ok) => {
-          if (ok) document.dispatchEvent(new CustomEvent("cluihud:clear-annotations"));
+          if (ok) document.dispatchEvent(new CustomEvent("nergal:clear-annotations"));
         });
       }
     }

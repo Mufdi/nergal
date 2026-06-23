@@ -5,7 +5,7 @@ TBD - created by archiving change agent-adapter-foundation. Update Purpose after
 ## Requirements
 ### Requirement: Claude Code adapter implements the AgentAdapter contract
 
-The system SHALL ship a `ClaudeCodeAdapter` in `src-tauri/src/agents/claude_code/mod.rs` that implements `AgentAdapter` and preserves all current cluihud behavior for CC sessions. The adapter SHALL be registered as the default in `AgentRegistry`.
+The system SHALL ship a `ClaudeCodeAdapter` in `src-tauri/src/agents/claude_code/mod.rs` that implements `AgentAdapter` and preserves all current nergal behavior for CC sessions. The adapter SHALL be registered as the default in `AgentRegistry`.
 
 #### Scenario: Registry returns CC adapter by id
 
@@ -39,12 +39,12 @@ The returned `binary_path` SHALL come from `which claude` if available; the `con
 
 ### Requirement: CC adapter spawns claude binary with current behavior
 
-`ClaudeCodeAdapter::spawn(ctx)` SHALL return a `SpawnSpec` whose `binary` is `claude` (or the configured override from `config.claude_binary`), whose `args` follow the existing pty.rs convention (`--continue` when `ctx.resume_from` is Some and the session was previously active; `--resume` for explicit resume; no flag for fresh start), and whose `env` includes `CLUIHUD_SESSION_ID = ctx.session_id`.
+`ClaudeCodeAdapter::spawn(ctx)` SHALL return a `SpawnSpec` whose `binary` is `claude` (or the configured override from `config.claude_binary`), whose `args` follow the existing pty.rs convention (`--continue` when `ctx.resume_from` is Some and the session was previously active; `--resume` for explicit resume; no flag for fresh start), and whose `env` includes `NERGAL_SESSION_ID = ctx.session_id`.
 
 #### Scenario: Fresh session spawn
 
 - **WHEN** `spawn(ctx)` is called with `ctx.resume_from == None`
-- **THEN** `SpawnSpec { binary: "claude", args: [], env: { CLUIHUD_SESSION_ID: ... } }` SHALL be returned
+- **THEN** `SpawnSpec { binary: "claude", args: [], env: { NERGAL_SESSION_ID: ... } }` SHALL be returned
 
 #### Scenario: Continue an existing session
 
@@ -68,14 +68,14 @@ The returned `binary_path` SHALL come from `which claude` if available; the `con
 
 ### Requirement: CC adapter uses Unix socket + FIFO transports for events and decisions
 
-The CC adapter SHALL use the existing Unix socket at `/tmp/cluihud.sock` to receive hook events from the `cluihud hook send` CLI subcommands. For blocking decisions (plan review, ask-user), it SHALL continue to use FIFOs at `/tmp/cluihud-plan-<pid>.fifo` and `/tmp/cluihud-ask-<pid>.fifo`.
+The CC adapter SHALL use the existing Unix socket at `/tmp/nergal.sock` to receive hook events from the `nergal hook send` CLI subcommands. For blocking decisions (plan review, ask-user), it SHALL continue to use FIFOs at `/tmp/nergal-plan-<pid>.fifo` and `/tmp/nergal-ask-<pid>.fifo`.
 
 #### Scenario: Plan review FIFO write on user decision
 
 - **WHEN** the user accepts or denies a plan in the UI for a CC session
 - **AND** the frontend invokes `submit_plan_decision`
 - **THEN** the CC adapter SHALL write the decision JSON to the FIFO referenced by `decision_path`
-- **AND** the blocked `cluihud hook plan-review` subprocess SHALL receive the decision and pass it back to CC via the hook protocol
+- **AND** the blocked `nergal hook plan-review` subprocess SHALL receive the decision and pass it back to CC via the hook protocol
 
 #### Scenario: Ask-user FIFO write on user answer
 
@@ -84,13 +84,13 @@ The CC adapter SHALL use the existing Unix socket at `/tmp/cluihud.sock` to rece
 
 ### Requirement: Setup flow for CC writes ~/.claude/settings.json hooks
 
-`setup_agent(AgentId::claude_code())` SHALL produce the same `~/.claude/settings.json` hook configuration as the pre-foundation `cluihud setup` command. Hook matchers, async/sync flags, and timeouts SHALL match the current behavior exactly.
+`setup_agent(AgentId::claude_code())` SHALL produce the same `~/.claude/settings.json` hook configuration as the pre-foundation `nergal setup` command. Hook matchers, async/sync flags, and timeouts SHALL match the current behavior exactly.
 
 #### Scenario: Setup writes all current hook entries
 
 - **WHEN** `setup_agent('claude-code')` runs against a fresh `~/.claude/settings.json`
 - **THEN** the resulting file SHALL include hook entries for SessionStart, SessionEnd, PermissionRequest[ExitPlanMode], PreToolUse + PreToolUse[AskUserQuestion], PostToolUse[Write|Edit|MultiEdit|Bash|TaskCreate|TaskUpdate|TodoWrite|NotebookEdit|Create], TaskCreated, TaskCompleted, CwdChanged, FileChanged, PermissionDenied, Stop, UserPromptSubmit
-- **AND** the obsolete-hooks cleanup logic SHALL remove any pre-existing entries from older cluihud versions
+- **AND** the obsolete-hooks cleanup logic SHALL remove any pre-existing entries from older nergal versions
 
 ### Requirement: Plan watcher respects user's plansDirectory configuration
 
@@ -103,7 +103,7 @@ CC's plans-directory resolution SHALL be centralized in a single resolver consum
 5. If the resulting path is relative → join against `cwd`.
 6. If no `plansDirectory` is set in any layer → fallback to `<cwd>/.claude/plans/`.
 
-The plan watcher startup in `lib.rs` SHALL call this resolver instead of consuming `config.plans_directory`. The two code paths that previously diverged (watcher used cluihud config; `list_session_plans` hardcoded `<cwd>/.claude/plans/`) MUST be unified through this resolver. This path convention SHALL remain CC-specific; other adapters' `plan_capability()` implementations MUST NOT use this resolver.
+The plan watcher startup in `lib.rs` SHALL call this resolver instead of consuming `config.plans_directory`. The two code paths that previously diverged (watcher used nergal config; `list_session_plans` hardcoded `<cwd>/.claude/plans/`) MUST be unified through this resolver. This path convention SHALL remain CC-specific; other adapters' `plan_capability()` implementations MUST NOT use this resolver.
 
 #### Scenario: Plan loaded from worktree-local plans dir (default case)
 - **WHEN** a CC session in `/path/to/worktree` has plans at `/path/to/worktree/.claude/plans/<plan>.md`

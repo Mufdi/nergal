@@ -112,7 +112,7 @@ export function BrowserHost() {
   useEffect(() => {
     if (visible && !wasShownRef.current) {
       const id = requestAnimationFrame(() => {
-        document.dispatchEvent(new CustomEvent("cluihud:browser-became-visible"));
+        document.dispatchEvent(new CustomEvent("nergal:browser-became-visible"));
       });
       wasShownRef.current = true;
       return () => cancelAnimationFrame(id);

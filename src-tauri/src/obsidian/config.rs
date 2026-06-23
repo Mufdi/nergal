@@ -30,7 +30,7 @@ impl ObsidianConfig {
 pub type ResolvedObsidianConfig = ObsidianConfig;
 
 pub fn global_toml_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|p| p.join("cluihud").join("obsidian.toml"))
+    dirs::config_dir().map(|p| p.join("nergal").join("obsidian.toml"))
 }
 
 // Obsidian hides non-.md files by default, so an unextensioned path would

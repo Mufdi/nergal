@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { configAtom } from "@/stores/config";
 import { useFocusPulse } from "@/hooks/useFocusPulse";
@@ -336,10 +336,16 @@ function WorkspacesView() {
   const workspaces = useAtomValue(workspacesAtom);
   const setWorkspaces = useSetAtom(workspacesAtom);
   const addToast = useSetAtom(toastsAtom);
-  // DnD state: index of row being dragged; index of drop slot (0 = before first row,
-  // N = after last row). null means no active drag.
+  // Reorder mode is an explicit toggle (button next to "+"): only then do rows
+  // show a grab handle and accept drag. Keeping the handle out of the default
+  // view avoids the hover affordance shifting the workspace name sideways.
+  const [reorderMode, setReorderMode] = useState(false);
+  // Drag state for the indicator/opacity; the live values during a gesture are
+  // mirrored in refs so the window pointer handlers don't read stale closures.
   const [dragSrcIdx, setDragSrcIdx] = useState<number | null>(null);
   const [dropTargetIdx, setDropTargetIdx] = useState<number | null>(null);
+  const dragSrcRef = useRef<number | null>(null);
+  const dropSlotRef = useRef<number | null>(null);
   const activeSessionId = useAtomValue(activeSessionIdAtom);
   const setActiveSessionId = useSetAtom(activeSessionIdAtom);
   const setLaunchMode = useSetAtom(sessionLaunchModeAtom);
@@ -473,42 +479,54 @@ function WorkspacesView() {
     });
   }
 
-  function handleDragStart(e: React.DragEvent, idx: number) {
+  // Pointer-based reorder (native HTML5 drag is unreliable in WebKitGTK). The
+  // grab handle starts the gesture; window listeners track the pointer over the
+  // rows (via elementFromPoint → the row's data-workspace-id) and resolve a drop
+  // slot from the hovered row's vertical midpoint. Per-gesture closures capture
+  // the current `workspaces`, so there are no stale-state hazards.
+  function beginReorderDrag(e: React.PointerEvent, idx: number) {
+    e.preventDefault();
+    e.stopPropagation();
+    dragSrcRef.current = idx;
+    dropSlotRef.current = null;
     setDragSrcIdx(idx);
-    // Minimal payload — actual reorder uses idx from state.
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", String(idx));
-  }
-
-  function handleDragOver(e: React.DragEvent, slotIdx: number) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    setDropTargetIdx(slotIdx);
-  }
-
-  function handleDragEnd() {
-    setDragSrcIdx(null);
     setDropTargetIdx(null);
-  }
+    const snapshot = workspaces;
 
-  function handleDrop(e: React.DragEvent, slotIdx: number) {
-    e.preventDefault();
-    const src = dragSrcIdx;
-    setDragSrcIdx(null);
-    setDropTargetIdx(null);
-    if (src === null || src === slotIdx || src === slotIdx - 1) return;
-    const next = [...workspaces];
-    const [moved] = next.splice(src, 1);
-    // Adjust insertion index after removal.
-    const insertAt = slotIdx > src ? slotIdx - 1 : slotIdx;
-    next.splice(insertAt, 0, moved);
-    // Optimistic update.
-    setWorkspaces(next);
-    invoke("reorder_workspaces", { orderedIds: next.map((w) => w.id) }).catch(() => {
-      // Revert on failure.
-      setWorkspaces(workspaces);
-      addToast({ type: "error", message: "Failed to save workspace order" });
-    });
+    const onMove = (ev: PointerEvent) => {
+      const row = (document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null)
+        ?.closest<HTMLElement>("[data-workspace-id]");
+      if (!row) return;
+      const overId = row.getAttribute("data-workspace-id");
+      const overIdx = snapshot.findIndex((w) => w.id === overId);
+      if (overIdx < 0) return;
+      const rect = row.getBoundingClientRect();
+      const slot = ev.clientY < rect.top + rect.height / 2 ? overIdx : overIdx + 1;
+      dropSlotRef.current = slot;
+      setDropTargetIdx(slot);
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      const src = dragSrcRef.current;
+      const slot = dropSlotRef.current;
+      dragSrcRef.current = null;
+      dropSlotRef.current = null;
+      setDragSrcIdx(null);
+      setDropTargetIdx(null);
+      if (src === null || slot === null || slot === src || slot === src + 1) return;
+      const next = [...snapshot];
+      const [moved] = next.splice(src, 1);
+      const insertAt = slot > src ? slot - 1 : slot;
+      next.splice(insertAt, 0, moved);
+      setWorkspaces(next); // optimistic
+      invoke("reorder_workspaces", { orderedIds: next.map((w) => w.id) }).catch(() => {
+        setWorkspaces(snapshot); // revert
+        addToast({ type: "error", message: "Failed to save workspace order" });
+      });
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
   }
 
   async function handleAddWorkspace() {
@@ -695,6 +713,23 @@ function WorkspacesView() {
           Workspaces
         </span>
         <div className="flex items-center gap-1">
+          {workspaces.length > 1 && (
+            <button
+              onClick={() => setReorderMode((v) => !v)}
+              aria-label={reorderMode ? "Done reordering" : "Reorder workspaces"}
+              aria-pressed={reorderMode}
+              className={`flex size-5 items-center justify-center rounded transition-colors ${
+                reorderMode
+                  ? "bg-primary/15 text-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="7 8 4 11 7 14" /><polyline points="17 8 20 11 17 14" />
+                <line x1="4" y1="11" x2="20" y2="11" /><line x1="12" y1="4" x2="12" y2="20" />
+              </svg>
+            </button>
+          )}
           <button
             onClick={handleAddWorkspace}
             className="flex size-5 items-center justify-center rounded text-muted-foreground hover:text-foreground transition-colors"
@@ -723,16 +758,12 @@ function WorkspacesView() {
           const isBeingDragged = dragSrcIdx === wsIdx;
         return (
           <div key={ws.id} className={isBeingDragged ? "opacity-40" : undefined}>
-            {/* Drop slot indicator rendered above this row */}
+            {/* Drop-slot indicator above this row (visual only — the drop target
+                is resolved from the pointer position, not this strip). */}
             <div
-              className={`mx-3 h-0.5 rounded-full transition-colors ${dropTargetIdx === wsIdx ? "bg-primary" : "bg-transparent"}`}
-              onDragOver={(e) => handleDragOver(e, wsIdx)}
-              onDrop={(e) => handleDrop(e, wsIdx)}
+              className={`mx-3 h-0.5 rounded-full transition-colors ${reorderMode && dropTargetIdx === wsIdx ? "bg-primary" : "bg-transparent"}`}
             />
             <div
-              draggable={workspaces.length > 1}
-              onDragStart={(e) => handleDragStart(e, wsIdx)}
-              onDragEnd={handleDragEnd}
               role="button"
               tabIndex={0}
               data-nav-item
@@ -747,12 +778,13 @@ function WorkspacesView() {
               }}
               className="group flex w-full items-center gap-1.5 px-3 py-1 text-left hover:bg-secondary/40 transition-colors cursor-pointer"
             >
-              {/* Drag handle — only visible on hover, only when multiple workspaces exist */}
-              {workspaces.length > 1 && (
+              {/* Grab handle — shown only in reorder mode so it never shifts the
+                  name in the default view. Pointer-down starts the drag. */}
+              {reorderMode && (
                 <span
-                  aria-hidden
-                  className="hidden shrink-0 cursor-grab text-muted-foreground/40 group-hover:block active:cursor-grabbing"
-                  onMouseDown={(e) => e.stopPropagation()}
+                  aria-label="Drag to reorder"
+                  onPointerDown={(e) => beginReorderDrag(e, wsIdx)}
+                  className="shrink-0 cursor-grab text-muted-foreground/50 hover:text-foreground active:cursor-grabbing touch-none"
                 >
                   <svg width="8" height="12" viewBox="0 0 8 12" fill="currentColor">
                     <circle cx="2" cy="2" r="1.2" /><circle cx="6" cy="2" r="1.2" />
@@ -868,11 +900,9 @@ function WorkspacesView() {
         return (
           <>
             {rows}
-            {/* Drop slot after the last row */}
+            {/* Drop-slot indicator after the last row (visual only). */}
             <div
-              className={`mx-3 h-0.5 rounded-full transition-colors ${dropTargetIdx === workspaces.length ? "bg-primary" : "bg-transparent"}`}
-              onDragOver={(e) => handleDragOver(e, workspaces.length)}
-              onDrop={(e) => handleDrop(e, workspaces.length)}
+              className={`mx-3 h-0.5 rounded-full transition-colors ${reorderMode && dropTargetIdx === workspaces.length ? "bg-primary" : "bg-transparent"}`}
             />
           </>
         );

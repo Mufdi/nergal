@@ -266,6 +266,7 @@ impl Database {
             include_str!("../migrations/026_linear_closed_out.sql"),
             include_str!("../migrations/027_linear_estimation_type.sql"),
             include_str!("../migrations/028_cross_session.sql"),
+            include_str!("../migrations/029_workspace_sort_order.sql"),
         ];
 
         for (i, sql) in migrations.iter().enumerate() {
@@ -365,7 +366,7 @@ impl Database {
     /// Get all workspaces with their sessions pre-joined.
     pub fn get_workspaces(&self) -> Result<Vec<Workspace>> {
         let mut ws_stmt = self.conn.prepare(
-            "SELECT id, name, repo_path, created_at FROM workspaces ORDER BY created_at",
+            "SELECT id, name, repo_path, created_at FROM workspaces ORDER BY sort_order ASC, created_at ASC",
         )?;
         let mut sess_stmt = self
             .conn
@@ -430,6 +431,21 @@ impl Database {
     pub fn delete_workspace(&self, id: &str) -> Result<()> {
         self.conn
             .execute("DELETE FROM workspaces WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// Rewrite sort_order for every id in `ordered_ids` in a single transaction.
+    /// Ids not in the list are left at their current sort_order (e.g. rows added
+    /// between the frontend fetch and this call).
+    pub fn set_workspace_order(&self, ordered_ids: &[String]) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        for (idx, id) in ordered_ids.iter().enumerate() {
+            tx.execute(
+                "UPDATE workspaces SET sort_order = ?1 WHERE id = ?2",
+                params![idx as i64, id],
+            )?;
+        }
+        tx.commit()?;
         Ok(())
     }
 

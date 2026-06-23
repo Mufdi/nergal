@@ -858,6 +858,15 @@ pub fn delete_workspace(db: State<'_, SharedDb>, workspace_id: String) -> Result
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn reorder_workspaces(
+    ordered_ids: Vec<String>,
+    db: State<'_, SharedDb>,
+) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    db.set_workspace_order(&ordered_ids).map_err(|e| e.to_string())
+}
+
 // -- Session commands --
 
 #[tauri::command]

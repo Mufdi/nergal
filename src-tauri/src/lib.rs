@@ -390,6 +390,7 @@ pub fn run() {
             commands::resolve_repo_root,
             commands::get_workspaces,
             commands::delete_workspace,
+            commands::reorder_workspaces,
             // Session commands
             commands::create_session,
             commands::delete_session,

@@ -335,6 +335,11 @@ function WorkspacesView() {
   const deleteWorkspaceWithGrace = useSetAtom(deleteWorkspaceWithGraceAction);
   const workspaces = useAtomValue(workspacesAtom);
   const setWorkspaces = useSetAtom(workspacesAtom);
+  const addToast = useSetAtom(toastsAtom);
+  // DnD state: index of row being dragged; index of drop slot (0 = before first row,
+  // N = after last row). null means no active drag.
+  const [dragSrcIdx, setDragSrcIdx] = useState<number | null>(null);
+  const [dropTargetIdx, setDropTargetIdx] = useState<number | null>(null);
   const activeSessionId = useAtomValue(activeSessionIdAtom);
   const setActiveSessionId = useSetAtom(activeSessionIdAtom);
   const setLaunchMode = useSetAtom(sessionLaunchModeAtom);
@@ -343,7 +348,6 @@ function WorkspacesView() {
   const expandedFromAtom = useAtomValue(expandedWorkspaceIdsAtom);
   const setExpandedAtom = useSetAtom(expandedWorkspaceIdsAtom);
   const openTab = useSetAtom(openTabAction);
-  const addToast = useSetAtom(toastsAtom);
   const setBootstrapPrompt = useSetAtom(bootstrapPromptAtom);
   const triggerMergeSignal = useAtomValue(triggerMergeAtom);
   const expandedIds = expandedFromAtom ?? new Set<string>();
@@ -466,6 +470,44 @@ function WorkspacesView() {
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
+    });
+  }
+
+  function handleDragStart(e: React.DragEvent, idx: number) {
+    setDragSrcIdx(idx);
+    // Minimal payload — actual reorder uses idx from state.
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", String(idx));
+  }
+
+  function handleDragOver(e: React.DragEvent, slotIdx: number) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDropTargetIdx(slotIdx);
+  }
+
+  function handleDragEnd() {
+    setDragSrcIdx(null);
+    setDropTargetIdx(null);
+  }
+
+  function handleDrop(e: React.DragEvent, slotIdx: number) {
+    e.preventDefault();
+    const src = dragSrcIdx;
+    setDragSrcIdx(null);
+    setDropTargetIdx(null);
+    if (src === null || src === slotIdx || src === slotIdx - 1) return;
+    const next = [...workspaces];
+    const [moved] = next.splice(src, 1);
+    // Adjust insertion index after removal.
+    const insertAt = slotIdx > src ? slotIdx - 1 : slotIdx;
+    next.splice(insertAt, 0, moved);
+    // Optimistic update.
+    setWorkspaces(next);
+    invoke("reorder_workspaces", { orderedIds: next.map((w) => w.id) }).catch(() => {
+      // Revert on failure.
+      setWorkspaces(workspaces);
+      addToast({ type: "error", message: "Failed to save workspace order" });
     });
   }
 
@@ -673,14 +715,24 @@ function WorkspacesView() {
         const shortcutWsId = focusZone === "sidebar" && focusedWorkspaceId
           ? focusedWorkspaceId
           : activeWs?.id;
-        return workspaces.map((ws) => {
+        const rows = workspaces.map((ws, wsIdx) => {
           const isExpanded = expandedIds.has(ws.id);
           const filteredSessions = ws.sessions.filter((s) => s.status !== "completed");
           const isShortcutWorkspace = ws.id === shortcutWsId;
           const nonCompletedSessions = ws.sessions.filter((s) => s.status !== "completed");
+          const isBeingDragged = dragSrcIdx === wsIdx;
         return (
-          <div key={ws.id}>
+          <div key={ws.id} className={isBeingDragged ? "opacity-40" : undefined}>
+            {/* Drop slot indicator rendered above this row */}
             <div
+              className={`mx-3 h-0.5 rounded-full transition-colors ${dropTargetIdx === wsIdx ? "bg-primary" : "bg-transparent"}`}
+              onDragOver={(e) => handleDragOver(e, wsIdx)}
+              onDrop={(e) => handleDrop(e, wsIdx)}
+            />
+            <div
+              draggable={workspaces.length > 1}
+              onDragStart={(e) => handleDragStart(e, wsIdx)}
+              onDragEnd={handleDragEnd}
               role="button"
               tabIndex={0}
               data-nav-item
@@ -695,6 +747,20 @@ function WorkspacesView() {
               }}
               className="group flex w-full items-center gap-1.5 px-3 py-1 text-left hover:bg-secondary/40 transition-colors cursor-pointer"
             >
+              {/* Drag handle — only visible on hover, only when multiple workspaces exist */}
+              {workspaces.length > 1 && (
+                <span
+                  aria-hidden
+                  className="hidden shrink-0 cursor-grab text-muted-foreground/40 group-hover:block active:cursor-grabbing"
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
+                  <svg width="8" height="12" viewBox="0 0 8 12" fill="currentColor">
+                    <circle cx="2" cy="2" r="1.2" /><circle cx="6" cy="2" r="1.2" />
+                    <circle cx="2" cy="6" r="1.2" /><circle cx="6" cy="6" r="1.2" />
+                    <circle cx="2" cy="10" r="1.2" /><circle cx="6" cy="10" r="1.2" />
+                  </svg>
+                </span>
+              )}
               <svg
                 width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                 strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
@@ -799,6 +865,17 @@ function WorkspacesView() {
           </div>
         );
         });
+        return (
+          <>
+            {rows}
+            {/* Drop slot after the last row */}
+            <div
+              className={`mx-3 h-0.5 rounded-full transition-colors ${dropTargetIdx === workspaces.length ? "bg-primary" : "bg-transparent"}`}
+              onDragOver={(e) => handleDragOver(e, workspaces.length)}
+              onDrop={(e) => handleDrop(e, workspaces.length)}
+            />
+          </>
+        );
       })()}
 
       {workspaces.length === 0 && (

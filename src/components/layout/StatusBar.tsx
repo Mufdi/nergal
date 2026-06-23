@@ -198,7 +198,9 @@ export function StatusBar() {
             {summary.lastAction ? (
               <>
                 <Zap className="size-3 shrink-0 text-primary" />
-                <span className="w-44 shrink-0 truncate">{summary.lastAction}</span>
+                {/* Content-sized (not fixed w-44): short tool names like "Bash"
+                    sit flush against the icon; long MCP names cap + truncate. */}
+                <span className="min-w-0 max-w-44 truncate">{summary.lastAction}</span>
                 <span className="shrink-0 text-muted-foreground/60">│</span>
                 <span className="shrink-0 whitespace-nowrap tabular-nums">
                   <span className="inline-block min-w-[1.25rem] text-right">{summary.actionCount}</span> actions

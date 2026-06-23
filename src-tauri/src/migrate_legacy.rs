@@ -106,9 +106,7 @@ fn migrate_conditional_wrapper(home: &Path) {
         tracing::warn!("could not read {} for migration", old.display());
         return;
     };
-    let rewritten = body
-        .replace(OLD, NEW)
-        .replace(&OLD.to_uppercase(), &NEW.to_uppercase());
+    let rewritten = apply_fragments(&body);
     if std::fs::write(&new, rewritten).is_err() {
         tracing::warn!("could not write {}", new.display());
         return;
@@ -138,9 +136,46 @@ fn remove_stale_sentinel(home: &Path) {
     }
 }
 
-/// Files whose `cluihud` occurrences are all nergal-owned entries (hook command
-/// strings, MCP server key + binary path), so a scoped string replace is both
-/// safe and complete — no foreign content matches the literal.
+/// nergal-OWNED substrings only. A blanket `cluihud`→`nergal` would corrupt
+/// legitimate user data that happens to contain the word — e.g. a workspace at
+/// `~/Projects/cluihud` or a Claude Code permission entry referencing it. Each
+/// fragment is anchored to a path/key/command nergal owns, so it never matches
+/// such a path (`/Projects/cluihud` has no `.config/`, `/usr/bin/`, `hook `,
+/// etc. prefix). Order is irrelevant — the fragments don't overlap.
+const RENAME_FRAGMENTS: &[(&str, &str)] = &[
+    ("cluihud hook ", "nergal hook "),
+    ("cluihud-conditional.sh", "nergal-conditional.sh"),
+    ("cluihud-state.json", "nergal-state.json"),
+    ("cluihud-mcp.sock", "nergal-mcp.sock"),
+    ("cluihud.sock", "nergal.sock"),
+    ("cluihud-plan-", "nergal-plan-"),
+    ("cluihud-ask-", "nergal-ask-"),
+    ("/usr/bin/cluihud", "/usr/bin/nergal"),
+    (".config/cluihud", ".config/nergal"),
+    (".cache/cluihud", ".cache/nergal"),
+    (".cluihud-active", ".nergal-active"),
+    ("[mcp_servers.cluihud]", "[mcp_servers.nergal]"),
+    ("mcp_servers.cluihud.", "mcp_servers.nergal."),
+    ("\"cluihud\":", "\"nergal\":"),
+    ("CLUIHUD_SESSION_ID", "NERGAL_SESSION_ID"),
+    ("CLUIHUD_AGENT_ID", "NERGAL_AGENT_ID"),
+];
+
+fn apply_fragments(body: &str) -> String {
+    let mut out = body.to_string();
+    for (from, to) in RENAME_FRAGMENTS {
+        if out.contains(from) {
+            out = out.replace(from, to);
+        }
+    }
+    out
+}
+
+/// Rewrite nergal-owned legacy names in place across the config files that
+/// reference them: Claude Code `settings.json` (hook commands + wrapper path),
+/// the codex/opencode MCP registrations, and nergal's own `config.json` (which
+/// persists absolute `hook_socket_path` / `scratchpad_path` etc. that pointed
+/// into the old config dir). Targeted fragments only — never a blanket replace.
 fn rewrite_known_configs() {
     let mut targets = Vec::new();
     if let Some(home) = dirs::home_dir() {
@@ -149,6 +184,7 @@ fn rewrite_known_configs() {
     }
     if let Some(cfg) = dirs::config_dir() {
         targets.push(cfg.join("opencode").join("opencode.json"));
+        targets.push(cfg.join("nergal").join("config.json"));
     }
     for path in targets {
         rewrite_file_in_place(&path);
@@ -159,12 +195,10 @@ fn rewrite_file_in_place(path: &Path) {
     let Ok(body) = std::fs::read_to_string(path) else {
         return; // absent or unreadable — nothing to migrate
     };
-    if !body.contains(OLD) && !body.contains(&OLD.to_uppercase()) {
-        return;
+    let rewritten = apply_fragments(&body);
+    if rewritten == body {
+        return; // no nergal-owned legacy fragment present
     }
-    let rewritten = body
-        .replace(OLD, NEW)
-        .replace(&OLD.to_uppercase(), &NEW.to_uppercase());
     match std::fs::write(path, rewritten) {
         Ok(()) => tracing::info!("rewrote legacy names in {}", path.display()),
         Err(e) => tracing::warn!("could not rewrite {} ({e})", path.display()),

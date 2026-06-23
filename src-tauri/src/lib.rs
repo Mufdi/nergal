@@ -262,6 +262,12 @@ pub fn run() {
                 // (BUG-06). Quick (just signals); window still closes at once.
                 let app = window.app_handle();
                 if let Some(pty) = app.try_state::<crate::pty::PtyManager>() {
+                    // Stop docker compose stacks rooted in live-session dirs first
+                    // (non-destructive, detached), then SIGTERM shell process
+                    // groups. Compose containers are daemon-managed and live
+                    // outside the shell tree, so shutdown_all alone never reaches
+                    // them.
+                    crate::pty::stop_compose_projects(&pty.live_session_cwds());
                     pty.shutdown_all();
                 }
                 queue_close_markers(app);

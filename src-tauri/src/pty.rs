@@ -172,6 +172,53 @@ impl PtyManager {
             s.clear();
         }
     }
+
+    /// Unique working directories of live sessions (read from `/proc`). Used at
+    /// shutdown to `docker compose stop` projects rooted there. Must run BEFORE
+    /// `shutdown_all` clears the instance map.
+    pub fn live_session_cwds(&self) -> Vec<String> {
+        let mut dirs: Vec<String> = Vec::new();
+        if let Ok(instances) = self.instances.lock() {
+            for inst in instances.values() {
+                if let Some(pid) = inst.child_pid
+                    && let Some(cwd) = process_cwd(pid)
+                    && !dirs.contains(&cwd)
+                {
+                    dirs.push(cwd);
+                }
+            }
+        }
+        dirs
+    }
+}
+
+/// Best-effort `docker compose stop` for any live-session directory holding a
+/// compose file. Non-destructive (containers stop, not removed) and detached so
+/// the window still closes immediately — mirrors the user's manual flow of
+/// stopping their compose stack before quitting. A no-op when docker isn't
+/// installed or no compose file is present.
+pub fn stop_compose_projects(dirs: &[String]) {
+    const COMPOSE_FILES: [&str; 4] = [
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        "compose.yml",
+        "compose.yaml",
+    ];
+    for dir in dirs {
+        let has_compose = COMPOSE_FILES
+            .iter()
+            .any(|f| std::path::Path::new(dir).join(f).is_file());
+        if !has_compose {
+            continue;
+        }
+        let _ = std::process::Command::new("docker")
+            .args(["compose", "stop"])
+            .current_dir(dir)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+    }
 }
 
 #[derive(Clone, serde::Serialize)]

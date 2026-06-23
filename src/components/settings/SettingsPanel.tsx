@@ -1730,7 +1730,12 @@ function AppearanceSection({
     custom: c,
     theme: resolveCustomTheme(c),
   }));
-  const activeId = normalizeThemeId(config.theme_mode);
+  // normalizeThemeId only knows builtins, so it collapses a custom id to the
+  // default — which sent the "active" check to the default card while a custom
+  // theme was in use. Preserve a known custom id; normalize everything else.
+  const activeId = customs.some((c) => c.id === config.theme_mode)
+    ? config.theme_mode
+    : normalizeThemeId(config.theme_mode);
 
   function selectTheme(id: string) {
     handleTextChange("theme_mode", id);

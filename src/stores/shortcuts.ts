@@ -36,7 +36,6 @@ import { searchModalOpenAtom, searchScopeAtom } from "./search";
 import { quakeOpenMapAtom, quakeShellsAtom, addAdHocShell, cycleQuakeShell } from "./quake";
 import { clickupSyncStatusAtom } from "./clickup";
 import { linearSyncStatusAtom } from "./linear";
-import { openInObsidian } from "@/lib/obsidian";
 import { LOCKED_SHORTCUT_IDS } from "@/lib/keymap";
 
 /// `quake` is deliberately NOT in the alt+left/right cycle (getVisibleZones)
@@ -590,47 +589,9 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     }
     s.set(quickCaptureOpenAtom, (prev: boolean) => !prev);
   }},
-  { id: "obsidian-open-current", label: "Open in Obsidian (current file)", keys: "ctrl+shift+v", category: "action", keywords: ["obsidian", "vault", "open", "file"], handler: () => {
-    const s = store();
-    const ws = s.get(activeWorkspaceAtom);
-    if (!ws) {
-      s.set(toastsAtom, {
-        message: "Open in Obsidian",
-        description: "No active session — open one to resolve the target vault.",
-        type: "info",
-      });
-      return;
-    }
-    if (!s.get(obsidianEnabledAtom)) {
-      s.set(toastsAtom, {
-        message: "Obsidian not configured for this workspace",
-        description: `Set vault_root for ${ws.name} in Settings → Obsidian Integration.`,
-        type: "info",
-      });
-      return;
-    }
-    const tab = s.get(activeTabAtom);
-    let absPath: string | null = null;
-    if (tab?.type === "diff" || tab?.type === "file" || tab?.type === "plan") {
-      absPath = (tab.data?.path as string) ?? null;
-    } else if (tab?.type === "spec") {
-      const specCtx = s.get(currentSpecArtifactAtom);
-      if (specCtx) {
-        absPath = `${ws.repo_path}/openspec/changes/${specCtx.changeName}/${specCtx.artifactPath}`;
-      }
-    }
-    if (!absPath) {
-      s.set(toastsAtom, { message: "Open in Obsidian", description: "No file in focus to open", type: "info" });
-      return;
-    }
-    openInObsidian(ws.id, absPath).catch((err) => {
-      s.set(toastsAtom, {
-        message: "Open in Obsidian failed",
-        description: String(err),
-        type: "error",
-      });
-    });
-  }},
+  // "Open in Obsidian" is a surface-scoped bare-letter verb (`o`), handled
+  // component-locally in ObsidianNoteView — NOT a global combo. Freeing
+  // ctrl+shift+v here lets it reach the terminal's paste handler.
   { id: "obsidian-vault-search", label: "Search the Vault", keys: "ctrl+alt+o", category: "action", keywords: ["obsidian", "vault", "search", "find", "ask", "note"], handler: () => {
     const s = store();
     const ws = s.get(activeWorkspaceAtom);

@@ -45,8 +45,9 @@ export function ObsidianNoteView({ tabId, path }: { tabId: string; path: string 
   const [loading, setLoading] = useState(true);
   const isPinned = pinned.includes(path);
 
-  // Contextual single-key `p` pins/unpins, like the conflict panel's o/t/b
-  // letters — only while the panel holds focus, never from the terminal.
+  // Contextual single-key verbs (`p` pin/unpin, `o` open in Obsidian), like the
+  // conflict panel's o/t/b letters — only while the panel holds focus, never
+  // from the terminal.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (focusZone !== "panel") return;
@@ -54,16 +55,23 @@ export function ObsidianNoteView({ tabId, path }: { tabId: string; path: string 
       if (target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.closest(".cm-editor")) {
         return;
       }
-      if (e.code === "KeyP" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+      const bare = !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
+      if (e.code === "KeyP" && bare) {
         e.preventDefault();
         if (!sessionId) return;
         if (isPinned) unpinNote({ sessionId, path });
         else pinNote({ sessionId, path });
+      } else if (e.code === "KeyO" && bare) {
+        e.preventDefault();
+        if (!workspace) return;
+        openInObsidian(workspace.id, path).catch((err) =>
+          setToasts({ message: "Open in Obsidian failed", description: String(err), type: "error" }),
+        );
       }
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [focusZone, sessionId, isPinned, path, pinNote, unpinNote]);
+  }, [focusZone, sessionId, isPinned, path, pinNote, unpinNote, workspace, setToasts]);
 
   useEffect(() => {
     if (!workspace) return;
@@ -140,7 +148,7 @@ export function ObsidianNoteView({ tabId, path }: { tabId: string; path: string 
           >
             <ExternalLink size={13} />
           </TooltipTrigger>
-          <TooltipContent side="bottom" className="text-[10px]">Open in Obsidian</TooltipContent>
+          <TooltipContent side="bottom" className="text-[10px]">Open in Obsidian (O)</TooltipContent>
         </Tooltip>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">

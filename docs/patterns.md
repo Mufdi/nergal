@@ -57,7 +57,8 @@ scratchpad `Ctrl+Alt+L`) — a documented exception, not a tier violation.
 
 Single letters, no modifier, that act on the focused surface's current item.
 This is §8 — see there for the full guard contract. Used by ClickUp
-(`S/W/P/B/R/C/O/T`), Conflicts (`O/T`), PrViewer (`A`), and plan/spec review
+(`S/W/P/B/R/C/O/T`), Conflicts (`O/T`), PrViewer (`A`), Obsidian note
+(`P` pin · `O` open in Obsidian), and plan/spec review
 (`A` approve · `R` revise · `C` comment · `X` clear, swal-confirmed). Bare-letter
 verbs are **NOT** registry entries; their affordance is the tooltip advertising
 the letter (§6). **Entering** an engaged state keeps a modifier (annotation mode

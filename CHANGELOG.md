@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.4.0 — 2026-06-23
+
+* Added Linear integration: an issue panel grouped by state, project, assignee, or cycle, with faithful Linear status glyphs and Linear's own ordering, multiple workspaces (an API key each), background polling, and an "assigned to me" filter
+* Added Linear issue actions: send an issue to the agent as a prompt, spawn a worktree session from it, bind or pin it as session context, and write back state, assignee, cycle, comments, and issue closure
+* Added one-click status changes from the ClickUp and Linear panels — pick a new status straight from a task/issue row, with an optimistic update that reconciles against the background mirror
+* Added a "sync now" button to the ClickUp and Linear panel headers that forces an immediate refresh instead of waiting for the next poll
+* Added an agent-coordination layer over an optional, off-by-default MCP server: an agent can see and query your other live Nergal sessions across workspaces (mode, recently touched files, last message), message other sessions (delivery wakes the target's terminal), and request new worktree sessions that you approve at a GUI gate before they spawn — registered into Codex and OpenCode automatically
+* Added drag-to-reorder for workspaces in the sidebar: toggle reorder mode next to the "+" button, then drag the handle to reposition; the order persists
+* Added a user-remappable keymap editor in Settings, with live capture and collision detection, plus a notification-history popover in the status bar
+* Changed the project's internal name from its original `cluihud` code-name to `nergal` everywhere (binary, hook subcommands, config directory, environment variables, IPC paths, deep-link scheme, MCP server). A one-time, non-destructive startup migration moves existing config, database, Claude Code hook entries, the activity sentinel, and stored ClickUp/Linear keyring tokens to the new names, so upgrading installs carry over without losing anything
+* Changed "Open in Obsidian" to the bare key `o` while the Obsidian note panel is focused, freeing `Ctrl+Shift+V` for the terminal's own paste
+* Fixed the status bar shifting as activity text and rate-limit numbers changed; the columns now hold stable widths and the center cluster stays centered
+* Fixed Codex sessions not reporting model, effort, and token usage in the status bar — these now come from the real rollout file, matched to the session by working directory
+* Fixed the terminal not copying a plain text selection made over a full-screen TUI, and softened the selection highlight color
+* Fixed freeing a listening port not handling Docker — the ports popover is now keyboard-navigable and can stop the owning container, and Docker Compose projects started in a session are stopped when you close Nergal
+* Fixed the theme picker not marking a custom theme as the active one
+* Fixed `Ctrl+Shift+R` (revise plan / resolve conflict / apply PR annotations) not always firing as a global shortcut
+
 ## v0.3.0 — 2026-06-13
 
 * Added ClickUp integration: a panel listing your tasks by project, "assigned to me", and due date — with status/priority icons and a subtask tree — plus desktop notifications when a task is assigned to you, and a task detail you can also open as its own tab (`T`)

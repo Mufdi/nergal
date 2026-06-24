@@ -760,6 +760,30 @@ pub fn run() {
             // restart it.
             linear::restart(&app_handle);
 
+            // Recover legacy `cluihud`-service keyring secrets (ClickUp + Linear
+            // tokens) into the `nergal` service for upgrading installs. Off the
+            // main thread — keyring access blocks on D-Bus and must not stall
+            // boot. Reads the per-workspace org ids from the mirror so each
+            // `linear-token::<org>` account is covered too.
+            {
+                let db_for_keyring = app_handle.state::<db::SharedDb>().inner().clone();
+                let keyring_app = app_handle.clone();
+                std::thread::spawn(move || {
+                    let org_ids = db_for_keyring
+                        .lock()
+                        .ok()
+                        .and_then(|g| linear::mirror::list_workspaces(g.conn()).ok())
+                        .map(|ws| ws.into_iter().map(|w| w.org_id).collect::<Vec<_>>())
+                        .unwrap_or_default();
+                    // Pollers already parked on "no token" at boot; if a secret
+                    // was recovered, restart them so they pick it up now.
+                    if migrate_legacy::migrate_keyring(&org_ids) {
+                        clickup::poller::restart(&keyring_app);
+                        linear::restart(&keyring_app);
+                    }
+                });
+            }
+
             // Plan watcher is dynamic: one notify::Watcher whose watch set
             // grows as sessions land in cwds the boot-time scan did not see
             // (e.g. worktrees outside the first workspace). Seed it with

@@ -205,6 +205,56 @@ fn rewrite_file_in_place(path: &Path) {
     }
 }
 
+/// Copy OS-keyring secrets from the legacy `cluihud` service to `nergal`,
+/// non-destructively. ClickUp + Linear tokens live in the keyring (service was
+/// renamed by the sweep), so after upgrading the app looks under `nergal` and
+/// finds nothing. `linear_org_ids` are the per-workspace key accounts
+/// (`linear-token::<org>`) read from the mirror; the bare `linear-token` covers
+/// the legacy single-key store.
+///
+/// MUST run off the main thread, AFTER startup — keyring access blocks on
+/// D-Bus, and a synchronous stall during boot reproduces the journald
+/// ghost-window class of bug. Idempotent: skips any account already present
+/// under `nergal`.
+/// Returns true if at least one secret was recovered, so the caller can restart
+/// the pollers (which already parked on "no token" at boot before this ran).
+pub fn migrate_keyring(linear_org_ids: &[String]) -> bool {
+    let mut accounts = vec!["clickup-token".to_string(), "linear-token".to_string()];
+    for org in linear_org_ids {
+        accounts.push(format!("linear-token::{org}"));
+    }
+    let mut recovered = false;
+    for account in &accounts {
+        recovered |= copy_keyring_secret(account);
+    }
+    recovered
+}
+
+fn copy_keyring_secret(account: &str) -> bool {
+    let (Ok(old), Ok(new)) = (
+        keyring::Entry::new(OLD, account),
+        keyring::Entry::new(NEW, account),
+    ) else {
+        return false;
+    };
+    // Non-destructive: never overwrite a secret the user already set under the
+    // new service (e.g. a token re-entered after the rename).
+    if new.get_password().is_ok() {
+        return false;
+    }
+    // NoEntry (nothing to migrate) or a transient keyring error → leave it.
+    if let Ok(secret) = old.get_password() {
+        match new.set_password(&secret) {
+            Ok(()) => {
+                tracing::info!("recovered legacy keyring secret for {account}");
+                return true;
+            }
+            Err(e) => tracing::warn!("keyring migrate {account} write failed: {e}"),
+        }
+    }
+    false
+}
+
 fn rename_if_absent(old: &Path, new: &Path) {
     if old.exists() && !new.exists() {
         match std::fs::rename(old, new) {

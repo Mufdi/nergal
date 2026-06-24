@@ -54,7 +54,7 @@ The result is a keyboard-first HUD where the agent stays in the centerpiece term
 
 - **Session directory** — Nergal runs its own MCP server (default-off) so an agent can see and query your other live Nergal sessions across workspaces — mode, recently touched files, last message, with optional on-demand AI summaries.
 - **Cross-session messaging** — Agents send and read messages to one another through Nergal; delivery wakes the target session's PTY so a working agent picks it up at its next turn.
-- **Agent-spawned worktrees** — An agent can *request* a new worktree session; a human approves it at an un-bypassable GUI gate before anything spawns. Registers into Codex (`config.toml`) and OpenCode (`opencode.json`) MCP configs automatically.
+- **Agent-spawned worktrees** — An agent can *request* a new worktree session; a human approves it at an un-bypassable GUI gate before anything spawns. Works across Claude Code, Codex, and OpenCode — Nergal registers itself into each agent's MCP config for you.
 
 ### Code & docs
 

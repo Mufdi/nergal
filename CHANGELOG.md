@@ -2,20 +2,53 @@
 
 ## v0.4.0 — 2026-06-23
 
-* Added Linear integration: an issue panel grouped by state, project, assignee, or cycle, with faithful Linear status glyphs and Linear's own ordering, multiple workspaces (an API key each), background polling, and an "assigned to me" filter
-* Added Linear issue actions: send an issue to the agent as a prompt, spawn a worktree session from it, bind or pin it as session context, and write back state, assignee, cycle, comments, and issue closure
-* Added one-click status changes from the ClickUp and Linear panels — pick a new status straight from a task/issue row, with an optimistic update that reconciles against the background mirror
+* Added a Linear issue panel: your issues grouped by state, project, assignee, or cycle, with faithful Linear status glyphs and Linear's own ordering, an "assigned to me" filter, and background polling
+* Added multi-workspace Linear support — connect several workspaces, each with its own API key
+* Added Linear issue → agent actions: send an issue to the agent as a prompt, or spawn a worktree session seeded with it
+* Added binding/pinning a Linear issue as session context that's injected at spawn and resume
+* Added Linear write-back: change an issue's state, assignee, or cycle, post comments, and close issues out, with a Linear issue activity feed in the detail
+* Added one-click status changes from the ClickUp and Linear panel rows, with an optimistic update that reconciles against the background mirror
 * Added a "sync now" button to the ClickUp and Linear panel headers that forces an immediate refresh instead of waiting for the next poll
-* Added an agent-coordination layer over an optional, off-by-default MCP server: an agent can see and query your other live Nergal sessions across workspaces (mode, recently touched files, last message), message other sessions (delivery wakes the target's terminal), and request new worktree sessions that you approve at a GUI gate before they spawn — registered into Codex and OpenCode automatically
+* Added a session directory over an optional, off-by-default MCP server: an agent can see and query your other live Nergal sessions across workspaces (mode, recently touched files, last message)
+* Added cross-session messaging: agents send and read messages to one another through Nergal, and delivery wakes the target session's terminal
+* Added agent-spawned worktree sessions: an agent requests one and a human approves it at an un-bypassable GUI gate before it spawns; Nergal registers itself into Codex and OpenCode for you
 * Added drag-to-reorder for workspaces in the sidebar: toggle reorder mode next to the "+" button, then drag the handle to reposition; the order persists
-* Added a user-remappable keymap editor in Settings, with live capture and collision detection, plus a notification-history popover in the status bar
+* Added a user-remappable keymap editor in Settings, with live capture and collision detection
+* Added a diagnostics report you can copy from Settings for bug reports
+* Added a notification center in the status bar that keeps a history of past toasts
+* Added localhost port management: inspect the process owning a listening port and free it from the ports popover
+* Added a richer Activity drawer — per-tool duration and status, tool-call chain grouping, header stats, clickable touched files, clear-completed, and filters
+* Added full keyboard navigation to the Activity drawer
+* Added a configurable default view for the ClickUp and Linear panels (which grouping each panel opens on)
 * Changed the project's internal name from its original `cluihud` code-name to `nergal` everywhere (binary, hook subcommands, config directory, environment variables, IPC paths, deep-link scheme, MCP server). A one-time, non-destructive startup migration moves existing config, database, Claude Code hook entries, the activity sentinel, and stored ClickUp/Linear keyring tokens to the new names, so upgrading installs carry over without losing anything
 * Changed "Open in Obsidian" to the bare key `o` while the Obsidian note panel is focused, freeing `Ctrl+Shift+V` for the terminal's own paste
-* Fixed the status bar shifting as activity text and rate-limit numbers changed; the columns now hold stable widths and the center cluster stays centered
+* Changed plan and spec review to bare-letter verbs while engaged — `A` approve, `R` revise, `C` comment, `X` clear annotations
+* Changed the status-bar incident chip to open OpenAI's status page in an external browser (its page can't be embedded in-app), while Claude's still opens in the in-app browser panel
+* Fixed the status bar deforming as activity text and rate-limit numbers changed — the columns now hold stable widths and the center cluster stays centered
+* Fixed the Claude/OpenAI incident badges clipping vertically for lack of padding
 * Fixed Codex sessions not reporting model, effort, and token usage in the status bar — these now come from the real rollout file, matched to the session by working directory
+* Fixed Codex permission presets sending a removed flag (`--full-auto`); "accept edits" now maps to the real Codex 0.139.0 flags
+* Fixed OpenCode failing to start on a circular theme-color reference
 * Fixed the terminal not copying a plain text selection made over a full-screen TUI, and softened the selection highlight color
-* Fixed freeing a listening port not handling Docker — the ports popover is now keyboard-navigable and can stop the owning container, and Docker Compose projects started in a session are stopped when you close Nergal
+* Fixed long port labels hiding the button to free the port
+* Fixed the ports popover not being keyboard-navigable and not being able to stop a Docker container
+* Fixed Docker Compose projects started in a session outliving Nergal — they're now stopped when you close the app
+* Fixed listening ports run by Chromium/Electron apps being mislabelled instead of showing the real binary
 * Fixed the theme picker not marking a custom theme as the active one
+* Fixed the Obsidian file picker showing inner note content instead of the file name
+* Fixed "Open log file" in Settings doing nothing
+* Fixed the cycle-layout shortcut (`Ctrl+Shift+I`) doing nothing
+* Fixed global shortcuts firing while an external browser window held focus
+* Fixed pinned-note and session-tab tooltips not appearing instantly
+* Fixed binding a task or issue not closing its detail modal
+* Fixed spawning a worktree from a ClickUp task detail not closing the modal
+* Fixed Linear cycle grouping repeating "No cycle" and ordering cycles incorrectly
+* Fixed the ClickUp task tab losing keyboard navigation when returning to it
+* Fixed the delete button appearing on the main (non-worktree) session
+* Fixed the AskUserQuestion attention tint never clearing after the question resolved
+* Fixed a new workspace's Settings forms pre-filling with another workspace's data
+* Fixed the per-workspace OpenSpec custom path not clearing when emptied
+* Fixed the session-number hint (`Alt+N`) showing past 9
 * Fixed `Ctrl+Shift+R` (revise plan / resolve conflict / apply PR annotations) not always firing as a global shortcut
 
 ## v0.3.0 — 2026-06-13

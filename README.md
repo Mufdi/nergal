@@ -44,6 +44,18 @@ The result is a keyboard-first HUD where the agent stays in the centerpiece term
 - **Task → agent** — Send a task to the agent as a prompt, or spawn a worktree session seeded with it. Pin or bind a task as session context that's injected at spawn / resume.
 - **Bidirectional write-back** — Change status, post comments, toggle checklist items, set due dates, and remove assignees from a task detail you can open as its own document tab (`T`). Auth via a personal API token kept in the OS keyring.
 
+### Linear integration
+
+- **Issue panel** — Your Linear issues grouped by state, project, assignee, or cycle, with faithful Linear status glyphs and Linear's own ordering. Multiple workspaces (an API key per workspace), background polling, and an "assigned to me" filter.
+- **Issue → agent** — Send an issue to the agent as a prompt or spawn a worktree session seeded with it; bind or pin it as session context injected at spawn / resume.
+- **Bidirectional write-back** — Change state, assignee, or cycle with one click (from the panel row or the detail), post comments, and close issues out. Optimistic updates reconcile against the mirror. Auth via a personal API key in the OS keyring.
+
+### Agent coordination (MCP)
+
+- **Session directory** — Nergal runs its own MCP server (default-off) so an agent can see and query your other live Nergal sessions across workspaces — mode, recently touched files, last message, with optional on-demand AI summaries.
+- **Cross-session messaging** — Agents send and read messages to one another through Nergal; delivery wakes the target session's PTY so a working agent picks it up at its next turn.
+- **Agent-spawned worktrees** — An agent can *request* a new worktree session; a human approves it at an un-bypassable GUI gate before anything spawns. Registers into Codex (`config.toml`) and OpenCode (`opencode.json`) MCP configs automatically.
+
 ### Code & docs
 
 - **File panel with quick editing** — Project tree plus a CodeMirror 6 editor with syntax for TS / JS / JSON / MD / Rust / CSS / HTML. Single-click preview, double-click to pin.
@@ -137,7 +149,7 @@ nergal setup
 
 **Active development.** Features land in [OpenSpec changes](./openspec/changes/) before they ship as [specs](./openspec/specs/). Expect iteration; the surface is not yet stable.
 
-**Naming.** The user-facing brand is **Nergal**. Internally — the binary, hook subcommands (`nergal hook ...`), env vars (`NERGAL_SESSION_ID`), IPC paths (`/tmp/nergal.sock`), and config (`~/.config/nergal/`) — the project keeps the original name `nergal` for backward compatibility with developer machines already running it. Both names refer to the same project.
+**Naming.** **Nergal** end to end — the brand and the internal name (binary, hook subcommands `nergal hook ...`, env vars `NERGAL_SESSION_ID`, IPC paths `/tmp/nergal.sock`, config `~/.config/nergal/`, deep-link scheme `nergal://`). The project was originally code-named `cluihud`; a one-time, non-destructive startup migration moves any leftover `cluihud` state (config dir + DB, Claude Code hook entries, keyring tokens, MCP registrations) to the new names, so upgrading installs carry over without losing anything.
 
 ## Inspiration
 

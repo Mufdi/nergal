@@ -646,9 +646,36 @@ export async function refreshClickUpMirror(store: Store): Promise<void> {
     store.set(clickupTasksAtom, tasks);
     store.set(clickupSpacesAtom, spaces);
     store.set(clickupClosedOutAtom, closedOut);
+    clearReconciledStatusOverlays(store, tasks);
   } catch (err) {
     console.warn("[clickup] mirror read failed:", err);
   }
+}
+
+/// "Mirror carries the truth": drop a pending status overlay once the poll
+/// brings the task's server status in line, so a panel row edited via the
+/// inline picker stops rendering from the overlay and matches un-edited rows.
+/// (The detail view clears its own writes via confirmAfterWrite; this covers
+/// the panel path, which holds the overlay until reconcile to avoid a flicker.)
+function clearReconciledStatusOverlays(store: Store, tasks: ClickUpTask[]): void {
+  const overlay = store.get(clickupOverlayAtom);
+  const keys = Object.keys(overlay) as OverlayKey[];
+  if (keys.length === 0) return;
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  let mutated = false;
+  const next = { ...overlay };
+  for (const key of keys) {
+    const sep = key.indexOf(":");
+    const taskId = key.slice(0, sep);
+    const field = key.slice(sep + 1);
+    if (field !== "status") continue;
+    const task = byId.get(taskId);
+    if (task && task.status_name === overlay[key].value) {
+      delete next[key];
+      mutated = true;
+    }
+  }
+  if (mutated) store.set(clickupOverlayAtom, next);
 }
 
 export async function setupClickUpListeners(store: Store): Promise<UnlistenFn[]> {

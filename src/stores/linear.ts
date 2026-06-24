@@ -577,9 +577,42 @@ export async function refreshLinearMirror(store: Store): Promise<void> {
     store.set(linearIssuesAtom, issues);
     store.set(linearTeamsAtom, teams);
     store.set(linearClosedOutAtom, new Set(closedOutIds));
+    clearReconciledOverlays(store, issues);
   } catch (err) {
     console.warn("[linear] mirror read failed:", err);
   }
+}
+
+/// "Mirror carries the truth": once a poll brings an issue's server value in
+/// line with a pending optimistic overlay, drop that overlay entry. Without
+/// this the overlay lingers forever (the writeback doesn't clear it on success
+/// to avoid a flicker back to the stale mirror), leaving an edited row rendered
+/// from the picker's state list instead of the mirror — visibly inconsistent
+/// with un-edited rows of the same state.
+function clearReconciledOverlays(store: Store, issues: IssueView[]): void {
+  const overlay = store.get(linearOverlayAtom);
+  const keys = Object.keys(overlay) as LinearOverlayKey[];
+  if (keys.length === 0) return;
+  const byId = new Map(issues.map((i) => [i.id, i]));
+  let mutated = false;
+  const next = { ...overlay };
+  for (const key of keys) {
+    const sep = key.indexOf(":");
+    const issueId = key.slice(0, sep);
+    const field = key.slice(sep + 1);
+    const issue = byId.get(issueId);
+    if (!issue) continue;
+    const want = overlay[key].value;
+    const reconciled =
+      (field === "state" && issue.stateId === want) ||
+      (field === "assignee" && (issue.assigneeId ?? null) === want) ||
+      (field === "cycle" && (issue.cycleId ?? null) === want);
+    if (reconciled) {
+      delete next[key];
+      mutated = true;
+    }
+  }
+  if (mutated) store.set(linearOverlayAtom, next);
 }
 
 export async function setupLinearListeners(store: Store): Promise<UnlistenFn[]> {

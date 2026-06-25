@@ -798,6 +798,15 @@ pub fn read_closed_out(conn: &Connection) -> Result<Vec<String>> {
     Ok(out)
 }
 
+/// Remove the worked-closed marker for a task, allowing it to be re-closed later.
+pub fn unmark_closed_out(conn: &Connection, task_id: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM clickup_closed_out WHERE task_id = ?1",
+        params![task_id],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1133,6 +1142,19 @@ mod tests {
         let mut ids = read_closed_out(&conn).unwrap();
         ids.sort();
         assert_eq!(ids, vec!["task-a".to_string(), "task-b".to_string()]);
+    }
+
+    #[test]
+    fn unmark_closed_out_removes_marker() {
+        let conn = mirror_conn();
+        conn.execute_batch(include_str!("../../migrations/019_clickup_closed_out.sql"))
+            .unwrap();
+        mark_closed_out(&conn, "task-x", 5000).unwrap();
+        assert_eq!(read_closed_out(&conn).unwrap(), vec!["task-x".to_string()]);
+        unmark_closed_out(&conn, "task-x").unwrap();
+        assert!(read_closed_out(&conn).unwrap().is_empty());
+        // Idempotent: clearing an absent marker is a no-op, not an error.
+        unmark_closed_out(&conn, "task-x").unwrap();
     }
 
     #[test]

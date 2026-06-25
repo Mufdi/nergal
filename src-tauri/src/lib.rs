@@ -512,6 +512,7 @@ pub fn run() {
             clickup::clickup_read_all_list_statuses,
             clickup::clickup_mark_closed_out,
             clickup::clickup_read_closed_out,
+            clickup::clickup_unmark_closed_out,
             clickup::clickup_set_task_status,
             clickup::clickup_set_checklist_item,
             clickup::clickup_update_task,

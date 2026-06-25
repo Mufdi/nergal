@@ -32,6 +32,7 @@ import { MarkdownView } from "@/components/plan/MarkdownView";
 import { LinearStatusIcon } from "@/components/linear/LinearStatusIcon";
 import { LinearEstimateIcon } from "@/components/linear/LinearEstimateIcon";
 import { PriorityIcon } from "@/components/clickup/PriorityIcon";
+import { AncestorBreadcrumb } from "@/components/ui/AncestorBreadcrumb";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -391,6 +392,21 @@ export function useLinearIssueController({
   }
 
   const closedOut = issue ? closedOutSet.has(issue.id) : false;
+  // Ancestor chain (root → immediate parent) for the header breadcrumb when
+  // viewing a sub-issue. Walk the mirror upward, guarding against cycles.
+  const ancestors = (() => {
+    const names: string[] = [];
+    const seen = new Set<string>();
+    let pid: string | null | undefined = issue?.parentId;
+    while (pid && !seen.has(pid)) {
+      seen.add(pid);
+      const p = issues.find((i) => i.id === pid);
+      if (!p) break;
+      names.unshift(p.title);
+      pid = p.parentId;
+    }
+    return names;
+  })();
 
   async function handleUncloseOut(targetId: string) {
     try {
@@ -527,6 +543,7 @@ export function useLinearIssueController({
     subIssues,
     childMap,
     closedOut,
+    ancestors,
     handleUncloseOut,
     contentRef,
     mainRef,
@@ -1540,9 +1557,15 @@ export function LinearIssueTitleContent({ c }: { c: LinearIssueController }) {
         className="shrink-0"
         title={c.issue?.stateName}
       />
+      <AncestorBreadcrumb ancestors={c.ancestors} />
       <span className="truncate text-sm font-medium text-foreground">
         {c.issue?.title ?? "Linear issue"}
       </span>
+      {c.closedOut && (
+        <span className="shrink-0 rounded-full bg-green-500/15 px-1.5 text-[9px] font-medium text-green-400">
+          done
+        </span>
+      )}
     </>
   );
 }

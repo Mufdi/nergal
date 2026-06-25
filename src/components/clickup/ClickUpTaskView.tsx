@@ -7,6 +7,7 @@ import {
   ChevronRight,
   CircleCheck,
   Copy,
+  Download,
   ExternalLink,
   GitBranchPlus,
   Link2,
@@ -28,6 +29,7 @@ import { DatePopover } from "@/components/clickup/DatePopover";
 import { StatusIcon } from "@/components/clickup/StatusIcon";
 import { StatusPicker } from "@/components/clickup/StatusPicker";
 import { PriorityIcon } from "@/components/clickup/PriorityIcon";
+import { AncestorBreadcrumb } from "@/components/ui/AncestorBreadcrumb";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { PulseDots } from "@/components/ui/PulseDots";
 import {
@@ -39,6 +41,7 @@ import { activeSessionIdAtom } from "@/stores/workspace";
 import {
   activeSessionClickUpPinsAtom,
   activeSessionClickUpTaskAtom,
+  clickupClosedOutAtom,
   clickupClosureOfferAtom,
   clickupListStatusesAtom,
   clickupOverlayAtom,
@@ -259,6 +262,8 @@ export function useClickUpTaskController({
 }) {
   const tasks = useAtomValue(clickupTasksAtom);
   const listStatuses = useAtomValue(clickupListStatusesAtom);
+  const closedOutList = useAtomValue(clickupClosedOutAtom);
+  const setClosedOut = useSetAtom(clickupClosedOutAtom);
   const copyTaskId = useSetAtom(copyTaskIdAction);
   const [overlay, setOverlay] = useAtom(clickupOverlayAtom);
   const addToast = useSetAtom(toastsAtom);
@@ -435,6 +440,34 @@ export function useClickUpTaskController({
   }
 
   const task = detail?.task ?? null;
+  const closedOut = taskId ? closedOutList.includes(taskId) : false;
+  // Ancestor chain (root → immediate parent) for the header breadcrumb when
+  // viewing a subtask. The detail payload only carries `parent_id`; walk the
+  // mirror upward, guarding against cycles / missing links.
+  const ancestors = (() => {
+    const names: string[] = [];
+    const seen = new Set<string>();
+    let pid: string | null | undefined = task?.parent_id;
+    while (pid && !seen.has(pid)) {
+      seen.add(pid);
+      const p = tasks.find((t) => t.id === pid);
+      if (!p) break;
+      names.unshift(p.name);
+      pid = p.parent_id;
+    }
+    return names;
+  })();
+
+  // Clear the closed-out marker (undone). Mirrors Linear's handleUncloseOut —
+  // the marker is a local durable flag, not the ClickUp status.
+  async function handleUncloseOut(targetId: string) {
+    try {
+      await invoke("clickup_unmark_closed_out", { taskId: targetId });
+      setClosedOut((prev) => prev.filter((id) => id !== targetId));
+    } catch {
+      // Badge stays — silently ignore.
+    }
+  }
 
   async function handleStatusChange(statusName: string) {
     if (!taskId || busy) return;
@@ -689,6 +722,12 @@ export function useClickUpTaskController({
       const item = cl?.items.find((it) => it.id === itemId);
       if (cl && item) void handleChecklistToggle(cl.id, item);
     } else if (key === "comment") commentRef.current?.focus();
+    else if (key === "unclose") {
+      if (task) void handleUncloseOut(task.id);
+    } else if (key.startsWith("att:")) {
+      const att = detail?.attachments.find((a) => a.id === key.slice(4));
+      if (att?.url) openExternalUrl(att.url);
+    }
   }
 
   function navKeysInOrder(): string[] {
@@ -759,6 +798,9 @@ export function useClickUpTaskController({
     postingComment,
     uncertainComment,
     busy,
+    closedOut,
+    ancestors,
+    handleUncloseOut,
     navKey,
     setNavKey,
     overlay,
@@ -793,7 +835,7 @@ export function useClickUpTaskController({
 /// truth, so the properties block leads in both.
 export function ClickUpTaskBody({ c, layout }: { c: TaskController; layout: "modal" | "tab" }) {
   const isTab = layout === "tab";
-  const { detail, task, loading, error, navKey, overlay, busy } = c;
+  const { detail, task, loading, error, navKey, overlay, busy, closedOut } = c;
 
   // In the tab the outer container is the single scroll surface, so the
   // scroll-to-top nav effect (mainRef) must target it too.
@@ -863,6 +905,28 @@ export function ClickUpTaskBody({ c, layout }: { c: TaskController; layout: "mod
       </TooltipTrigger>
       <TooltipContent side="bottom" className="text-[10px]">Copy task ID</TooltipContent>
     </Tooltip>
+  ) : null;
+
+  // Worked-and-done marker (local, separate from the ClickUp status). Mirrors
+  // Linear's done badge + "Mark undone" toggle; leads the Properties block so
+  // the index cursor reaches it first.
+  const closedOutEl = closedOut && task ? (
+    <div className="flex items-center gap-1.5">
+      <span className="rounded-full bg-green-500/15 px-1.5 text-[9px] font-medium text-green-400">done</span>
+      <button
+        type="button"
+        data-nav-key="unclose"
+        data-nav-selected={navKey === "unclose" || undefined}
+        onClick={(e) => {
+          e.stopPropagation();
+          void c.handleUncloseOut(task.id);
+        }}
+        className="rounded px-1 text-[9px] text-muted-foreground outline-none hover:text-foreground"
+        title="Unmark closed out"
+      >
+        Mark undone
+      </button>
+    </div>
   ) : null;
 
   const statusEl = c.displayStatusName ? (
@@ -1115,7 +1179,7 @@ export function ClickUpTaskBody({ c, layout }: { c: TaskController; layout: "mod
       <SectionCaps label="Attachments" />
       <div className="flex flex-wrap gap-1.5">
         {detail.attachments.map((att) => (
-          <AttachmentChip key={att.id} attachment={att} />
+          <AttachmentChip key={att.id} attachment={att} navSelected={navKey === `att:${att.id}`} />
         ))}
       </div>
     </>
@@ -1222,6 +1286,7 @@ export function ClickUpTaskBody({ c, layout }: { c: TaskController; layout: "mod
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-5 py-4">
           <div className="flex flex-col gap-2">
             <SectionCaps label="Properties" />
+            {closedOutEl}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
               {statusEl}
               {priorityEl}
@@ -1259,6 +1324,7 @@ export function ClickUpTaskBody({ c, layout }: { c: TaskController; layout: "mod
       <aside className="order-2 flex w-44 shrink-0 flex-col gap-3 border-l border-border/50 px-2.5 py-2">
         <div className="flex flex-col gap-1.5">
           <SectionCaps label="Properties" />
+          {closedOutEl}
           {taskIdEl}
           {statusEl}
           {priorityEl}
@@ -1321,9 +1387,15 @@ export function TaskTitleContent({ c }: { c: TaskController }) {
         className="shrink-0"
         title={c.displayStatusName ?? undefined}
       />
+      <AncestorBreadcrumb ancestors={c.ancestors} />
       <span className="truncate text-sm font-medium text-foreground">
         {c.task?.name ?? "ClickUp task"}
       </span>
+      {c.closedOut && (
+        <span className="shrink-0 rounded-full bg-green-500/15 px-1.5 text-[9px] font-medium text-green-400">
+          done
+        </span>
+      )}
     </>
   );
 }
@@ -1412,7 +1484,13 @@ function SectionCaps({ label }: { label: string }) {
   );
 }
 
-function AttachmentChip({ attachment }: { attachment: ClickUpAttachment }) {
+function AttachmentChip({
+  attachment,
+  navSelected,
+}: {
+  attachment: ClickUpAttachment;
+  navSelected: boolean;
+}) {
   const image = isImageAttachment(attachment);
   function openOriginal() {
     openExternalUrl(attachment.url);
@@ -1421,11 +1499,24 @@ function AttachmentChip({ attachment }: { attachment: ClickUpAttachment }) {
   return (
     <button
       type="button"
+      data-nav-key={`att:${attachment.id}`}
+      data-nav-selected={navSelected || undefined}
       onClick={openOriginal}
       disabled={!attachment.url}
       title={attachment.title ?? undefined}
-      className="flex max-w-44 flex-col gap-1 rounded border border-border/60 bg-secondary/30 p-1.5 text-left transition-colors hover:border-border hover:bg-secondary/60 disabled:opacity-50"
+      className="group relative flex max-w-44 flex-col gap-1 rounded border border-border/60 bg-secondary/30 p-1.5 text-left outline-none transition-colors hover:border-border hover:bg-secondary/60 disabled:opacity-50"
     >
+      {attachment.url && (
+        // Download affordance: surfaces on hover (or keyboard nav-selection)
+        // over the thumbnail. Decorative — the whole chip opens the URL in the
+        // external browser, which triggers the download.
+        <span
+          aria-hidden
+          className={`pointer-events-none absolute right-1 top-1 z-10 flex size-5 items-center justify-center rounded bg-background/85 text-muted-foreground shadow-sm transition-opacity ${navSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
+        >
+          <Download size={11} />
+        </span>
+      )}
       {image && attachment.thumbnail_url && /^https?:\/\//i.test(attachment.thumbnail_url) && (
         <img
           src={attachment.thumbnail_url}

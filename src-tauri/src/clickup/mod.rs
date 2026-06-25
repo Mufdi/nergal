@@ -361,6 +361,16 @@ pub fn clickup_read_closed_out(
     mirror::read_closed_out(guard.conn()).map_err(|e| format!("{e:#}"))
 }
 
+/// Clear the closed-out marker for a task so the user can re-open it (undone).
+#[tauri::command]
+pub fn clickup_unmark_closed_out(
+    task_id: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+) -> Result<(), String> {
+    let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+    mirror::unmark_closed_out(guard.conn(), &task_id).map_err(|e| format!("{e:#}"))
+}
+
 // ── Status read (clickup-writeback: 1.5) ──
 
 /// Mirror-only bulk read of every cached list's workflow, keyed by list id.

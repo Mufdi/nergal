@@ -98,7 +98,8 @@ fn rewrite_cc_config(register: bool) -> Result<()> {
     let changed = apply_cc_registration(&mut root, &shim_command(), register);
     if changed {
         let pretty = serde_json::to_string_pretty(&root)?;
-        std::fs::write(&path, pretty).with_context(|| format!("writing {}", path.display()))?;
+        crate::atomic_write::write_atomic(&path, pretty)
+            .with_context(|| format!("writing {}", path.display()))?;
         tracing::info!(
             "mcp: {} nergal in {}",
             if register {
@@ -185,7 +186,7 @@ fn rewrite_codex_config(register: bool) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        std::fs::write(&path, doc.to_string())
+        crate::atomic_write::write_atomic(&path, doc.to_string())
             .with_context(|| format!("writing {}", path.display()))?;
         tracing::info!(
             "mcp: {} nergal in {}",
@@ -260,7 +261,8 @@ fn rewrite_opencode_config(register: bool) -> Result<()> {
             std::fs::create_dir_all(parent).ok();
         }
         let pretty = serde_json::to_string_pretty(&root)?;
-        std::fs::write(&path, pretty).with_context(|| format!("writing {}", path.display()))?;
+        crate::atomic_write::write_atomic(&path, pretty)
+            .with_context(|| format!("writing {}", path.display()))?;
         tracing::info!(
             "mcp: {} nergal in {}",
             if register {

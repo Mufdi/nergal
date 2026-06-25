@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};
@@ -411,9 +411,9 @@ fn backup_settings(path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn save_settings(path: &PathBuf, settings: &Map<String, Value>) -> Result<()> {
+fn save_settings(path: &Path, settings: &Map<String, Value>) -> Result<()> {
     let json = serde_json::to_string_pretty(&Value::Object(settings.clone()))?;
-    std::fs::write(path, json).context("writing settings.json")?;
+    crate::atomic_write::write_atomic(path, json).context("writing settings.json")?;
     Ok(())
 }
 

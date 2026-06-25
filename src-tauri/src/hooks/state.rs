@@ -37,7 +37,7 @@ impl HookState {
     pub fn write(&self) -> Result<()> {
         let path = Self::state_path()?;
         let json = serde_json::to_string(self).context("serializing state")?;
-        std::fs::write(&path, json)
+        crate::atomic_write::write_atomic(&path, json)
             .with_context(|| format!("writing state: {}", path.display()))?;
         Ok(())
     }

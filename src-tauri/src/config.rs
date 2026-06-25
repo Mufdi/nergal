@@ -357,7 +357,7 @@ impl Config {
             std::fs::create_dir_all(parent)?;
         }
         let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, json)?;
+        crate::atomic_write::write_atomic(&path, json)?;
         Ok(())
     }
 

@@ -30,8 +30,32 @@ pub fn run() {
         migrate_claude_state(&home);
         migrate_conditional_wrapper(&home);
         remove_stale_sentinel(&home);
+        migrate_cc_mcp_registration(&home);
     }
     rewrite_known_configs();
+    clean_legacy_scheme_handler();
+    remove_legacy_cache_dir();
+}
+
+/// Best-effort removal of the legacy `~/.cache/cluihud` log directory. nergal
+/// writes its log to `~/.cache/nergal/nergal.log` (see `lib.rs`), so an upgraded
+/// install leaves a sibling `~/.cache/cluihud/` behind. XDG cache is regenerable
+/// diagnostic output, not user data — delete it rather than merge. The
+/// `.cache/cluihud` RENAME_FRAGMENT only rewrites that string *inside* a config
+/// file, but the log path is computed at runtime and never persisted, so the
+/// stale directory needs this dedicated cleanup.
+fn remove_legacy_cache_dir() {
+    let Some(cache) = dirs::cache_dir() else {
+        return;
+    };
+    let old = cache.join(OLD);
+    if !old.is_dir() {
+        return;
+    }
+    match std::fs::remove_dir_all(&old) {
+        Ok(()) => tracing::info!("removed legacy cache dir {}", old.display()),
+        Err(e) => tracing::warn!("could not remove legacy cache dir {} ({e})", old.display()),
+    }
 }
 
 /// `~/.config/cluihud` → `~/.config/nergal`. The data-critical move: the SQLite
@@ -136,6 +160,101 @@ fn remove_stale_sentinel(home: &Path) {
     }
 }
 
+/// `~/.claude.json` carries Claude Code's entire state blob (command history,
+/// projects, pasted contents), so a blanket fragment rewrite would corrupt user
+/// data — a `cluihud hook` string in someone's history would be silently edited.
+/// It is therefore NOT a `rewrite_known_configs` target. The one nergal-owned key
+/// is the MCP server entry `mcpServers.cluihud`, written by `mcp::registration`.
+/// Remove it surgically (touch only that key): `register()` runs moments later at
+/// startup and recreates the `nergal` entry with the correct command when the
+/// server is enabled; a disabled server correctly leaves no entry. Without this,
+/// the stale `cluihud` entry (→ `/usr/bin/cluihud`, gone after upgrade) sits
+/// beside the new `nergal` one and Claude Code fails to spawn it every session.
+fn migrate_cc_mcp_registration(home: &Path) {
+    let path = home.join(".claude.json");
+    let Ok(body) = std::fs::read_to_string(&path) else {
+        return; // absent — never registered the MCP server under the old name
+    };
+    let Ok(mut root) = serde_json::from_str::<serde_json::Value>(&body) else {
+        tracing::warn!("could not parse {} for mcp migration", path.display());
+        return;
+    };
+    if !remove_legacy_cc_entry(&mut root) {
+        return; // no legacy entry — nothing to migrate
+    }
+    match serde_json::to_string_pretty(&root) {
+        Ok(pretty) => match crate::atomic_write::write_atomic(&path, pretty) {
+            Ok(()) => tracing::info!("removed legacy cluihud mcp entry from {}", path.display()),
+            Err(e) => tracing::warn!("could not rewrite {} ({e:#})", path.display()),
+        },
+        Err(e) => tracing::warn!("mcp migration serialize failed: {e}"),
+    }
+}
+
+/// Pure: drop `mcpServers.cluihud` from a parsed `~/.claude.json` root, leaving
+/// every other server and top-level key intact. Returns true if it removed the
+/// entry. Mirrors `mcp::registration::apply_cc_registration`'s deregister path.
+fn remove_legacy_cc_entry(root: &mut serde_json::Value) -> bool {
+    root.get_mut("mcpServers")
+        .and_then(|v| v.as_object_mut())
+        .map(|servers| servers.remove(OLD).is_some())
+        .unwrap_or(false)
+}
+
+/// The legacy `x-scheme-handler/cluihud=` mimeapps key.
+const LEGACY_SCHEME_LINE: &str = "x-scheme-handler/cluihud=";
+
+/// Drop the orphaned `cluihud://` scheme association from the user's
+/// `mimeapps.list`. After the rename nergal registers only `nergal://`; the old
+/// key lingers (pointing at the now-renamed `Nergal.desktop`, so not even
+/// broken) but nothing emits `cluihud://` anymore, so it is inert. Remove it for
+/// hygiene. Both XDG locations are checked. Only system-level state (the old
+/// `.deb`'s `/usr/bin/cluihud` + `/usr/share/applications/*.desktop`, if a
+/// renamed package left one behind) is out of scope — that is the package
+/// manager's job (`apt remove`), not something an unprivileged process touches.
+fn clean_legacy_scheme_handler() {
+    let mut paths = Vec::new();
+    if let Some(cfg) = dirs::config_dir() {
+        paths.push(cfg.join("mimeapps.list"));
+    }
+    if let Some(data) = dirs::data_dir() {
+        paths.push(data.join("applications").join("mimeapps.list"));
+    }
+    for path in paths {
+        let Ok(body) = std::fs::read_to_string(&path) else {
+            continue; // absent — never registered the scheme there
+        };
+        let Some(cleaned) = strip_legacy_scheme(&body) else {
+            continue; // no legacy key present
+        };
+        match crate::atomic_write::write_atomic(&path, cleaned) {
+            Ok(()) => tracing::info!(
+                "removed legacy cluihud scheme handler from {}",
+                path.display()
+            ),
+            Err(e) => tracing::warn!("could not clean {} ({e:#})", path.display()),
+        }
+    }
+}
+
+/// Pure: strip every line whose key is exactly `x-scheme-handler/cluihud`,
+/// leaving all other associations and section headers intact. Returns the new
+/// body if anything changed, else None. The trailing newline is preserved.
+fn strip_legacy_scheme(body: &str) -> Option<String> {
+    if !body.contains(LEGACY_SCHEME_LINE) {
+        return None;
+    }
+    let mut out = body
+        .lines()
+        .filter(|line| !line.trim_start().starts_with(LEGACY_SCHEME_LINE))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if body.ends_with('\n') {
+        out.push('\n');
+    }
+    Some(out)
+}
+
 /// nergal-OWNED substrings only. A blanket `cluihud`→`nergal` would corrupt
 /// legitimate user data that happens to contain the word — e.g. a workspace at
 /// `~/Projects/cluihud` or a Claude Code permission entry referencing it. Each
@@ -202,9 +321,9 @@ fn rewrite_file_in_place(path: &Path) {
     if rewritten == body {
         return; // no nergal-owned legacy fragment present
     }
-    match std::fs::write(path, rewritten) {
+    match crate::atomic_write::write_atomic(path, rewritten) {
         Ok(()) => tracing::info!("rewrote legacy names in {}", path.display()),
-        Err(e) => tracing::warn!("could not rewrite {} ({e})", path.display()),
+        Err(e) => tracing::warn!("could not rewrite {} ({e:#})", path.display()),
     }
 }
 
@@ -300,5 +419,60 @@ mod tests {
         // only nergal-owned anchored fragments are.
         let body = "cd /home/felipe/Projects/cluihud && ls";
         assert_eq!(apply_fragments(body), body);
+    }
+
+    #[test]
+    fn removes_legacy_cc_mcp_entry_only() {
+        // The orphan `cluihud` MCP entry must go; every other server and the
+        // surrounding state blob must survive untouched.
+        let mut root = serde_json::json!({
+            "mcpServers": {
+                "cluihud": { "command": "/usr/bin/cluihud", "args": ["mcp"] },
+                "other": { "command": "x" }
+            },
+            "projects": { "/home/felipe/Projects/cluihud": { "history": ["cluihud hook send"] } }
+        });
+        assert!(remove_legacy_cc_entry(&mut root));
+        assert!(root["mcpServers"].get("cluihud").is_none());
+        assert_eq!(root["mcpServers"]["other"]["command"], "x");
+        // History inside the state blob is data, not config — must be preserved verbatim.
+        assert_eq!(
+            root["projects"]["/home/felipe/Projects/cluihud"]["history"][0],
+            "cluihud hook send"
+        );
+    }
+
+    #[test]
+    fn cc_mcp_migration_noop_when_absent() {
+        let mut root = serde_json::json!({ "mcpServers": { "nergal": { "command": "c" } } });
+        assert!(!remove_legacy_cc_entry(&mut root));
+        let mut no_servers = serde_json::json!({ "foo": 1 });
+        assert!(!remove_legacy_cc_entry(&mut no_servers));
+    }
+
+    #[test]
+    fn strips_only_legacy_scheme_line() {
+        let body = "[Added Associations]\n\
+                    x-scheme-handler/cluihud=Nergal.desktop;\n\
+                    x-scheme-handler/nergal=Nergal.desktop;\n\
+                    text/html=firefox.desktop;\n\n\
+                    [Default Applications]\n\
+                    x-scheme-handler/cluihud=Nergal.desktop\n";
+        let out = strip_legacy_scheme(body).expect("changed");
+        assert!(!out.contains("cluihud"));
+        // The live scheme and an unrelated association survive, headers intact.
+        assert!(out.contains("x-scheme-handler/nergal=Nergal.desktop;"));
+        assert!(out.contains("text/html=firefox.desktop;"));
+        assert!(out.contains("[Added Associations]"));
+        assert!(out.contains("[Default Applications]"));
+        assert!(out.ends_with('\n'));
+    }
+
+    #[test]
+    fn scheme_strip_noop_when_absent() {
+        assert!(
+            strip_legacy_scheme("[Default Applications]\nx-scheme-handler/nergal=Nergal.desktop\n")
+                .is_none()
+        );
     }
 }

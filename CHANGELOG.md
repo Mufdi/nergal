@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.4.1 — 2026-06-25
+
+* Added a "done" badge and a "Mark undone" toggle to the ClickUp task view
+* Added an ancestor breadcrumb to the ClickUp and Linear task views when viewing a subtask or sub-issue, with deep chains collapsing into a tooltip
+* Added keyboard navigation and a download control to ClickUp attachments
+* Added an "Open About" button to the launch update notification that jumps straight to the About section
+* Fixed the Claude Code status bar staying blank after updating from an older install
+* Fixed Claude Code failing to launch Nergal's MCP server after updating from an older install
+* Fixed tab cycling (`Ctrl+Tab`) and close (`Ctrl+W`) shortcuts being swallowed elsewhere while the in-app browser was open
+* Improved durability of saved settings and agent configs — they're now written atomically, so an interrupted save can no longer corrupt them
+
 ## v0.4.0 — 2026-06-23
 
 * Added a Linear issue panel: your issues grouped by state, project, assignee, or cycle, with faithful Linear status glyphs and Linear's own ordering, an "assigned to me" filter, and background polling

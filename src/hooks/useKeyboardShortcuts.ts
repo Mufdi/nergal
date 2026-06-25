@@ -151,13 +151,14 @@ export function useKeyboardShortcuts() {
       }
 
       // Browser-panel reserved shortcuts (Ctrl+T/Ctrl+W/Ctrl+Tab/Ctrl+R/F5/
-      // Ctrl+Shift+0/Ctrl+Shift+R) are now intercepted at the Tauri
-      // runtime layer when the browser panel is visible — see
-      // src-tauri/src/browser.rs::RESERVED_SHORTCUTS. That avoids the
-      // cross-origin iframe focus trap so they fire even when the user is
-      // clicking around inside the embedded SPA. The previous JS-level
-      // hijack on this hook was redundant once OS-level capture took
-      // over.
+      // Ctrl+Shift+0) are intercepted at the Tauri runtime layer, but ONLY
+      // while the embedded <iframe> itself holds focus — see
+      // src-tauri/src/browser.rs::RESERVED_SHORTCUTS and the focus-gated
+      // register/unregister in BrowserHost.tsx. That bypasses the cross-origin
+      // iframe key-trap so they fire while the user is interacting inside the
+      // embedded page. Everywhere else (toolbar, host wrapper, panel, terminal)
+      // no OS-global is live, so the same chords fall through to the registry
+      // loop below and drive session/panel tabs as usual.
 
       if (paletteOpen) return;
 

@@ -120,36 +120,59 @@ export function BrowserHost() {
     if (!visible) wasShownRef.current = false;
   }, [visible]);
 
-  // Reserved shortcuts (Ctrl+T, Ctrl+W, Ctrl+Shift+0) live as Tauri OS-
-  // level globals while the browser panel is visible. The runtime
-  // intercepts BEFORE the cross-origin iframe sees the keystroke — so
-  // typing inside iframe inputs keeps working (non-reserved keys pass
-  // through normally) while these specific chords always reach our
-  // panel. See src-tauri/src/browser.rs for the registration handlers
-  // and the corresponding event payloads.
-  // OS-global shortcuts fire regardless of which window has focus, so they must
-  // only be live while Nergal actually owns OS focus — otherwise typing Ctrl+W /
-  // Ctrl+R in an external browser gets grabbed by our hidden panel.
+  // Reserved shortcuts (Ctrl+T, Ctrl+W, Ctrl+Tab, Ctrl+Shift+0, …) live as
+  // Tauri OS-level globals so the runtime intercepts them BEFORE the cross-
+  // origin iframe traps the keystroke — that's the only way these chords reach
+  // our panel while the user is clicking around inside the embedded SPA. See
+  // src-tauri/src/browser.rs for the handlers and event payloads.
+  //
+  // BUT an OS-global fires window-wide regardless of DOM focus, so it must be
+  // live ONLY while the embedded iframe itself holds focus. Two orthogonal
+  // gates:
+  //   - window focus: don't grab Ctrl+W / Ctrl+R from another OS app (e.g.
+  //     Brave) while our hidden panel sits in the background.
+  //   - iframe focus (the <iframe> owns activeElement): the iframe only traps
+  //     keys while IT is focused, so OS capture is needed exactly then. The
+  //     host wrapper, toolbar, and tab strip are ordinary parent-document
+  //     elements — React sees their keydowns, so OS capture there is harmful:
+  //     it swallowed the panel's own Ctrl+Tab / Ctrl+W (cycle/close right-panel
+  //     tabs) while the browser merely stayed open in the dock.
   useEffect(() => {
     if (!visible) return;
-    let focused = true;
-    let unlisten: (() => void) | null = null;
-    const apply = () => {
-      if (focused) void invoke("browser_register_shortcuts").catch(() => {});
-      else void invoke("browser_unregister_shortcuts").catch(() => {});
+    let windowFocused = true;
+    let registered = false;
+    let unlistenWindow: (() => void) | null = null;
+    const iframeFocused = () => {
+      const el = document.activeElement;
+      return (
+        el?.tagName === "IFRAME" && el.closest("[data-browser-host]") != null
+      );
     };
-    apply();
+    const sync = () => {
+      const want = windowFocused && iframeFocused();
+      if (want === registered) return;
+      registered = want;
+      void invoke(
+        want ? "browser_register_shortcuts" : "browser_unregister_shortcuts",
+      ).catch(() => {});
+    };
+    document.addEventListener("focusin", sync);
+    document.addEventListener("focusout", sync);
     void getCurrentWindow()
       .onFocusChanged(({ payload }) => {
-        focused = payload;
-        apply();
+        windowFocused = payload;
+        sync();
       })
       .then((fn) => {
-        unlisten = fn;
+        unlistenWindow = fn;
       });
+    sync();
     return () => {
-      void invoke("browser_unregister_shortcuts").catch(() => {});
-      unlisten?.();
+      document.removeEventListener("focusin", sync);
+      document.removeEventListener("focusout", sync);
+      if (registered)
+        void invoke("browser_unregister_shortcuts").catch(() => {});
+      unlistenWindow?.();
     };
   }, [visible]);
 

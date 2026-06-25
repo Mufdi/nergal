@@ -71,13 +71,13 @@ export function BrowserPanel() {
                     onMouseLeave={(e) => {
                       if (document.activeElement === e.currentTarget) {
                         e.currentTarget.blur();
-                        // Re-focus the BrowserHost wrapper so subsequent
-                        // shortcuts (Ctrl+T, Ctrl+Tab, Ctrl+L) match the
-                        // `target.closest("[data-browser-host]")` gate in
-                        // useKeyboardShortcuts. Without this, focus would
-                        // fall back to <body> which is not inside the
-                        // host, and the browser-focused override would
-                        // bail out.
+                        // Re-focus the BrowserHost wrapper so focus lands on a
+                        // parent-document element instead of orphaning to <body>
+                        // when the iframe blurs. Moving focus off the iframe
+                        // also unregisters the focus-gated OS-globals (see
+                        // BrowserHost.tsx) — intended: from the toolbar, Ctrl+Tab
+                        // / Ctrl+W should drive the right-panel tabs, not the
+                        // browser's internal ones.
                         const host = e.currentTarget.closest(
                           "[data-browser-host]",
                         ) as HTMLElement | null;

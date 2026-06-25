@@ -9,7 +9,7 @@ import { setupObsidianListeners } from "./stores/obsidian";
 import { setupClickUpListeners } from "./stores/clickup";
 import { setupLinearListeners } from "./stores/linear";
 import { setupCrossSessionListeners } from "./stores/crossSession";
-import { configAtom } from "./stores/config";
+import { configAtom, settingsOpenAtom, settingsRequestedSectionAtom } from "./stores/config";
 import { toastsAtom } from "./stores/toast";
 import { invoke, listen } from "./lib/tauri";
 import { dispatchDeepLink } from "./lib/deepLinkRouter";
@@ -95,12 +95,19 @@ export function App() {
         if (!r.hasUpdate) return;
         setToasts({
           message: "Update available",
-          description: `Nergal v${r.latestVersion} is out — update from Settings › About.`,
+          description: `Nergal v${r.latestVersion} is out.`,
           type: "info",
+          action: {
+            label: "Open About",
+            onClick: () => {
+              store.set(settingsRequestedSectionAtom, "about");
+              store.set(settingsOpenAtom, true);
+            },
+          },
         });
       })
       .catch(() => {});
-  }, [setToasts]);
+  }, [setToasts, store]);
 
   useEffect(() => {
     applyTheme(themeMode, customThemes);

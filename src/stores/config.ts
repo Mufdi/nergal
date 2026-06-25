@@ -4,6 +4,11 @@ import { DEFAULT_THEME_ID } from "@/lib/themes";
 
 export const settingsOpenAtom = atom(false);
 
+/// When set, the SettingsPanel jumps to this section on its next open and
+/// clears the atom. Lets callers deep-link into a section (e.g. the update
+/// toast's "Open About" button) instead of landing on the default.
+export const settingsRequestedSectionAtom = atom<string | null>(null);
+
 export const configAtom = atom<Config>({
   claude_binary: "claude",
   transcripts_directory: "",

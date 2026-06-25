@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { configAtom } from "@/stores/config";
+import { configAtom, settingsRequestedSectionAtom } from "@/stores/config";
 import { getVersion } from "@tauri-apps/api/app";
 import { availableAgentsAtom, type AgentDetection } from "@/stores/agent";
 import { invoke } from "@/lib/tauri";
@@ -2640,6 +2640,18 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
   useEffect(() => {
     if (open) resetObsidianDraft();
   }, [open, resetObsidianDraft]);
+
+  // Deep-link into a section when a caller requested one (e.g. the update
+  // toast's "Open About"). Consume the request so a later plain open lands on
+  // whatever section the user last viewed.
+  const requestedSection = useAtomValue(settingsRequestedSectionAtom);
+  const clearRequestedSection = useSetAtom(settingsRequestedSectionAtom);
+  useEffect(() => {
+    if (open && requestedSection) {
+      setActiveSection(requestedSection as SectionId);
+      clearRequestedSection(null);
+    }
+  }, [open, requestedSection, clearRequestedSection]);
 
   const FOCUSABLE_SELECTOR =
     'input:not([type="hidden"]):not([disabled]):not([aria-disabled="true"]):not([tabindex="-1"]), [role="combobox"]:not([disabled]):not([aria-disabled="true"]):not([tabindex="-1"]), textarea:not([disabled]):not([aria-disabled="true"]):not([tabindex="-1"]), button:not([disabled]):not([aria-disabled="true"]):not([tabindex="-1"])';

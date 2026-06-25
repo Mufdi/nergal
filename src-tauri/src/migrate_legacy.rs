@@ -173,6 +173,8 @@ fn apply_fragments(body: &str) -> String {
 
 /// Rewrite nergal-owned legacy names in place across the config files that
 /// reference them: Claude Code `settings.json` (hook commands + wrapper path),
+/// the Claude Code statusline script (user-authored, pipes its JSON snapshot to
+/// `cluihud hook send agent-status` — left stale, the CC status bar goes blank),
 /// the codex/opencode MCP registrations, and nergal's own `config.json` (which
 /// persists absolute `hook_socket_path` / `scratchpad_path` etc. that pointed
 /// into the old config dir). Targeted fragments only — never a blanket replace.
@@ -180,6 +182,7 @@ fn rewrite_known_configs() {
     let mut targets = Vec::new();
     if let Some(home) = dirs::home_dir() {
         targets.push(home.join(".claude").join("settings.json"));
+        targets.push(home.join(".claude").join("statusline-command.sh"));
         targets.push(home.join(".codex").join("config.toml"));
     }
     if let Some(cfg) = dirs::config_dir() {
@@ -265,5 +268,37 @@ fn rename_if_absent(old: &Path, new: &Path) {
                 new.display()
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rewrites_statusline_hook_command() {
+        // The CC statusline script pipes its AgentStatus JSON to the nergal CLI.
+        // The legacy `cluihud hook send` must become `nergal hook send` so the
+        // status bar keeps receiving snapshots after the rename.
+        let body = "}' 2>/dev/null | cluihud hook send agent-status 2>/dev/null &";
+        let out = apply_fragments(body);
+        assert_eq!(
+            out,
+            "}' 2>/dev/null | nergal hook send agent-status 2>/dev/null &"
+        );
+    }
+
+    #[test]
+    fn apply_fragments_is_idempotent() {
+        let once = apply_fragments("cluihud hook send agent-status");
+        assert_eq!(apply_fragments(&once), once);
+    }
+
+    #[test]
+    fn leaves_bare_cluihud_paths_untouched() {
+        // A workspace path that merely contains the word must NOT be rewritten —
+        // only nergal-owned anchored fragments are.
+        let body = "cd /home/felipe/Projects/cluihud && ls";
+        assert_eq!(apply_fragments(body), body);
     }
 }

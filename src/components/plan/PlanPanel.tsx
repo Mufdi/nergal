@@ -6,7 +6,7 @@ import { activeAnnotationsAtom, clearAnnotationsAtom, addAnnotationAtom, seriali
 import { hasCapabilityAtom } from "@/stores/agent";
 import { toastsAtom } from "@/stores/toast";
 import { invoke } from "@/lib/tauri";
-import { confirm } from "@/lib/swal";
+import { confirm } from "@/lib/confirm";
 import { AnnotatableMarkdownView } from "./AnnotatableMarkdownView";
 import { useObsidianMentionPicker } from "@/hooks/useObsidianMentionPicker";
 import { MessageSquare, Trash2, Highlighter } from "lucide-react";
@@ -165,7 +165,7 @@ export function PlanPanel({ path }: PlanPanelProps) {
   // panel zone focused during review, A/R/C/X act without a modifier — they
   // bridge to the same custom events as the header buttons. Entering annotation
   // mode keeps its modifier (Ctrl+Shift+H); it's triggered from outside the
-  // engaged state. X is swal-confirmed because a bare letter is easy to hit by
+  // engaged state. X is confirm-gated because a bare letter is easy to hit by
   // accident.
   useEffect(() => {
     if (!canAnnotate) return;

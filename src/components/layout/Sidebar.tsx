@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { configAtom } from "@/stores/config";
 import { useFocusPulse } from "@/hooks/useFocusPulse";
-import { confirm as swalConfirm } from "@/lib/swal";
+import { confirm as swalConfirm } from "@/lib/confirm";
 import { Pencil, Trash2 } from "lucide-react";
 import { TextInputDialog } from "@/components/ui/TextInputDialog";
 import { deleteSessionWithGraceAction, deleteWorkspaceWithGraceAction } from "@/stores/pendingDeletes";

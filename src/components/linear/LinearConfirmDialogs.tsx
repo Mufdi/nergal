@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Kbd } from "@/components/ui/kbd";
 import { toastsAtom } from "@/stores/toast";
 import { linearIssuesAtom, linearSendConfirmAtom } from "@/stores/linear";
 
@@ -66,7 +67,18 @@ export function LinearSendConfirmDialog() {
 
   return (
     <Dialog open={request !== null} onOpenChange={(open) => !open && setRequest(null)}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent
+        className="sm:max-w-lg"
+        onKeyDown={(e) => {
+          // No free-text field here (read-only preview) — Enter confirms.
+          // preventDefault + stop so it can't bubble to a hovered sidebar row.
+          if (e.key === "Enter" && compose !== null && !sending) {
+            e.preventDefault();
+            e.stopPropagation();
+            void handleConfirm();
+          }
+        }}
+      >
         <DialogHeader>
           <DialogTitle className="truncate">{issueName}</DialogTitle>
           <DialogDescription>
@@ -90,12 +102,13 @@ export function LinearSendConfirmDialog() {
           )}
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={() => setRequest(null)}>
-            Cancel
+        <DialogFooter className="flex-nowrap gap-1.5">
+          <Button variant="secondary" size="sm" onClick={() => setRequest(null)}>
+            Cancel <Kbd keys="esc" className="ml-1.5" />
           </Button>
           <Button size="sm" onClick={() => void handleConfirm()} disabled={compose === null || sending}>
             {sending ? "Sending…" : "Send as prompt"}
+            <Kbd keys="enter" tone="onPrimary" className="ml-1.5" />
           </Button>
         </DialogFooter>
       </DialogContent>

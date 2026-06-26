@@ -74,7 +74,8 @@ import {
   forkBuiltinTheme,
 } from "@/lib/themes";
 import type { CustomTheme } from "@/lib/types";
-import { confirm as swalConfirm } from "@/lib/swal";
+import { confirm as swalConfirm } from "@/lib/confirm";
+import { Kbd } from "@/components/ui/kbd";
 
 type PathKind = "dir" | "file" | "executable";
 
@@ -3115,14 +3116,14 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
 
         <DialogFooter className="-mx-4 -mb-4 bg-transparent border-t-0 px-4 pt-2 pb-4">
           <div ref={footerRef} className="contents">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
+            <Button variant="secondary" onClick={() => onOpenChange(false)}>
+              Cancel <Kbd keys="esc" className="ml-1.5" />
             </Button>
             {activeSection === "obsidian" && (
               <ObsidianApplyButton />
             )}
             <Button onClick={handleSave}>
-              Save
+              Save <Kbd keys="ctrl+enter" tone="onPrimary" className="ml-1.5" />
             </Button>
           </div>
         </DialogFooter>

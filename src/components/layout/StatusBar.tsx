@@ -16,13 +16,13 @@ import { openTabAction, expandRightPanelAtom } from "@/stores/rightPanel";
 import { toastsAtom } from "@/stores/toast";
 import { invoke } from "@/lib/tauri";
 import { open as openShell } from "@tauri-apps/plugin-shell";
-import { confirm as swalConfirm } from "@/lib/swal";
+import { confirm as swalConfirm } from "@/lib/confirm";
 import { focusZoneAtom } from "@/stores/shortcuts";
 import * as terminalService from "@/components/terminal/terminalService";
 import { Badge } from "@/components/ui/badge";
-import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock, Globe, CalendarRange, Pencil, TriangleAlert, Timer, History, X } from "lucide-react";
+import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock, Globe, CalendarRange, Pencil, TriangleAlert, Timer, History, X, Copy } from "lucide-react";
 import { activeIncidentsAtom } from "@/stores/statusFeed";
-import { notificationHistoryAtom, clearNotificationsAtom } from "@/stores/notifications";
+import { notificationHistoryAtom, clearNotificationsAtom, notificationHistoryOpenAtom, type NotificationEntry } from "@/stores/notifications";
 import {
   Tooltip,
   TooltipProvider,
@@ -335,9 +335,92 @@ function formatRelativeTime(ts: number, now: number): string {
 function NotificationHistory() {
   const history = useAtomValue(notificationHistoryAtom);
   const clearAll = useSetAtom(clearNotificationsAtom);
-  const [open, setOpen] = useState(false);
+  const setToasts = useSetAtom(toastsAtom);
+  const setFocusZone = useSetAtom(focusZoneAtom);
+  const [open, setOpen] = useAtom(notificationHistoryOpenAtom);
+  const [activeIdx, setActiveIdx] = useState(0);
+  const popoverRef = useRef<HTMLDivElement>(null);
 
   const now = Date.now();
+
+  function closeAndFocusTerminal() {
+    setOpen(false);
+    setFocusZone("terminal");
+    terminalService.focusActive();
+  }
+
+  function copyEntry(n: NotificationEntry) {
+    // Single line "message → description" so it reads like the entry.
+    const text = n.description ? `${n.message} → ${n.description}` : n.message;
+    // terminal_clipboard_write is the Wayland-safe spawn_blocking writer used by
+    // the ClickUp/Linear copy actions; the plugin's async write_text stalls.
+    // skipHistory: confirm the copy without logging "Copied" into this very
+    // popover (every toast otherwise mirrors into the history — toast.ts).
+    void invoke("terminal_clipboard_write", { text })
+      .then(() =>
+        setToasts({ message: "Copied to clipboard", description: text, type: "success", skipHistory: true }),
+      )
+      .catch(() => setToasts({ message: "Copy failed", type: "error", skipHistory: true }));
+  }
+
+  useEffect(() => {
+    if (open) setActiveIdx(0);
+  }, [open]);
+
+  // Keep the keyboard cursor in view as it moves past the scroll fold (block:
+  // "nearest" is a no-op for already-visible rows, so mouse-hover doesn't jump).
+  useEffect(() => {
+    if (!open) return;
+    popoverRef.current
+      ?.querySelector('[data-nav-selected="true"]')
+      ?.scrollIntoView({ block: "nearest" });
+  }, [activeIdx, open]);
+
+  // Window-capture keyboard nav while open (mirrors the ports popover): ↑↓ move,
+  // Enter/Space/C copy the selected entry, Shift+Backspace clears all + returns
+  // focus to the terminal, Esc closes. stopImmediatePropagation keeps every
+  // handled key from leaking to global shortcuts or the terminal.
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        closeAndFocusTerminal();
+        return;
+      }
+      if (history.length === 0) return;
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setActiveIdx((p) => (p + 1) % history.length);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setActiveIdx((p) => (p - 1 + history.length) % history.length);
+      } else if (
+        e.key === "Enter" ||
+        e.key === " " ||
+        ((e.key === "c" || e.key === "C") && !e.ctrlKey && !e.metaKey && !e.altKey)
+      ) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const n = history[activeIdx];
+        if (n) copyEntry(n);
+      } else if (e.key === "Backspace" && e.shiftKey) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        clearAll();
+        closeAndFocusTerminal();
+      }
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, history, activeIdx]);
+
+  // Clamp the highlight if the list shrank under the cursor (e.g. after clear).
+  const safeIdx = Math.min(activeIdx, Math.max(0, history.length - 1));
 
   return (
     <div className="relative flex items-center">
@@ -349,17 +432,23 @@ function NotificationHistory() {
         >
           <History className="size-3 shrink-0" />
         </TooltipTrigger>
-        <TooltipContent>Notification history</TooltipContent>
+        <TooltipContent>Notification history (Ctrl+Alt+N)</TooltipContent>
       </Tooltip>
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full right-0 z-50 mb-1.5 max-h-72 w-72 overflow-y-auto rounded-md border border-border bg-card shadow-lg">
+          <div
+            ref={popoverRef}
+            className="absolute bottom-full right-0 z-50 mb-1.5 max-h-72 w-72 overflow-y-auto rounded-md border border-border bg-card shadow-lg"
+          >
             <div className="sticky top-0 flex items-center justify-between border-b border-border/50 bg-card px-2.5 py-1.5">
               <span className="text-[10px] font-medium text-foreground">Notification history</span>
               {history.length > 0 && (
                 <button
-                  onClick={() => clearAll()}
+                  onClick={() => {
+                    clearAll();
+                    closeAndFocusTerminal();
+                  }}
                   className="text-[9px] text-muted-foreground transition-colors hover:text-foreground"
                 >
                   Clear all
@@ -371,34 +460,55 @@ function NotificationHistory() {
                 No notifications yet
               </div>
             ) : (
-              history.map((n) => (
-                <div
-                  key={n.id}
-                  className="flex items-start gap-2 border-b border-border/30 px-2.5 py-1.5 last:border-b-0"
-                >
-                  <span
-                    className={`mt-1 inline-block size-1.5 shrink-0 rounded-full ${
-                      n.type === "error"
-                        ? "bg-red-500"
-                        : n.type === "success"
-                          ? "bg-green-500"
-                          : "bg-sky-400"
-                    }`}
-                    aria-hidden="true"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="truncate text-[10px] font-medium text-foreground">{n.message}</span>
-                      <span className="shrink-0 text-[9px] tabular-nums text-muted-foreground/50">
-                        {formatRelativeTime(n.ts, now)}
-                      </span>
-                    </div>
-                    {n.description && (
-                      <p className="mt-0.5 line-clamp-2 text-[9px] text-muted-foreground">{n.description}</p>
-                    )}
-                  </div>
+              <>
+                <div className="border-b border-border/40 px-2.5 py-1 text-[9px] text-muted-foreground/50">
+                  ↑↓ move · Enter/C copy · ⇧⌫ clear all
                 </div>
-              ))
+                {history.map((n, idx) => {
+                  const selected = idx === safeIdx;
+                  return (
+                    <div
+                      key={n.id}
+                      data-nav-selected={selected ? "true" : undefined}
+                      onMouseEnter={() => setActiveIdx(idx)}
+                      // scroll-mt clears the sticky header so an item scrolled to
+                      // the top (e.g. wrapping last→first) isn't hidden behind it.
+                      className={`group/notif flex scroll-mt-9 items-start gap-2 border-b border-border/30 px-2.5 py-1.5 last:border-b-0 ${selected ? "bg-secondary" : ""}`}
+                    >
+                      <span
+                        className={`mt-1 inline-block size-1.5 shrink-0 rounded-full ${
+                          n.type === "error"
+                            ? "bg-red-500"
+                            : n.type === "success"
+                              ? "bg-green-500"
+                              : "bg-sky-400"
+                        }`}
+                        aria-hidden="true"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="truncate text-[10px] font-medium text-foreground">{n.message}</span>
+                          <span className="shrink-0 text-[9px] tabular-nums text-muted-foreground/50">
+                            {formatRelativeTime(n.ts, now)}
+                          </span>
+                        </div>
+                        {n.description && (
+                          <p className="mt-0.5 line-clamp-2 text-[9px] text-muted-foreground">{n.description}</p>
+                        )}
+                      </div>
+                      <Tooltip>
+                        <TooltipTrigger
+                          onClick={() => copyEntry(n)}
+                          className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground/40 transition-all hover:bg-secondary hover:text-foreground ${selected ? "opacity-100" : "opacity-0 group-hover/notif:opacity-100"}`}
+                        >
+                          <Copy className="size-3" />
+                        </TooltipTrigger>
+                        <TooltipContent>Copy</TooltipContent>
+                      </Tooltip>
+                    </div>
+                  );
+                })}
+              </>
             )}
           </div>
         </>
@@ -551,7 +661,7 @@ function LocalhostPortChips() {
   }
 
   // Killing a port is reversible (it just restarts) but still a deliberate
-  // destructive-ish act — confirm with the project swal first.
+  // destructive-ish act — confirm with the project `confirm()` first.
   async function confirmKillPort(port: number) {
     const info = procInfo[port];
     const isDocker = info?.kind === "docker";
@@ -563,9 +673,9 @@ function LocalhostPortChips() {
       });
       return;
     }
-    // Close the popover BEFORE the swal so its window-capture keydown listener
-    // detaches — otherwise Enter/Space on the swal is swallowed by the ports
-    // handler and re-fires the confirm.
+    // Close the popover BEFORE the confirm so its window-capture keydown
+    // listener detaches — otherwise Enter/Space on the confirm is swallowed by
+    // the ports handler and re-fires the confirm.
     setOpen(false);
     const ok = await swalConfirm({
       title: `Free port :${port}?`,
@@ -582,7 +692,7 @@ function LocalhostPortChips() {
 
   // Keyboard nav (window-capture so it works without focusing a row, mirroring
   // the ClickUp StatusPicker): up/down move the cursor, Enter/Space free the
-  // port (swal-confirmed), Escape closes and returns focus to the terminal.
+  // port (confirm-gated), Escape closes and returns focus to the terminal.
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {

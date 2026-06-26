@@ -7,7 +7,7 @@ import {
   keymapCaptureActiveAtom,
 } from "@/stores/shortcuts";
 import { LOCKED_SHORTCUT_IDS, formatKeyParts, eventToKeys, validateCombo } from "@/lib/keymap";
-import { confirm } from "@/lib/swal";
+import { confirm } from "@/lib/confirm";
 import { Button } from "@/components/ui/button";
 import { Lock, RotateCcw } from "lucide-react";
 

@@ -1,7 +1,7 @@
 import { atom, type getDefaultStore } from "jotai";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { invoke, listen } from "@/lib/tauri";
-import { confirm as swalConfirm } from "@/lib/swal";
+import { confirm as swalConfirm } from "@/lib/confirm";
 import { focusZoneAtom } from "./shortcuts";
 import { toastsAtom } from "./toast";
 import {
@@ -354,7 +354,7 @@ export const LINEAR_ACTION_LABELS = {
   closeOut: "Close out issue (C) — mark done & unbind",
 } as const;
 
-/// Linear issue titles are multi-writer input and swal bodies render as HTML.
+/// Linear issue titles are multi-writer input and confirm bodies render as HTML.
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")

@@ -59,7 +59,7 @@ Single letters, no modifier, that act on the focused surface's current item.
 This is §8 — see there for the full guard contract. Used by ClickUp
 (`S/W/P/B/R/C/O/T`), Conflicts (`O/T`), PrViewer (`A`), Obsidian note
 (`P` pin · `O` open in Obsidian), and plan/spec review
-(`A` approve · `R` revise · `C` comment · `X` clear, swal-confirmed). Bare-letter
+(`A` approve · `R` revise · `C` comment · `X` clear, confirm-gated). Bare-letter
 verbs are **NOT** registry entries; their affordance is the tooltip advertising
 the letter (§6). **Entering** an engaged state keeps a modifier (annotation mode
 is `Ctrl+Shift+H`) because it's triggered from *outside* the engaged surface;
@@ -213,6 +213,22 @@ Enter/Escape and we override that. They also focus a `tabIndex={0}` div with
 
 Every modal must respond to `Esc`; decision modals must respond to `↑↓+Enter`
 and (where ≤9 options) `1–9`.
+
+**Confirm modals** (`confirm()` from `@/lib/confirm`, rendered by the single
+`<ConfirmHost/>` in Workspace) are the canonical yes/no — a promise-based
+(`await confirm({...}) → boolean`) Base UI dialog matching the branch-rename
+mini-modal (`TextInputDialog`): iconless, `Kbd` chips in the footer buttons.
+Don't hand-roll a confirm `Dialog`, and don't reach for a bare `Dialog` when a
+`confirm()` suffices. `body` renders as HTML — escape user-controlled substrings
+upstream. SweetAlert2 was removed (2026-06-25); `@/lib/swal` no longer exists.
+
+**Footer buttons carry their shortcut chip.** Cancel (`variant="secondary"`)
+shows `<Kbd keys="esc" />`; the primary shows `<Kbd keys="enter" tone="onPrimary" />`
+— or `ctrl+enter` for text-field / content-heavy modals (ShipDialog,
+SettingsPanel, the closure dialogs). **Wire the key for real before adding its
+chip — a chip that doesn't fire is a lie.** Footer uses `flex-nowrap gap-1.5`;
+full surface + variant rules live in `design.md` §3.8. Canonical references:
+`TextInputDialog`, `ConfirmHost`.
 
 ### 5.4 Terminal interception
 

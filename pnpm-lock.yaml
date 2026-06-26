@@ -140,9 +140,6 @@ importers:
       simple-icons:
         specifier: ^16.21.0
         version: 16.21.0
-      sweetalert2:
-        specifier: ^11.26.24
-        version: 11.26.24
       tailwind-merge:
         specifier: ^3.5.0
         version: 3.5.0
@@ -2641,9 +2638,6 @@ packages:
 
   style-to-object@1.0.14:
     resolution: {integrity: sha512-LIN7rULI0jBscWQYaSswptyderlarFkjQ+t79nzty8tcIAceVomEVlLzH5VP4Cmsv6MtKhs7qaAiwlcp+Mgaxw==}
-
-  sweetalert2@11.26.24:
-    resolution: {integrity: sha512-SLgukW4wicewpW5VOukSXY5Z6DL/z7HCOK2ODSjmQPiSphCN8gJAmh9npoceXOtBRNoDN0xIz+zHYthtfiHmjg==}
 
   tagged-tag@1.0.0:
     resolution: {integrity: sha512-yEFYrVhod+hdNyx7g5Bnkkb0G6si8HJurOoOEgC8B/O0uXLHlaey/65KRv6cuWBNhBgHKAROVpc7QyYqE5gFng==}
@@ -5554,8 +5548,6 @@ snapshots:
   style-to-object@1.0.14:
     dependencies:
       inline-style-parser: 0.2.7
-
-  sweetalert2@11.26.24: {}
 
   tagged-tag@1.0.0: {}
 

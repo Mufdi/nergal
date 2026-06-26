@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Kbd } from "@/components/ui/kbd";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { invoke } from "@/lib/tauri";
@@ -100,6 +101,12 @@ export function ProjectBootstrapPrompt() {
               type="text"
               value={targetPath}
               onChange={(e) => setTargetPath(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !busy && targetPath.trim()) {
+                  e.preventDefault();
+                  void handleConfirm();
+                }
+              }}
               spellCheck={false}
               autoComplete="off"
             />
@@ -126,12 +133,13 @@ export function ProjectBootstrapPrompt() {
           </label>
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={handleClose} disabled={busy}>
-            Skip
+        <DialogFooter className="flex-nowrap gap-1.5">
+          <Button variant="secondary" onClick={handleClose} disabled={busy}>
+            Skip <Kbd keys="esc" className="ml-1.5" />
           </Button>
           <Button onClick={handleConfirm} disabled={busy}>
             {busy ? "Creating…" : "Create"}
+            <Kbd keys="enter" tone="onPrimary" className="ml-1.5" />
           </Button>
         </DialogFooter>
       </DialogContent>

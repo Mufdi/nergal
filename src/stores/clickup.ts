@@ -1,7 +1,7 @@
 import { atom, type getDefaultStore } from "jotai";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { invoke, listen } from "@/lib/tauri";
-import { confirm as swalConfirm } from "@/lib/swal";
+import { confirm as swalConfirm } from "@/lib/confirm";
 import { toastsAtom } from "./toast";
 import { openTabAction } from "./rightPanel";
 import { focusZoneAtom } from "./shortcuts";
@@ -522,7 +522,7 @@ export const unbindTaskAction = atom(null, async (get, set) => {
 
 /// Bind toggle: same task → unbind; different active task → confirm the
 /// replacement (Decision 2 rebind rule); no active task → bind directly.
-/// The replacement confirm uses the project's swal pattern (same as the
+/// The replacement confirm uses the project's `confirm()` pattern (same as the
 /// Sidebar's Delete/Remove confirms), not a bespoke Dialog.
 export const requestBindTaskAction = atom(null, async (get, set, taskId: string) => {
   const sessionId = get(activeSessionIdAtom);
@@ -553,7 +553,7 @@ export const requestBindTaskAction = atom(null, async (get, set, taskId: string)
   await set(performBindTaskAction, { sessionId, taskId });
 });
 
-/// ClickUp task names are multi-writer input and swal bodies render as HTML.
+/// ClickUp task names are multi-writer input and confirm bodies render as HTML.
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")

@@ -15,7 +15,7 @@ import {
   type AnnotationType,
 } from "@/stores/annotations";
 import { toastsAtom } from "@/stores/toast";
-import { confirm } from "@/lib/swal";
+import { confirm } from "@/lib/confirm";
 import { MarkdownView } from "@/components/plan/MarkdownView";
 import { AnnotatableMarkdownView } from "@/components/plan/AnnotatableMarkdownView";
 import { useObsidianMentionPicker } from "@/hooks/useObsidianMentionPicker";
@@ -261,7 +261,7 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
   // Bare-letter verbs scoped to the spec surface (patterns.md §1/§8): while
   // annotating with the panel zone focused, C/R/X act without a modifier and
   // bridge to the same custom events as the header buttons. Entering annotation
-  // mode keeps its modifier (Ctrl+Shift+H). X is swal-confirmed — a bare letter
+  // mode keeps its modifier (Ctrl+Shift+H). X is confirm-gated — a bare letter
   // is easy to hit by accident.
   useEffect(() => {
     if (!isAnnotatingThis) return;

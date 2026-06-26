@@ -357,10 +357,15 @@ parent surface). Animations: `fade-in-0 zoom-in-95` open/close.
 | **`Dialog`** | A focused task the user must complete or dismiss (Ship, Merge, AgentPicker, AskUser, settings) | Modal, backdrop, captures focus | Modal capture — global dispatcher bails |
 | **`FloatingPanel`** | A persistent, draggable companion that survives across sessions (scratchpad, ClickUp detail, quick capture) | Non-modal, no backdrop | Surface override — recycles its keys, globals pass |
 | **popover-as-modal** (§3.9) | Jump-*through* the UI without pausing it (command palette, file picker) | Quasi-modal, stronger blur | Own listener while open |
-| **`swal`** (`@/lib/swal`) | A quick yes/no confirm, especially destructive (delete, clear, remove) | Modal, themed, pixel icon | Confirm/Cancel only |
+| **`confirm()`** (`@/lib/confirm`) | A quick yes/no confirm, especially destructive (delete, clear, remove) | Modal, iconless mini-modal, `Kbd` chips | Confirm/Cancel only |
 
-Don't reach for a `Dialog` when a `swal` confirm suffices, and don't hand-roll a
-confirm `Dialog` — `confirm()` from `@/lib/swal` is the canonical yes/no.
+Don't reach for a bespoke `Dialog` when a `confirm()` suffices, and don't
+hand-roll a confirm `Dialog` — `confirm()` from `@/lib/confirm` is the canonical
+yes/no. It's a promise-based bridge (`await confirm({...}) → boolean`) rendered
+by the single `<ConfirmHost/>` mounted in Workspace, built on the same Base UI
+`Dialog` as the branch-rename mini-modal. `body` is rendered as **HTML** —
+callers MUST escape user-controlled substrings (see `escapeHtml` in
+`stores/clickup.ts` / `stores/linear.ts`).
 
 > ⚠️ **`FloatingPanel` size gotcha — persisted geometry overrides `DEFAULT_GEOMETRY`.**
 > Each `FloatingPanel` persists its `{x,y,width,height}` per `panelId` in the
@@ -405,21 +410,28 @@ scroll inside `max-h-[60vh] overflow-y-auto`). SettingsPanel uses `sm:max-w-md`.
 
 **Buttons inside modals**:
 
-- **Roles → variant**: primary action = `Button` default (filled); secondary /
-  Cancel = `variant="outline"`; destructive primary = `variant="destructive"`.
+- **Roles → variant**: primary action = `Button` default (filled); Cancel =
+  `variant="secondary"`; destructive primary = `variant="destructive"`.
   One primary per footer.
+- **`Kbd` chips**: every footer button carries its shortcut chip — Cancel shows
+  `<Kbd keys="esc" />`, the primary shows `<Kbd keys="enter" tone="onPrimary" />`
+  (or `ctrl+enter` for content-heavy / text-field modals like ShipDialog,
+  SettingsPanel, the closure dialogs). Footer uses `flex-nowrap gap-1.5`.
+  Canonical references: `TextInputDialog` (branch-rename mini-modal), `ConfirmHost`.
 - **Order**: footer is right-aligned on `sm:` with the primary action **last**
   (rightmost), Cancel to its left; column-reverse on mobile so the primary sits
   on top. Decision-list modals have no footer (the cards are the actions).
 - **Keyboard**: modals own their keyboard (§1.1 modal-capture). Auto-focus the
   first focusable, walk fields with arrows, `Enter` confirms the primary, `Esc`
-  cancels. A primary that submits text binds `Ctrl+Enter` in the field.
+  cancels. A primary that submits text binds `Ctrl+Enter` in the field. Wire the
+  key for real before adding its chip — a chip that doesn't fire is a lie.
 
-**Destructive confirm (swal)**: any destructive action that can be triggered by a
+**Destructive confirm**: any destructive action that can be triggered by a
 low-friction gesture (a bare-letter verb, a hover icon button) routes through
-`confirm()` from `@/lib/swal` with `destructive: true` before acting — e.g.
-clearing plan/spec annotations (`X`). Themed, pixel `warning` icon,
-`reverseButtons` + `focusCancel` so the safe choice is the default. Don't gate
+`confirm()` from `@/lib/confirm` with `destructive: true` before acting — e.g.
+clearing plan/spec annotations (`X`). The confirm button takes `variant="destructive"`;
+initial focus lands on Cancel so the safe choice is the default. Esc cancels,
+Enter confirms (both advertised via `Kbd` chips in the footer). Don't gate
 non-destructive or easily-reversible actions behind a confirm.
 
 ### 3.9 Command palette / file picker (popover-as-modal)

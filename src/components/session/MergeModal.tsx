@@ -10,6 +10,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Kbd } from "@/components/ui/kbd";
 import type { Session } from "@/stores/workspace";
 
 interface MergeModalProps {
@@ -142,13 +143,13 @@ export function MergeModal({
           )}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="flex-nowrap gap-1.5">
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             onClick={() => onOpenChange(false)}
           >
-            Cancel
+            Cancel <Kbd keys="esc" className="ml-1.5" />
           </Button>
           <Button
             size="sm"
@@ -156,6 +157,7 @@ export function MergeModal({
             disabled={merging || !targetBranch}
           >
             {merging ? "Merging..." : "Merge"}
+            <Kbd keys="enter" tone="onPrimary" className="ml-1.5" />
           </Button>
         </DialogFooter>
       </DialogContent>

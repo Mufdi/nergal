@@ -15,6 +15,11 @@ const MAX_HISTORY = 100;
 /// status messages; losing them on close is fine). Newest first, capped.
 export const notificationHistoryAtom = atom<NotificationEntry[]>([]);
 
+/// Open state of the StatusBar notification-history popover. Lifted out of the
+/// component so the `ctrl+alt+n` shortcut can toggle it (mirrors
+/// `portsPopoverOpenAtom`).
+export const notificationHistoryOpenAtom = atom(false);
+
 let seq = 0;
 
 export const pushNotificationAction = atom(

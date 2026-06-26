@@ -29,6 +29,7 @@ import { softCloseSessionAction, undoSessionCloseAction, hasPendingSessionCloseA
 import { invoke as invokeCmd } from "@/lib/tauri";
 import { scratchpadOpenAtom } from "./scratchpad";
 import { browserToggleModeAction, localhostPortsAtom, portsPopoverOpenAtom } from "./browser";
+import { notificationHistoryOpenAtom } from "./notifications";
 import { obsidianEnabledAtom } from "./obsidian";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { quickCaptureOpenAtom } from "./quickCapture";
@@ -451,6 +452,7 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     }
     s.set(portsPopoverOpenAtom, (p) => !p);
   } },
+  { id: "toggle-notifications", label: "Toggle Notification History", keys: "ctrl+alt+n", category: "navigation", keywords: ["notifications", "history", "toasts", "alerts", "log", "bell"], handler: () => store().set(notificationHistoryOpenAtom, (p) => !p) },
   { id: "nav-up", label: "Navigate Up", keys: "alt+arrowup", category: "navigation", keywords: ["navigate", "up", "item"], handler: () => navigateItems("up") },
   { id: "nav-down", label: "Navigate Down", keys: "alt+arrowdown", category: "navigation", keywords: ["navigate", "down", "item"], handler: () => navigateItems("down") },
 

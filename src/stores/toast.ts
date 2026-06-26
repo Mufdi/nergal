@@ -9,6 +9,10 @@ export interface Toast {
   /// Optional action button. When present the toast renders via sileo.action
   /// (the only variant with a button) regardless of `type`.
   action?: { label: string; onClick: () => void };
+  /// When true the toast pops ephemerally but is NOT mirrored into the
+  /// notification history — e.g. "Copied" feedback, which would otherwise
+  /// pollute the very popover it was triggered from.
+  skipHistory?: boolean;
 }
 
 export const toastsAtom = atom(
@@ -44,11 +48,14 @@ export const toastsAtom = atom(
           break;
       }
     }
-    // Mirror into the notification center so toasts are re-readable later.
-    set(pushNotificationAction, {
-      message: toast.message,
-      description: toast.description,
-      type: toast.type,
-    });
+    // Mirror into the notification center so toasts are re-readable later,
+    // unless the caller opted out (transient feedback like "Copied").
+    if (!toast.skipHistory) {
+      set(pushNotificationAction, {
+        message: toast.message,
+        description: toast.description,
+        type: toast.type,
+      });
+    }
   },
 );

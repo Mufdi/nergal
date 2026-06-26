@@ -23,6 +23,7 @@ import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { CommandPalette } from "@/components/command/CommandPalette";
 import { ShipDialog } from "@/components/git/ShipDialog";
 import { BranchRenameDialog } from "@/components/git/BranchRenameDialog";
+import { ConfirmHost } from "@/components/ui/ConfirmHost";
 import { ScratchpadPanel } from "@/components/scratchpad/ScratchpadPanel";
 import { QuickCapturePanel } from "@/components/floating/QuickCapturePanel";
 import { VaultSearchModal } from "@/components/search/VaultSearchModal";
@@ -425,6 +426,7 @@ export function Workspace() {
       <CommandPalette />
       <ShipDialog />
       <BranchRenameDialog />
+      <ConfirmHost />
       <ScratchpadPanel />
       <QuickCapturePanel />
       <VaultSearchModal />

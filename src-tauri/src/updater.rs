@@ -326,6 +326,11 @@ pub async fn download_app_update(
 /// focus-stealing prevention bury it — the failure mode of a bare
 /// `xdg-open` spawn. The spawn survives only as fallback for DEs without
 /// the service.
+///
+/// Linux-only: `zbus`/FileManager1 is D-Bus. `platform-desktop` later replaces
+/// this with the cross-platform Tauri opener plugin; until then non-Linux
+/// targets skip the reveal (see `reveal_in_downloads`).
+#[cfg(target_os = "linux")]
 async fn show_items_via_dbus(path: &Path) -> Result<(), String> {
     let uri = url::Url::from_file_path(path)
         .map_err(|_| "path is not absolute".to_string())?
@@ -448,15 +453,26 @@ pub async fn reveal_in_downloads(path: String) -> Result<(), String> {
     if !p.is_file() {
         return Err("downloaded file no longer exists".into());
     }
-    let Err(dbus_err) = show_items_via_dbus(&p).await else {
-        return Ok(());
-    };
-    let dir = p.parent().ok_or_else(|| "path has no parent".to_string())?;
-    std::process::Command::new("xdg-open")
-        .arg(dir)
-        .spawn()
-        .map_err(|e| format!("FileManager1 ({dbus_err}); xdg-open: {e}"))?;
-    Ok(())
+    #[cfg(target_os = "linux")]
+    {
+        let Err(dbus_err) = show_items_via_dbus(&p).await else {
+            return Ok(());
+        };
+        let dir = p.parent().ok_or_else(|| "path has no parent".to_string())?;
+        std::process::Command::new("xdg-open")
+            .arg(dir)
+            .spawn()
+            .map_err(|e| format!("FileManager1 ({dbus_err}); xdg-open: {e}"))?;
+        Ok(())
+    }
+    // Non-Linux: reveal is owned by platform-desktop (opener plugin). Log-only
+    // no-op — the download already succeeded, so this is not a hard error and
+    // must NOT fall through to xdg-open (absent/meaningless off Linux).
+    #[cfg(not(target_os = "linux"))]
+    {
+        tracing::debug!(path = %p.display(), "reveal_in_downloads: skipped (non-Linux; platform-desktop reveal pending)");
+        Ok(())
+    }
 }
 
 #[cfg(test)]

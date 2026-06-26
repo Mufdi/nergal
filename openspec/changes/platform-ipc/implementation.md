@@ -1,0 +1,59 @@
+# Implementation Plan: platform-ipc
+
+> Grounded in the current codebase, symbols verified 2026-06-26 against files on disk. Behaviour (not just symbol existence) verified for the load-bearing claims below.
+
+## Verified codebase facts (do not re-assume)
+
+- **Hook CLI imports the Unix stream type at module top and connects at five sites.** `src-tauri/src/hooks/cli.rs:3` `use std::os::unix::net::UnixStream;`. Connect sites: `:16` (`send_rescan_agents`), `:47` (`send_hook_event`), `:178` (plan-review, blocking), `:250` (`notification`, best-effort), `:292` (`ask_user`, best-effort). The `:178` connect is followed by `drop(stream)` then a blocking `std::fs::read_to_string(&fifo_path)` (`:188`).
+- **Plan-review creates a POSIX FIFO via the `mkfifo` binary and blocks on it.** `src-tauri/src/hooks/cli.rs:142` `let fifo_path = PathBuf::from(format!("/tmp/nergal-plan-{}.fifo", std::process::id()));`, `:146` `std::process::Command::new("mkfifo")`. The GUI writes the decision back via the adapter (`agents/claude_code/adapter.rs:296` `tokio::fs::write(&fifo_path, ...)`); the CLI unblocks at `:188`.
+- **Ask-user blocking uses a registered FIFO, written by the adapter.** `agents/claude_code/adapter.rs:80` `register_pending_ask_fifo`, `:307` `submit_ask_answer` removes the pending entry and `:311` `tokio::fs::write(&fifo_path, ...)`. The `events.rs` payloads carry `fifo_path` for both PlanReview (`hooks/events.rs:74`) and the ask variant (`:82`). Note the CC `ask_user` in `cli.rs:264` is the *non-blocking* notifier; the blocking ask round-trip rides the adapter FIFO.
+- **Hook server binds a `UnixListener` and sets `0600` in an UNGATED block.** `src-tauri/src/hooks/server.rs:6` `use tokio::net::UnixListener;`, `:203` `let listener = UnixListener::bind(socket_path)?;`, `:206-209` a bare `{ use std::os::unix::fs::PermissionsExt; std::fs::set_permissions(socket_path, ...0o600)?; }` with **no `#[cfg(unix)]`**. `:213` `listener.accept().await?` yields a `tokio::net::UnixStream` consumed by `BufReader::lines()` (`:220-221`) — newline-delimited, fire-and-forget (no response path).
+- **MCP transport already has the seam pattern, already gated.** `src-tauri/src/mcp/transport.rs:18` `use tokio::net::{UnixListener, UnixStream};`; `:70` `pub struct UnixSocketTransport { listener: UnixListener, path: PathBuf }`; `:78` `bind` removes stale socket + `UnixListener::bind` + `:83` `#[cfg(unix)]`-gated `set_permissions(0o600)`; `:95` `accept` returns `(UnixStream, u32)` where the `u32` is the peer uid; `:115-119` `#[cfg(unix)] peer_uid` via `stream.peer_cred()?.uid()`; `:121-124` `#[cfg(not(unix))]` stub returning an error; `:127` `connect` = `UnixStream::connect`. The module doc (`:9-12`) already states the framing helpers are generic so "a future Windows named-pipe transport drops in without touching dispatch."
+- **Framing helpers are already platform-agnostic.** `mcp/transport.rs:32` `read_frame<R: AsyncReadExt + Unpin>` and `:53` `write_frame<W: AsyncWriteExt + Unpin>` are generic over any async reader/writer (4-byte LE length prefix). They need **no change** to ride a Windows stream.
+- **MCP handlers reference `tokio::net::UnixStream` directly.** `src-tauri/src/mcp/mod.rs:608,660` (handlers); `:46` `socket_path()` = `std::env::temp_dir().join("nergal-mcp.sock")`. `mcp/shim.rs:112` relays over the connected stream.
+- **Socket base path is already cross-platform (no change).** `src-tauri/src/config.rs:305` `hook_socket_path: std::env::temp_dir().join("nergal.sock")`; `mcp/mod.rs:46` likewise uses `std::env::temp_dir()`. Neither hardcodes `/tmp`.
+- **Legacy FIFO prefixes are already namespaced** (`migrate_legacy.rs:270-271`: `nergal-plan-`, `nergal-ask-`) — confirms both blocking round-trips use the FIFO mechanism today.
+
+## Execution order
+
+1. `src-tauri/src/platform/ipc.rs` (new) — define the `PlatformListener` / `PlatformStream` seam + the Unix implementation (move, don't rewrite, the bind/accept/connect logic). Register `mod platform;` (or extend an existing module) in `lib.rs`.
+2. `src-tauri/src/mcp/transport.rs` — re-express `UnixSocketTransport` as the Unix impl of the seam (or have it satisfy the seam trait), keeping the framing helpers and the already-gated perms/peer_uid untouched.
+3. `src-tauri/src/mcp/mod.rs` (`:608,660`) + `src-tauri/src/mcp/shim.rs` (`:112`) — obtain streams via the seam instead of naming `tokio::net::UnixStream` at the call site.
+4. `src-tauri/src/hooks/server.rs` — bind via the seam (`:203`); wrap the `0600` block (`:206-209`) in `#[cfg(unix)]`.
+5. `src-tauri/src/hooks/cli.rs` — replace the top-level `use std::os::unix::net::UnixStream;` (`:3`) with the seam's stream type; route the five connect sites (`:16,47,178,250,292`) through `PlatformStream::connect`.
+6. Linux full-check (no regression gate).
+7. macOS verification of the real flows.
+8. (Deferred iteration, not this change) Windows named-pipe impl + FIFO unification.
+
+## Plan
+
+### 1. Seam module (`platform/ipc.rs`)
+
+Define a transport abstraction mirroring `UnixSocketTransport`'s proven surface: a listener type that `bind`s a path, removes any stale endpoint, and `accept`s into `(stream, peer_identity)`; a stream type that `connect`s a path and exposes the async read/write the callers already use. Provide the Unix implementation wrapping `tokio::net::{UnixListener, UnixStream}` (async) and, where the hook CLI needs sync, `std::os::unix::net::UnixStream`. Keep peer identity as the existing uid on Unix; expose it through the seam so the Windows iteration can return a pipe SID without changing call sites. Gate the Unix impl `#[cfg(unix)]`; leave a `#[cfg(windows)]` placeholder module (compile-time stub) so the file's shape is ready for the deferred body.
+
+### 2. MCP transport conformance
+
+`UnixSocketTransport` (`mcp/transport.rs:70`) already *is* the Unix impl in spirit. Either (a) make it the canonical Unix impl behind the seam, or (b) have the seam re-export it. Do not touch `read_frame`/`write_frame` (`:32,53`), the gated perms (`:83`), or `peer_uid` (`:115-124`). The MCP handlers (`mcp/mod.rs:608,660`) and shim (`shim.rs:112`) switch their `UnixStream` type references to the seam's stream type.
+
+### 3. Hook server gating + bind
+
+`hooks/server.rs:203` bind goes through the seam. Wrap the `:206-209` perms block in `#[cfg(unix)]` (copy the `mcp/transport.rs:83` pattern verbatim). The `accept` loop (`:213`) consumes the seam's stream; `BufReader::lines()` (`:220`) is unchanged (it is generic over `AsyncRead`).
+
+### 4. Hook CLI connect sites
+
+Remove `use std::os::unix::net::UnixStream;` (`cli.rs:3`); the seam owns that import. Each connect site (`:16,47,178,250,292`) calls the seam's sync connect. The plan-review blocking FIFO (`:142,146,188`) and the ask-user FIFO are **left as POSIX FIFOs for this iteration** (Linux + macOS) per the design's macOS-iteration cut — the spec's unified-primitive requirement is satisfied at contract level and deferred for implementation alongside Windows.
+
+## Per-phase risk
+
+- **[Phase 1-2: seam over-fits Unix]** → Model strictly on `UnixSocketTransport`'s already-neutral surface; return peer identity as an opaque value carried through, not a hard `u32` in the public trait where it can be avoided. → Mitigation: review the trait signature against Decision 3's named-pipe needs (client SID) before finalising.
+- **[Phase 3-4: behaviour drift on Linux]** → A move that accidentally changes newline framing, perms timing, or connect error handling would silently break hooks. → Mitigation: diff-review that the moved bodies are byte-equivalent; run `cargo test` (the existing transport unit tests cover framing) + a manual hook-event round-trip on Linux.
+- **[Phase 4: sync vs async stream split]** → The hook CLI uses the **blocking** `std::os::unix::net::UnixStream`; the server/MCP use **tokio** async streams. → Mitigation: the seam exposes both a sync connect (CLI) and an async listener/stream (server/MCP); do not force the CLI onto tokio.
+- **[Phase 7: macOS `sun_path` length]** → macOS `temp_dir()` returns a long `/var/folders/...` path; `AF_UNIX` path limit is ~104 bytes. → Mitigation: during macOS verification, log the resolved socket path and confirm it binds; shorten the socket filename if it overflows.
+- **[Windows compile rot — out of this change but enabled here]** → Gating now prevents `unix::net` creeping back ungated. → Mitigation: the `#[cfg(unix)]` discipline lands in this change; a CI `cargo check --target ...-windows-msvc` is a follow-up.
+
+## Verification
+
+- Full machine check (CLAUDE.md): `cd src-tauri && cargo clippy -- -D warnings && cargo test && cargo fmt --check && cd .. && npx tsc --noEmit`.
+- Linux no-regression manual: trigger a hook event (session state updates), a plan review (blocks then resolves), an MCP `tools/call` via the shim, and a cross-session message — all behave as before.
+- macOS acceptance: the same four real flows pass on macOS through the seam; confirm the `temp_dir()` socket path binds within the macOS `sun_path` limit.
+- Confirm the crate has no ungated `std::os::unix` / `tokio::net::Unix*` reference outside the `#[cfg(unix)]` seam impl (grep).

@@ -32,6 +32,7 @@ Nergal corre **alrededor** del agente CLI, no en su lugar. Esto define el filtro
 - **No `unwrap()` / `expect()` in Rust outside tests.** Propagate with `anyhow` and `?`.
 - **No TODO/FIXME** — track in issues or OpenSpec changes.
 - **Absolute paths in tool calls.**
+- **Cross-platform invariant.** Nergal is Linux-only today but mid-port to macOS (then Windows). Every new OS-specific seam is born `#[cfg]`-gated (`cfg(unix)` for POSIX, `cfg(target_os = "linux")` for Linux-only like D-Bus/`/proc`/Secret-Service) **with a non-Linux stub**, never ungated. Prefer cross-platform crates (`which`, `dirs`, `sysinfo`) over shelling out to Linux binaries (`which`, `xdg-open`, `notify-send`). The CI `macos-cross-check` job (`.github/workflows/ci.yml`, runs `cargo check --target aarch64-apple-darwin` on every `src-tauri/**` PR) is the enforcement arm — **but its reach is bounded**: it catches macOS-breaking (Linux-only) regressions, NOT a newly-added *ungated* `std::os::unix`/`libc` seam (those compile on macOS, which is unix — catching them needs the deferred Windows-target gate). A green cross-check is necessary, not sufficient; don't over-trust it. New unix-only seams must be added to the Windows-deferred registry in `openspec/changes/*/design.md`.
 
 ## Verification commands
 

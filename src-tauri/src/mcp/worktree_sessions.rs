@@ -592,6 +592,10 @@ pub struct GateResourceInfo {
     pub over_soft_cap: bool,
 }
 
+// The `as u64` widening is a no-op on Linux (both fields are already u64) but
+// required on macOS, where Darwin types `f_bavail` as u32 and `f_frsize` as
+// u64 — clippy can only see the Linux widths, so it wrongly flags the cast.
+#[allow(clippy::unnecessary_cast)]
 fn free_disk_bytes(path: &std::path::Path) -> u64 {
     // statvfs: f_bavail (blocks available to non-root) * f_frsize.
     use std::os::unix::ffi::OsStrExt;
@@ -603,7 +607,10 @@ fn free_disk_bytes(path: &std::path::Path) -> u64 {
     unsafe {
         let mut stat: libc::statvfs = std::mem::zeroed();
         if libc::statvfs(c_path.as_ptr(), &mut stat) == 0 {
-            stat.f_bavail.saturating_mul(stat.f_frsize)
+            // Darwin types these narrower than Linux (f_bavail: u32, f_frsize:
+            // u64 on macOS; both u64 on Linux) — widen both to u64 so the
+            // multiply typechecks and never truncates on either target.
+            (stat.f_bavail as u64).saturating_mul(stat.f_frsize as u64)
         } else {
             0
         }

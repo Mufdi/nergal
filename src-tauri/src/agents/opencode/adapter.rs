@@ -56,6 +56,13 @@ impl Default for OpenCodeAdapter {
 
 impl OpenCodeAdapter {
     pub fn new() -> Self {
+        // opencode resolves its config/data dirs via the `xdg-basedir` package,
+        // which keeps the Linux XDG layout on macOS too — `~/.config/opencode`
+        // + `~/.local/share/opencode`, NOT `~/Library/Application Support`
+        // (that path is opencode's org-level *managed* settings, not user
+        // config). Verified against opencode docs + sst/opencode#8235. So these
+        // paths are correct on macOS unchanged — do NOT "fix" them to
+        // `dirs::config_dir()`, which would point at the wrong directory.
         let home = dirs::home_dir().unwrap_or_default();
         Self::with_config_root(home.join(".config/opencode"))
     }

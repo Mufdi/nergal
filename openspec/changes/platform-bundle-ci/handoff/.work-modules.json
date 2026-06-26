@@ -1,0 +1,49 @@
+{
+  "tier": "L",
+  "tier_source": "heuristic",
+  "ceremony": "deep",
+  "risk_tier": "medium",
+  "risk_note": "Release pipeline + updater asset resolution. Risk concentrated in CI matrix correctness and the updater finding the macOS asset. OS-level signing (Apple notarization / Windows cert) is DEFERRED behind a human gate (no certs yet) — bundles ship unsigned.",
+  "files_estimate": 5,
+  "tags": ["cross-platform", "ci", "release", "distribution"],
+  "visibility": "public",
+  "spec_target": "platform-distribution",
+  "spec_modified": ["release-ci-signed"],
+  "parent": "multiplatform-port (XL split, macOS-first)",
+  "port_sequence": 5,
+  "depends_on": ["platform-compile", "platform-proc", "platform-desktop", "platform-ipc"],
+  "blocks": [],
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "iprev_rounds": 0,
+    "iprev_triaged": true,
+    "iprev_trigger": "tier L + deep + files_estimate>=5",
+    "iprev_schedule": "DEFERRED until platform-compile is shipped. Then run iprev for the four sibling changes (proc/desktop/ipc/bundle-ci) in ONE parallel pass — they depend only on platform-compile (whose shipped decisions stabilize cargo check --target + the CI gate) and not on each other for plan review. NOTE: bundle-ci EXECUTES last (needs the app running on macOS), but its PLAN can be iprev-reviewed in the same pass. Decided 2026-06-26.",
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": ["compile", "test", "lint"],
+    "per_phase_models": {
+      "design": "opus",
+      "implementation": "sonnet",
+      "implementation_mechanical": "haiku",
+      "validation": "opus",
+      "exploration": "haiku"
+    }
+  },
+  "interview_answers": {
+    "first_target": "macOS",
+    "signing": "DEFERRED — no Apple Developer account ($99/yr) nor Windows code-signing cert. macOS bundles ship UNSIGNED (Gatekeeper warning); Tauri updater key still signs update artifacts for integrity. Apple notarization + Windows signing = human-gated follow-up.",
+    "arch": "darwin-aarch64 only (no universal binary, no Intel) for the first iteration"
+  },
+  "human_gate": {
+    "blocks_phase": "signing-only (the rest of C ships unsigned)",
+    "needs": ["Apple Developer account + notarization credentials", "Windows code-signing cert"],
+    "cost": "Apple $99/yr; Windows cert varies",
+    "irreversible_ish": true
+  },
+  "events": [
+    { "ts": "2026-06-26", "type": "artifact-generation", "by": "architect-subagent", "model": "sonnet", "note": "proposal+specs(platform-distribution + release-ci-signed delta)+design+implementation+tasks authored; signing deferred section included; openspec validate --strict passed" }
+  ],
+  "scope_note": "Adds macOS packaging (.dmg/.app/.app.tar.gz.sig) + CI build matrix (ubuntu + macos runners) + multi-target latest.json + updater macOS asset resolution. Last in sequence (depends on the crate actually working on macOS). Signing deferred behind human gate.",
+  "interview_ts": "2026-06-26"
+}

@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+    paths:
+      # The crate manifest AND Cargo.lock both live under src-tauri/, so this
+      # one filter also covers dependency bumps. If a future workspace
+      # restructure moves Cargo.lock to the repo root, ADD that path here —
+      # otherwise a dep bump could break macOS while this gate silently skips.
+      - 'src-tauri/**'
+      - '.github/workflows/ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src-tauri/**'
+      - '.github/workflows/ci.yml'
+
+jobs:
+  # Catches macOS-BREAKING (Linux-only) regressions before they land: a new
+  # `cfg(target_os = "linux")`-only construct, an unconditional Linux-only
+  # dependency, etc. It does NOT catch a newly-added *ungated* `std::os::unix`
+  # / `libc::` seam — those compile on macOS because macOS is a unix target;
+  # detecting them needs a Windows target (deferred). A green check here is
+  # necessary, not sufficient — see CLAUDE.md "Cross-platform invariant".
+  #
+  # Runner is macos-latest (not ubuntu + rustup target): the macOS objc2 build
+  # scripts (arboard, tao, rfd) compile Objective-C with `-arch arm64` and the
+  # macOS SDK, which a Linux `cc` cannot do — a Linux cross-check aborts in the
+  # objc stack before ever reaching our crate (empirically verified, D5).
+  macos-cross-check:
+    name: macOS compile gate (cargo check aarch64-apple-darwin)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: macos-cross-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            macos-cross-
+
+      - name: cargo check (aarch64-apple-darwin)
+        working-directory: src-tauri
+        run: cargo check --target aarch64-apple-darwin

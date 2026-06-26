@@ -29,11 +29,6 @@ tauri-plugin-clipboard-manager = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
-# Updater "reveal in file manager": FileManager1.ShowItems over D-Bus
-# (file highlight + activation token so GNOME raises the window — xdg-open
-# spawns carry no token and lose to focus-stealing prevention). Already in
-# the tree transitively; tokio feature reuses our runtime.
-zbus = { version = "5", default-features = false, features = ["tokio"] }
 # Direct dep on arboard so we can write to the OS clipboard inside
 # `spawn_blocking`. The clipboard plugin's own `write_text` runs on the
 # tokio runtime and its Wayland backend makes synchronous I/O to wl-clipboard
@@ -101,21 +96,40 @@ tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 fs2 = "0.4"
 
-# clickup-sync: Personal API token storage in the OS keyring (secret-service
-# on Linux). async-secret-service + crypto-rust = pure-Rust D-Bus, avoiding
-# the libdbus C binding the sync backend needs — at the cost of a duplicate
-# zbus 4.x stack next to the tree's zbus 5 (keyring 3 pins secret-service ^4).
-# Dedupe path: keyring v4 (keyring-core + zbus-secret-service-keyring-store).
-keyring = { version = "3", features = ["async-secret-service", "tokio", "crypto-rust"] }
-
-# Used by `redirect_journald_stdio_to_logfile` in lib.rs to `dup2` an open log
-# file over stdout/stderr when launched under systemd (gnome-shell), where
-# stderr is a journald pipe whose backpressure stalls WebKitGTK rendering.
-[target.'cfg(target_os = "linux")'.dependencies]
+# libc is scoped to `cfg(unix)` (not `linux`) because every ungated `libc::*`
+# call site is valid POSIX — `dup2` in `redirect_journald_stdio_to_logfile`
+# (lib.rs, systemd journald-pipe backpressure workaround), `getuid`, `statvfs`,
+# `kill`, `setsid`, `localtime_r` — so they compile on macOS too with no
+# per-site `#[cfg]`.
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
 # Pinned to wry's version so we share one webkit2gtk build. Used only to connect
 # the main webview's `web-process-terminated` signal for crash recovery (BUG-01).
 webkit2gtk = "=2.0.2"
+# Updater "reveal in file manager": FileManager1.ShowItems over D-Bus
+# (file highlight + activation token so GNOME raises the window — xdg-open
+# spawns carry no token and lose to focus-stealing prevention). zbus is
+# Linux-only D-Bus; gated here so macOS compiles. platform-desktop later
+# replaces this reveal path with the cross-platform opener plugin.
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+
+# clickup-sync / linear-sync: Personal API token storage in the OS keyring.
+# Per-target backend — no plaintext fallback, secret storage stays on a real
+# OS keystore on both platforms:
+#   Linux: Secret Service via async-secret-service + crypto-rust (pure-Rust
+#   D-Bus, avoids the libdbus C binding; pulls a duplicate zbus 4.x next to the
+#   tree's zbus 5 since keyring 3 pins secret-service ^4 — dedupe path is
+#   keyring v4: keyring-core + zbus-secret-service-keyring-store).
+#   macOS: apple-native (Keychain).
+[target.'cfg(target_os = "linux")'.dependencies.keyring]
+version = "3"
+features = ["async-secret-service", "tokio", "crypto-rust"]
+
+[target.'cfg(target_os = "macos")'.dependencies.keyring]
+version = "3"
+features = ["apple-native"]
 
 [dev-dependencies]
 tempfile = "3"

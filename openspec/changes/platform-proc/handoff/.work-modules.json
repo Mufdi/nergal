@@ -1,0 +1,40 @@
+{
+  "tier": "L",
+  "tier_source": "heuristic",
+  "ceremony": "deep",
+  "risk_tier": "medium",
+  "files_estimate": 5,
+  "tags": ["cross-platform", "refactor", "backend"],
+  "visibility": "public",
+  "spec_target": "platform-process-inspection",
+  "parent": "multiplatform-port (XL split, macOS-first)",
+  "port_sequence": 2,
+  "depends_on": ["platform-compile"],
+  "blocks": [],
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "iprev_rounds": 0,
+    "iprev_triaged": true,
+    "iprev_trigger": "tier L + deep + files_estimate>=5",
+    "iprev_schedule": "DEFERRED until platform-compile is shipped. Then run iprev for the four sibling changes (proc/desktop/ipc/bundle-ci) in ONE parallel pass — they depend only on platform-compile (whose shipped decisions stabilize cargo check --target + the CI gate) and not on each other for plan review. Decided 2026-06-26.",
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": ["compile", "test", "lint"],
+    "per_phase_models": {
+      "design": "opus",
+      "implementation": "sonnet",
+      "implementation_mechanical": "haiku",
+      "validation": "opus",
+      "exploration": "haiku"
+    }
+  },
+  "interview_answers": {
+    "first_target": "macOS",
+    "crate_decision": "design recommends sysinfo + netstat2/listeners (spike-gated D2a) to collapse 3 per-OS impls to 1"
+  },
+  "events": [
+    { "ts": "2026-06-26", "type": "artifact-generation", "by": "architect-subagent", "model": "opus", "note": "proposal+specs+design+implementation+tasks authored; verified codebase facts cite path:line; openspec validate --strict passed" }
+  ],
+  "scope_note": "Owns the FUNCTIONAL macOS port of all /proc-based process+port inspection (browser.rs ports, pty.rs tree/cwd, shim.rs ancestor-env, updater.rs kernel diag) behind a platform_proc module. Hard-depends on platform-compile (libc -> cfg(unix)). Linux behavior preserved bit-for-bit.",
+  "interview_ts": "2026-06-26"
+}

@@ -1,0 +1,44 @@
+{
+  "tier": "L",
+  "tier_source": "user-stated",
+  "tier_note": "Capability is L (full cross-platform contract incl. Windows named pipes). The macOS-iteration executable cut is S (verify unix path + gate + trait seam). Windows body deferred.",
+  "ceremony": "deep",
+  "risk_tier": "critical",
+  "risk_reason": "Touches the IPC security boundary: 0600 socket perms + SO_PEERCRED peer-uid auth on the MCP daemon. A weakened peer-auth on Windows named pipes / TCP-loopback would expose the cross-session/agent surface.",
+  "files_estimate": 8,
+  "tags": ["cross-platform", "security", "ipc"],
+  "visibility": "public",
+  "spec_target": "platform-ipc-transport",
+  "parent": "multiplatform-port (XL split, macOS-first)",
+  "port_sequence": 4,
+  "depends_on": ["platform-compile"],
+  "blocks": [],
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "iprev_rounds": 0,
+    "iprev_triaged": true,
+    "iprev_trigger": "risk_tier critical (security) -> iprev STRONGLY recommended; opus evaluator",
+    "iprev_schedule": "DEFERRED until platform-compile is shipped. Then run iprev for the four sibling changes (proc/desktop/ipc/bundle-ci) in ONE parallel pass — they depend only on platform-compile (whose shipped decisions stabilize cargo check --target + the CI gate) and not on each other for plan review. NOTE: this one is security-critical -> use opus evaluator + run before any Windows-body work. Decided 2026-06-26.",
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": "security-reviewer mandatory (diff touches IPC auth)",
+    "gates_phases_run": ["compile", "test", "lint", "security"],
+    "per_phase_models": {
+      "design": "opus",
+      "implementation": "sonnet",
+      "implementation_mechanical": "haiku",
+      "validation": "opus",
+      "exploration": "haiku"
+    }
+  },
+  "interview_answers": {
+    "first_target": "macOS",
+    "windows_transport_decision": "design recommends named-pipe (OS-enforced owner ACL + client SID peer identity, no new dep) over TCP-loopback+token, preserving the Unix SO_PEERCRED security model",
+    "macos_cut": "implement Unix impl + PlatformListener/PlatformStream trait seam + cfg(unix) gating; keep POSIX FIFOs on Linux/macOS; defer Windows body + FIFO-onto-primitive unification"
+  },
+  "events": [
+    { "ts": "2026-06-26", "type": "artifact-generation", "by": "architect-subagent", "model": "opus", "note": "proposal+specs+design+implementation+tasks authored; Windows tasks marked deferred; openspec validate --strict passed" },
+    { "ts": "2026-06-26", "type": "risk-flag", "reason": "IPC peer-auth security boundary -> risk_tier critical + mandatory security-reviewer at Mode B" }
+  ],
+  "scope_note": "Defines the full PlatformListener/PlatformStream cross-platform contract; macOS iteration implements only the unix path + trait seam + gating. Security-critical: any Windows transport must reproduce the 0600 + peer-uid guarantees. Depends on platform-compile.",
+  "interview_ts": "2026-06-26"
+}

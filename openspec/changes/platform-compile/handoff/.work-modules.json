@@ -1,0 +1,52 @@
+{
+  "tier": "M",
+  "tier_source": "heuristic",
+  "ceremony": "standard",
+  "risk_tier": "medium",
+  "files_estimate": 8,
+  "tags": ["cross-platform", "build-config", "migration"],
+  "visibility": "public",
+  "spec_target": "platform-compat",
+  "parent": "multiplatform-port (XL split, macOS-first)",
+  "port_sequence": 1,
+  "depends_on": [],
+  "blocks": ["platform-proc", "platform-desktop", "platform-ipc", "platform-bundle-ci"],
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "iprev_rounds": 2,
+    "iprev_evaluator": "claude",
+    "iprev_verdict": "APPROVED (round 2)",
+    "iprev_triaged": true,
+    "iprev_trigger": "files_estimate>=5; RAN 2026-06-26 -> APPROVED (R1: 8 issues 2H/4M/2L -> REVISE; R2: APPROVED, 5 LOW absorbed). See handoff/REVIEW.md.",
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": ["compile", "test", "lint"],
+    "per_phase_models": {
+      "design": "opus",
+      "implementation": "sonnet",
+      "implementation_mechanical": "haiku",
+      "validation": "opus",
+      "exploration": "haiku"
+    }
+  },
+  "interview_answers": {
+    "first_target": "macOS",
+    "signing": "deferred (no Apple/Windows certs yet)",
+    "protocol": "CI cargo check --target gate + CLAUDE.md convention"
+  },
+  "events": [
+    { "ts": "2026-06-26", "type": "artifact-generation", "by": "architect-subagent", "model": "sonnet", "note": "proposal+specs+design+tasks authored; openspec validate --strict passed" },
+    { "ts": "2026-06-26", "type": "iprev", "evaluator": "claude", "rounds": 2, "verdict": "APPROVED", "note": "R1 found keyring/zbus guaranteed-blockers + CI-gate overselling + D3 mis-scope -> plan revised (keyring per-target backend D7, zbus gated D8, D3 dropped, exhaustive registries, pre-flight empirical check). R2 APPROVED." },
+    { "ts": "2026-06-26", "type": "implementation", "by": "builder", "model": "opus", "note": "Mode B complete. Pre-flight: Linux runner CANNOT cross-check (objc2-exception-helper C build script needs macOS SDK/-arch) -> D5 resolved to macos-latest; local validation via cc-stub wrapper. Edits: Cargo.toml libc->cfg(unix), keyring per-target (apple-native resolves clean), zbus->linux; updater.rs zbus gating + non-Linux no-op reveal; worktree_sessions.rs statvfs u64-widen (NEW blocker not predicted: Darwin f_bavail u32/f_frsize u64) + clippy allow; commands.rs 3x which->which crate; shim.rs find_in_environ gated cfg(any(linux,test)); opencode adapter REVERSED (XDG on macOS per sst#8235, no path change, WHY-comment) + spec corrected; ci.yml macos-cross-check job; CLAUDE.md invariant. Result: macOS check clean (no warnings); Linux clippy -D warnings + 684 tests + fmt + tsc all green. tasks.md 8.4 GUI-smoke is the only human-gated remainder." }
+  ],
+  "implementation": {
+    "status": "complete",
+    "ts": "2026-06-26",
+    "verification": { "macos_cross_check": "clean (local cc-stub; CI=macos-latest authoritative)", "linux_clippy_dwarnings": "clean", "linux_tests": "684 passed", "linux_fmt": "clean", "tsc": "clean", "gui_smoke": "human-gated (8.4)" },
+    "new_finding": "statvfs field widths differ on Darwin (f_bavail u32, f_frsize u64) — not predicted by the plan; widened to u64.",
+    "reversal": "opencode uses XDG (~/.config/opencode) on macOS too (xdg-basedir, sst#8235) — dirs::config_dir() would have been wrong; no path change, spec corrected.",
+    "files_touched": ["src-tauri/Cargo.toml", "src-tauri/Cargo.lock", "src-tauri/src/updater.rs", "src-tauri/src/mcp/worktree_sessions.rs", "src-tauri/src/commands.rs", "src-tauri/src/mcp/shim.rs", "src-tauri/src/agents/opencode/adapter.rs", ".github/workflows/ci.yml", "CLAUDE.md"]
+  },
+  "scope_note": "Owns COMPILING on macOS (Cargo.toml libc -> cfg(unix); gate genuinely linux-only ungated seams; establish cargo check --target CI gate). Functional macOS impls are OUT of scope (siblings). Windows std::os::unix gating recorded as deferred.",
+  "interview_ts": "2026-06-26"
+}

@@ -176,35 +176,31 @@ pub fn validate_path(path: String, kind: String, case_insensitive: Option<bool>)
     }
 
     if kind == "executable" && !path.contains('/') {
-        let ok = std::process::Command::new("which")
-            .arg(&path)
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        if ok {
-            let resolved = std::process::Command::new("which")
-                .arg(&path)
-                .output()
-                .ok()
-                .and_then(|o| String::from_utf8(o.stdout).ok())
-                .map(|s| s.trim().to_string());
-            return PathValidation {
-                exists: true,
-                is_dir: false,
-                is_file: true,
-                is_executable: true,
-                resolved_path: resolved,
-                error: None,
-            };
+        // `which` crate, not `Command::new("which")`: cross-platform (no
+        // dependency on a `which`/`where.exe` binary in PATH) and a single
+        // lookup instead of two shell-outs.
+        match which::which(&path) {
+            Ok(resolved) => {
+                return PathValidation {
+                    exists: true,
+                    is_dir: false,
+                    is_file: true,
+                    is_executable: true,
+                    resolved_path: Some(resolved.to_string_lossy().into_owned()),
+                    error: None,
+                };
+            }
+            Err(_) => {
+                return PathValidation {
+                    exists: false,
+                    is_dir: false,
+                    is_file: false,
+                    is_executable: false,
+                    resolved_path: None,
+                    error: Some(format!("'{path}' not found in PATH")),
+                };
+            }
         }
-        return PathValidation {
-            exists: false,
-            is_dir: false,
-            is_file: false,
-            is_executable: false,
-            resolved_path: None,
-            error: Some(format!("'{path}' not found in PATH")),
-        };
     }
 
     let mut resolved = expand_home(&path);
@@ -2020,19 +2016,12 @@ pub struct EditorInfo {
     pub available: bool,
 }
 
-/// Find the first available command candidate via `which`.
+/// Find the first available command candidate via the `which` crate.
 fn find_available_command(candidates: &[&str]) -> Option<String> {
-    for cmd in candidates {
-        let ok = std::process::Command::new("which")
-            .arg(cmd)
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        if ok {
-            return Some(cmd.to_string());
-        }
-    }
-    None
+    candidates
+        .iter()
+        .find(|cmd| which::which(cmd).is_ok())
+        .map(|cmd| cmd.to_string())
 }
 
 /// Detect which editors are available on the system via `which`.

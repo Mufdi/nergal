@@ -142,7 +142,10 @@ fn degraded_response(msg: &Value) -> Value {
 }
 
 /// Extract `key`'s value from a NUL-separated `/proc/<pid>/environ` buffer.
-/// Pure (testable); returns the first non-empty match.
+/// Pure (testable); returns the first non-empty match. Scoped to where its
+/// only callers live — the Linux `session_hint_from_ancestors` (procfs) and
+/// the unit tests — so it doesn't warn as dead code on non-Linux targets.
+#[cfg(any(target_os = "linux", test))]
 fn find_in_environ(data: &[u8], key: &str) -> Option<String> {
     let prefix = format!("{key}=");
     data.split(|&b| b == 0)

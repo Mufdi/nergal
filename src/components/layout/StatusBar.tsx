@@ -87,6 +87,18 @@ export function StatusBar() {
   const agentMeta = useAtomValue(activeAgentMetadataAtom);
   const [now, setNow] = useState(() => Date.now());
 
+  // Status popovers (ports / notifications) are transient: opening the
+  // activities drawer or expanding the right panel dismisses whichever is open.
+  // The sibling case + click-away are handled inside each popover.
+  const setPortsOpen = useSetAtom(portsPopoverOpenAtom);
+  const setNotifOpen = useSetAtom(notificationHistoryOpenAtom);
+  const activityDrawerOpen = useAtomValue(activityDrawerOpenAtom);
+  const rightPanelExpand = useAtomValue(expandRightPanelAtom);
+  useEffect(() => {
+    setPortsOpen(false);
+    setNotifOpen(false);
+  }, [activityDrawerOpen, rightPanelExpand, setPortsOpen, setNotifOpen]);
+
   useEffect(() => {
     if (sessionId) {
       refreshGit(sessionId);
@@ -337,9 +349,11 @@ function NotificationHistory() {
   const clearAll = useSetAtom(clearNotificationsAtom);
   const setToasts = useSetAtom(toastsAtom);
   const setFocusZone = useSetAtom(focusZoneAtom);
+  const setPortsOpen = useSetAtom(portsPopoverOpenAtom);
   const [open, setOpen] = useAtom(notificationHistoryOpenAtom);
   const [activeIdx, setActiveIdx] = useState(0);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const now = Date.now();
 
@@ -366,6 +380,24 @@ function NotificationHistory() {
   useEffect(() => {
     if (open) setActiveIdx(0);
   }, [open]);
+
+  // Notifications and ports are mutually exclusive — opening this closes the
+  // sibling (covers the shortcut path; clicks are handled by the dismiss-on-
+  // outside listener below).
+  useEffect(() => {
+    if (open) setPortsOpen(false);
+  }, [open, setPortsOpen]);
+
+  // Dismiss on any pointerdown outside the popover (incl. its trigger). Non-
+  // consuming, so the same click can open the sibling popover or focus a panel.
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: PointerEvent) {
+      if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("pointerdown", onDown, true);
+    return () => document.removeEventListener("pointerdown", onDown, true);
+  }, [open, setOpen]);
 
   // Keep the keyboard cursor in view as it moves past the scroll fold (block:
   // "nearest" is a no-op for already-visible rows, so mouse-hover doesn't jump).
@@ -423,7 +455,7 @@ function NotificationHistory() {
   const safeIdx = Math.min(activeIdx, Math.max(0, history.length - 1));
 
   return (
-    <div className="relative flex items-center">
+    <div ref={containerRef} className="relative flex items-center">
       <Tooltip>
         <TooltipTrigger
           onClick={() => setOpen((v) => !v)}
@@ -436,7 +468,6 @@ function NotificationHistory() {
       </Tooltip>
       {open && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div
             ref={popoverRef}
             className="absolute bottom-full right-0 z-50 mb-1.5 max-h-72 w-72 overflow-y-auto rounded-md border border-border bg-card shadow-lg"
@@ -589,8 +620,10 @@ function LocalhostPortChips() {
   const setMode = useSetAtom(browserSetModeAction);
   const openTab = useSetAtom(openTabAction);
   const [open, setOpen] = useAtom(portsPopoverOpenAtom);
+  const setNotifOpen = useSetAtom(notificationHistoryOpenAtom);
   const setFocusZone = useSetAtom(focusZoneAtom);
   const popoverRef = useRef<HTMLDivElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
   const [procInfo, setProcInfo] = useState<
     Record<number, { label: string; project: string | null; kind: string; pid: number | null } | null>
@@ -613,6 +646,24 @@ function LocalhostPortChips() {
   useEffect(() => {
     if (open) setActiveIdx(0);
   }, [open]);
+
+  // Ports and notifications are mutually exclusive — opening this closes the
+  // sibling (covers the shortcut path; clicks are handled by the dismiss-on-
+  // outside listener below).
+  useEffect(() => {
+    if (open) setNotifOpen(false);
+  }, [open, setNotifOpen]);
+
+  // Dismiss on any pointerdown outside the popover (incl. its trigger). Non-
+  // consuming, so the same click can open the sibling popover or focus a panel.
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: PointerEvent) {
+      if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("pointerdown", onDown, true);
+    return () => document.removeEventListener("pointerdown", onDown, true);
+  }, [open, setOpen]);
 
   // Resolve the owning process per port when the popover opens — a cheap /proc
   // walk, on-demand only so the 3s scanner stays lightweight.
@@ -722,7 +773,7 @@ function LocalhostPortChips() {
   }, [open, ports, activeIdx]);
 
   return (
-    <div className="relative flex items-center">
+    <div ref={containerRef} className="relative flex items-center">
       <Tooltip>
         <TooltipTrigger
           onClick={() => hasPorts && setOpen((v) => !v)}
@@ -748,8 +799,6 @@ function LocalhostPortChips() {
       </Tooltip>
       {open && (
         <>
-          {/* Outside-click catcher — same pattern as the TopBar/TabBar dropdowns. */}
-          <div className="fixed inset-0 z-40" onClick={closeAndFocusTerminal} />
           <div
             ref={popoverRef}
             className="absolute bottom-full left-1/2 z-50 mb-1.5 max-h-56 w-64 -translate-x-1/2 overflow-y-auto rounded-md border border-border bg-card py-1 shadow-lg"

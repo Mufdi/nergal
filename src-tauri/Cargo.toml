@@ -96,6 +96,14 @@ tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 fs2 = "0.4"
 
+# platform_proc: cross-platform process/port introspection replacing hand-rolled
+# /proc reads. sysinfo provides process tree, cwd, environ, and system info
+# (kernel version, OS name). listeners enumerates LISTEN sockets with owning
+# pid — pure-Rust on Linux/macOS (hand-written libproc FFI on macOS, no
+# bindgen), no build script for those targets.
+sysinfo = "0.33"
+listeners = "0.6"
+
 # libc is scoped to `cfg(unix)` (not `linux`) because every ungated `libc::*`
 # call site is valid POSIX — `dup2` in `redirect_journald_stdio_to_logfile`
 # (lib.rs, systemd journald-pipe backpressure workaround), `getuid`, `statvfs`,

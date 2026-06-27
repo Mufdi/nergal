@@ -4,14 +4,14 @@
 //!   1. URL scheme validation for `browser_validate_url` (defense-in-depth so
 //!      a compromised frontend cannot navigate the iframe to file:// or
 //!      javascript: URLs).
-//!   2. Localhost listening-port scanner: reads `/proc/net/tcp` and
-//!      `/proc/net/tcp6` every 3s to find ports in LISTEN state on the user
-//!      port range, applies hysteresis (1-scan add, 2-scan remove) to
-//!      absorb transient flap, emits `localhost:ports-changed` events.
+//!   2. Localhost listening-port scanner: polls `platform_proc::listening_ports`
+//!      (backed by `listeners` on Linux/macOS) every 3s to find TCP LISTEN
+//!      ports in the user range, applies hysteresis (1-scan add, 2-scan
+//!      remove) to absorb transient flap, emits `localhost:ports-changed`
+//!      events.
 //!
-//! Linux-only: nergal targets Linux per CLAUDE.md. The /proc approach is
-//! native, fast (sub-ms), and accurate — same source `ss`/`netstat`/`lsof`
-//! consult. No hardcoded port list, no TCP probes.
+//! Cross-platform: port data comes from `listeners` (pure Rust, no bindgen
+//! on Linux/macOS) rather than the previous `/proc/net/tcp` file reads.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -42,9 +42,6 @@ const RESERVED_SHORTCUTS: &[(&str, &str)] = &[
 const ALLOWED_SCHEMES: &[&str] = &["http", "https"];
 const ABOUT_BLANK: &str = "about:blank";
 
-/// Linux TCP socket state value for LISTEN. See `include/net/tcp_states.h`.
-const TCP_LISTEN: &str = "0A";
-
 /// Inclusive lower bound: skip privileged system ports (DNS 53, CUPS 631…).
 const MIN_PORT: u16 = 1024;
 /// Inclusive upper bound: cap at the registered/user range so we exclude
@@ -56,9 +53,6 @@ const SCAN_INTERVAL: Duration = Duration::from_secs(3);
 /// A port disappears from the active set only after this many consecutive
 /// inactive scans. One-scan flap (e.g. dev-server hot-restart) is absorbed.
 const REMOVE_AFTER_INACTIVE_SCANS: u8 = 2;
-
-const PROC_NET_TCP: &str = "/proc/net/tcp";
-const PROC_NET_TCP6: &str = "/proc/net/tcp6";
 
 /// Validate a URL string against the allowed-scheme list.
 ///
@@ -90,7 +84,7 @@ pub async fn browser_validate_url(url: String) -> Result<String, String> {
 /// updates flow through `localhost:ports-changed` events.
 #[tauri::command]
 pub async fn browser_get_listening_ports() -> Vec<u16> {
-    read_listening_user_ports()
+    crate::platform_proc::listening_ports()
 }
 
 /// Register the reserved browser shortcuts at the OS level. Called when
@@ -141,121 +135,6 @@ pub async fn browser_unregister_shortcuts(app: AppHandle) -> Result<(), String> 
     Ok(())
 }
 
-/// Parse listening TCP ports from a `/proc/net/tcp{,6}` content blob.
-///
-/// Format (skip-1-header, then one socket per line):
-///   sl  local_address rem_address   st ...
-///    0: 0100007F:0277 00000000:0000 0A ...
-///
-/// `local_address` is `<hex_ip>:<hex_port>`. The port is the last 4 hex
-/// digits regardless of IPv4 (8-hex IP) or IPv6 (32-hex IP). State `0A`
-/// means LISTEN.
-fn parse_listening_ports(content: &str) -> Vec<u16> {
-    let mut ports = Vec::new();
-    for line in content.lines().skip(1) {
-        let mut fields = line.split_whitespace();
-        let local = match fields.nth(1) {
-            Some(s) => s,
-            None => continue,
-        };
-        // After the `nth(1)` consumed `sl` and `local_address`, `next()` is
-        // `rem_address`; one more `next()` is `st`.
-        let _rem = fields.next();
-        let state = match fields.next() {
-            Some(s) => s,
-            None => continue,
-        };
-        if state != TCP_LISTEN {
-            continue;
-        }
-        let port_hex = match local.rsplit(':').next() {
-            Some(p) => p,
-            None => continue,
-        };
-        let port = match u16::from_str_radix(port_hex, 16) {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-        ports.push(port);
-    }
-    ports
-}
-
-/// Read both /proc/net/tcp and tcp6, dedup, filter to user-port range,
-/// return sorted ascending. Reads are best-effort: failure on either file
-/// just yields an empty contribution (the other still works).
-fn read_listening_user_ports() -> Vec<u16> {
-    let mut all = Vec::new();
-    if let Ok(c) = std::fs::read_to_string(PROC_NET_TCP) {
-        all.extend(parse_listening_ports(&c));
-    }
-    if let Ok(c) = std::fs::read_to_string(PROC_NET_TCP6) {
-        all.extend(parse_listening_ports(&c));
-    }
-    all.sort_unstable();
-    all.dedup();
-    all.retain(|&p| (MIN_PORT..=MAX_PORT).contains(&p));
-    all
-}
-
-/// Resolve the inode of the LISTEN socket bound to `port` from
-/// /proc/net/tcp{,6}. Column layout (whitespace-split, 0-indexed): 1=local,
-/// 3=state, 9=inode.
-fn listen_inode_for_port(port: u16) -> Option<String> {
-    for path in [PROC_NET_TCP, PROC_NET_TCP6] {
-        let Ok(content) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        for line in content.lines().skip(1) {
-            let mut fields = line.split_whitespace();
-            let Some(local) = fields.nth(1) else { continue };
-            let _rem = fields.next();
-            let Some(state) = fields.next() else { continue };
-            if state != TCP_LISTEN {
-                continue;
-            }
-            let Some(port_hex) = local.rsplit(':').next() else {
-                continue;
-            };
-            if u16::from_str_radix(port_hex, 16) != Ok(port) {
-                continue;
-            }
-            // After `state`, advance 5 more columns to reach `inode` (index 9).
-            if let Some(inode) = fields.nth(5) {
-                return Some(inode.to_string());
-            }
-        }
-    }
-    None
-}
-
-/// Find the PID owning the socket with `inode` by scanning /proc/<pid>/fd for a
-/// `socket:[<inode>]` symlink. Only the user's own processes are readable —
-/// fine, dev servers run as the user.
-fn pid_for_socket_inode(inode: &str) -> Option<u32> {
-    let target = format!("socket:[{inode}]");
-    for entry in std::fs::read_dir("/proc").ok()?.flatten() {
-        let Some(pid) = entry
-            .file_name()
-            .to_str()
-            .and_then(|s| s.parse::<u32>().ok())
-        else {
-            continue;
-        };
-        let Ok(fds) = std::fs::read_dir(entry.path().join("fd")) else {
-            continue;
-        };
-        for fd in fds.flatten() {
-            if let Ok(link) = std::fs::read_link(fd.path())
-                && link.to_string_lossy() == target
-            {
-                return Some(pid);
-            }
-        }
-    }
-    None
-}
-
 fn basename(p: &str) -> &str {
     p.rsplit('/').next().unwrap_or(p)
 }
@@ -275,10 +154,9 @@ const INTERPRETERS: &[&str] = &[
     "node", "python", "python3", "python2", "ruby", "deno", "bun", "php", "sh", "bash",
 ];
 
-/// Pure label resolution from a process's parts, so the heuristic is testable
-/// without a live `/proc`. `exe_base` is the basename of `/proc/<pid>/exe`'s
-/// readlink target; `comm` is the (truncated) kernel name. Returns `None` only
-/// when there is no arg0 to work from.
+/// Pure label resolution from a process's parts, so the heuristic is testable.
+/// `exe_base` is the basename of the process executable path; `comm` is the
+/// short kernel name. Returns `None` only when there is no arg0 to work from.
 fn resolve_label(args: &[String], exe_base: Option<&str>, comm: Option<&str>) -> Option<String> {
     let arg0 = args.first()?;
     let base = basename(arg0);
@@ -303,38 +181,6 @@ fn resolve_label(args: &[String], exe_base: Option<&str>, comm: Option<&str>) ->
         }
     }
     Some(strip_script_ext(base).to_string())
-}
-
-/// A human label for a process from its full cmdline (not the 15-char,
-/// thread-name-leaking `comm`). For an interpreter (node/python/…) the label is
-/// the script/module it runs (`node …/vite` → `vite`), otherwise arg0's
-/// basename. Falls back to `comm`.
-fn process_label(pid: u32) -> String {
-    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm"))
-        .ok()
-        .map(|s| s.trim().to_string());
-    if let Ok(raw) = std::fs::read(format!("/proc/{pid}/cmdline")) {
-        let args: Vec<String> = raw
-            .split(|&b| b == 0)
-            .filter(|s| !s.is_empty())
-            .map(|s| String::from_utf8_lossy(s).into_owned())
-            .collect();
-        let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok();
-        let exe_base = exe
-            .as_deref()
-            .and_then(|p| p.file_name())
-            .and_then(|n| n.to_str());
-        if let Some(label) = resolve_label(&args, exe_base, comm.as_deref()) {
-            return label;
-        }
-    }
-    comm.unwrap_or_else(|| "unknown".into())
-}
-
-/// The working-directory basename of a process — usually the project folder.
-fn process_cwd_name(pid: u32) -> Option<String> {
-    let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).ok()?;
-    cwd.file_name().map(|n| n.to_string_lossy().into_owned())
 }
 
 /// Best-effort Docker attribution for a published port (the listener on the
@@ -381,18 +227,22 @@ pub struct PortProcess {
 }
 
 /// Identify what's listening on `port`: an owned process (label from cmdline +
-/// project from cwd) when /proc can attribute it, else a best-effort Docker
-/// container, else None.
+/// project from cwd basename) when a user-visible process can be attributed via
+/// `platform_proc::port_owner`, else a best-effort Docker container, else None.
 #[tauri::command]
 pub fn port_process_info(port: u16) -> Option<PortProcess> {
-    if let Some(inode) = listen_inode_for_port(port)
-        && let Some(pid) = pid_for_socket_inode(&inode)
-    {
+    if let Some(owner) = crate::platform_proc::port_owner(port) {
+        let label = resolve_label(
+            &owner.args,
+            owner.exe_base.as_deref(),
+            owner.comm.as_deref(),
+        )
+        .unwrap_or_else(|| "unknown".into());
         return Some(PortProcess {
-            label: process_label(pid),
-            project: process_cwd_name(pid),
+            label,
+            project: owner.cwd_basename,
             kind: "process".into(),
-            pid: Some(pid),
+            pid: Some(owner.pid),
         });
     }
     docker_container_for_port(port)
@@ -402,20 +252,13 @@ pub fn port_process_info(port: u16) -> Option<PortProcess> {
 /// the same way `port_process_info` does, then lets the dev server shut down.
 #[tauri::command]
 pub fn kill_port(port: u16) -> Result<(), String> {
-    // Owned process → SIGTERM. A Docker-published port has no /proc-visible
-    // owner (the listener is root `docker-proxy`), so fall back to stopping the
-    // owning container by name.
-    if let Some(inode) = listen_inode_for_port(port)
-        && let Some(pid) = pid_for_socket_inode(&inode)
-    {
-        let rc = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
-        if rc != 0 {
-            return Err(format!(
-                "kill({pid}) failed: {}",
-                std::io::Error::last_os_error()
-            ));
-        }
-        return Ok(());
+    // Owned process → SIGTERM. A Docker-published port has no user-visible
+    // owner (the listener is root `docker-proxy`), so fall back to stopping
+    // the owning container by name.
+    #[cfg(unix)]
+    if let Some(owner) = crate::platform_proc::port_owner(port) {
+        return crate::platform_proc::kill_pid(owner.pid)
+            .map_err(|e| format!("kill({}) failed: {e}", owner.pid));
     }
     if let Some(dp) = docker_container_for_port(port) {
         let out = std::process::Command::new("docker")
@@ -478,15 +321,13 @@ pub async fn run_port_scanner(app: AppHandle) {
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     tracing::info!(
-        "browser port scanner started: reading /proc/net/tcp{{,6}} every {:?} (range {}-{})",
+        "browser port scanner started: listeners every {:?} (range {MIN_PORT}-{MAX_PORT})",
         SCAN_INTERVAL,
-        MIN_PORT,
-        MAX_PORT
     );
 
     loop {
         interval.tick().await;
-        let raw = read_listening_user_ports();
+        let raw = crate::platform_proc::listening_ports();
         tracing::debug!("browser scan tick: raw={raw:?}");
         let next = apply_hysteresis(&raw, &previous, &mut inactive_streaks);
         if next != previous {
@@ -535,38 +376,11 @@ mod tests {
     }
 
     #[test]
-    fn parses_ipv4_listen_socket() {
-        // 127.0.0.1:5173 — port 5173 = 0x1435
-        let content = "  sl  local_address rem_address   st\n   0: 0100007F:1435 00000000:0000 0A 00000000:00000000 00:00000000 00000000   1000        0 1\n";
-        assert_eq!(parse_listening_ports(content), vec![5173]);
-    }
-
-    #[test]
-    fn parses_ipv6_listen_socket() {
-        // ::1:1420 — port 1420 = 0x058C, IPv6 IP is 32 hex chars
-        let content = "  sl  local_address rem_address   st\n   0: 00000000000000000000000001000000:058C 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000   1000        0 1\n";
-        assert_eq!(parse_listening_ports(content), vec![1420]);
-    }
-
-    #[test]
-    fn ignores_non_listen_states() {
-        // ESTABLISHED (01), TIME_WAIT (06), etc. are all != "0A"
-        let content = "  sl  local_address rem_address   st\n   0: 0100007F:1F90 0100007F:1F91 01 00000000:00000000 00:00000000 00000000   1000        0 1\n";
-        assert!(parse_listening_ports(content).is_empty());
-    }
-
-    #[test]
     fn skips_privileged_ports_in_filter() {
-        // Constructed via read_listening_user_ports filter, simulated:
+        // Verify the port-range constants match platform_proc's filter window.
         let mut all = vec![22u16, 53, 80, 443, 631, 1024, 5173, 32767, 40000];
         all.retain(|&p| (MIN_PORT..=MAX_PORT).contains(&p));
         assert_eq!(all, vec![1024, 5173, 32767]);
-    }
-
-    #[test]
-    fn handles_empty_proc_file() {
-        assert!(parse_listening_ports("").is_empty());
-        assert!(parse_listening_ports("  sl  local_address rem_address   st\n").is_empty());
     }
 
     #[test]

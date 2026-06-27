@@ -407,14 +407,6 @@ pub fn open_log_file() -> Result<(), String> {
     Ok(())
 }
 
-fn read_os_pretty_name() -> Option<String> {
-    let content = std::fs::read_to_string("/etc/os-release").ok()?;
-    content.lines().find_map(|line| {
-        line.strip_prefix("PRETTY_NAME=")
-            .map(|rest| rest.trim_matches('"').to_string())
-    })
-}
-
 fn read_log_tail(n: usize) -> String {
     let log_path = dirs::cache_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
@@ -437,10 +429,8 @@ fn read_log_tail(n: usize) -> String {
 pub fn collect_diagnostics() -> String {
     let version = env!("CARGO_PKG_VERSION");
     let source = format!("{:?}", detect_install_source()).to_lowercase();
-    let os = read_os_pretty_name().unwrap_or_else(|| "unknown".into());
-    let kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease")
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|_| "unknown".into());
+    let os = crate::platform_proc::os_name().unwrap_or_else(|| "unknown".into());
+    let kernel = crate::platform_proc::kernel_version().unwrap_or_else(|| "unknown".into());
     let log_tail = read_log_tail(150);
     format!(
         "Nergal diagnostics\nVersion: {version}\nInstall source: {source}\nOS: {os}\nKernel: {kernel}\n\n---- log tail (last 150 lines) ----\n{log_tail}"

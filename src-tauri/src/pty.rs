@@ -49,82 +49,15 @@ impl Drop for PtyInstance {
     fn drop(&mut self) {
         // Stop processes started in the shell when the session (or the whole
         // app) closes — otherwise dev servers / watchers leak (BUG-06).
-        #[cfg(target_os = "linux")]
+        // `kill_tree` handles descendants cross-platform (sysinfo BFS + libc
+        // POSIX signals); the old per-OS split is gone.
+        #[cfg(unix)]
         if let Some(pid) = self.child_pid
             && pid > 1
         {
-            kill_process_tree(pid);
-        }
-        // Other unixes: best-effort process-group SIGTERM (no /proc).
-        #[cfg(all(unix, not(target_os = "linux")))]
-        if let Some(pid) = self.child_pid
-            && pid > 1
-        {
-            unsafe {
-                libc::kill(-(pid as libc::pid_t), libc::SIGTERM);
-            }
+            crate::platform_proc::kill_tree(pid);
         }
     }
-}
-
-/// SIGTERM the shell's whole descendant tree, not just its process group.
-/// Dropping the PTY master only SIGHUPs the foreground group, and `kill(-pgid)`
-/// misses children that `pnpm`/`node` spawn in a *new* process group — exactly
-/// the leak in BUG-06 (the server survived session close, dying only via the
-/// app-exit cascade). Walks /proc by PPID to find every descendant.
-#[cfg(target_os = "linux")]
-fn kill_process_tree(root: u32) {
-    fn ppid_of(pid: u32) -> Option<u32> {
-        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-        // `comm` (field 2) may contain spaces/parens — split after the last ')'.
-        let rest = &stat[stat.rfind(')')? + 1..];
-        rest.split_whitespace().nth(1)?.parse().ok()
-    }
-
-    let procs: Vec<(u32, u32)> = match std::fs::read_dir("/proc") {
-        Ok(rd) => rd
-            .flatten()
-            .filter_map(|e| e.file_name().to_str().and_then(|s| s.parse::<u32>().ok()))
-            .filter_map(|pid| Some((pid, ppid_of(pid)?)))
-            .collect(),
-        Err(_) => Vec::new(),
-    };
-
-    // BFS the descendant set of `root`.
-    let mut tree = vec![root];
-    let mut i = 0;
-    while i < tree.len() {
-        let parent = tree[i];
-        for &(pid, ppid) in &procs {
-            if ppid == parent && pid != root && !tree.contains(&pid) {
-                tree.push(pid);
-            }
-        }
-        i += 1;
-    }
-
-    // Descendants first, then the root's process group + the root itself.
-    for &pid in tree.iter().skip(1).rev() {
-        unsafe {
-            libc::kill(pid as libc::pid_t, libc::SIGTERM);
-        }
-    }
-    unsafe {
-        libc::kill(-(root as libc::pid_t), libc::SIGTERM);
-        libc::kill(root as libc::pid_t, libc::SIGTERM);
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn process_cwd(pid: u32) -> Option<String> {
-    std::fs::read_link(format!("/proc/{pid}/cwd"))
-        .ok()
-        .map(|p| p.display().to_string())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn process_cwd(_pid: u32) -> Option<String> {
-    None
 }
 
 pub struct PtyManager {
@@ -173,15 +106,15 @@ impl PtyManager {
         }
     }
 
-    /// Unique working directories of live sessions (read from `/proc`). Used at
-    /// shutdown to `docker compose stop` projects rooted there. Must run BEFORE
+    /// Unique working directories of live sessions. Used at shutdown to
+    /// `docker compose stop` projects rooted there. Must run BEFORE
     /// `shutdown_all` clears the instance map.
     pub fn live_session_cwds(&self) -> Vec<String> {
         let mut dirs: Vec<String> = Vec::new();
         if let Ok(instances) = self.instances.lock() {
             for inst in instances.values() {
                 if let Some(pid) = inst.child_pid
-                    && let Some(cwd) = process_cwd(pid)
+                    && let Some(cwd) = crate::platform_proc::process_cwd(pid)
                     && !dirs.contains(&cwd)
                 {
                     dirs.push(cwd);
@@ -1329,7 +1262,9 @@ pub fn terminal_input(
         });
         if let Some((alt_screen, cursor_col, line_text)) = snapshot {
             let shell_cwd = if is_enter {
-                instance.child_pid.and_then(process_cwd)
+                instance
+                    .child_pid
+                    .and_then(crate::platform_proc::process_cwd)
             } else {
                 None
             };

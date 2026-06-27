@@ -14,6 +14,7 @@ mod models;
 pub mod obsidian;
 mod openspec;
 mod plan_state;
+mod platform_proc;
 mod pty;
 pub mod scratchpad;
 mod search;

@@ -31,11 +31,14 @@ async fn run_async() -> anyhow::Result<()> {
                 .ok()
                 .filter(|s| !s.is_empty())
         })
-        // Fallback: some agents (Codex) spawn MCP servers with a SANITIZED env,
+        // Fallback: some agents (Codex) spawn MCP servers with a sanitized env,
         // so our own `NERGAL_SESSION_ID` is missing — but an ancestor process
         // (the agent itself, spawned by the PTY with the var set) still has it.
-        // Walk the parent chain via /proc and recover it (Linux only).
-        .or_else(session_hint_from_ancestors);
+        // Walk the parent chain and recover it. macOS environ readability is
+        // restricted by SIP; `None` there is expected and non-fatal.
+        .or_else(|| {
+            crate::platform_proc::ancestor_env(&["NERGAL_SESSION_ID", "CLAUDE_CODE_SESSION_ID"], 8)
+        });
 
     // Fast, non-hanging connect: a missing/dead socket → degraded mode.
     let mut daemon = transport::connect(&super::socket_path()).await.ok();
@@ -142,54 +145,15 @@ fn degraded_response(msg: &Value) -> Value {
 }
 
 /// Extract `key`'s value from a NUL-separated `/proc/<pid>/environ` buffer.
-/// Pure (testable); returns the first non-empty match. Scoped to where its
-/// only callers live — the Linux `session_hint_from_ancestors` (procfs) and
-/// the unit tests — so it doesn't warn as dead code on non-Linux targets.
-#[cfg(any(target_os = "linux", test))]
+/// Pure helper kept for the unit tests below; runtime env recovery now goes
+/// through `platform_proc::ancestor_env` which uses `sysinfo` cross-platform.
+#[cfg(test)]
 fn find_in_environ(data: &[u8], key: &str) -> Option<String> {
     let prefix = format!("{key}=");
     data.split(|&b| b == 0)
         .filter_map(|chunk| std::str::from_utf8(chunk).ok())
         .find_map(|kv| kv.strip_prefix(&prefix).map(str::to_string))
         .filter(|v| !v.is_empty())
-}
-
-/// Read `PPid` from `/proc/<pid>/status`.
-#[cfg(target_os = "linux")]
-fn parent_pid(pid: u32) -> Option<u32> {
-    std::fs::read_to_string(format!("/proc/{pid}/status"))
-        .ok()?
-        .lines()
-        .find_map(|l| l.strip_prefix("PPid:").and_then(|v| v.trim().parse().ok()))
-}
-
-/// Recover the session id from an ancestor process's env when our own was
-/// stripped (Codex sanitizes the MCP server env). Walks a bounded number of
-/// parents reading `/proc/<pid>/environ`. Linux only; `None` elsewhere.
-#[cfg(target_os = "linux")]
-fn session_hint_from_ancestors() -> Option<String> {
-    let mut pid = std::process::id();
-    for _ in 0..8 {
-        pid = parent_pid(pid)?;
-        if pid <= 1 {
-            break;
-        }
-        let Ok(data) = std::fs::read(format!("/proc/{pid}/environ")) else {
-            continue;
-        };
-        if let Some(v) = find_in_environ(&data, "NERGAL_SESSION_ID") {
-            return Some(v);
-        }
-        if let Some(v) = find_in_environ(&data, "CLAUDE_CODE_SESSION_ID") {
-            return Some(v);
-        }
-    }
-    None
-}
-
-#[cfg(not(target_os = "linux"))]
-fn session_hint_from_ancestors() -> Option<String> {
-    None
 }
 
 #[cfg(test)]

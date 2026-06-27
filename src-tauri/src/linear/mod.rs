@@ -1496,13 +1496,7 @@ fn notify_assignments(app: &AppHandle, db: &crate::db::SharedDb, ids: &[String])
     } else {
         format!("{} new issues assigned to you", ids.len().max(titles.len()))
     };
-    if let Err(e) = std::process::Command::new("notify-send")
-        .arg("Linear")
-        .arg(&body)
-        .spawn()
-    {
-        tracing::warn!("linear assignment notify-send failed: {e}");
-    }
+    crate::notify::send(app, "Linear", &body);
 }
 
 #[cfg(test)]

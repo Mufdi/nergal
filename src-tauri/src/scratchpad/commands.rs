@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::{AppHandle, State};
+use tauri_plugin_opener::OpenerExt;
 
 use super::watcher::ScratchpadWatcher;
 use super::{
@@ -176,14 +177,15 @@ pub fn scratchpad_set_geometry(
 }
 
 #[tauri::command]
-pub fn scratchpad_reveal_in_file_manager(state: State<'_, ScratchpadState>) -> Result<(), String> {
+pub fn scratchpad_reveal_in_file_manager(
+    app: tauri::AppHandle,
+    state: State<'_, ScratchpadState>,
+) -> Result<(), String> {
     let root = state.current_root();
-    // `Command::new` with `.arg()` — never `bash -c` — so the path can't
-    // be interpreted as a shell expression even if it contains spaces or
-    // metacharacters.
-    std::process::Command::new("xdg-open")
-        .arg(&root)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    // open_path on a directory opens its contents (equivalent to xdg-open <dir>);
+    // reveal_item_in_dir would instead select the folder icon in its parent — an
+    // observable UX change we deliberately avoid (Decision 1).
+    app.opener()
+        .open_path(root.to_string_lossy().as_ref(), None::<&str>)
+        .map_err(|e| e.to_string())
 }

@@ -10,6 +10,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
+use tauri_plugin_opener::OpenerExt;
 
 /// Drives the UI's update affordance — see module doc for the per-source
 /// policy. `Dev` exists so dev builds get a warning banner instead of a
@@ -63,7 +64,7 @@ pub struct SystemHealth {
 /// fail silently at first use.
 #[tauri::command]
 pub fn check_system_health() -> SystemHealth {
-    let missing_binaries = ["git", "xdg-open", "xdg-user-dir"]
+    let missing_binaries = ["git"]
         .into_iter()
         .filter(|bin| which::which(bin).is_err())
         .map(str::to_string)
@@ -218,22 +219,17 @@ fn version_is_newer(latest: &str, current: &str) -> bool {
     latest != current
 }
 
-/// `xdg-user-dir DOWNLOAD` first so we respect the user's localized /
-/// remapped Downloads folder (KDE/GNOME both honor this); fall through
-/// to the conventional `$HOME/Downloads` when xdg-user-dirs isn't set up.
+/// Pure helper so unit tests can exercise the fallback chain without touching
+/// the real `dirs` queries (which depend on the current user environment).
+fn downloads_from(dl: Option<PathBuf>, home: Option<PathBuf>) -> PathBuf {
+    dl.or_else(|| home.map(|h| h.join("Downloads")))
+        .unwrap_or_else(|| PathBuf::from("/tmp/Downloads"))
+}
+
+/// `dirs::download_dir()` covers both Linux (respects xdg-user-dirs) and macOS
+/// (`~/Downloads`); no subprocess needed.
 fn resolve_downloads_dir() -> Result<PathBuf, String> {
-    if let Ok(out) = std::process::Command::new("xdg-user-dir")
-        .arg("DOWNLOAD")
-        .output()
-        && out.status.success()
-    {
-        let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if !path.is_empty() {
-            return Ok(PathBuf::from(path));
-        }
-    }
-    let home = dirs::home_dir().ok_or_else(|| "HOME not set".to_string())?;
-    Ok(home.join("Downloads"))
+    Ok(downloads_from(dirs::download_dir(), dirs::home_dir()))
 }
 
 /// Filename comes from the frontend; reject anything that would
@@ -320,64 +316,17 @@ pub async fn download_app_update(
     Ok(target.to_string_lossy().into_owned())
 }
 
-/// FileManager1 is the freedesktop reveal interface (Nautilus, Dolphin,
-/// Nemo all implement it): it highlights the file and the D-Bus activation
-/// carries a startup token, so GNOME raises the window instead of letting
-/// focus-stealing prevention bury it — the failure mode of a bare
-/// `xdg-open` spawn. The spawn survives only as fallback for DEs without
-/// the service.
-///
-/// Linux-only: `zbus`/FileManager1 is D-Bus. `platform-desktop` later replaces
-/// this with the cross-platform Tauri opener plugin; until then non-Linux
-/// targets skip the reveal (see `reveal_in_downloads`).
-#[cfg(target_os = "linux")]
-async fn show_items_via_dbus(path: &Path) -> Result<(), String> {
-    let uri = url::Url::from_file_path(path)
-        .map_err(|_| "path is not absolute".to_string())?
-        .to_string();
-    let conn = zbus::Connection::session()
-        .await
-        .map_err(|e| format!("session bus: {e}"))?;
-    conn.call_method(
-        Some("org.freedesktop.FileManager1"),
-        "/org/freedesktop/FileManager1",
-        Some("org.freedesktop.FileManager1"),
-        "ShowItems",
-        &(vec![uri], String::new()),
-    )
-    .await
-    .map_err(|e| format!("ShowItems: {e}"))?;
-    Ok(())
-}
-
-/// Resolve the default application id for a MIME type via `xdg-mime`, or
-/// `None` when no handler is registered (empty output) / the query fails.
-fn default_app_for_mime(mime: &str) -> Option<String> {
-    let out = std::process::Command::new("xdg-mime")
-        .args(["query", "default", mime])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let app = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    (!app.is_empty()).then_some(app)
-}
-
 /// Open the app log for diagnostics. The log only exists when launched under
 /// journald redirect (the GNOME launcher path — see
 /// `redirect_journald_stdio_to_logfile`); a terminal/dev run logs to stderr,
 /// so report a clear error instead of opening a non-existent file.
 ///
-/// `xdg-open` resolves the handler by EXTENSION: `.log` maps to `text/x-log`,
-/// which has no registered default app on a stock desktop, so it exits 0
-/// without opening anything (the v0.3.0 "0 action, 0 feedback" bug). Launch
-/// the `text/plain` default app directly — the content IS plain text — to
-/// bypass the extension mapping, falling back to revealing the containing
-/// folder (directories always have a file-manager handler) so the log stays
-/// reachable on desktops without `gtk-launch` or a `text/plain` default.
+/// `opener::open_path` delegates to the OS handler for the file's MIME type
+/// directly (LaunchServices on macOS, gio/xdg-open on Linux), sidestepping the
+/// extension-to-MIME mapping bug that caused `xdg-open nergal.log` to exit 0
+/// without opening anything in v0.3.0.
 #[tauri::command]
-pub fn open_log_file() -> Result<(), String> {
+pub fn open_log_file(app: tauri::AppHandle) -> Result<(), String> {
     let log_path = dirs::cache_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join("nergal")
@@ -388,23 +337,9 @@ pub fn open_log_file() -> Result<(), String> {
             log_path.display()
         ));
     }
-    if let Some(app) = default_app_for_mime("text/plain")
-        && std::process::Command::new("gtk-launch")
-            .arg(&app)
-            .arg(&log_path)
-            .spawn()
-            .is_ok()
-    {
-        return Ok(());
-    }
-    let dir = log_path
-        .parent()
-        .ok_or_else(|| "log path has no parent".to_string())?;
-    std::process::Command::new("xdg-open")
-        .arg(dir)
-        .spawn()
-        .map_err(|e| format!("xdg-open: {e}"))?;
-    Ok(())
+    app.opener()
+        .open_path(log_path.to_string_lossy().as_ref(), None::<&str>)
+        .map_err(|e| e.to_string())
 }
 
 fn read_log_tail(n: usize) -> String {
@@ -438,31 +373,14 @@ pub fn collect_diagnostics() -> String {
 }
 
 #[tauri::command]
-pub async fn reveal_in_downloads(path: String) -> Result<(), String> {
+pub async fn reveal_in_downloads(app: tauri::AppHandle, path: String) -> Result<(), String> {
     let p = PathBuf::from(&path);
     if !p.is_file() {
         return Err("downloaded file no longer exists".into());
     }
-    #[cfg(target_os = "linux")]
-    {
-        let Err(dbus_err) = show_items_via_dbus(&p).await else {
-            return Ok(());
-        };
-        let dir = p.parent().ok_or_else(|| "path has no parent".to_string())?;
-        std::process::Command::new("xdg-open")
-            .arg(dir)
-            .spawn()
-            .map_err(|e| format!("FileManager1 ({dbus_err}); xdg-open: {e}"))?;
-        Ok(())
-    }
-    // Non-Linux: reveal is owned by platform-desktop (opener plugin). Log-only
-    // no-op — the download already succeeded, so this is not a hard error and
-    // must NOT fall through to xdg-open (absent/meaningless off Linux).
-    #[cfg(not(target_os = "linux"))]
-    {
-        tracing::debug!(path = %p.display(), "reveal_in_downloads: skipped (non-Linux; platform-desktop reveal pending)");
-        Ok(())
-    }
+    app.opener()
+        .reveal_item_in_dir(&p)
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -534,5 +452,26 @@ mod tests {
         assert!(validate_filename("a/b.deb").is_err());
         assert!(validate_filename("a\\b.deb").is_err());
         assert!(validate_filename("..deb..").is_err());
+    }
+
+    #[test]
+    fn downloads_from_uses_dl_dir_when_available() {
+        assert_eq!(
+            downloads_from(Some(PathBuf::from("/d")), Some(PathBuf::from("/h"))),
+            PathBuf::from("/d")
+        );
+    }
+
+    #[test]
+    fn downloads_from_falls_back_to_home_downloads() {
+        assert_eq!(
+            downloads_from(None, Some(PathBuf::from("/h"))),
+            PathBuf::from("/h/Downloads")
+        );
+    }
+
+    #[test]
+    fn downloads_from_falls_back_to_tmp_when_both_none() {
+        assert_eq!(downloads_from(None, None), PathBuf::from("/tmp/Downloads"));
     }
 }

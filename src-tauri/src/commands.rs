@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use tauri::{AppHandle, Emitter, State};
+use tauri_plugin_opener::OpenerExt;
 
 use crate::agents::AgentId;
 use crate::agents::ThemePalette;
@@ -569,16 +570,8 @@ pub fn load_plan(
 // -- Notification command --
 
 #[tauri::command]
-pub fn send_notification(title: String, body: String) -> Result<(), String> {
-    std::process::Command::new("notify-send")
-        .arg("--app-name=nergal")
-        .arg("--expire-time=4000")
-        .arg("--urgency=normal")
-        .arg(&title)
-        .arg(&body)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    Ok(())
+pub fn send_notification(app: tauri::AppHandle, title: String, body: String) {
+    crate::notify::send(&app, &title, &body);
 }
 
 // -- Setup command --
@@ -3180,22 +3173,21 @@ pub fn obsidian_enabled(db: State<'_, SharedDb>, workspace_id: String) -> Result
     Ok(resolved.vault_root.is_some())
 }
 
-// xdg-open bypasses tauri-plugin-shell's hardcoded URL regex, which rejects
-// custom schemes by default. We validate the prefix in our own code so the
-// command never spawns xdg-open with anything outside our scheme allowlist.
+/// Reject any URI that doesn't match our allowlist BEFORE calling the opener —
+/// the Rust `app.opener().open_url()` call bypasses the plugin's ACL scope
+/// check, so this prefix gate is the sole security boundary (Decision 6/7).
+pub fn is_allowed_scheme(uri: &str) -> bool {
+    uri.starts_with("obsidian://") || uri.starts_with("nergal://")
+}
+
 #[tauri::command]
-pub fn obsidian_open_uri(uri: String) -> Result<(), String> {
-    if !uri.starts_with("obsidian://") && !uri.starts_with("nergal://") {
+pub fn obsidian_open_uri(app: tauri::AppHandle, uri: String) -> Result<(), String> {
+    if !is_allowed_scheme(&uri) {
         return Err(format!("refusing to open unknown scheme: {uri}"));
     }
-    std::process::Command::new("xdg-open")
-        .arg(&uri)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| format!("xdg-open: {e}"))?;
-    Ok(())
+    app.opener()
+        .open_url(&uri, None::<&str>)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -3816,7 +3808,7 @@ mod vault_read_tests {
 
 #[cfg(test)]
 mod config_merge_tests {
-    use super::merge_config_over;
+    use super::{is_allowed_scheme, merge_config_over};
     use crate::config::{Config, SummaryBackend, SummaryConfig};
 
     #[test]
@@ -3852,5 +3844,21 @@ mod config_merge_tests {
     #[test]
     fn non_object_payload_is_rejected() {
         assert!(merge_config_over(Config::default(), &serde_json::json!("nope")).is_err());
+    }
+
+    // Security boundary (Decision 7): the scheme allowlist is the sole guard
+    // because Rust app.opener().open_url() bypasses the plugin ACL scope check.
+    #[test]
+    fn is_allowed_scheme_permits_obsidian_and_nergal() {
+        assert!(is_allowed_scheme("obsidian://open?vault=MyVault"));
+        assert!(is_allowed_scheme("nergal://session/abc123"));
+    }
+
+    #[test]
+    fn is_allowed_scheme_rejects_other_schemes() {
+        assert!(!is_allowed_scheme("https://evil.example.com"));
+        assert!(!is_allowed_scheme("file:///etc/passwd"));
+        assert!(!is_allowed_scheme("javascript:alert(1)"));
+        assert!(!is_allowed_scheme(""));
     }
 }

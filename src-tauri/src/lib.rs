@@ -11,6 +11,7 @@ pub mod linear;
 pub mod mcp;
 mod migrate_legacy;
 mod models;
+mod notify;
 pub mod obsidian;
 mod openspec;
 mod plan_state;
@@ -304,6 +305,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -753,6 +755,21 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 feeds::run_status_feed(feed_app).await;
             });
+
+            // macOS gates notifications behind a per-app permission dialog. Resolve
+            // it on the main thread BEFORE spawning the pollers so no poller's first
+            // send races the "not-determined" window from a background thread.
+            // request_permission() is a no-op when already granted/denied; it only
+            // prompts when the state is Prompt/PromptWithRationale. A denied result
+            // is non-fatal — pollers start regardless; the warn path in
+            // notify::send handles individual send failures.
+            #[cfg(target_os = "macos")]
+            {
+                use tauri_plugin_notification::NotificationExt;
+                if let Err(e) = app_handle.notification().request_permission() {
+                    tracing::warn!("notification permission request failed: {e}");
+                }
+            }
 
             // ClickUp mirror poller. The loop parks itself when no token is
             // configured; token set/clear and team selection restart it.

@@ -25,6 +25,7 @@ clap = { version = "4", features = ["derive"] }
 tauri-plugin-dialog = "2.7"
 rusqlite = { version = "0.34", features = ["bundled"] }
 tauri-plugin-notification = "2"
+tauri-plugin-opener = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-updater = "2"
@@ -116,12 +117,6 @@ libc = "0.2"
 # Pinned to wry's version so we share one webkit2gtk build. Used only to connect
 # the main webview's `web-process-terminated` signal for crash recovery (BUG-01).
 webkit2gtk = "=2.0.2"
-# Updater "reveal in file manager": FileManager1.ShowItems over D-Bus
-# (file highlight + activation token so GNOME raises the window — xdg-open
-# spawns carry no token and lose to focus-stealing prevention). zbus is
-# Linux-only D-Bus; gated here so macOS compiles. platform-desktop later
-# replaces this reveal path with the cross-platform opener plugin.
-zbus = { version = "5", default-features = false, features = ["tokio"] }
 
 # clickup-sync / linear-sync: Personal API token storage in the OS keyring.
 # Per-target backend — no plaintext fallback, secret storage stays on a real

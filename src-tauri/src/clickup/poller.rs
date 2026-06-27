@@ -920,19 +920,10 @@ struct TauriEffects {
 
 impl SyncEffects for TauriEffects {
     fn notify(&mut self, title: &str, body: &str) {
-        // `notify-send` directly, matching the rest of the app (commands.rs
-        // send_notification). tauri_plugin_notification's `.show()` is
-        // unreliable under WebKitGTK and was failing silently here.
-        if let Err(e) = std::process::Command::new("notify-send")
-            .arg("--app-name=nergal")
-            .arg("--expire-time=5000")
-            .arg("--urgency=normal")
-            .arg(title)
-            .arg(body)
-            .spawn()
-        {
-            tracing::warn!("clickup assignment notify-send failed: {e}");
-        }
+        // Routed through crate::notify::send: Linux uses notify-send (primary
+        // path per Decision 3a — plugin's Ok(()) indistinguishable from silent
+        // no-display under WebKitGTK); macOS uses the notification plugin.
+        crate::notify::send(&self.app, title, body);
     }
 
     fn emit_changed(&mut self) {

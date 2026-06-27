@@ -12,6 +12,7 @@
     "release:dry": "node scripts/release.mjs --dry-run",
     "release:body": "node scripts/extract-release-body.mjs",
     "release:banner": "node scripts/update-previous-banner.mjs",
+    "release:merge-json": "node scripts/merge-latest-json.mjs",
     "release:test": "node --test scripts/release.test.mjs scripts/extract-release-body.test.mjs scripts/update-previous-banner.test.mjs"
   },
   "packageManager": "pnpm@10.28.2",

@@ -20,32 +20,41 @@ use tauri_plugin_opener::OpenerExt;
 pub enum InstallSource {
     Deb,
     Appimage,
+    MacApp,
     Dev,
     Unknown,
 }
 
-pub fn detect_install_source() -> InstallSource {
-    if env::var_os("APPIMAGE").is_some() {
+/// Pure classifier so the `.app/Contents/MacOS/` branch is unit-testable
+/// without the test binary's real `current_exe()` path (which is always
+/// under `target/` in CI).
+fn install_source_for_path(exe_str: &str, appimage_env: bool) -> InstallSource {
+    if appimage_env {
         return InstallSource::Appimage;
     }
-    let exe = match env::current_exe() {
-        Ok(p) => p,
-        Err(_) => return InstallSource::Unknown,
-    };
-    let exe_str = exe.to_string_lossy();
     if exe_str.ends_with(".AppImage") {
         return InstallSource::Appimage;
     }
-    if matches!(
-        exe_str.as_ref(),
-        "/usr/bin/nergal" | "/usr/local/bin/nergal"
-    ) {
+    // Matches /Applications/Nergal.app/Contents/MacOS/nergal and ~/Applications/...
+    if exe_str.contains(".app/Contents/MacOS/") {
+        return InstallSource::MacApp;
+    }
+    if matches!(exe_str, "/usr/bin/nergal" | "/usr/local/bin/nergal") {
         return InstallSource::Deb;
     }
     if exe_str.contains("/target/release/") || exe_str.contains("/target/debug/") {
         return InstallSource::Dev;
     }
     InstallSource::Unknown
+}
+
+pub fn detect_install_source() -> InstallSource {
+    let appimage_env = env::var_os("APPIMAGE").is_some();
+    let exe = match env::current_exe() {
+        Ok(p) => p,
+        Err(_) => return InstallSource::Unknown,
+    };
+    install_source_for_path(&exe.to_string_lossy(), appimage_env)
 }
 
 #[tauri::command]
@@ -107,6 +116,8 @@ pub struct UpdateCheckResult {
     pub deb_asset_size: Option<u64>,
     pub appimage_asset_url: Option<String>,
     pub appimage_asset_size: Option<u64>,
+    pub dmg_asset_url: Option<String>,
+    pub dmg_asset_size: Option<u64>,
 }
 
 const GITHUB_RELEASES_URL: &str = "https://api.github.com/repos/Mufdi/nergal/releases/latest";
@@ -192,6 +203,10 @@ pub async fn check_app_update() -> Result<UpdateCheckResult, String> {
         .assets
         .iter()
         .find(|a| a.name.ends_with(".AppImage"));
+    let dmg = release
+        .assets
+        .iter()
+        .find(|a| a.name.ends_with(".dmg") && a.name.contains("aarch64"));
     Ok(UpdateCheckResult {
         current_version: current,
         latest_version: latest,
@@ -202,6 +217,8 @@ pub async fn check_app_update() -> Result<UpdateCheckResult, String> {
         deb_asset_size: deb.map(|a| a.size),
         appimage_asset_url: appimage.map(|a| a.browser_download_url.clone()),
         appimage_asset_size: appimage.map(|a| a.size),
+        dmg_asset_url: dmg.map(|a| a.browser_download_url.clone()),
+        dmg_asset_size: dmg.map(|a| a.size),
     })
 }
 
@@ -402,8 +419,58 @@ mod tests {
 
     #[test]
     fn install_source_recognizes_dev_build_path() {
-        let exe = "/home/user/projects/nergal/src-tauri/target/release/nergal";
-        assert!(exe.contains("/target/release/"));
+        assert_eq!(
+            install_source_for_path(
+                "/home/user/projects/nergal/src-tauri/target/release/nergal",
+                false,
+            ),
+            InstallSource::Dev,
+        );
+    }
+
+    #[test]
+    fn install_source_recognizes_mac_app_bundle_path() {
+        assert_eq!(
+            install_source_for_path("/Applications/Nergal.app/Contents/MacOS/nergal", false),
+            InstallSource::MacApp,
+        );
+        // User Applications folder variant
+        assert_eq!(
+            install_source_for_path(
+                "/Users/user/Applications/Nergal.app/Contents/MacOS/nergal",
+                false,
+            ),
+            InstallSource::MacApp,
+        );
+    }
+
+    #[test]
+    fn install_source_classifier_regression() {
+        // Existing sources must be unaffected by the new MacApp probe.
+        assert_eq!(
+            install_source_for_path("/usr/bin/nergal", false),
+            InstallSource::Deb,
+        );
+        assert_eq!(
+            install_source_for_path("/usr/bin/Nergal_0.4.1_amd64.AppImage", false),
+            InstallSource::Appimage,
+        );
+        // APPIMAGE env var takes priority regardless of exe path
+        assert_eq!(
+            install_source_for_path("/usr/bin/nergal", true),
+            InstallSource::Appimage,
+        );
+        assert_eq!(
+            install_source_for_path(
+                "/home/user/projects/nergal/src-tauri/target/debug/nergal",
+                false,
+            ),
+            InstallSource::Dev,
+        );
+        assert_eq!(
+            install_source_for_path("/opt/nergal/nergal", false),
+            InstallSource::Unknown,
+        );
     }
 
     #[test]

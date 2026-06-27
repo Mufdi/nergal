@@ -5,12 +5,11 @@ on:
     tags:
       - 'v*'
 
-permissions:
-  contents: write
-
 jobs:
   build-linux:
     runs-on: ubuntu-22.04
+    permissions:
+      contents: read
     env:
       # Tauri's `bundleMediaFramework: true` for AppImage links GStreamer
       # at bundle time; the bundler reads this env var to discover the
@@ -68,26 +67,157 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build
 
+      - name: Emit Linux platform fragment
+        run: |
+          APPIMAGE=$(ls src-tauri/target/release/bundle/appimage/*.AppImage | xargs basename)
+          node scripts/generate-latest-json.mjs --fragment linux-x86_64 \
+            "src-tauri/target/release/bundle/appimage/$APPIMAGE.sig" \
+            "https://github.com/Mufdi/nergal/releases/download/$GITHUB_REF_NAME/$APPIMAGE" \
+            "$GITHUB_REF_NAME" \
+            ./linux-platform.json
+
+      - name: Upload Linux bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-artifacts
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/appimage/*.AppImage.sig
+
+      - name: Upload Linux platform fragment
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-platform
+          path: linux-platform.json
+
+  build-macos:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install JS deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build signed bundles
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri build
+
+      - name: Emit macOS platform fragment
+        run: |
+          TARBALL=$(ls src-tauri/target/release/bundle/macos/*.app.tar.gz | xargs basename)
+          node scripts/generate-latest-json.mjs --fragment darwin-aarch64 \
+            "src-tauri/target/release/bundle/macos/$TARBALL.sig" \
+            "https://github.com/Mufdi/nergal/releases/download/$GITHUB_REF_NAME/$TARBALL" \
+            "$GITHUB_REF_NAME" \
+            ./macos-platform.json
+
+      - name: Upload macOS bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-artifacts
+          path: |
+            src-tauri/target/release/bundle/macos/*.dmg
+            src-tauri/target/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
+
+      - name: Upload macOS platform fragment
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-platform
+          path: macos-platform.json
+
+  publish:
+    needs: [build-linux, build-macos]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install JS deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
       - name: Extract release body
         run: node scripts/extract-release-body.mjs "${GITHUB_REF_NAME#v}" > /tmp/release-body.md
 
-      - name: Generate latest.json updater manifest
-        run: node scripts/generate-latest-json.mjs "$GITHUB_REF_NAME" /tmp/latest.json
+      - name: Merge platform fragments into latest.json
+        run: |
+          node scripts/merge-latest-json.mjs \
+            artifacts/linux-platform/linux-platform.json \
+            artifacts/macos-platform/macos-platform.json \
+            /tmp/latest.json
 
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          PRERELEASE=""
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then PRERELEASE="--prerelease"; fi
           gh release create "$GITHUB_REF_NAME" \
+            $PRERELEASE \
             --title "Nergal $GITHUB_REF_NAME" \
             --notes-file /tmp/release-body.md \
-            src-tauri/target/release/bundle/deb/*.deb \
-            src-tauri/target/release/bundle/rpm/*.rpm \
-            src-tauri/target/release/bundle/appimage/*.AppImage \
-            src-tauri/target/release/bundle/appimage/*.AppImage.sig \
+            artifacts/linux-artifacts/* \
+            artifacts/macos-artifacts/* \
             /tmp/latest.json
 
       - name: Update previous-release banner
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/update-previous-banner.mjs "$GITHUB_REF_NAME"
+        # Skip for pre-release/smoke-test tags so the live latest release's
+        # banner is never clobbered.
+        run: |
+          if [[ "$GITHUB_REF_NAME" != *-* ]]; then
+            node scripts/update-previous-banner.mjs "$GITHUB_REF_NAME"
+          fi

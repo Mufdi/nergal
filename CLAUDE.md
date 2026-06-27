@@ -56,7 +56,7 @@ Two-step ship flow (see OpenSpec changes `release-script` + `release-ci-signed`)
 
 1. **In a Claude session**: say "cortemos v0.1.X" (or equivalent). Claude reads `git log <prev-tag>..HEAD` + relevant diffs + BUG-NN entries from the just-archived working file, writes a contextual user-facing CHANGELOG section, and prepends it to `CHANGELOG.md`. **The section must be COMPLETE, not a highlights reel** — but it is reader-facing release notes, not a commit log. Cross-check BOTH `git log <prev-tag>..HEAD` AND the BUG-NN registry so nothing user-perceivable is dropped (internal-only churn — refactors, openspec archival, the mechanical half of a rename — stays out). Grouping rule: **distinct capabilities each get their own line** (e.g. each Linear sub-feature, each MCP capability), but **facets of one feature/surface share a line** (e.g. the ports-popover fixes, two status-bar-layout fixes, two "modal didn't close" fixes) — completeness without a 50-bullet wall.
 2. **Run the script**: `pnpm release <patch|minor|major>` (or explicit `pnpm release 0.1.10`). The script verifies the CHANGELOG section is present, bumps versions in `package.json` + `src-tauri/Cargo.toml` + `src-tauri/tauri.conf.json`, refreshes `Cargo.lock`, commits `chore(release): vX.Y.Z`, tags, and pushes `main` + tag.
-3. **CI takes it from there**: `.github/workflows/release.yml` (triggered on `v*` tag push) builds, signs (via `TAURI_SIGNING_PRIVATE_KEY` repo secret), and publishes `.deb` + `.rpm` + `.AppImage` + `.AppImage.sig` + `latest.json`. Then prepends a "Latest release →" banner to the previous release. Monitor at https://github.com/Mufdi/nergal/actions.
+3. **CI takes it from there**: `.github/workflows/release.yml` (triggered on `v*` tag push) runs **three parallel jobs** — `build-linux` (ubuntu-22.04) and `build-macos` (macos-latest, Apple Silicon) build and sign their respective bundles independently, then `publish` downloads both artifact sets, merges the per-platform JSON fragments into a single `latest.json` (via `scripts/merge-latest-json.mjs`), creates the GitHub release with all assets (`.deb`, `.rpm`, `.AppImage`, `.AppImage.sig`, `.dmg`, `.app.tar.gz`, `.app.tar.gz.sig`, `latest.json`), and prepends a "Latest release →" banner to the previous release. Tags containing a `-` (e.g. `v0.0.0-test1`) publish as pre-releases and skip the banner, protecting `/releases/latest`. Monitor at https://github.com/Mufdi/nergal/actions.
 
 Versioning policy (when to pick `patch` vs `minor`, what counts as "breaking" while still in `0.x`, expectations for the eventual `1.0` cut) lives in the project's private notes — ask the user if you need it.
 
@@ -91,6 +91,17 @@ The pubkey is already pinned in `src-tauri/tauri.conf.json` under `plugins.updat
 ### Key rotation
 
 Regenerate the keypair, swap both repo secrets, replace `plugins.updater.pubkey` in `tauri.conf.json`, then cut a new release. AppImages signed with the old key cannot verify updates signed with the new key — this is expected behaviour and the only mitigation is for affected users to download the next release manually from GitHub.
+
+### Deferred: Apple notarization (macOS OS-level signing)
+
+macOS bundles ship unsigned today (Gatekeeper warning on first launch; bypass via right-click → Open). When ready, follow these six human-gated steps:
+
+1. Enroll in Apple Developer Program ($99/yr) and generate a Developer ID Application certificate at developer.apple.com.
+2. Export the cert as `.p12`, base64-encode it, and add two GH repo secrets: `APPLE_CERTIFICATE` (base64 content) and `APPLE_CERTIFICATE_PASSWORD`.
+3. Add three more GH secrets: `APPLE_SIGNING_IDENTITY` (e.g. `Developer ID Application: …`), `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_ID_PASSWORD`.
+4. Add a `codesign` + `notarytool submit --staple` step to the `build-macos` CI job in `.github/workflows/release.yml`, after `pnpm tauri build`.
+5. Cut a release; Gatekeeper warnings disappear for new `.dmg` downloads.
+6. Upgrade the About UI: change the `mac_app` branch in `renderUpdateButton` to call the `tauri-plugin-updater` auto-install path instead of the download-and-reveal flow (one-line change in `SettingsPanel.tsx`).
 
 ## Documentation TOC
 

@@ -1997,7 +1997,7 @@ const SECTIONS: { id: SectionId; label: string; icon: typeof FolderTree }[] = [
   { id: "about", label: "About", icon: Info },
 ];
 
-type InstallSource = "deb" | "appimage" | "dev" | "unknown";
+type InstallSource = "deb" | "appimage" | "mac_app" | "dev" | "unknown";
 
 interface UpdateCheckResult {
   currentVersion: string;
@@ -2009,6 +2009,8 @@ interface UpdateCheckResult {
   debAssetSize: number | null;
   appimageAssetUrl: string | null;
   appimageAssetSize: number | null;
+  dmgAssetUrl: string | null;
+  dmgAssetSize: number | null;
 }
 
 interface CurrentReleaseInfo {
@@ -2030,6 +2032,10 @@ type UpdateState =
 
 function debFilename(result: UpdateCheckResult): string {
   return result.debAssetUrl?.split("/").pop() ?? `Nergal_${result.latestVersion}_amd64.deb`;
+}
+
+function dmgFilename(result: UpdateCheckResult): string {
+  return result.dmgAssetUrl?.split("/").pop() ?? `Nergal_${result.latestVersion}_aarch64.dmg`;
 }
 
 function AboutSection({ appVersion }: { appVersion: string }) {
@@ -2071,6 +2077,16 @@ function AboutSection({ appVersion }: { appVersion: string }) {
           return;
         }
       }
+      if (installSource === "mac_app" && result.dmgAssetUrl) {
+        const staged = await invoke<string | null>("find_downloaded_update", {
+          filename: dmgFilename(result),
+          expectedSize: result.dmgAssetSize,
+        }).catch(() => null);
+        if (staged) {
+          setUpdateState({ kind: "downloaded", path: staged });
+          return;
+        }
+      }
       setUpdateState({ kind: "available", result });
     } catch (err) {
       setUpdateState({ kind: "error", message: String(err) });
@@ -2085,6 +2101,21 @@ function AboutSection({ appVersion }: { appVersion: string }) {
         url: result.debAssetUrl,
         filename: debFilename(result),
         expectedSize: result.debAssetSize,
+      });
+      setUpdateState({ kind: "downloaded", path });
+    } catch (err) {
+      setUpdateState({ kind: "error", message: String(err) });
+    }
+  }
+
+  async function handleDownloadDmg(result: UpdateCheckResult) {
+    if (!result.dmgAssetUrl) return;
+    setUpdateState({ kind: "downloading" });
+    try {
+      const path = await invoke<string>("download_app_update", {
+        url: result.dmgAssetUrl,
+        filename: dmgFilename(result),
+        expectedSize: result.dmgAssetSize,
       });
       setUpdateState({ kind: "downloaded", path });
     } catch (err) {
@@ -2174,6 +2205,7 @@ function AboutSection({ appVersion }: { appVersion: string }) {
   const sourceLabel = {
     deb: ".deb (system install)",
     appimage: "AppImage (portable)",
+    mac_app: ".app (macOS)",
     dev: "Dev build",
     unknown: "Unknown",
   }[installSource];
@@ -2233,6 +2265,7 @@ function AboutSection({ appVersion }: { appVersion: string }) {
           state={updateState}
           onCheck={handleCheck}
           onDownloadDeb={handleDownloadDeb}
+          onDownloadDmg={handleDownloadDmg}
           onReveal={handleReveal}
           onOpenRelease={handleOpenReleaseUrl}
           onUpdateAppImage={handleAppImageUpdate}
@@ -2338,6 +2371,7 @@ function UpdateActions({
   state,
   onCheck,
   onDownloadDeb,
+  onDownloadDmg,
   onReveal,
   onOpenRelease,
   onUpdateAppImage,
@@ -2347,6 +2381,7 @@ function UpdateActions({
   state: UpdateState;
   onCheck: () => void;
   onDownloadDeb: (result: UpdateCheckResult) => void;
+  onDownloadDmg: (result: UpdateCheckResult) => void;
   onReveal: (path: string) => void;
   onOpenRelease: (url: string) => void;
   onUpdateAppImage: () => void;
@@ -2357,6 +2392,7 @@ function UpdateActions({
     state,
     onCheck,
     onDownloadDeb,
+    onDownloadDmg,
     onReveal,
     onUpdateAppImage,
     onRelaunch,
@@ -2392,6 +2428,7 @@ function renderUpdateButton({
   state,
   onCheck,
   onDownloadDeb,
+  onDownloadDmg,
   onReveal,
   onUpdateAppImage,
   onRelaunch,
@@ -2400,6 +2437,7 @@ function renderUpdateButton({
   state: UpdateState;
   onCheck: () => void;
   onDownloadDeb: (result: UpdateCheckResult) => void;
+  onDownloadDmg: (result: UpdateCheckResult) => void;
   onReveal: (path: string) => void;
   onUpdateAppImage: () => void;
   onRelaunch: () => void;
@@ -2452,6 +2490,23 @@ function renderUpdateButton({
             <Download size={12} />
             Download v{result.latestVersion}
             {debSize ? ` (${debSize})` : ""}
+          </Button>
+        );
+      }
+      // mac_app follows the same download-and-reveal path as deb.
+      // Auto-install is not used on un-notarized builds (re-triggers Gatekeeper).
+      if (installSource === "mac_app" && result.dmgAssetUrl) {
+        const dmgSize = result.dmgAssetSize ? formatBytes(result.dmgAssetSize) : null;
+        return (
+          <Button
+            variant="default"
+            size="sm"
+            onClick={() => onDownloadDmg(result)}
+            className="w-fit"
+          >
+            <Download size={12} />
+            Download v{result.latestVersion}
+            {dmgSize ? ` (${dmgSize})` : ""}
           </Button>
         );
       }

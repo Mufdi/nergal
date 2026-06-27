@@ -4,7 +4,7 @@
 
 A GitHub Actions workflow at `.github/workflows/release.yml` SHALL trigger on `push` events for tags matching the pattern `v*`. On trigger, it SHALL build Linux desktop artifacts (`.deb`, `.rpm`, `.AppImage`) via `pnpm tauri build` on `ubuntu-22.04` **and** macOS desktop artifacts (`.dmg`, `.app.tar.gz`) via `pnpm tauri build` on `macos-latest`, then publish all artifacts as assets on a new GitHub release for the triggering tag.
 
-The workflow SHALL use a three-job structure: `build-linux` and `build-macos` run in parallel; the `publish` job depends on both, assembles `latest.json`, creates the release, and updates the previous-release banner. The `build-linux` job SHALL no longer call `gh release create` directly.
+The workflow SHALL use a three-job structure: `build-linux` and `build-macos` run in parallel; the `publish` job depends on both, assembles `latest.json`, creates the release, and (for non-prerelease tags only) updates the previous-release banner. The `build-linux` job SHALL no longer call `gh release create` directly.
 
 #### Scenario: Tag push triggers the workflow
 - **WHEN** a tag matching `v*` is pushed to origin (e.g., from `pnpm release patch`)
@@ -40,6 +40,20 @@ The workflow SHALL use a three-job structure: `build-linux` and `build-macos` ru
 - **AND** update the previous release's banner
 
 #### Scenario: Workflow creates GH release with all artifacts
-- **WHEN** the `publish` job runs
+- **WHEN** the `publish` job runs for a tag with no `-` (e.g. `v0.4.2`)
 - **THEN** the workflow SHALL invoke `gh release create <tag>` with `--title "Nergal <tag>"`, the release body extracted from CHANGELOG.md, and all artifacts as assets
 - **AND** the release SHALL be public (not a draft, not a prerelease)
+- **AND** the previous-release banner SHALL be updated
+
+#### Scenario: Pre-release tags do not become the live updater target
+- **GIVEN** a tag containing a `-` is pushed (semver pre-release convention, e.g. the smoke-test tag `v0.0.0-test1` or a future `v1.0.0-rc.1`)
+- **WHEN** the `publish` job runs
+- **THEN** `gh release create` SHALL be invoked with `--prerelease`
+- **AND** the previous-release banner update SHALL be SKIPPED
+- **AND** because GitHub `/releases/latest` excludes pre-releases, the existing release SHALL remain the target of the updater endpoint and of `check_app_update()` throughout — a smoke test never exposes live users to the throwaway build
+
+#### Scenario: Publish resolves fragments from downloaded artifacts
+- **GIVEN** `build-linux` and `build-macos` uploaded their platform fragments via `actions/upload-artifact`
+- **WHEN** the `publish` job runs `actions/download-artifact` with an explicit `path`
+- **THEN** it SHALL read the fragments from the per-artifact download directories (not the build jobs' local `/tmp` paths, which do not survive the artifact round-trip)
+- **AND** pass those resolved paths to `merge-latest-json.mjs`

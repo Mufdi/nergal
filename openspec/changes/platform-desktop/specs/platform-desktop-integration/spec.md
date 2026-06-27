@@ -41,7 +41,7 @@ The system SHALL resolve the user's downloads directory using `dirs::download_di
 
 ### Requirement: Reveal file in file manager via Tauri opener plugin
 
-The system SHALL reveal files and directories in the native file manager using `opener::reveal_item_in_dir`. The `show_items_via_dbus` function (D-Bus `org.freedesktop.FileManager1` `ShowItems`) and its `xdg-open <dir>` fallback in `reveal_in_downloads` SHALL be removed. The top-level `zbus` dependency in `Cargo.toml` SHALL be removed once confirmed unused outside the replaced call sites (note: the `keyring` crate retains its own transitive D-Bus stack on Linux).
+The system SHALL reveal files in the native file manager using `opener::reveal_item_in_dir` (for the downloaded-file case, whose argument is a file). The `show_items_via_dbus` function (D-Bus `org.freedesktop.FileManager1` `ShowItems`, now `#[cfg(target_os = "linux")]`) and its `xdg-open <dir>` fallback in `reveal_in_downloads` SHALL be removed. The Linux-gated `zbus` dependency under `[target.'cfg(target_os = "linux")'.dependencies]` in `Cargo.toml` SHALL be removed once confirmed unused outside the replaced call sites (note: the `keyring` crate retains its own transitive D-Bus stack on Linux).
 
 #### Scenario: Reveal downloaded file on macOS
 
@@ -60,7 +60,15 @@ The system SHALL reveal files and directories in the native file manager using `
 
 ### Requirement: Desktop notifications via Tauri notification plugin
 
-The system SHALL send desktop notifications using `tauri_plugin_notification::NotificationExt::notification().show()`. Direct subprocess invocations of `notify-send` SHALL NOT appear in any non-test source file. The three existing `notify-send` call sites (general `send_notification` in `commands.rs`, Linear assignment in `linear/mod.rs`, ClickUp assignment in `clickup/poller.rs`) SHALL all use the plugin.
+The system SHALL send desktop notifications through a single shared helper. The three existing `notify-send` call sites (general `send_notification` in `commands.rs`, Linear assignment in `linear/mod.rs`, ClickUp assignment in `clickup/poller.rs`) SHALL route through this helper and SHALL NOT spawn `notify-send` directly.
+
+On **macOS** the helper SHALL use `tauri_plugin_notification::NotificationExt::notification().show()` exclusively; no `notify-send` invocation SHALL appear.
+
+On **Linux** the helper's implementation SHALL be chosen from an empirical verification of whether the plugin's `.show()` actually displays a notification on the supported WebKitGTK build (the historical regression was a *silent* failure — `.show()` returned `Ok(())` while displaying nothing, which is not detectable at runtime):
+- If the plugin is verified to display, the helper SHALL use the plugin and no `notify-send` SHALL remain.
+- If the plugin still fails silently, the helper SHALL use a `#[cfg(target_os = "linux")]`-gated `notify-send` spawn as the primary Linux path (the prior behavior), and the plugin SHALL NOT be relied upon on Linux.
+
+A runtime `Ok`/`Err` toggle SHALL NOT be used as the silent-failure guard. Any residual `notify-send` SHALL exist only inside the gated helper, never at the three call sites.
 
 #### Scenario: General notification on macOS
 
@@ -70,22 +78,35 @@ The system SHALL send desktop notifications using `tauri_plugin_notification::No
 #### Scenario: General notification on Linux
 
 - **WHEN** `send_notification` is called with a title and body on Linux
-- **THEN** the OS SHALL display a native notification via the notification plugin
+- **THEN** the OS SHALL display a native notification via the shared helper (mechanism — plugin or gated `notify-send` — per the empirical-verification scenario)
 
 #### Scenario: Linear assignment notification
 
 - **WHEN** the Linear poller detects a new issue assigned to the user
-- **THEN** the system SHALL emit a desktop notification titled "Linear" via the notification plugin (and still emit the `linear:assigned` Tauri event for the in-app toast)
+- **THEN** the system SHALL emit a desktop notification titled "Linear" through the shared helper (and still emit the `linear:assigned` Tauri event for the in-app toast)
 
 #### Scenario: ClickUp assignment notification
 
 - **WHEN** the ClickUp poller detects a new task assigned to the user
-- **THEN** the system SHALL emit a desktop notification via the notification plugin (and still emit the `clickup:changed` Tauri event for the in-app toast)
+- **THEN** the system SHALL emit a desktop notification through the shared helper (and still emit the `clickup:changed` Tauri event for the in-app toast)
 
 #### Scenario: Notification plugin failure is non-fatal
 
 - **WHEN** the notification plugin call fails (e.g., permission denied on macOS Sandbox)
 - **THEN** the system SHALL log a warning at `tracing::warn!` level and continue; it SHALL NOT panic or return an error to the caller
+
+#### Scenario: Linux helper implementation chosen by empirical verification
+
+- **WHEN** the Linux notification path is implemented and the plugin's `.show()` has been verified against the supported WebKitGTK build
+- **THEN** if the plugin was observed to display, the helper SHALL use the plugin and retain no `notify-send`
+- **AND** if the plugin was observed to fail silently, the helper SHALL use a `#[cfg(target_os = "linux")]`-gated `notify-send` spawn as the primary Linux path
+- **AND** the three notification call sites SHALL NOT spawn `notify-send` directly (any residual `notify-send` lives only inside the gated helper)
+
+#### Scenario: macOS notification permission
+
+- **WHEN** notifications are first used on macOS and permission has not yet been granted or denied
+- **THEN** the system SHALL request notification permission via the plugin (`request_permission`)
+- **AND** a denied permission SHALL flow through the non-fatal warn path without panicking or erroring to the caller
 
 ### Requirement: System health check reflects new platform model
 

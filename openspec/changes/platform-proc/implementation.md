@@ -37,26 +37,29 @@
 - `shim.rs:163-185` — `session_hint_from_ancestors()` `#[cfg(target_os = "linux")]`: walks up to 8 parents from `std::process::id()`, reads `/proc/{pid}/environ`, returns first `NERGAL_SESSION_ID` else `CLAUDE_CODE_SESSION_ID`; stops at `pid <= 1`.
 - `shim.rs:187-190` — `session_hint_from_ancestors()` `#[cfg(not(target_os = "linux"))]` returns `None` (dead-on-macOS stub; Codex env recovery disabled there).
 
-### updater.rs (kernel diagnostics — minor)
-- `updater.rs:431-443` — `collect_diagnostics()` `#[tauri::command]`: `kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease")` (line 436), fallback `"unknown"`. Map to `sysinfo::System::kernel_version()` (or a `platform_proc::kernel_version()` wrapper) with the same `"unknown"` fallback.
+### updater.rs (OS diagnostics — BOTH reads reassigned from platform-compile's dropped D3)
+- `updater.rs:436-448` — `collect_diagnostics()` `#[tauri::command]`. Verified live 2026-06-26 (line numbers shifted ~+5 from earlier drafts after `platform-compile` landed). Two Linux-only reads, both reassigned here:
+  - `kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease")` (line 441), fallback `"unknown"`. Map to `platform_proc::kernel_version()` (`sysinfo::System::kernel_version()`) with the same fallback.
+  - `os = read_os_pretty_name().unwrap_or_else(|| "unknown".into())` (line 440). `read_os_pretty_name()` (`updater.rs:410-416`) does `std::fs::read_to_string("/etc/os-release")` and pulls `PRETTY_NAME`. On macOS `/etc/os-release` is absent → `None` → `OS: unknown`. Map to `platform_proc::os_name()` (`sysinfo::System::long_os_version()`, fallback `name()`+`os_version()`, then `"unknown"`). **This read is NOT under `/proc`**, so it compiles on macOS, silently degrades to `"unknown"`, and is invisible to the `grep -rn "/proc"` cleanup gate — it must be migrated as an explicit caller edit (see D6). Delete `read_os_pretty_name` once unused.
 
 ## Execution order
 
 1. **Prereq gate**: confirm `platform-compile` has landed `libc` → `cfg(unix)` and the `cargo check --target <macos>` CI gate. If not, block.
 2. **Deps + spike**: add `sysinfo` + `netstat2` (and `listeners` as spike fallback) to `Cargo.toml`. Run the D2a spike: does `netstat2` associate owning pids for LISTEN sockets on macOS? Record the verdict in design Open Questions.
-3. **New module** `src-tauri/src/platform_proc.rs` (or `platform_proc/mod.rs`): free functions — `kernel_version`, `process_cwd`, `descendants`, `kill_tree`, `kill_pid`, `listening_ports`, `port_owner`, `ancestor_env`. Register `mod platform_proc;` in `lib.rs`. Linux impl mirrors current `/proc` behaviour exactly first (parity), then add the `sysinfo`/`netstat2`-backed cross-platform impl.
+3. **New module** `src-tauri/src/platform_proc.rs` (or `platform_proc/mod.rs`): free functions — `kernel_version`, `os_name`, `process_cwd`, `descendants`, `kill_tree`, `kill_pid`, `listening_ports`, `port_owner`, `ancestor_env`. Register `mod platform_proc;` in `lib.rs`. **The shipped module is single-impl**: one `sysinfo`/`netstat2`-backed implementation that runs on both Linux and macOS (per D1/D4) — the crate handles per-OS internals. "Mirror current `/proc` behaviour exactly first (parity), then swap to the crate-backed impl" is a *dev-sequencing* tactic (build/diff against the live `/proc` output, then replace), NOT two coexisting shipped impls. Do NOT leave a lingering `#[cfg(target_os = "linux")]` `/proc` arm in the module — if one survives, step 5's `grep /proc` would wrongly bless it. The only `cfg(unix)` code that remains is the `libc::kill` signalling (D3).
 4. **Migrate callers low-risk → high-risk**, full check after each:
    a. `updater.rs` kernel version.
    b. `shim.rs` ancestor env (`parent_pid` + `session_hint_from_ancestors` → `platform_proc::ancestor_env`); delete both stubs.
    c. `pty.rs` `process_cwd` (delete the `cfg(not(linux))` stub) + `kill_process_tree` → `platform_proc::descendants` + `kill_tree`; `live_session_cwds` + the line-1332 tracker now call `platform_proc::process_cwd`.
    d. `browser.rs` ports: `read_listening_user_ports` → `platform_proc::listening_ports`; `port_process_info`/`listen_inode_for_port`/`pid_for_socket_inode`/`process_label`/`process_cwd_name` → `platform_proc::port_owner` feeding the kept pure `resolve_label`; `kill_port` SIGTERM → `platform_proc::kill_pid` (`cfg(unix)`).
-5. **Cleanup**: remove dead `/proc` consts and stubs; ensure no direct `/proc` path string remains outside `platform_proc` (`grep -rn "/proc" src/` should only hit the Linux impl in `platform_proc`).
+5. **Cleanup**: remove dead `/proc` consts and stubs; ensure no direct `/proc` path string remains outside `platform_proc` (`grep -rn "/proc" src/` should only hit `platform_proc`). Separately assert the OS-name migration was not skipped — `grep -rn "os-release\|read_os_pretty_name" src-tauri/src/` returns nothing outside `platform_proc` (the `/proc` grep cannot catch `/etc/os-release`).
 6. **Verify**: full check on Linux (no regression) + macOS acceptance walk.
 
 ## Plan
 
 ### platform_proc module (new)
 - `kernel_version() -> Option<String>` — `sysinfo::System::kernel_version()`.
+- `os_name() -> Option<String>` — `sysinfo::System::long_os_version()` (fallback `name()`+`os_version()`); replaces `read_os_pretty_name`'s `/etc/os-release` parse. Linux stays a distro string; macOS yields `macOS <ver>` (D6).
 - `process_cwd(pid: u32) -> Option<String>` — `sysinfo` process `.cwd()` → absolute path string; `None` on missing.
 - `descendants(root: u32) -> Vec<u32>` — build the pid→ppid map from a `sysinfo` refresh, BFS the descendant set of `root` excluding `root` and pid<=1. Mirrors `pty.rs:94-104` semantics.
 - `kill_tree(root: u32)` `cfg(unix)` — call `descendants`, SIGTERM descendants reversed, then `libc::kill(-(root), SIGTERM)` + `libc::kill(root, SIGTERM)` (preserve `pty.rs:107-115` ordering). Guard `pid > 1`.
@@ -66,7 +69,8 @@
 - `ancestor_env(keys: &[&str], max_depth: usize) -> Option<String>` — walk parents from `std::process::id()` via `sysinfo` `.parent()`, read each ancestor's environment (`sysinfo` `.environ()` or equivalent) for the first matching key; stop at depth or pid<=1. Mirrors `shim.rs:167-184`.
 
 ### Caller edits
-- `updater.rs:436` → `platform_proc::kernel_version().unwrap_or_else(|| "unknown".into())`.
+- `updater.rs:441` kernel → `platform_proc::kernel_version().unwrap_or_else(|| "unknown".into())`.
+- `updater.rs:440` os → `platform_proc::os_name().unwrap_or_else(|| "unknown".into())`; delete `read_os_pretty_name` (`:410-416`) once unused.
 - `shim.rs`: replace `parent_pid` + `session_hint_from_ancestors` (both cfgs) with one call to `platform_proc::ancestor_env(&["NERGAL_SESSION_ID","CLAUDE_CODE_SESSION_ID"], 8)`; keep pure `find_in_environ` only if still needed by tests, else fold into the module.
 - `pty.rs`: `Drop` (48-67) calls `platform_proc::kill_tree` on all unix (drop the linux/non-linux split — `kill_tree` now handles descendants cross-platform); delete `kill_process_tree` (75-116) and both `process_cwd` defs (118-128); point `live_session_cwds` (184) and the tracker (1332) at `platform_proc::process_cwd`.
 - `browser.rs`: route scan (93) through `platform_proc::listening_ports`; `port_process_info` (387) through `platform_proc::port_owner` + kept `resolve_label`; `kill_port` (411) through `platform_proc::kill_pid`; delete `PROC_NET_TCP*` consts, `listen_inode_for_port`, `pid_for_socket_inode`, `process_label`, `process_cwd_name` once unused. KEEP `resolve_label`, `basename`, `strip_script_ext`, `INTERPRETERS`, the port-range filter, and their tests.
@@ -86,5 +90,7 @@ Project full check (CLAUDE.md): `cd src-tauri && cargo clippy -- -D warnings && 
 Cross-platform compile (owned by `platform-compile`, exercised here): `cargo check --target aarch64-apple-darwin` (and/or x86_64) must pass.
 
 Change-specific manual checks:
-- **Linux (no-regression):** ports chip lists dev servers with correct labels/projects; `kill_port` frees an owned port; quake aux-shell cwd resolves on Enter; close a session whose shell spawned a `pnpm dev` in a new process group → server dies (BUG-06); Codex MCP session attribution intact; diagnostics shows a kernel version.
-- **macOS (acceptance):** ports chip discovers a `pnpm dev` listener with label/project; quake-shell cwd resolves; cross-session Codex env recovery returns the session id from an ancestor; diagnostics kernel string is non-`unknown`.
+- **Linux (no-regression):** ports chip lists dev servers with correct labels/projects; `kill_port` frees an owned port; quake aux-shell cwd resolves on Enter; close a session whose shell spawned a `pnpm dev` in a new process group → server dies (BUG-06); Codex MCP session attribution intact; diagnostics show BOTH a kernel version AND a distro `OS:` name (the `OS:` string must stay a distribution name, not regress to `"unknown"`).
+- **macOS (acceptance):** ports chip discovers a `pnpm dev` listener with label/project; quake-shell cwd resolves; cross-session Codex env recovery returns the session id from an ancestor (or the spike-documented `environ`-unreadable limitation holds); diagnostics `Kernel:` AND `OS:` fields are both non-`unknown` (`OS:` shows a `macOS …` string).
+
+**macOS coverage limit (stated):** macOS behavior is verified only by this manual acceptance walk. CI `cargo check --target` compiles but does not execute macOS code (no macOS test runner until `platform-bundle-ci`).

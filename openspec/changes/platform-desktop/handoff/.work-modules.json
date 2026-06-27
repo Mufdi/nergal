@@ -14,7 +14,9 @@
   "blocks": [],
   "rigor_applied": {
     "discovery_invoked": false,
-    "iprev_rounds": 0,
+    "iprev_rounds": 6,
+    "iprev_evaluator": "claude",
+    "iprev_verdict": "APPROVED",
     "iprev_triaged": true,
     "iprev_trigger": "files_estimate>=5 (mechanical, may waive)",
     "iprev_schedule": "DEFERRED until platform-compile is shipped. Then run iprev for the four sibling changes (proc/desktop/ipc/bundle-ci) in ONE parallel pass — they depend only on platform-compile (whose shipped decisions stabilize cargo check --target + the CI gate) and not on each other for plan review. Decided 2026-06-26.",
@@ -34,7 +36,8 @@
     "plugin_decision": "tauri-plugin-opener (open/url/reveal) + tauri-plugin-notification, replacing xdg-*/gtk-launch/notify-send/D-Bus FileManager1"
   },
   "events": [
-    { "ts": "2026-06-26", "type": "artifact-generation", "by": "architect-subagent", "model": "sonnet", "note": "proposal+specs(platform-desktop-integration + scratchpad delta)+design+tasks authored; openspec validate --strict passed" }
+    { "ts": "2026-06-26", "type": "artifact-generation", "by": "architect-subagent", "model": "sonnet", "note": "proposal+specs(platform-desktop-integration + scratchpad delta)+design+tasks authored; openspec validate --strict passed" },
+    { "ts": "2026-06-26", "type": "iprev", "by": "iprev-subagent", "evaluator": "claude", "persona": "architect", "rounds": 6, "verdict": "APPROVED", "note": "Mode A plan review. Reconciled artifacts against post-platform-compile source (zbus now Linux-gated at Cargo.toml:116, show_items_via_dbus cfg-gated, reveal_in_downloads two-branch). Replaced runtime Err-fallback notification fallacy with build-time empirical gate (Decision 3/3a, task 6.0) since silent .show() Ok-no-display is not runtime-detectable. Corrected opener API to OpenerExt Rust path (bypasses capability ACL -> in-code scheme allowlist is sole security boundary, Decision 6/7, now tested). Fixed scratchpad reveal file-vs-dir behavior change (open_path not reveal_item_in_dir). Added existence-guard retention, trait imports, macOS notif permission sequencing, hermetic unit tests, non-Linux cfg stub. Transcript in handoff/REVIEW.md." }
   ],
   "scope_note": "Mechanical swap of Linux-only desktop commands to cross-platform Tauri plugins. Depends on platform-compile. Lowest port risk. zbus may still be pulled transitively by keyring secret-service on Linux (no full removal claim).",
   "interview_ts": "2026-06-26"

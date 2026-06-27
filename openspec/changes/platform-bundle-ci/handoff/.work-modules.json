@@ -15,7 +15,10 @@
   "blocks": [],
   "rigor_applied": {
     "discovery_invoked": false,
-    "iprev_rounds": 0,
+    "iprev_rounds": 2,
+    "iprev_evaluator": "claude",
+    "iprev_verdict": "APPROVED",
+    "iprev_run_ts": "2026-06-26",
     "iprev_triaged": true,
     "iprev_trigger": "tier L + deep + files_estimate>=5",
     "iprev_schedule": "DEFERRED until platform-compile is shipped. Then run iprev for the four sibling changes (proc/desktop/ipc/bundle-ci) in ONE parallel pass — they depend only on platform-compile (whose shipped decisions stabilize cargo check --target + the CI gate) and not on each other for plan review. NOTE: bundle-ci EXECUTES last (needs the app running on macOS), but its PLAN can be iprev-reviewed in the same pass. Decided 2026-06-26.",
@@ -42,7 +45,8 @@
     "irreversible_ish": true
   },
   "events": [
-    { "ts": "2026-06-26", "type": "artifact-generation", "by": "architect-subagent", "model": "sonnet", "note": "proposal+specs(platform-distribution + release-ci-signed delta)+design+implementation+tasks authored; signing deferred section included; openspec validate --strict passed" }
+    { "ts": "2026-06-26", "type": "artifact-generation", "by": "architect-subagent", "model": "sonnet", "note": "proposal+specs(platform-distribution + release-ci-signed delta)+design+implementation+tasks authored; signing deferred section included; openspec validate --strict passed" },
+    { "ts": "2026-06-26", "type": "iprev", "by": "iprev-orchestrator", "model": "claude", "persona": "architect", "rounds": 2, "verdict": "APPROVED", "note": "R1 REVISE (2C/2H/3M/2L): category invalid under bundle.macOS (additionalProperties:false breaks build all-platforms); 'no frontend changes' false (deb-only gate + sourceLabel map + missing TS dmg fields -> added Phase 2B); latest.json darwin url must be .app.tar.gz not .dmg; v-prefix consistency (D2); smoke-test --prerelease guard (D7); download-artifact path resolution (D8); testable install_source_for_path seam. R2 APPROVED with 1M/2L residuals (upload-artifact LCA path -> own-named single-file fragment artifacts; dynamic macOS tarball name; banner-sentence qualifier) all fixed. validate --strict green throughout." }
   ],
   "scope_note": "Adds macOS packaging (.dmg/.app/.app.tar.gz.sig) + CI build matrix (ubuntu + macos runners) + multi-target latest.json + updater macOS asset resolution. Last in sequence (depends on the crate actually working on macOS). Signing deferred behind human gate.",
   "interview_ts": "2026-06-26"

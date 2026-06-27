@@ -9,7 +9,7 @@ Three subsystems read the Linux `/proc` filesystem directly — the port scanner
 - **Migrate `browser.rs`** — the largest ungated Linux-only subsystem — off `/proc/net/tcp{,6}`, `/proc/<pid>/fd`, `/proc/<pid>/{comm,cmdline,exe,cwd}` onto `platform_proc`. The port-owner SIGTERM (`kill_port`) stays `cfg(unix)`.
 - **Migrate `pty.rs`** process-tree kill (`kill_process_tree`) and `process_cwd` onto `platform_proc`, removing the `#[cfg(not(target_os = "linux"))]` cwd stub that returned `None`.
 - **Migrate `shim.rs`** ancestor PPID walk + `NERGAL_SESSION_ID` recovery onto `platform_proc`, removing the non-Linux stub — restoring Codex env recovery on macOS.
-- **Map `updater.rs` kernel-version diagnostic** (`/proc/sys/kernel/osrelease`) onto `sysinfo::System::kernel_version()`.
+- **Map both `updater.rs` OS diagnostics** onto cross-platform `sysinfo` sources: the kernel-version read (`/proc/sys/kernel/osrelease`) onto `sysinfo::System::kernel_version()`, AND the OS-name read (`read_os_pretty_name()` parsing `/etc/os-release`) onto `sysinfo::System::long_os_version()` (falling back to `name()`+`os_version()`). Both reads were formally reassigned here when the sibling `platform-compile` change dropped its D3 — `/etc/os-release` is absent on macOS, so without this the diagnostics `OS:` field renders `"unknown"` on every Mac.
 - Linux behaviour is preserved bit-for-bit (no regression); macOS is added behind the same interface. New per-OS branches are born `#[cfg]`-gated per the cross-platform invariant.
 
 ## Capabilities
@@ -28,7 +28,7 @@ Three subsystems read the Linux `/proc` filesystem directly — the port scanner
 ## Impact
 
 - **New dependency**: `sysinfo` + one TCP-listener crate (`netstat2` or `listeners`), added under appropriate `cfg` gating. Removes most direct `/proc` string parsing.
-- **Backend code**: `browser.rs` (port scanner + owner resolution + `kill_port`), `pty.rs` (`kill_process_tree`, `process_cwd`, `live_session_cwds`), `mcp/shim.rs` (`session_hint_from_ancestors`, `parent_pid`), `updater.rs` (`collect_diagnostics`). A new `platform_proc.rs` (or `platform_proc/` module) and its registration in `lib.rs`.
+- **Backend code**: `browser.rs` (port scanner + owner resolution + `kill_port`), `pty.rs` (`kill_process_tree`, `process_cwd`, `live_session_cwds`), `mcp/shim.rs` (`session_hint_from_ancestors`, `parent_pid`), `updater.rs` (`collect_diagnostics` — BOTH the kernel read AND `read_os_pretty_name`). A new `platform_proc.rs` (or `platform_proc/` module) and its registration in `lib.rs`.
 - **`libc`**: this change assumes the sibling `platform-compile` change has moved `libc` to `cfg(unix)` and established a `cargo check --target` CI gate, so the crate compiles on macOS. The `libc::kill` SIGTERM calls in `browser.rs`/`pty.rs` remain `cfg(unix)` (POSIX signals exist on macOS).
-- **Downstream features that regain macOS support**: ports status-bar chip + live-preview port discovery, quake-shell cwd resolution, cross-session Codex env recovery, kernel-version diagnostics.
+- **Downstream features that regain macOS support**: ports status-bar chip + live-preview port discovery, quake-shell cwd resolution, cross-session Codex env recovery, OS-name + kernel-version diagnostics.
 - **Tests**: existing pure-function tests in `browser.rs` (label resolution, port parsing) must keep passing; new tests cover the `platform_proc` interface against the live host.

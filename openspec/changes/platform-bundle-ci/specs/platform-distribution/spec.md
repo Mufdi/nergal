@@ -2,7 +2,7 @@
 
 ### Requirement: macOS bundle configuration declares a valid .app/.dmg target
 
-`src-tauri/tauri.conf.json` SHALL contain a `bundle.macOS` section specifying at minimum `minimumSystemVersion` (≥ "12.0") and a `category` matching the existing `bundle.category` value. The `bundle.targets` value "all" SHALL remain, allowing Tauri to build macOS targets on a macOS runner without a separate targets override. The existing `bundle.linux` section SHALL be preserved unchanged.
+`src-tauri/tauri.conf.json` SHALL contain a `bundle.macOS` section specifying `minimumSystemVersion` (≥ "12.0"). It SHALL NOT contain a `category` key: the Tauri 2 `MacConfig` schema is `additionalProperties: false` and has no `category` member, so adding one fails config-schema validation and breaks `pnpm tauri build` on every platform (including the Linux release path). The macOS app category SHALL continue to derive from the existing top-level `bundle.category`. The `bundle.targets` value "all" SHALL remain, allowing Tauri to build macOS targets on a macOS runner without a separate targets override. The existing `bundle.linux` section SHALL be preserved unchanged.
 
 #### Scenario: macOS section present and valid
 - **WHEN** `src-tauri/tauri.conf.json` is read on a macOS CI runner running `pnpm tauri build`
@@ -46,15 +46,16 @@ The macOS job SHALL NOT require `apt-get` or GStreamer env vars (those are Linux
 
 ### Requirement: latest.json covers all distribution platforms
 
-The `latest.json` updater manifest published as a GitHub release asset SHALL contain a `platforms` object with entries for every actively supported distribution platform. After this change, it SHALL include at minimum `linux-x86_64` and `darwin-aarch64`. Each entry SHALL contain `url` (pointing to the corresponding GitHub release asset download URL) and `signature` (the minisign `.sig` file content).
+The `latest.json` updater manifest published as a GitHub release asset SHALL contain a `platforms` object with entries for every actively supported distribution platform. After this change, it SHALL include at minimum `linux-x86_64` and `darwin-aarch64`. Each entry SHALL contain `url` and `signature` forming a CONSISTENT pair: `url` points to the **updater artifact** whose `.sig` content is in `signature` — the `.AppImage` (+`.AppImage.sig`) for `linux-x86_64` and the `.app.tar.gz` (+`.app.tar.gz.sig`) for `darwin-aarch64`. The `.dmg` SHALL NOT appear in `latest.json` (it is a manual-download asset surfaced only via `check_app_update().dmg_asset_url`); pairing a `.dmg` URL with a `.app.tar.gz` signature would fail updater verification.
 
-The merge process SHALL be deterministic: platform fragments emitted by each runner are downloaded by the `publish` job and merged via `scripts/merge-latest-json.mjs`. The `version`, `notes`, and `pub_date` fields SHALL be identical across fragments (keyed from the same tag + CHANGELOG).
+The merge process SHALL be deterministic: platform fragments emitted by each runner are downloaded by the `publish` job and merged via `scripts/merge-latest-json.mjs`. The `version` and `notes` fields SHALL be identical across fragments (keyed from the same tag + CHANGELOG); the merge SHALL abort if `version` differs. `pub_date` SHALL be generated once by the merge step (NOT carried in fragments, since per-runner clocks diverge). Fragments SHALL NOT contain `pub_date`.
 
 #### Scenario: Merged latest.json validates against Tauri updater schema
 - **GIVEN** a Linux fragment containing `linux-x86_64` and a macOS fragment containing `darwin-aarch64`
 - **WHEN** `merge-latest-json.mjs` combines them
-- **THEN** the output SHALL be a valid Tauri updater manifest with both platform entries
+- **THEN** the output SHALL be a valid Tauri updater manifest with both platform entries and a merge-generated `pub_date`
 - **AND** each entry SHALL have a non-empty `url` (GitHub asset download URL) and `signature` (`.sig` file contents)
+- **AND** the `darwin-aarch64.url` SHALL end with `.app.tar.gz` (the updater artifact), never `.dmg`
 
 #### Scenario: Tauri plugin updater on macOS resolves darwin-aarch64 entry
 - **GIVEN** the user is running Nergal on an Apple Silicon Mac
@@ -73,7 +74,7 @@ The merge process SHALL be deterministic: platform fragments emitted by each run
 
 The `check_app_update()` command SHALL add `dmg_asset_url: Option<String>` and `dmg_asset_size: Option<u64>` fields to `UpdateCheckResult`, populated by searching the GitHub release assets for a file ending `.dmg` and containing `aarch64` (for Apple Silicon). The existing `deb_asset_url` and `appimage_asset_url` fields SHALL remain.
 
-The About UI already branches on `InstallSource` to decide which download flow to offer. `MacApp` SHALL be treated identically to `Deb` at the UI level for this change: "download to ~/Downloads/ and reveal in Finder". Fully automated in-app update (via `tauri-plugin-updater` install flow) is deferred until Apple notarization is in place.
+The About UI (`src/components/settings/SettingsPanel.tsx`) branches on `InstallSource` to decide which download flow to offer, but its TypeScript `InstallSource` union, `UpdateCheckResult` interface, `sourceLabel` map, and download gate (`installSource === "deb"`) are currently Linux-only. This change SHALL extend them: add `"mac_app"` to the union, add `dmgAssetUrl`/`dmgAssetSize` to `UpdateCheckResult`, add a `mac_app` entry to `sourceLabel`, and broaden the download gate so `mac_app` follows the `deb`-style "download to ~/Downloads/ and reveal in Finder" flow reading `dmgAssetUrl`. `mac_app` SHALL NOT be routed through the `appimage` `tauri-plugin-updater` auto-install path — fully automated in-app update is deferred until Apple notarization is in place (auto-install on an un-notarized build re-triggers Gatekeeper).
 
 #### Scenario: detect_install_source on macOS .app install
 - **GIVEN** Nergal runs from `/Applications/Nergal.app/Contents/MacOS/nergal`

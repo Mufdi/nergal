@@ -15,10 +15,22 @@
   "blocks": [],
   "rigor_applied": {
     "discovery_invoked": false,
-    "iprev_rounds": 0,
+    "iprev_rounds": 5,
+    "iprev_evaluator": "claude",
+    "iprev_persona": "skeptic",
+    "iprev_verdict": "APPROVED",
+    "iprev_verdict_round": 5,
+    "iprev_run_ts": "2026-06-26",
+    "iprev_issue_counts": [
+      { "round": 1, "critical": 1, "high": 5, "medium": 5, "low": 2, "verdict": "REVISE" },
+      { "round": 2, "critical": 0, "high": 2, "medium": 3, "low": 1, "verdict": "REVISE" },
+      { "round": 3, "critical": 0, "high": 2, "medium": 2, "low": 2, "verdict": "REVISE" },
+      { "round": 4, "critical": 0, "high": 1, "medium": 2, "low": 3, "verdict": "REVISE" },
+      { "round": 5, "critical": 0, "high": 0, "medium": 0, "low": 3, "verdict": "APPROVED" }
+    ],
     "iprev_triaged": true,
     "iprev_trigger": "risk_tier critical (security) -> iprev STRONGLY recommended; opus evaluator",
-    "iprev_schedule": "DEFERRED until platform-compile is shipped. Then run iprev for the four sibling changes (proc/desktop/ipc/bundle-ci) in ONE parallel pass — they depend only on platform-compile (whose shipped decisions stabilize cargo check --target + the CI gate) and not on each other for plan review. NOTE: this one is security-critical -> use opus evaluator + run before any Windows-body work. Decided 2026-06-26.",
+    "iprev_schedule": "DONE 2026-06-26 (5 rounds, claude/skeptic, APPROVED). Transcript in handoff/REVIEW.md. Siblings proc/desktop/bundle-ci iprev still pending per original parallel-pass plan.",
     "reviewer_mode": "single-sequential",
     "reviewer_escalation": "security-reviewer mandatory (diff touches IPC auth)",
     "gates_phases_run": ["compile", "test", "lint", "security"],
@@ -37,7 +49,8 @@
   },
   "events": [
     { "ts": "2026-06-26", "type": "artifact-generation", "by": "architect-subagent", "model": "opus", "note": "proposal+specs+design+implementation+tasks authored; Windows tasks marked deferred; openspec validate --strict passed" },
-    { "ts": "2026-06-26", "type": "risk-flag", "reason": "IPC peer-auth security boundary -> risk_tier critical + mandatory security-reviewer at Mode B" }
+    { "ts": "2026-06-26", "type": "risk-flag", "reason": "IPC peer-auth security boundary -> risk_tier critical + mandatory security-reviewer at Mode B" },
+    { "ts": "2026-06-26", "type": "iprev", "by": "iprev-loop", "evaluator": "claude", "persona": "skeptic", "rounds": 5, "verdict": "APPROVED", "note": "5-round adversarial plan review. R1 critical: blocking FIFO approval gate had zero peer-auth. Major security revisions added: un-squattable per-user IPC dir (/run/user/<getuid()>, getpwuid fallback) closing squat-DoS+TOCTOU+forged-FIFO; getuid()-keyed resolver surviving Codex env-stripping; FIFO liveness deny via gui.pid pid+start-time token (flock-owned) + timer-driven non-blocking poll; CI comparison-branch test + committed sudo-u-nobody real-extraction harness against a relaxed-perm test socket (no false-green); hook-socket peer-uid backstop; corrected macOS LOCAL_PEERCRED semantics; constrained Windows loopback fallback. Transcript: handoff/REVIEW.md." }
   ],
   "scope_note": "Defines the full PlatformListener/PlatformStream cross-platform contract; macOS iteration implements only the unix path + trait seam + gating. Security-critical: any Windows transport must reproduce the 0600 + peer-uid guarantees. Depends on platform-compile.",
   "interview_ts": "2026-06-26"

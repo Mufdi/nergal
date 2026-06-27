@@ -85,11 +85,17 @@ The system SHALL walk a bounded number of ancestor processes by parent-pid and r
 - **WHEN** no ancestor within the bound carries the variable, or the walk reaches pid <= 1
 - **THEN** the recovery SHALL stop and return `None` without unbounded traversal
 
-### Requirement: Kernel version for diagnostics
+### Requirement: OS name and kernel version for diagnostics
 
-The system SHALL report the running kernel/OS version string in the diagnostics bundle via a cross-platform source, falling back to `"unknown"` when unavailable, instead of reading `/proc/sys/kernel/osrelease` directly.
+The system SHALL report BOTH the human-readable OS/distribution name AND the running kernel version string in the diagnostics bundle via cross-platform sources, each falling back to `"unknown"` when unavailable, instead of reading `/proc/sys/kernel/osrelease` (kernel) and `/etc/os-release` (OS name) directly. The OS-name source SHALL produce a meaningful value on macOS, where `/etc/os-release` does not exist.
 
 #### Scenario: Diagnostics include a kernel version on both platforms
 
 - **WHEN** the user collects a diagnostics bundle on Linux or macOS
-- **THEN** the bundle SHALL include a kernel/OS version string, or `"unknown"` if it cannot be read
+- **THEN** the bundle SHALL include a kernel version string, or `"unknown"` if it cannot be read
+
+#### Scenario: Diagnostics include an OS name on both platforms
+
+- **WHEN** the user collects a diagnostics bundle on macOS (where `/etc/os-release` is absent)
+- **THEN** the bundle's `OS:` field SHALL show a meaningful OS/version string (e.g. `macOS 14.x`) sourced cross-platform, NOT `"unknown"`
+- **AND** on Linux the `OS:` field SHALL remain a meaningful distribution string (no regression to `"unknown"` or a bare kernel string); byte-identity with the old `/etc/os-release` `PRETTY_NAME` is NOT required, since `sysinfo::System::long_os_version()` constructs an equivalent distro string

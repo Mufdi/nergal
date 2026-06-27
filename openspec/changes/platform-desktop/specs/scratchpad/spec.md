@@ -20,4 +20,4 @@ The scratchpad directory path SHALL be configurable via the application settings
 #### Scenario: Reveal in file manager
 
 - **WHEN** the user clicks "Reveal in file manager" in settings
-- **THEN** the system SHALL open the native file manager with the scratchpad directory highlighted via the platform desktop integration layer (`opener::reveal_item_in_dir`), without invoking any OS-specific subprocess directly
+- **THEN** the system SHALL open the scratchpad directory in the native file manager via the platform desktop integration layer (`opener::open_path` on the directory, preserving the prior "open the folder's contents" behavior), without invoking any OS-specific subprocess directly

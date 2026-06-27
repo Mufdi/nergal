@@ -41,7 +41,9 @@ Each build job emits a per-platform JSON fragment (`linux-platform.json`, `macos
 **Alternatives considered:**
 - *Inline the merge into the `generate-latest-json.mjs` script and run on the publish runner*: the script currently reads artifact paths from the local filesystem (`src-tauri/target/release/bundle/appimage/`). On the publish runner those paths don't exist (artifacts were built on the other runners). Would need to pass all artifact paths as CLI arguments — messy and fragile.
 - *Each runner generates a complete `latest.json` and they're merged*: merge logic must reconcile two full manifests; `version`, `notes`, and `pub_date` duplication creates a conflict vector.
-- *Fragment approach* (chosen): each runner emits only its platform entry (`{platform: "linux-x86_64", signature: "...", url: "..."}`) plus the shared fields (`version`, `notes`, `pub_date`). `merge-latest-json.mjs` is a simple merge with a shared-fields check.
+- *Fragment approach* (chosen): each runner emits only its platform entry (`{platform: "linux-x86_64", signature: "...", url: "..."}`) plus the shared fields (`version`, `notes`). `merge-latest-json.mjs` is a simple merge with a shared-fields check.
+
+**Shared-field consistency.** `version` and `notes` are deterministic from the same `$GITHUB_REF_NAME` + the same committed `CHANGELOG.md`, so they are byte-identical across fragments. `emitFragment` MUST mirror the existing `main()` representation in `generate-latest-json.mjs` (`version` = the raw `tag`, i.e. v-prefixed, matching the current shipped Linux manifest at `generate-latest-json.mjs:36`; `notes` computed from the bare version) so the two fragments never disagree. **`pub_date` is NOT a fragment field** — the two runners finish at different wall-clock times, so emitting `new Date().toISOString()` per runner would always differ. The `publish`/merge step generates a single `pub_date` once when assembling `latest.json`. (Whether the manifest `version` should be bare semver rather than v-prefixed is a PRE-EXISTING question for the shipped Linux path and is intentionally out of scope here — this change only requires the macOS fragment to match the Linux one.)
 
 ### D3: Target darwin-aarch64 only (no Intel, no universal binary)
 
@@ -57,6 +59,12 @@ The `tauri-plugin-updater` CAN do fully automated update installation on macOS (
 
 **Decision**: `MacApp` install source → About page offers "Download .dmg and open in Finder" (same as `.deb` flow), not auto-install. When notarization is added, the About page can be upgraded to invoke the plugin's install path with a one-line change.
 
+**Two distinct update mechanisms exist and must not be conflated** (verified in `SettingsPanel.tsx`):
+- **(A) `@tauri-apps/plugin-updater`** reads `latest.json`. `handleAppImageUpdate()` calls its `check()` + `downloadAndInstall()` — the AUTO-INSTALL path, gated on `installSource === "appimage"`. For this mechanism the `latest.json` `darwin-aarch64.url` MUST point to the `.app.tar.gz` (the updater artifact whose `.sig` is in `signature`), NOT the `.dmg`. Pairing a `.dmg` URL with a `.app.tar.gz.sig` signature would fail verification and cannot install a `.dmg`. The `mac_app` UI branch does NOT call this path (avoids the Gatekeeper regression above); the entry exists only so the manifest is well-formed for the future notarized auto-install upgrade and for any background plugin check.
+- **(B) custom Rust `check_app_update()`** hits the GitHub API directly and returns `deb_asset_url`/`appimage_asset_url`/(new)`dmg_asset_url`. This is the MANUAL download-and-reveal path. The `.dmg` URL belongs here, surfaced to the `mac_app` UI branch as `dmgAssetUrl`.
+
+**Frontend is NOT zero-change.** The About panel's `InstallSource` union, `UpdateCheckResult` interface, `sourceLabel` map, and download gate (`installSource === "deb"`) are Linux-only; they must be extended for `mac_app` (see tasks Phase 2.5). The `mac_app` branch reuses the `deb` download-and-reveal rendering, reading `dmgAssetUrl`/`dmgAssetSize`.
+
 The minisign signature is still verified by the updater at download time (artifact integrity), which is the more important security property.
 
 ### D5: Cargo.toml and lib.rs untouched by this change
@@ -70,6 +78,16 @@ The deferred gate covers:
 - **Windows code signing**: EV cert (~$300-500/yr) or cloud signing service. Out of scope for this change entirely.
 
 These are NOT tasks in this change. They are documented as follow-up human gates in `CLAUDE.md` and in tasks.md's "Deferred" section.
+
+### D7: Pre-release tags publish as GitHub pre-releases (smoke-test safety)
+
+The CI smoke test pushes a throwaway tag (`v0.0.0-test1`). The updater endpoint is `releases/latest/download/latest.json`, and GitHub's `/releases/latest` resolves to the most recent **non-prerelease, non-draft** release. A plain `gh release create` makes a full release, so the test tag would briefly become every live user's update target and `update-previous-banner.mjs` would clobber the real latest release's banner.
+
+**Decision**: the `publish` job's `gh release create` passes `--prerelease` **when `$GITHUB_REF_NAME` contains a hyphen** (semver pre-release convention — `v0.0.0-test1`, future `v1.0.0-rc.1`, etc.). Real releases (`v0.4.1`) have no hyphen and remain full releases. This keeps `/releases/latest` and `check_app_update()` (which already rejects prereleases) pointed at the last real release throughout the smoke test, and the banner script is skipped for prerelease tags. No throwaway repo required.
+
+### D8: macOS fragment artifacts are resolved from `download-artifact` output dirs, not `/tmp`
+
+`actions/upload-artifact@v4` + `download-artifact@v4` do NOT round-trip absolute `/tmp` paths: downloaded artifacts land under a per-artifact directory (e.g. `artifacts/linux-artifacts/...`). The `publish` job therefore resolves the fragment + bundle paths from the download target directory, not the `/tmp/*.json` paths the build jobs wrote locally. The merge and `gh release create` globs reference the downloaded layout.
 
 ## Risks / Trade-offs
 

@@ -99,9 +99,11 @@ fs2 = "0.4"
 
 # platform_proc: cross-platform process/port introspection replacing hand-rolled
 # /proc reads. sysinfo provides process tree, cwd, environ, and system info
-# (kernel version, OS name). listeners enumerates LISTEN sockets with owning
-# pid — pure-Rust on Linux/macOS (hand-written libproc FFI on macOS, no
-# bindgen), no build script for those targets.
+# (kernel version, OS name). listeners attributes a LISTEN port to its owning
+# process (pure-Rust, no build script on Linux/macOS). The system-wide port
+# LIST on Linux comes from a direct /proc/net/tcp read inside platform_proc —
+# listeners only enumerates the current user's sockets, so a root-owned
+# docker-proxy port would otherwise vanish from the chip (see listening_ports).
 sysinfo = "0.33"
 listeners = "0.6"
 

@@ -7,7 +7,10 @@
 //! on both platforms, and `sysinfo`'s `Process::kill_with` lacks the `kill(-pgid)`
 //! call that BUG-06 requires (kills processes in a *new* process group).
 
-use listeners::{Protocol, SocketState};
+use listeners::Protocol;
+// SocketState only filters the listeners-backed list, which is the non-Linux path.
+#[cfg(not(target_os = "linux"))]
+use listeners::SocketState;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 /// Lower bound for the user-port filter (inclusive). Mirrors the constant in
@@ -121,8 +124,34 @@ pub fn kill_pid(pid: u32) -> std::io::Result<()> {
 // ── Port scanner ─────────────────────────────────────────────────────────────
 
 /// All TCP ports in LISTEN state (v4 + v6), sorted ascending, deduped,
-/// filtered to the user-port range [`MIN_PORT`, `MAX_PORT`]. Replaces the
-/// `/proc/net/tcp{,6}` + `parse_listening_ports` pipeline in `browser.rs`.
+/// filtered to the user-port range [`MIN_PORT`, `MAX_PORT`].
+///
+/// On Linux the source is a direct read of `/proc/net/tcp{,6}` (world-readable,
+/// kernel socket table) so it sees EVERY listening socket system-wide —
+/// including a root-owned `docker-proxy` port a non-root user cannot attribute.
+/// `listeners` walks `/proc/<pid>/fd` of the current user's processes only, so
+/// it would silently drop those Docker ports from the chip (regression). Owner
+/// attribution (the part a non-root user genuinely cannot do for root's
+/// sockets) is the separate, best-effort concern of `port_owner`.
+#[cfg(target_os = "linux")]
+pub fn listening_ports() -> Vec<u16> {
+    let mut ports = Vec::new();
+    for path in ["/proc/net/tcp", "/proc/net/tcp6"] {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            ports.extend(parse_proc_net_listen_ports(&content));
+        }
+    }
+    ports.sort_unstable();
+    ports.dedup();
+    ports.retain(|&p| (MIN_PORT..=MAX_PORT).contains(&p));
+    ports
+}
+
+/// Non-Linux (macOS): `listeners` enumerates the current user's LISTEN sockets.
+/// Docker Desktop on macOS forwards ports through a user-owned helper process,
+/// so those ports remain visible here (the root-owned-proxy problem is a Linux
+/// networking detail that does not arise on macOS).
+#[cfg(not(target_os = "linux"))]
 pub fn listening_ports() -> Vec<u16> {
     let Ok(all) = listeners::get_all() else {
         return Vec::new();
@@ -136,6 +165,28 @@ pub fn listening_ports() -> Vec<u16> {
     ports.dedup();
     ports.retain(|&p| (MIN_PORT..=MAX_PORT).contains(&p));
     ports
+}
+
+/// Parse the LISTEN local ports out of a `/proc/net/tcp{,6}` buffer. Columns
+/// are whitespace-separated; field 1 is `local_addr:port` (hex), field 3 is the
+/// connection state (`0A` == TCP_LISTEN). Unparseable lines are skipped.
+#[cfg(target_os = "linux")]
+fn parse_proc_net_listen_ports(content: &str) -> Vec<u16> {
+    const TCP_LISTEN: &str = "0A";
+    content
+        .lines()
+        .skip(1) // header row
+        .filter_map(|line| {
+            let mut cols = line.split_whitespace();
+            let local = cols.nth(1)?; // field 1: local_address
+            let state = cols.nth(1)?; // field 3 (two past field 1)
+            if state != TCP_LISTEN {
+                return None;
+            }
+            let port_hex = local.rsplit(':').next()?;
+            u16::from_str_radix(port_hex, 16).ok()
+        })
+        .collect()
 }
 
 /// Process attributes for the owner of a LISTEN socket — inputs to
@@ -193,8 +244,8 @@ pub fn port_owner(port: u16) -> Option<PortOwner> {
             .map(|n| n.to_string_lossy().into_owned());
         (args, exe_base, comm, cwd_basename)
     } else {
-        // Process exited between listeners scan and sysinfo refresh — use
-        // listeners' name/path as a minimal fallback for labelling.
+        // Process exited between the listeners scan and the sysinfo refresh —
+        // use listeners' name/path as a minimal labelling fallback.
         let exe_base = std::path::Path::new(&lproc.path)
             .file_name()
             .map(|n| n.to_string_lossy().into_owned());
@@ -293,5 +344,20 @@ mod tests {
         // With no matching ancestors, must return None, not panic.
         let result = ancestor_env(&["__DEFINITELY_NOT_SET_KEY_XYZ__"], 4);
         assert!(result.is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn parses_listen_ports_skipping_non_listen() {
+        // Real /proc/net/tcp shape: header + 5432 (0x1538) LISTEN (0A),
+        // a port-80 ESTABLISHED (01) that must be skipped, and a v6-style
+        // long local_address LISTEN on 3000 (0x0BB8).
+        let sample = "  sl  local_address rem_address   st tx_queue\n   \
+            0: 0100007F:1538 00000000:0000 0A 00000000:00000000\n   \
+            1: 0100007F:0050 0A00A8C0:9AF1 01 00000000:00000000\n   \
+            2: 00000000000000000000000001000000:0BB8 00000000000000000000000000000000:0000 0A 00000000:00000000\n";
+        let mut ports = parse_proc_net_listen_ports(sample);
+        ports.sort_unstable();
+        assert_eq!(ports, vec![3000, 5432]);
     }
 }

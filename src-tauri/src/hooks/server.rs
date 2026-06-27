@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::Result;
 use tauri::{AppHandle, Emitter, Manager};
@@ -10,6 +11,7 @@ use crate::agents::AgentId;
 use crate::agents::state::AgentRuntimeState;
 use crate::db::SharedDb;
 use crate::plan_state::SharedPlanState;
+use crate::platform::RejectionRateLimit;
 
 /// Flat event structure the frontend expects.
 #[derive(Clone, serde::Serialize)]
@@ -196,21 +198,77 @@ pub async fn start_hook_server(
     plan_state: SharedPlanState,
     agent_state: AgentRuntimeState,
 ) -> Result<()> {
+    // Conditional probe: ECONNREFUSED = provably dead stale socket → safe to unlink.
+    // Do NOT unlink unconditionally — a second launch must not evict the live server.
+    // (The flock in IpcLockFile is the primary guard; this is the per-bind backstop.)
+    #[cfg(unix)]
+    if socket_path.exists() {
+        if crate::platform::probe_socket_alive(socket_path) {
+            tracing::warn!(
+                ipc_event = "bind_deferred",
+                path = %socket_path.display(),
+                "live hook socket found at startup; deferring bind"
+            );
+            // Return Ok — the live instance is already serving.
+            return Ok(());
+        }
+        std::fs::remove_file(socket_path)?;
+    }
+    #[cfg(not(unix))]
     if socket_path.exists() {
         std::fs::remove_file(socket_path)?;
     }
 
     let listener = UnixListener::bind(socket_path)?;
-    // 0600: a permissive umask would let other local users inject spoofed
-    // hook events (session state, attention indicators, Obsidian writes).
+    // 0600: defence-in-depth behind the per-user 0700 IPC dir. A permissive
+    // umask would otherwise let other local users inject spoofed hook events
+    // (session state, attention indicators, Obsidian writes).
+    // Gated #[cfg(unix)] matching mcp/transport.rs:83 so the crate compiles
+    // under a Windows target (owner-only ACL provided by the named-pipe
+    // security descriptor there — deferred Windows iteration).
+    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))?;
     }
     tracing::info!("hook server listening on {}", socket_path.display());
 
+    // Current process uid — connections from any other uid are rejected.
+    // WHY: the per-user 0700 IPC dir makes this unreachable by a different uid
+    // in normal operation. The check is defence-in-depth closing the brief
+    // create→chmod TOCTOU window on the socket file itself.
+    #[cfg(unix)]
+    let app_uid = unsafe { libc::getuid() };
+
+    let rejection_log: Arc<RejectionRateLimit> = Arc::new(RejectionRateLimit::new());
+
     loop {
         let (stream, _addr) = listener.accept().await?;
+
+        // Peer-uid gate: reject and log any connection from a foreign uid
+        // BEFORE reading any line. This closes the create→chmod TOCTOU window
+        // and provides defence-in-depth behind the 0700 IPC dir.
+        // The rejection_log rate-limits so a spammer cannot fill the disk.
+        #[cfg(unix)]
+        {
+            match crate::platform::peer_uid_of(&stream) {
+                Ok(uid) if uid != app_uid => {
+                    rejection_log.report(uid, "hook");
+                    // stream dropped here → connection closed without reading
+                    continue;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        ipc_event = "peer_rejected",
+                        error = %e,
+                        "hook: could not extract peer uid; dropping connection"
+                    );
+                    continue;
+                }
+                Ok(_) => {} // same uid — proceed
+            }
+        }
+
         let app = app.clone();
         let db = db.clone();
         let plan_state = plan_state.clone();

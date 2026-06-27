@@ -65,11 +65,17 @@ fn main() {
         None => nergal::run(),
 
         Some(Commands::Hook { action }) => {
-            let config = nergal::config::Config::load();
+            // Always derive the socket path from the per-user IPC resolver
+            // (same getuid()-keyed path the GUI binds). The config path is
+            // only a fallback in case the resolver fails (misconfigured host).
+            let socket_path = nergal::platform::hook_socket_path().unwrap_or_else(|e| {
+                eprintln!("nergal: IPC dir resolver failed: {e:#}; using config path");
+                nergal::config::Config::load().hook_socket_path.clone()
+            });
 
             match action {
                 HookAction::Send { .. } => {
-                    if let Err(e) = nergal::hooks::cli::send_hook_event(&config.hook_socket_path) {
+                    if let Err(e) = nergal::hooks::cli::send_hook_event(&socket_path) {
                         eprintln!("nergal hook send: {e:#}");
                         std::process::exit(1);
                     }
@@ -81,19 +87,19 @@ fn main() {
                     }
                 }
                 HookAction::PlanReview => {
-                    if let Err(e) = nergal::hooks::cli::plan_review(&config.hook_socket_path) {
+                    if let Err(e) = nergal::hooks::cli::plan_review(&socket_path) {
                         eprintln!("nergal hook plan-review: {e:#}");
                         std::process::exit(1);
                     }
                 }
                 HookAction::AskUser => {
-                    if let Err(e) = nergal::hooks::cli::ask_user(&config.hook_socket_path) {
+                    if let Err(e) = nergal::hooks::cli::ask_user(&socket_path) {
                         eprintln!("nergal hook ask-user: {e:#}");
                         std::process::exit(1);
                     }
                 }
                 HookAction::Notification => {
-                    if let Err(e) = nergal::hooks::cli::notification(&config.hook_socket_path) {
+                    if let Err(e) = nergal::hooks::cli::notification(&socket_path) {
                         eprintln!("nergal hook notification: {e:#}");
                         std::process::exit(1);
                     }
@@ -108,8 +114,11 @@ fn main() {
         }
 
         Some(Commands::RescanAgents) => {
-            let config = nergal::config::Config::load();
-            if let Err(e) = nergal::hooks::cli::send_rescan_agents(&config.hook_socket_path) {
+            let socket_path = nergal::platform::hook_socket_path().unwrap_or_else(|e| {
+                eprintln!("nergal: IPC dir resolver failed: {e:#}; using config path");
+                nergal::config::Config::load().hook_socket_path.clone()
+            });
+            if let Err(e) = nergal::hooks::cli::send_rescan_agents(&socket_path) {
                 eprintln!("nergal rescan-agents: {e:#}");
                 std::process::exit(1);
             }

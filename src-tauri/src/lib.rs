@@ -15,6 +15,7 @@ mod notify;
 pub mod obsidian;
 mod openspec;
 mod plan_state;
+pub mod platform;
 mod platform_proc;
 mod pty;
 pub mod scratchpad;
@@ -628,8 +629,30 @@ pub fn run() {
             }
 
             let app_handle = app.handle().clone();
-            let socket_path = config.hook_socket_path.clone();
+            // Always compute the socket path from the per-user IPC dir resolver
+            // (keyed off getuid(), never stored in config). This guarantees that
+            // both the GUI (bind) and the CLI hooks (connect) derive the identical
+            // path regardless of env differences (Codex sanitizes the MCP shim env).
+            let socket_path = match crate::platform::hook_socket_path() {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::error!(
+                        ipc_event = "bind_failure",
+                        "cannot resolve per-user IPC dir for hook socket: {e:#}; \
+                         falling back to config path"
+                    );
+                    config.hook_socket_path.clone()
+                }
+            };
             let transcripts_dir = config.transcripts_directory.clone();
+
+            // Write the GUI liveness token so hook-CLI plan-review can detect
+            // GUI death without relying on a connection (FIFO is connectionless).
+            if let Ok(ipc_dir) = crate::platform::ipc_dir()
+                && let Err(e) = crate::platform::write_gui_pid(&ipc_dir)
+            {
+                tracing::warn!("failed to write gui.pid liveness token: {e:#}");
+            }
 
             let deep_link_emitter = app_handle.clone();
             app.deep_link().on_open_url(move |event| {
@@ -686,7 +709,7 @@ pub fn run() {
                         };
                         crate::mcp::serve(transport, ctx).await;
                     }
-                    Err(e) => tracing::error!("mcp daemon bind error: {e}"),
+                    Err(e) => tracing::error!(ipc_event = "bind_failure", "mcp daemon bind error: {e}"),
                 }
             });
 

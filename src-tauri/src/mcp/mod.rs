@@ -41,9 +41,20 @@ const INTERNAL_ERROR: i64 = -32603;
 /// Server is reachable but disabled by the user (default-off posture).
 const MCP_DISABLED: i64 = -32001;
 
-/// Dedicated MCP socket path (per-user temp dir). NOT the hook socket.
+/// Dedicated MCP socket path inside the per-user IPC dir. NOT the hook socket.
+///
+/// WHY platform::mcp_socket_path() not a hardcoded temp_dir(): on Linux
+/// temp_dir() is the shared sticky /tmp — a foreign-uid process can squat
+/// the socket name before we bind. The platform resolver places the socket
+/// inside /run/user/<uid>/nergal/ which only the owner-uid can write.
 pub fn socket_path() -> PathBuf {
-    std::env::temp_dir().join("nergal-mcp.sock")
+    crate::platform::mcp_socket_path().unwrap_or_else(|e| {
+        tracing::warn!(
+            ipc_event = "bind_failure",
+            "mcp_socket_path resolver failed: {e:#}; using temp_dir fallback (unsafe)"
+        );
+        std::env::temp_dir().join("nergal-mcp.sock")
+    })
 }
 
 /// Toggle the MCP server: persist the flag and (de)register the shim in agent

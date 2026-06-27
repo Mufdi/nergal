@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 use std::io::{Read, Write};
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -13,7 +12,7 @@ use crate::hooks::state::HookState;
 /// running — the connection error is surfaced to the caller.
 pub fn send_rescan_agents(socket_path: &Path) -> Result<()> {
     let payload = r#"{"kind":"control","op":"rescan_agents"}"#;
-    let mut stream = UnixStream::connect(socket_path)
+    let mut stream = crate::platform::sync_connect(socket_path)
         .with_context(|| format!("connecting to {}", socket_path.display()))?;
     stream
         .write_all(payload.as_bytes())
@@ -44,7 +43,7 @@ pub fn send_hook_event(socket_path: &Path) -> Result<()> {
 
     let payload = serde_json::to_string(&json).context("serializing JSON")?;
 
-    let mut stream = UnixStream::connect(socket_path)
+    let mut stream = crate::platform::sync_connect(socket_path)
         .with_context(|| format!("connecting to {}", socket_path.display()))?;
 
     stream
@@ -108,8 +107,33 @@ pub fn inject_edits() -> Result<()> {
     Ok(())
 }
 
-/// FIFO guard — removes the FIFO on drop.
+/// FIFO guard — unlinks the FIFO on drop (RAII cleanup).
+///
+/// Also treats a pre-existing FIFO as hostile: the constructor removes any
+/// pre-existing path before use so a stale/pre-seeded decision from a crashed
+/// run or a recycled PID cannot be read as a live answer.
 struct FifoGuard(PathBuf);
+
+impl FifoGuard {
+    /// Create a FIFO at `path`, removing any pre-existing file first.
+    ///
+    /// WHY remove pre-existing: a stale FIFO from a crashed run could still
+    /// hold a forged `allow` written by an attacker who guessed the path.
+    /// Unconditional removal-on-entry closes this pre-seeding attack.
+    #[cfg(unix)]
+    fn create(path: PathBuf) -> anyhow::Result<Self> {
+        if path.exists() {
+            std::fs::remove_file(&path).with_context(|| {
+                format!("removing hostile pre-existing FIFO {}", path.display())
+            })?;
+        }
+        std::process::Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .context("creating FIFO")?;
+        Ok(Self(path))
+    }
+}
 
 impl Drop for FifoGuard {
     fn drop(&mut self) {
@@ -117,11 +141,34 @@ impl Drop for FifoGuard {
     }
 }
 
+/// Human-scale wall-clock backstop for the plan-review blocking wait.
+/// The deliberation can legitimately take minutes; this avoids hanging forever
+/// when neither the GUI death detector nor the human resolves the prompt.
+const PLAN_REVIEW_WALL_CLOCK_SECS: u64 = 30 * 60; // 30 minutes
+
+/// Liveness poll cadence for the blocking FIFO read.
+///
+/// WHY ~1s not infinite: a writerless read-only FIFO returns `POLLHUP`
+/// continuously on Linux (and with platform-divergent semantics on macOS), so
+/// `poll(-1)` would busy-spin or stall the liveness check. An explicit timeout
+/// drives the cadence; each tick checks GUI liveness via the pid+starttime
+/// token and falls through to deny on detected death.
+#[cfg(unix)]
+const POLL_TIMEOUT_MS: i32 = 1000;
+
 /// Synchronous plan review for PermissionRequest[ExitPlanMode] hook.
 ///
 /// Reads the PermissionRequest event from stdin, sends it to the GUI via
 /// Unix socket, then blocks on a FIFO until the user approves or denies.
 /// Outputs the PermissionRequest decision JSON to stdout.
+///
+/// FIFO hardening (Decision 5):
+/// (a) FIFO lives in the per-user 0700 IPC dir — only same-uid can write.
+/// (b) Liveness-aware blocking: poll with ~1s timeout + pid+starttime check
+///     per tick so GUI death resolves to safe deny without hanging forever.
+/// (c) RAII guard unlinks the FIFO on entry (hostile-preexisting) and exit.
+/// The full FIFO→PlatformStream unification is sequenced with Windows (where
+/// mkfifo does not exist); see design Decision 5 for the deferred roadmap.
 pub fn plan_review(socket_path: &Path) -> Result<()> {
     let mut input = String::new();
     std::io::stdin()
@@ -138,16 +185,26 @@ pub fn plan_review(socket_path: &Path) -> Result<()> {
         return Ok(());
     }
 
-    // Create FIFO for blocking communication
-    let fifo_path = PathBuf::from(format!("/tmp/nergal-plan-{}.fifo", std::process::id()));
-    if fifo_path.exists() {
-        std::fs::remove_file(&fifo_path)?;
+    // FIFO lives in the per-user 0700 IPC dir so only a same-uid process
+    // can open it for writing — closes the forged-allow approval-gate hole.
+    let pid = std::process::id();
+    let fifo_path =
+        crate::platform::plan_review_fifo_path(pid).context("resolving plan-review FIFO path")?;
+
+    // RAII guard: removes any pre-existing hostile FIFO + unlinks on exit.
+    #[cfg(unix)]
+    let _guard = FifoGuard::create(fifo_path.clone())?;
+    #[cfg(not(unix))]
+    {
+        if fifo_path.exists() {
+            std::fs::remove_file(&fifo_path)?;
+        }
+        std::process::Command::new("mkfifo")
+            .arg(&fifo_path)
+            .status()
+            .context("creating FIFO")?;
+        let _guard = FifoGuard(fifo_path.clone());
     }
-    std::process::Command::new("mkfifo")
-        .arg(&fifo_path)
-        .status()
-        .context("creating FIFO")?;
-    let _guard = FifoGuard(fifo_path.clone());
 
     // Build PlanReview event for the socket server
     let session_id = stdin_json
@@ -175,7 +232,7 @@ pub fn plan_review(socket_path: &Path) -> Result<()> {
     });
 
     let payload = serde_json::to_string(&socket_msg).context("serializing socket message")?;
-    let mut stream = UnixStream::connect(socket_path)
+    let mut stream = crate::platform::sync_connect(socket_path)
         .with_context(|| format!("connecting to {}", socket_path.display()))?;
     stream
         .write_all(payload.as_bytes())
@@ -184,28 +241,178 @@ pub fn plan_review(socket_path: &Path) -> Result<()> {
     stream.flush().context("flushing socket")?;
     drop(stream);
 
-    // Block reading from FIFO until the GUI writes a decision
-    let decision_str = std::fs::read_to_string(&fifo_path).context("reading decision from FIFO")?;
+    // Liveness-aware blocking read from the FIFO.
+    // Read the GUI liveness token written at startup by the Nergal GUI.
+    let gui_token = crate::platform::read_gui_pid(
+        fifo_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("FIFO has no parent dir"))?,
+    );
 
-    let decision: serde_json::Value =
-        serde_json::from_str(decision_str.trim()).context("parsing decision JSON")?;
+    #[cfg(unix)]
+    {
+        let decision_str = blocking_fifo_read_liveness_aware(&fifo_path, gui_token)?;
+        let decision: serde_json::Value =
+            serde_json::from_str(decision_str.trim()).context("parsing decision JSON")?;
 
-    let approved = decision
-        .get("approved")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
+        let approved = decision
+            .get("approved")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
 
-    if approved {
-        output_allow()?;
-    } else {
-        let message = decision
-            .get("message")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Plan changes requested");
-        output_deny(message)?;
+        if approved {
+            output_allow()?;
+        } else {
+            let message = decision
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Plan changes requested");
+            output_deny(message)?;
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        // Non-unix: fall back to simple blocking read (no liveness check)
+        let _ = gui_token;
+        let decision_str =
+            std::fs::read_to_string(&fifo_path).context("reading decision from FIFO")?;
+        let decision: serde_json::Value =
+            serde_json::from_str(decision_str.trim()).context("parsing decision JSON")?;
+        let approved = decision
+            .get("approved")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        if approved {
+            output_allow()?;
+        } else {
+            let message = decision
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Plan changes requested");
+            output_deny(message)?;
+        }
     }
 
     Ok(())
+}
+
+/// Blocking FIFO read with GUI liveness awareness.
+///
+/// Opens the FIFO non-blocking (`O_RDONLY | O_NONBLOCK`) and polls with an
+/// explicit ~1s timeout per tick. On each timeout:
+///   - Checks GUI liveness via the pid+starttime token.
+///   - `ESRCH` or start-time mismatch → safe deny (process dead / pid recycled).
+///   - GUI alive + human still deciding → keep waiting.
+///   - Wall-clock backstop (30 min) → log + safe deny.
+///
+/// WHY poll() not poll(-1)/POLLHUP: a writerless read-only FIFO returns
+/// POLLHUP continuously → busy-spin or stalled liveness check with edge-wait.
+/// An explicit timeout budget drives the cadence cleanly.
+///
+/// WHY not EOF-as-death-signal: the FIFO is connectionless during deliberation
+/// (no writer is attached while the human is deciding) so there is no EOF
+/// signal to observe. This mechanism is the FIFO-iteration substitute for the
+/// connection-close signal that PlatformStream would provide.
+#[cfg(unix)]
+fn blocking_fifo_read_liveness_aware(
+    fifo_path: &Path,
+    gui_token: Option<(u32, u64)>,
+) -> anyhow::Result<String> {
+    use std::os::unix::io::RawFd;
+
+    let path_cstr = std::ffi::CString::new(fifo_path.to_str().unwrap_or_default())
+        .context("FIFO path is not a valid C string")?;
+
+    // O_RDONLY | O_NONBLOCK: opens without blocking on the writer side.
+    let fd: RawFd = unsafe { libc::open(path_cstr.as_ptr(), libc::O_RDONLY | libc::O_NONBLOCK) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error())
+            .context("opening FIFO for liveness-aware read");
+    }
+
+    // RAII: close the fd on exit
+    struct FdGuard(RawFd);
+    impl Drop for FdGuard {
+        fn drop(&mut self) {
+            unsafe { libc::close(self.0) };
+        }
+    }
+    let _fd_guard = FdGuard(fd);
+
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs(PLAN_REVIEW_WALL_CLOCK_SECS);
+    let mut buf = Vec::new();
+
+    loop {
+        // Check wall-clock backstop before polling
+        let remaining = deadline
+            .checked_duration_since(std::time::Instant::now())
+            .unwrap_or_default();
+        if remaining.is_zero() {
+            tracing::warn!(
+                ipc_event = "dead_peer_deny",
+                "plan-review wall-clock backstop reached; resolving to safe deny"
+            );
+            output_deny("Plan review timed out — please resubmit")
+                .context("writing wall-clock deny")?;
+            // Return a safe-deny sentinel; plan_review() already wrote to stdout
+            return Ok(r#"{"approved":false,"message":"wall_clock_backstop"}"#.to_string());
+        }
+
+        let mut pfd = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+
+        let ret = unsafe { libc::poll(&mut pfd, 1, POLL_TIMEOUT_MS) };
+
+        if ret < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::Interrupted {
+                continue; // EINTR — retry
+            }
+            return Err(err).context("poll on FIFO");
+        }
+
+        if ret == 0 || (pfd.revents & libc::POLLIN) == 0 {
+            // Timeout tick (or POLLHUP with no data — ignore POLLHUP: a
+            // writerless FIFO returns it continuously; it is not a death signal).
+            // Check GUI liveness.
+            if let Some((pid, start_time)) = gui_token
+                && !crate::platform::check_gui_liveness(pid, start_time)
+            {
+                // GUI dead — safe deny so the agent loop is not hung.
+                output_deny("Nergal GUI is no longer running — plan review cancelled")
+                    .context("writing dead-GUI deny")?;
+                return Ok(r#"{"approved":false,"message":"gui_dead"}"#.to_string());
+            }
+            // GUI alive (or unknown) — keep waiting
+            continue;
+        }
+
+        // POLLIN: data available; read it
+        let mut chunk = [0u8; 4096];
+        let n = unsafe { libc::read(fd, chunk.as_mut_ptr() as *mut libc::c_void, chunk.len()) };
+        if n < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::WouldBlock {
+                continue;
+            }
+            return Err(err).context("reading from FIFO");
+        }
+        if n == 0 {
+            // EOF — writer closed; decision is in `buf`
+            break;
+        }
+        buf.extend_from_slice(&chunk[..n as usize]);
+        // Check for a complete JSON-parseable payload (the GUI writes atomically)
+        if serde_json::from_slice::<serde_json::Value>(&buf).is_ok() {
+            break;
+        }
+    }
+
+    String::from_utf8(buf).context("FIFO decision is not UTF-8")
 }
 
 /// Returns immediately so CC's TUI keeps owning the dialog; we only fire a
@@ -247,10 +454,20 @@ pub fn notification(socket_path: &Path) -> Result<()> {
     });
 
     let payload = serde_json::to_string(&socket_msg).context("serializing socket message")?;
-    if let Ok(mut stream) = UnixStream::connect(socket_path) {
-        let _ = stream.write_all(payload.as_bytes());
-        let _ = stream.write_all(b"\n");
-        let _ = stream.flush();
+    match crate::platform::sync_connect(socket_path) {
+        Ok(mut stream) => {
+            let _ = stream.write_all(payload.as_bytes());
+            let _ = stream.write_all(b"\n");
+            let _ = stream.flush();
+        }
+        Err(e) => {
+            tracing::debug!(
+                ipc_event = "notifier_connect_failed",
+                path = %socket_path.display(),
+                error = %e,
+                "notification: connect failed (best-effort, GUI may not be running)"
+            );
+        }
     }
 
     Ok(())
@@ -289,10 +506,20 @@ pub fn ask_user(socket_path: &Path) -> Result<()> {
     });
 
     let payload = serde_json::to_string(&socket_msg).context("serializing socket message")?;
-    if let Ok(mut stream) = UnixStream::connect(socket_path) {
-        let _ = stream.write_all(payload.as_bytes());
-        let _ = stream.write_all(b"\n");
-        let _ = stream.flush();
+    match crate::platform::sync_connect(socket_path) {
+        Ok(mut stream) => {
+            let _ = stream.write_all(payload.as_bytes());
+            let _ = stream.write_all(b"\n");
+            let _ = stream.flush();
+        }
+        Err(e) => {
+            tracing::debug!(
+                ipc_event = "notifier_connect_failed",
+                path = %socket_path.display(),
+                error = %e,
+                "ask-user: connect failed (best-effort, GUI may not be running)"
+            );
+        }
     }
 
     Ok(())

@@ -201,15 +201,21 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # upload-artifact@v4 roots each artifact at the common ancestor of its
+        # globs, so linux-artifacts keeps the bundler's deb/ rpm/ appimage/
+        # subdirs — a bare `artifacts/linux-artifacts/*` glob then passes those
+        # DIRECTORIES to gh, which errors. `find -type f` flattens any nesting
+        # uniformly across both platforms. Tauri bundle names carry no spaces,
+        # so unquoted word-splitting of $ASSETS is safe.
         run: |
           PRERELEASE=""
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then PRERELEASE="--prerelease"; fi
+          ASSETS=$(find artifacts/linux-artifacts artifacts/macos-artifacts -type f)
           gh release create "$GITHUB_REF_NAME" \
             $PRERELEASE \
             --title "Nergal $GITHUB_REF_NAME" \
             --notes-file /tmp/release-body.md \
-            artifacts/linux-artifacts/* \
-            artifacts/macos-artifacts/* \
+            $ASSETS \
             /tmp/latest.json
 
       - name: Update previous-release banner

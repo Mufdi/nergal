@@ -1,5 +1,8 @@
-## ADDED Requirements
+# platform-process-inspection Specification
 
+## Purpose
+TBD - created by archiving change platform-proc. Update Purpose after archive.
+## Requirements
 ### Requirement: Unified process/port inspection interface
 
 The system SHALL provide a single `platform_proc` module exposing process-tree walking, process cwd lookup, and listening-TCP-port discovery behind one interface, with one implementation per supported OS selected at compile time via `#[cfg]`. All current callers (`browser.rs`, `pty.rs`, `mcp/shim.rs`, `updater.rs`) SHALL consume this interface instead of reading `/proc` directly. New per-OS code SHALL be born `#[cfg]`-gated.
@@ -45,7 +48,7 @@ The system SHALL return the absolute working directory of a given pid, or `None`
 
 ### Requirement: Listening-TCP-port discovery
 
-The system SHALL enumerate TCP sockets in the LISTEN state owned by the current user, deduplicated and filtered to the user-port range, returning ports sorted ascending. For a given listening port the system SHALL resolve the owning process's pid and, from it, a human label (interpreter scripts resolve to the script/module name, e.g. `node …/vite` → `vite`) and the project folder name (cwd basename). This SHALL work on Linux and macOS.
+The system SHALL enumerate TCP sockets in the LISTEN state, deduplicated and filtered to the user-port range, returning ports sorted ascending. The enumeration is system-wide on Linux (reading `/proc/net/tcp` + `/proc/net/tcp6`) so that container-published ports whose listener is a root proxy (e.g. Docker) are included; on macOS it enumerates via the `listeners` crate. Owner attribution is a separate, current-user-scoped step: for a given listening port the system SHALL resolve the owning process's pid and, from it, a human label (interpreter scripts resolve to the script/module name, e.g. `node …/vite` → `vite`) and the project folder name (cwd basename), returning no owner when the socket is not user-owned. This SHALL work on Linux and macOS.
 
 #### Scenario: Dev server appears in the active port set
 
@@ -60,7 +63,7 @@ The system SHALL enumerate TCP sockets in the LISTEN state owned by the current 
 #### Scenario: Unowned (Docker-published) port has no /proc owner
 
 - **WHEN** a port is published by a Docker container (listener is a root proxy, not user-owned)
-- **THEN** the user-owned-socket lookup SHALL return no owning pid, leaving the Docker-container fallback path to label/stop it
+- **THEN** the port SHALL still appear in the enumerated listening set (the Linux list is system-wide via `/proc/net/tcp`), AND the current-user owner lookup SHALL return no owning pid, leaving the Docker-container fallback path to label/stop it
 
 ### Requirement: Free a port by terminating its owner
 
@@ -99,3 +102,4 @@ The system SHALL report BOTH the human-readable OS/distribution name AND the run
 - **WHEN** the user collects a diagnostics bundle on macOS (where `/etc/os-release` is absent)
 - **THEN** the bundle's `OS:` field SHALL show a meaningful OS/version string (e.g. `macOS 14.x`) sourced cross-platform, NOT `"unknown"`
 - **AND** on Linux the `OS:` field SHALL remain a meaningful distribution string (no regression to `"unknown"` or a bare kernel string); byte-identity with the old `/etc/os-release` `PRETTY_NAME` is NOT required, since `sysinfo::System::long_os_version()` constructs an equivalent distro string
+

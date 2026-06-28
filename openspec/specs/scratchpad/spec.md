@@ -164,7 +164,7 @@ The scratchpad directory path SHALL be configurable via the application settings
 #### Scenario: Reveal in file manager
 
 - **WHEN** the user clicks "Reveal in file manager" in settings
-- **THEN** the system SHALL spawn `xdg-open` with the canonical path as a single argument (never as a shell-interpreted string)
+- **THEN** the system SHALL open the scratchpad directory in the native file manager via the platform desktop integration layer (`opener::open_path` on the directory, preserving the prior "open the folder's contents" behavior), without invoking any OS-specific subprocess directly
 
 ### Requirement: No coupling with sessions or workspaces
 

@@ -1,18 +1,22 @@
-## ADDED Requirements
+# platform-desktop-integration Specification
 
+## Purpose
+TBD - created by archiving change platform-desktop. Update Purpose after archive.
+## Requirements
 ### Requirement: Open file or URL via Tauri opener plugin
 
-The system SHALL open files and URLs using `tauri-plugin-opener` (`opener::open_path` for filesystem paths, `opener::open_url` for URLs and custom-scheme URIs). Direct subprocess invocations of `xdg-open` and `gtk-launch` SHALL NOT appear in any non-test source file outside `migrate_legacy.rs`.
+The system SHALL open files and URLs using `tauri-plugin-opener` (`opener::open_path` for filesystem paths, `opener::open_url` for URLs and custom-scheme URIs). Direct subprocess invocations of `xdg-open` and `gtk-launch` SHALL NOT appear in any non-test source file outside `migrate_legacy.rs`, with ONE documented exception: the Linux "Open log file" path (see its scenario below), where the opener plugin resolves the handler-less `.log` extension to `text/x-log` and exits without opening anything, so a `text/plain`-handler workaround is required and gated `#[cfg(target_os = "linux")]`.
 
 #### Scenario: Open log file on macOS
 
 - **WHEN** the user triggers "Open log file" from the About panel on macOS
-- **THEN** the system SHALL open the log file with the OS-default text handler via the opener plugin without spawning `xdg-open` or `gtk-launch`
+- **THEN** the system SHALL open the log file with the OS-default text handler via the opener plugin without spawning `xdg-open` or `gtk-launch` (macOS LaunchServices resolves `.log` to a real handler)
 
 #### Scenario: Open log file on Linux
 
 - **WHEN** the user triggers "Open log file" from the About panel on Linux
-- **THEN** the system SHALL open the log file with the OS-default text handler via the opener plugin without spawning `xdg-open` or `gtk-launch`
+- **THEN** the system SHALL resolve the `text/plain` default application (`xdg-mime query default text/plain`) and launch it on the log file with `gtk-launch`, because `xdg-open`/the opener plugin resolve `.log` by extension to a handler-less `text/x-log` and exit without opening anything
+- **AND** when no `text/plain` handler (or `gtk-launch`) is available, the system SHALL fall back to revealing the log's containing directory with `xdg-open <dir>`, since directories always have a file-manager handler
 
 #### Scenario: Open custom-scheme URI
 
@@ -122,3 +126,4 @@ The system SHALL remove `xdg-open` and `xdg-user-dir` from the `missing_binaries
 
 - **WHEN** `check_system_health` is called on a minimal Linux install without `xdg-open`
 - **THEN** the result SHALL NOT list `xdg-open` as a missing binary
+

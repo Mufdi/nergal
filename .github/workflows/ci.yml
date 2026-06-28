@@ -53,3 +53,41 @@ jobs:
       - name: cargo check (aarch64-apple-darwin)
         working-directory: src-tauri
         run: cargo check --target aarch64-apple-darwin
+
+  # Catches WINDOWS-BREAKING regressions the macOS gate is structurally blind
+  # to: a newly-added *ungated* `std::os::unix` / `libc::` seam compiles on
+  # macOS (a unix target) but fails here. The two gates are complementary —
+  # macOS catches Linux-only constructs, Windows catches ungated-unix seams.
+  # See CLAUDE.md "Cross-platform invariant".
+  #
+  # Runner is windows-latest (not ubuntu + rustup target): `ring`'s C build
+  # script needs the MSVC toolchain (`cl.exe`/`lib.exe`), which a Linux cross
+  # cannot provide — a Linux `--target x86_64-pc-windows-msvc` aborts in the
+  # ring build before reaching our crate. No GStreamer/WebKit system deps:
+  # Windows uses bundled WebView2.
+  windows-check:
+    name: Windows compile gate (cargo check x86_64-pc-windows-msvc)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: windows-check-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            windows-check-
+
+      - name: cargo check (x86_64-pc-windows-msvc)
+        working-directory: src-tauri
+        run: cargo check --target x86_64-pc-windows-msvc

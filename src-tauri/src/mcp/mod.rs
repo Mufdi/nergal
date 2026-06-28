@@ -584,6 +584,7 @@ pub fn dispatch(
 /// pin unbounded tasks/heap (each connection can allocate up to MAX_FRAME_BYTES
 /// per read). The threat is same-uid (already full-trust), so the cap is a
 /// resource backstop, not an authz boundary.
+#[cfg(unix)]
 pub async fn serve(transport: transport::UnixSocketTransport, ctx: DaemonContext) {
     const MAX_CONNECTIONS: usize = 32;
     let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
@@ -616,6 +617,7 @@ pub async fn serve(transport: transport::UnixSocketTransport, ctx: DaemonContext
     }
 }
 
+#[cfg(unix)]
 async fn handle_connection(mut stream: tokio::net::UnixStream, ctx: DaemonContext) {
     // Per-connection cooperative identity hint, captured from `initialize`.
     // Re-resolved against the live registry on every tool call (lazy
@@ -667,6 +669,7 @@ async fn handle_connection(mut stream: tokio::net::UnixStream, ctx: DaemonContex
     }
 }
 
+#[cfg(unix)]
 async fn write_response(
     stream: &mut tokio::net::UnixStream,
     resp: &JsonRpcResponse,

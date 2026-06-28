@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::AsyncBufReadExt;
+#[cfg(unix)]
 use tokio::net::UnixListener;
 
 use super::events::HookEvent;
@@ -191,6 +192,7 @@ impl FrontendHookEvent {
 }
 
 /// Starts the Unix socket server that receives hook events from Claude CLI.
+#[cfg(unix)]
 pub async fn start_hook_server(
     socket_path: &Path,
     app: AppHandle,
@@ -324,6 +326,24 @@ pub async fn start_hook_server(
             }
         });
     }
+}
+
+/// Windows stub: the named-pipe hook server is deferred to windows-ipc. Returns
+/// `Unsupported` so the spawn task logs a clean error instead of the crate
+/// failing to compile; hook events are unavailable until the Windows transport
+/// lands. Signature mirrors the Unix one so the ungated caller in `lib.rs`
+/// resolves on every target.
+#[cfg(not(unix))]
+pub async fn start_hook_server(
+    _socket_path: &Path,
+    _app: AppHandle,
+    _db: SharedDb,
+    _plan_state: SharedPlanState,
+    _agent_state: AgentRuntimeState,
+) -> Result<()> {
+    Err(anyhow::anyhow!(
+        "hook server unsupported on this platform until windows-ipc lands"
+    ))
 }
 
 /// Handle a `kind=control` message off the hook socket. Today the only op is

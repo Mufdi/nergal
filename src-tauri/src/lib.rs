@@ -689,29 +689,36 @@ pub fn run() {
             // dedicated socket. It binds unconditionally (so a registered shim
             // always gets a clean connection); `tools/call` is gated by
             // `mcp_server_enabled` (default off) per request.
-            let mcp_db = db.clone();
-            let mcp_agents = agent_state.clone();
-            let mcp_app = app_handle.clone();
-            let mcp_worktree_gate = worktree_gate.clone();
-            tauri::async_runtime::spawn(async move {
-                let path = crate::mcp::socket_path();
-                match crate::mcp::transport::UnixSocketTransport::bind(&path) {
-                    Ok(transport) => {
-                        let app_uid = unsafe { libc::getuid() };
-                        let ctx = crate::mcp::DaemonContext {
-                            db: mcp_db,
-                            agents: mcp_agents,
-                            app_uid,
-                            delivery: std::sync::Arc::new(crate::mcp::delivery::AppBridge::new(
-                                mcp_app,
-                            )),
-                            worktree_gate: mcp_worktree_gate,
-                        };
-                        crate::mcp::serve(transport, ctx).await;
+            // Gated #[cfg(unix)] including the local clones so they are not
+            // unused on Windows; the named-pipe MCP daemon is windows-ipc.
+            #[cfg(unix)]
+            {
+                let mcp_db = db.clone();
+                let mcp_agents = agent_state.clone();
+                let mcp_app = app_handle.clone();
+                let mcp_worktree_gate = worktree_gate.clone();
+                tauri::async_runtime::spawn(async move {
+                    let path = crate::mcp::socket_path();
+                    match crate::mcp::transport::UnixSocketTransport::bind(&path) {
+                        Ok(transport) => {
+                            let app_uid = unsafe { libc::getuid() };
+                            let ctx = crate::mcp::DaemonContext {
+                                db: mcp_db,
+                                agents: mcp_agents,
+                                app_uid,
+                                delivery: std::sync::Arc::new(
+                                    crate::mcp::delivery::AppBridge::new(mcp_app),
+                                ),
+                                worktree_gate: mcp_worktree_gate,
+                            };
+                            crate::mcp::serve(transport, ctx).await;
+                        }
+                        Err(e) => {
+                            tracing::error!(ipc_event = "bind_failure", "mcp daemon bind error: {e}")
+                        }
                     }
-                    Err(e) => tracing::error!(ipc_event = "bind_failure", "mcp daemon bind error: {e}"),
-                }
-            });
+                });
+            }
 
             // Agent-spawned-worktree request sweeper: atomically purges timed-out
             // requests (notifying their requesters) + GCs the terminal ledger.

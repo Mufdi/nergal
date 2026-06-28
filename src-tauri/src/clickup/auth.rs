@@ -152,8 +152,6 @@ fn remove_fallback_file() -> Result<()> {
 }
 
 fn write_fallback_file(path: &std::path::Path, token: &str) -> Result<()> {
-    use std::os::unix::fs::OpenOptionsExt;
-
     let parent = path
         .parent()
         .ok_or_else(|| anyhow!("token file path has no parent"))?;
@@ -164,10 +162,16 @@ fn write_fallback_file(path: &std::path::Path, token: &str) -> Result<()> {
     // pre-existing (possibly wider-mode) file.
     let tmp = parent.join(format!(".{}.tmp-{}", FALLBACK_FILE, std::process::id()));
     let _ = std::fs::remove_file(&tmp);
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
+    let mut opts = OpenOptions::new();
+    opts.write(true).create_new(true);
+    // 0o600 on Unix; Windows has no POSIX mode bits — the per-user config dir +
+    // Credential Manager (keyring) is the real boundary for this fallback file.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts
         .open(&tmp)
         .with_context(|| format!("creating token temp file in {}", parent.display()))?;
 

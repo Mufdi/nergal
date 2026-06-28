@@ -595,6 +595,7 @@ pub struct GateResourceInfo {
 // The `as u64` widening is a no-op on Linux (both fields are already u64) but
 // required on macOS, where Darwin types `f_bavail` as u32 and `f_frsize` as
 // u64 — clippy can only see the Linux widths, so it wrongly flags the cast.
+#[cfg(unix)]
 #[allow(clippy::unnecessary_cast)]
 fn free_disk_bytes(path: &std::path::Path) -> u64 {
     // statvfs: f_bavail (blocks available to non-root) * f_frsize.
@@ -615,6 +616,15 @@ fn free_disk_bytes(path: &std::path::Path) -> u64 {
             0
         }
     }
+}
+
+// WHY 0: the free-disk soft-cap check treats 0 as "unknown / no headroom data"
+// and skips the warning. The functional Windows impl (GetDiskFreeSpaceExW /
+// sysinfo::Disks) lands in windows-proc; until then disk pressure is unreported
+// on Windows, never a false cap.
+#[cfg(not(unix))]
+fn free_disk_bytes(_path: &std::path::Path) -> u64 {
+    0
 }
 
 fn resource_info(repo_path: &std::path::Path, soft_cap: u32) -> GateResourceInfo {

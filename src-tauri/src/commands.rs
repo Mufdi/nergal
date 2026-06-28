@@ -217,11 +217,16 @@ pub fn validate_path(path: String, kind: String, case_insensitive: Option<bool>)
         Ok(meta) => {
             let is_dir = meta.is_dir();
             let is_file = meta.is_file();
-            let is_executable = if cfg!(unix) {
-                use std::os::unix::fs::PermissionsExt;
-                meta.permissions().mode() & 0o111 != 0
-            } else {
-                is_file
+            let is_executable = {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    meta.permissions().mode() & 0o111 != 0
+                }
+                #[cfg(not(unix))]
+                {
+                    is_file
+                }
             };
             PathValidation {
                 exists: true,

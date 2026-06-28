@@ -821,6 +821,44 @@ pub fn sync_connect(path: &Path) -> io::Result<std::os::unix::net::UnixStream> {
     std::os::unix::net::UnixStream::connect(path)
 }
 
+// Non-Unix stub. The hook-CLI blocking callers drive the returned value with
+// synchronous `Read`/`Write`, so the `Ok` type must implement both even though
+// it is never constructed here — a bare `Err` without a concrete `T` would not
+// type-check. NOT a `TcpStream`: that would invite a transport bypassing the
+// SID auth boundary. The real named-pipe sync connect is windows-ipc.
+#[cfg(not(unix))]
+fn unsupported_sync() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Unsupported,
+        "synchronous IPC is not yet implemented on this platform (windows-ipc pending)",
+    )
+}
+
+#[cfg(not(unix))]
+pub struct UnsupportedSyncStream(());
+
+#[cfg(not(unix))]
+impl io::Read for UnsupportedSyncStream {
+    fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+        Err(unsupported_sync())
+    }
+}
+
+#[cfg(not(unix))]
+impl io::Write for UnsupportedSyncStream {
+    fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+        Err(unsupported_sync())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Err(unsupported_sync())
+    }
+}
+
+#[cfg(not(unix))]
+pub fn sync_connect(_path: &Path) -> io::Result<UnsupportedSyncStream> {
+    Err(unsupported_sync())
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

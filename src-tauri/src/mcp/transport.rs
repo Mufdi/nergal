@@ -12,9 +12,11 @@
 //! future Windows named-pipe transport drops in without touching dispatch.
 
 use std::io;
+#[cfg(unix)]
 use std::path::{Path, PathBuf};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 
 /// Hard ceiling on a single frame. A JSON-RPC tool result for the directory is
@@ -67,11 +69,13 @@ pub async fn write_frame<W: AsyncWriteExt + Unpin>(
 /// Owner-only Unix-socket transport for the daemon. Holds the bound listener;
 /// `accept` yields a connected `UnixStream` plus the peer's uid for the uid
 /// boundary check (the only enforced access control — design Decision 2).
+#[cfg(unix)]
 pub struct UnixSocketTransport {
     listener: UnixListener,
     path: PathBuf,
 }
 
+#[cfg(unix)]
 impl UnixSocketTransport {
     /// Bind the daemon socket at `path` with mode `0600`, removing any stale
     /// socket first (mirrors `hooks/server.rs:198`).
@@ -103,6 +107,7 @@ impl UnixSocketTransport {
     }
 }
 
+#[cfg(unix)]
 impl Drop for UnixSocketTransport {
     fn drop(&mut self) {
         // Best-effort cleanup so a restart re-binds cleanly.
@@ -111,19 +116,17 @@ impl Drop for UnixSocketTransport {
 }
 
 /// Peer credential uid via `SO_PEERCRED`. The uid wall is the real boundary:
-/// a different-uid process is rejected outright.
+/// a different-uid process is rejected outright. No Windows counterpart — the
+/// named-pipe transport (windows-ipc) enforces the equivalent via the client
+/// SID, and no ungated caller references `peer_uid` on Windows.
 #[cfg(unix)]
 pub fn peer_uid(stream: &UnixStream) -> io::Result<u32> {
     let cred = stream.peer_cred()?;
     Ok(cred.uid())
 }
 
-#[cfg(not(unix))]
-pub fn peer_uid(_stream: &UnixStream) -> io::Result<u32> {
-    Err(invalid("peer uid unsupported on this platform"))
-}
-
 /// Connect to the daemon socket (shim side).
+#[cfg(unix)]
 pub async fn connect(path: &Path) -> io::Result<UnixStream> {
     UnixStream::connect(path).await
 }

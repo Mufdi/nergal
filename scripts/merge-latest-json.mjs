@@ -8,6 +8,8 @@
 // pub_date is generated here so per-runner clock skew never diverges.
 
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 function mergeFragments(fragmentPaths, outPath) {
   if (fragmentPaths.length < 1) {
@@ -75,7 +77,10 @@ function mergeFragments(fragmentPaths, outPath) {
   return manifest;
 }
 
-const isMain = import.meta.url === `file://${process.argv[1]}`;
+// Real-path comparison so this also works if ever run on Windows (argv[1] is a
+// backslash drive path there, never equal to the file:///D:/… import URL).
+const isMain =
+  !!process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   // Last positional arg is the output path; all prior args are fragment paths.
   const args = process.argv.slice(2);

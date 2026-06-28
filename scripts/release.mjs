@@ -356,8 +356,10 @@ async function main() {
   process.stdout.write(`Monitor at https://github.com/Mufdi/nergal/actions\n`);
 }
 
-// Only run main when invoked directly (not when imported by tests)
-const isMain = import.meta.url === `file://${process.argv[1]}`;
+// Only run main when invoked directly (not when imported by tests). Real-path
+// comparison (not a hand-built file:// string) so it holds on Windows too.
+const isMain =
+  !!process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   main().catch((e) => {
     process.stderr.write(`Unexpected error: ${e.message}\n`);

@@ -60,7 +60,8 @@ function main() {
   if (!body.endsWith('\n')) process.stdout.write('\n');
 }
 
-const isMain = import.meta.url === `file://${process.argv[1]}`;
+const isMain =
+  !!process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   main();
 }

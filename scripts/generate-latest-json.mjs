@@ -80,7 +80,12 @@ function main() {
   process.stdout.write(`Wrote ${outPath} (AppImage: ${appImageName}, sig: ${sigName})\n`);
 }
 
-const isMain = import.meta.url === `file://${process.argv[1]}`;
+// Compare real filesystem paths, not a hand-built file:// string — on Windows
+// process.argv[1] is a backslash drive path (D:\…) while import.meta.url is
+// file:///D:/…, so the naive `file://${argv[1]}` never matches and main() would
+// silently no-op (the bundle CI on windows-latest hit exactly this).
+const isMain =
+  !!process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   try {
     main();

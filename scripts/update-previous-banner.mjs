@@ -69,7 +69,8 @@ function main() {
   process.stdout.write(`Updated banner on ${prev.tag_name} pointing to ${newTag}.\n`);
 }
 
-const isMain = import.meta.url === `file://${process.argv[1]}`;
+const isMain =
+  !!process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   try {
     main();

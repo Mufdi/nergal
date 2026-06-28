@@ -37,6 +37,11 @@ use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 
+// Windows named-pipe security helpers (client-SID peer auth, owner-only SD,
+// owner verification). Win32-only; the Unix path uses peer-cred uids.
+#[cfg(windows)]
+mod win_sec;
+
 // ── Platform constants ────────────────────────────────────────────────────────
 
 /// Maximum AF_UNIX sun_path length on this platform (characters, incl. null).
@@ -270,33 +275,54 @@ fn fnv1a_32(data: &[u8]) -> u32 {
     h
 }
 
-/// Hook event socket path inside the per-user IPC dir.
+/// Build a per-user named-pipe path `\\.\pipe\nergal-{user-SID}-{endpoint}`.
+/// The SID makes the name unique per user, so two users on one machine never
+/// collide in the machine-global `\\.\pipe` namespace (Decision 3). The SID
+/// string contains only `S`, `-`, and ASCII digits — safe in a pipe name.
+#[cfg(windows)]
+fn win_pipe_name(endpoint: &str) -> io::Result<PathBuf> {
+    let sid = win_sec::current_user_sid_string()?;
+    Ok(PathBuf::from(format!(r"\\.\pipe\nergal-{sid}-{endpoint}")))
+}
+
+/// Hook event endpoint: a socket in the per-user IPC dir (Unix) or a per-user
+/// named pipe (Windows).
 pub fn hook_socket_path() -> io::Result<PathBuf> {
     #[cfg(unix)]
     {
         let dir = ipc_dir()?;
         Ok(endpoint_path_within(&dir, "hook.sock"))
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        win_pipe_name("hook")
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         Ok(std::env::temp_dir().join("nergal.sock"))
     }
 }
 
-/// MCP daemon socket path inside the per-user IPC dir.
+/// MCP daemon endpoint: a socket in the per-user IPC dir (Unix) or a per-user
+/// named pipe (Windows).
 pub fn mcp_socket_path() -> io::Result<PathBuf> {
     #[cfg(unix)]
     {
         let dir = ipc_dir()?;
         Ok(endpoint_path_within(&dir, "mcp.sock"))
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        win_pipe_name("mcp")
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         Ok(std::env::temp_dir().join("nergal-mcp.sock"))
     }
 }
 
-/// Plan-review FIFO path for the given process id, inside the per-user IPC dir.
+/// Plan-review endpoint for the given process id: a FIFO in the per-user IPC
+/// dir (Unix) or a per-user named pipe (Windows).
 pub fn plan_review_fifo_path(pid: u32) -> io::Result<PathBuf> {
     #[cfg(unix)]
     {
@@ -304,22 +330,38 @@ pub fn plan_review_fifo_path(pid: u32) -> io::Result<PathBuf> {
         // Not a socket, so sun_path limit does not apply; keep it readable.
         Ok(dir.join(format!("plan-{pid}.fifo")))
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        win_pipe_name(&format!("plan-{pid}"))
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         Ok(std::env::temp_dir().join(format!("nergal-plan-{pid}.fifo")))
     }
 }
 
-/// GUI liveness token file inside the per-user IPC dir.
-pub fn gui_pid_path() -> io::Result<PathBuf> {
+/// Directory holding the `gui.pid` liveness token. Unix: the per-user IPC dir.
+/// Windows: the per-user local-data dir `…/nergal` (default per-user ACL) —
+/// `ipc_dir()` has no Windows analog, but the liveness token still anchors the
+/// plan-review dead-GUI deny (Decision 6). Both the writer (GUI) and reader
+/// (hook CLI) resolve through here so they agree on one location.
+pub fn gui_pid_dir() -> io::Result<PathBuf> {
     #[cfg(unix)]
     {
-        let dir = ipc_dir()?;
-        Ok(dir.join("gui.pid"))
+        ipc_dir()
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        Ok(std::env::temp_dir().join("nergal-gui.pid"))
+        let base = dirs::data_local_dir().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, "no local-data dir for gui.pid")
+        })?;
+        let dir = base.join("nergal");
+        std::fs::create_dir_all(&dir)?;
+        Ok(dir)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        Ok(std::env::temp_dir())
     }
 }
 
@@ -499,16 +541,60 @@ pub fn peer_uid_of(stream: &tokio::net::UnixStream) -> io::Result<u32> {
     Ok(cred.uid())
 }
 
+// ── Peer identity (cross-platform principal) ─────────────────────────────────
+
+/// Opaque peer identity from an accepted IPC connection. The seam returns this
+/// instead of a raw uid so the Unix path (a uid via `SO_PEERCRED`) and the
+/// Windows named-pipe path (a variable-length client SID) share one
+/// comparison + audit surface. The only enforced access control is
+/// "same principal as this process?" — there is no notion of a privileged
+/// peer.
+#[derive(Clone)]
+pub enum PeerIdentity {
+    #[cfg(unix)]
+    Uid(u32),
+    #[cfg(windows)]
+    Sid(Box<[u8]>),
+}
+
+impl PeerIdentity {
+    /// True when the peer is the same principal as the current process. Unix:
+    /// `uid == getuid()`. Windows: the client SID `EqualSid` the process owner
+    /// SID. A `false` here is the rejection signal at every accept loop.
+    pub fn matches_current_process(&self) -> bool {
+        match self {
+            #[cfg(unix)]
+            PeerIdentity::Uid(uid) => *uid == unsafe { libc::getuid() },
+            #[cfg(windows)]
+            PeerIdentity::Sid(sid) => win_sec::sid_matches_current_user(sid),
+        }
+    }
+
+    /// A loggable principal string for the audit line (the uid, or the SID
+    /// string `S-1-5-…`). Never the raw SID bytes.
+    pub fn display(&self) -> String {
+        match self {
+            #[cfg(unix)]
+            PeerIdentity::Uid(uid) => uid.to_string(),
+            #[cfg(windows)]
+            PeerIdentity::Sid(sid) => {
+                win_sec::sid_bytes_to_string(sid).unwrap_or_else(|_| "<unresolved-sid>".to_string())
+            }
+        }
+    }
+}
+
 // ── Rate-limited rejection logger ────────────────────────────────────────────
 
-/// Coalesces repeated foreign-uid rejection log lines so a spammer cannot
+/// Coalesces repeated foreign-principal rejection log lines so a spammer cannot
 /// turn audit logging into a disk-fill DoS.
 ///
-/// Emits at most one coalesced line per `WINDOW` per (uid, socket) pair,
-/// reporting the count and first/last timestamps.
+/// Emits at most one coalesced line per `WINDOW` per (principal, socket) pair,
+/// reporting the count and first/last timestamps. `principal` is the uid string
+/// on Unix and the client SID string on Windows (the `PeerIdentity::display()`).
 pub struct RejectionRateLimit {
-    // key: (uid, socket_name), value: (count, first_seen, last_seen)
-    windows: DashMap<(u32, &'static str), (u64, Instant, Instant)>,
+    // key: (principal, socket_name), value: (count, first_seen, last_seen)
+    windows: DashMap<(String, &'static str), (u64, Instant, Instant)>,
 }
 
 const REJECTION_WINDOW: Duration = Duration::from_secs(60);
@@ -520,23 +606,27 @@ impl RejectionRateLimit {
         }
     }
 
-    /// Record a rejection from `uid` on `socket` (a static label like
-    /// `"hook"` or `"mcp"`). Logs at most once per `REJECTION_WINDOW`
-    /// per (uid, socket) pair; bursts within the window are coalesced.
-    pub fn report(&self, uid: u32, socket: &'static str) {
+    /// Record a rejection from `principal` on `socket` (a static label like
+    /// `"hook"` or `"mcp"`). `principal` is `PeerIdentity::display()` (uid on
+    /// Unix, SID string on Windows). Logs at most once per `REJECTION_WINDOW`
+    /// per (principal, socket) pair; bursts within the window are coalesced.
+    pub fn report(&self, principal: &str, socket: &'static str) {
         let now = Instant::now();
-        let mut entry = self.windows.entry((uid, socket)).or_insert((0, now, now));
+        let mut entry = self
+            .windows
+            .entry((principal.to_string(), socket))
+            .or_insert((0, now, now));
         let (count, first_seen, last_seen) = entry.value_mut();
         *count += 1;
         if now.duration_since(*last_seen) >= REJECTION_WINDOW {
             // Window expired: emit the coalesced summary and reset
             tracing::warn!(
                 ipc_event = "peer_rejected",
-                uid,
+                principal,
                 socket,
                 burst_count = *count,
                 window_secs = REJECTION_WINDOW.as_secs(),
-                "rejected {count} connection(s) from uid {uid} on {socket} in the last {}s",
+                "rejected {count} connection(s) from {principal} on {socket} in the last {}s",
                 REJECTION_WINDOW.as_secs()
             );
             *count = 0;
@@ -545,9 +635,9 @@ impl RejectionRateLimit {
             // First rejection in a new window — emit immediately
             tracing::warn!(
                 ipc_event = "peer_rejected",
-                uid,
+                principal,
                 socket,
-                "rejected connection from uid {uid} on {socket} (further rejections coalesced)"
+                "rejected connection from {principal} on {socket} (further rejections coalesced)"
             );
         }
         *last_seen = now;
@@ -557,11 +647,11 @@ impl RejectionRateLimit {
     /// burst is not silently dropped).
     pub fn flush(&self) {
         for entry in self.windows.iter() {
-            let ((uid, socket), (count, _, _)) = entry.pair();
+            let ((principal, socket), (count, _, _)) = entry.pair();
             if *count > 0 {
                 tracing::warn!(
                     ipc_event = "peer_rejected",
-                    uid,
+                    principal,
                     socket,
                     burst_count = count,
                     "flushing coalesced rejections on shutdown"
@@ -643,11 +733,11 @@ impl PlatformListener {
         })
     }
 
-    /// Accept one connection, returning the stream and the peer process uid.
-    pub async fn accept(&self) -> io::Result<(PlatformStream, u32)> {
+    /// Accept one connection, returning the stream and the peer identity.
+    pub async fn accept(&self) -> io::Result<(PlatformStream, PeerIdentity)> {
         let (stream, _addr) = self.listener.accept().await?;
         let uid = peer_uid_of(&stream)?;
-        Ok((PlatformStream(stream), uid))
+        Ok((PlatformStream(stream), PeerIdentity::Uid(uid)))
     }
 
     pub fn path(&self) -> &Path {
@@ -721,54 +811,174 @@ impl tokio::io::AsyncWrite for PlatformStream {
     }
 }
 
-// ── Windows stubs (compile-only; deferred implementation) ────────────────────
+// ── Windows named-pipe transport ─────────────────────────────────────────────
 //
-// WHY stubs not absent: we want `cargo check --target …-windows-msvc` to
-// succeed so ungated unix::net cannot silently re-enter the codebase. The
-// Windows named-pipe body is deferred to the platform-ipc Windows iteration.
+// The Unix model ported to Windows: an owner-only security descriptor on the
+// pipe (the ACL analog of 0600 + the 0700 dir) + a client-SID peer check on
+// accept (the analog of SO_PEERCRED). A named-pipe server is a LOOP — each
+// accepted connection consumes one instance, so `accept` creates the next
+// instance (with the SAME owner-only SD — Decision 4) before handing the
+// current one to the caller.
+
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::{
+    ClientOptions, NamedPipeClient, NamedPipeServer, ServerOptions,
+};
+#[cfg(windows)]
+use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, HANDLE};
+
+/// Create one server instance of the named pipe with the owner-only security
+/// descriptor. `first` toggles `FILE_FLAG_FIRST_PIPE_INSTANCE`: anti-squat on
+/// the first instance, and MUST be false on instances 2..N (it would make
+/// `create` fail `ERROR_ACCESS_DENIED`). The SD is identical on every instance
+/// (Decision 4 — a plain `create()` on later instances would grant the default
+/// SD, re-opening the foreign-open gap).
+#[cfg(windows)]
+fn make_pipe_instance(name: &str, sid: &str, first: bool) -> io::Result<NamedPipeServer> {
+    win_sec::with_owner_only_security_attributes(sid, |sa| {
+        let mut opts = ServerOptions::new();
+        opts.first_pipe_instance(first).reject_remote_clients(true);
+        // SAFETY: `sa` points to a valid SECURITY_ATTRIBUTES for the duration
+        // of this call (the closure outlives it); the SD is freed afterwards.
+        unsafe { opts.create_with_security_attributes_raw(name, sa) }
+    })
+}
 
 #[cfg(windows)]
 pub struct PlatformListener {
-    _priv: (),
+    name: String,
+    sid: String,
+    // The not-yet-connected server instance ready for the next accept. Swapped
+    // out (the connected one returned) and a fresh one swapped in per accept.
+    current: std::sync::Mutex<Option<NamedPipeServer>>,
 }
 
 #[cfg(windows)]
 impl PlatformListener {
-    pub fn bind(_path: &Path) -> io::Result<Self> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "Windows named-pipe IPC is not yet implemented (deferred iteration)",
-        ))
+    /// Bind the first pipe instance. `first_pipe_instance(true)` makes `create`
+    /// fail `PermissionDenied` if any instance of this name already exists — a
+    /// squatter pre-created it; refuse to start the surface (Decision 3).
+    pub fn bind(path: &Path) -> io::Result<Self> {
+        let name = path
+            .to_str()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "pipe name is not UTF-8"))?
+            .to_string();
+        let sid = win_sec::current_user_sid_string()?;
+        let first = make_pipe_instance(&name, &sid, true).map_err(|e| {
+            if e.kind() == io::ErrorKind::PermissionDenied {
+                tracing::error!(
+                    ipc_event = "squat_detected",
+                    path = %name,
+                    "named pipe already exists at bind — refusing to start (possible squat)"
+                );
+            }
+            e
+        })?;
+        Ok(Self {
+            name,
+            sid,
+            current: std::sync::Mutex::new(Some(first)),
+        })
     }
 
-    pub async fn accept(&self) -> io::Result<(PlatformStream, u32)> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "Windows named-pipe IPC is not yet implemented",
-        ))
+    /// Accept one connection. Waits on the current instance, then creates the
+    /// NEXT instance (same owner-only SD) BEFORE handing this one off, so the
+    /// pipe is continuously available (Decision 9 — shrink the ERROR_PIPE_BUSY
+    /// window). The client SID is extracted synchronously (Decision 5).
+    pub async fn accept(&self) -> io::Result<(PlatformStream, PeerIdentity)> {
+        // Take the ready instance (recreate if somehow absent).
+        let server = {
+            let mut guard = self.current.lock().unwrap();
+            guard.take()
+        };
+        let server = match server {
+            Some(s) => s,
+            None => make_pipe_instance(&self.name, &self.sid, false)?,
+        };
+
+        server.connect().await?;
+
+        // Make the next instance available before serving this one. If it fails
+        // we leave `current` empty; the next accept recreates it (None branch).
+        match make_pipe_instance(&self.name, &self.sid, false) {
+            Ok(next) => {
+                *self.current.lock().unwrap() = Some(next);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    ipc_event = "pipe_instance_create_failed",
+                    error = %e,
+                    "could not pre-create next pipe instance; will retry on next accept"
+                );
+            }
+        }
+
+        // Synchronous SID extraction — NO await between connect() and here, and
+        // none inside client_sid_of (Decision 5: an await in the impersonation
+        // window could migrate the task and strand the impersonation).
+        let handle = HANDLE(server.as_raw_handle());
+        let sid = win_sec::client_sid_of(handle)?;
+        Ok((PlatformStream::Server(server), PeerIdentity::Sid(sid)))
     }
 
     pub fn path(&self) -> &Path {
-        Path::new("")
+        Path::new(&self.name)
     }
 }
 
+/// Accepted (`Server`) or connected (`Client`) named-pipe stream. Both ends
+/// impl `AsyncRead + AsyncWrite`, so the framing helpers + `BufReader` work
+/// unchanged.
 #[cfg(windows)]
-pub struct PlatformStream {
-    _priv: (),
+pub enum PlatformStream {
+    Server(NamedPipeServer),
+    Client(NamedPipeClient),
+}
+
+#[cfg(windows)]
+impl PlatformStream {
+    /// Connect to a bound pipe (shim / async client side). Retries on
+    /// `ERROR_PIPE_BUSY` (server momentarily between instances — Decision 9),
+    /// then verifies the server's owner SID is the current user before the
+    /// caller sends any payload (Decision 3, client side).
+    pub async fn connect(path: &Path) -> io::Result<Self> {
+        let name = path
+            .to_str()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "pipe name is not UTF-8"))?;
+        const MAX_BUSY_RETRIES: u32 = 50; // ~1s at 20ms
+        let mut tries = 0u32;
+        let client = loop {
+            match ClientOptions::new().open(name) {
+                Ok(c) => break c,
+                Err(e)
+                    if e.raw_os_error() == Some(ERROR_PIPE_BUSY.0 as i32)
+                        && tries < MAX_BUSY_RETRIES =>
+                {
+                    tries += 1;
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                Err(e) => return Err(e),
+            }
+        };
+        // Anti-impersonation: confirm the pipe is owned by us before trusting it.
+        win_sec::verify_pipe_owner_is_current_user(HANDLE(client.as_raw_handle()))?;
+        Ok(PlatformStream::Client(client))
+    }
 }
 
 #[cfg(windows)]
 impl tokio::io::AsyncRead for PlatformStream {
     fn poll_read(
         self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-        _buf: &mut tokio::io::ReadBuf<'_>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
     ) -> std::task::Poll<io::Result<()>> {
-        std::task::Poll::Ready(Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "Windows IPC not yet implemented",
-        )))
+        match self.get_mut() {
+            PlatformStream::Server(s) => std::pin::Pin::new(s).poll_read(cx, buf),
+            PlatformStream::Client(c) => std::pin::Pin::new(c).poll_read(cx, buf),
+        }
     }
 }
 
@@ -776,33 +986,33 @@ impl tokio::io::AsyncRead for PlatformStream {
 impl tokio::io::AsyncWrite for PlatformStream {
     fn poll_write(
         self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-        _buf: &[u8],
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
     ) -> std::task::Poll<io::Result<usize>> {
-        std::task::Poll::Ready(Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "Windows IPC not yet implemented",
-        )))
+        match self.get_mut() {
+            PlatformStream::Server(s) => std::pin::Pin::new(s).poll_write(cx, buf),
+            PlatformStream::Client(c) => std::pin::Pin::new(c).poll_write(cx, buf),
+        }
     }
 
     fn poll_flush(
         self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
+        cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<io::Result<()>> {
-        std::task::Poll::Ready(Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "Windows IPC not yet implemented",
-        )))
+        match self.get_mut() {
+            PlatformStream::Server(s) => std::pin::Pin::new(s).poll_flush(cx),
+            PlatformStream::Client(c) => std::pin::Pin::new(c).poll_flush(cx),
+        }
     }
 
     fn poll_shutdown(
         self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
+        cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<io::Result<()>> {
-        std::task::Poll::Ready(Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "Windows IPC not yet implemented",
-        )))
+        match self.get_mut() {
+            PlatformStream::Server(s) => std::pin::Pin::new(s).poll_shutdown(cx),
+            PlatformStream::Client(c) => std::pin::Pin::new(c).poll_shutdown(cx),
+        }
     }
 }
 
@@ -821,30 +1031,61 @@ pub fn sync_connect(path: &Path) -> io::Result<std::os::unix::net::UnixStream> {
     std::os::unix::net::UnixStream::connect(path)
 }
 
-// Non-Unix stub. The hook-CLI blocking callers drive the returned value with
-// synchronous `Read`/`Write`, so the `Ok` type must implement both even though
-// it is never constructed here — a bare `Err` without a concrete `T` would not
-// type-check. NOT a `TcpStream`: that would invite a transport bypassing the
-// SID auth boundary. The real named-pipe sync connect is windows-ipc.
-#[cfg(not(unix))]
+/// Synchronous named-pipe client connect (blocking). Opening `\\.\pipe\name`
+/// with `OpenOptions` is `CreateFile(OPEN_EXISTING)` under the hood; the
+/// returned `File` impls `Read + Write` like the Unix `UnixStream`. Retries on
+/// `ERROR_PIPE_BUSY` / `ERROR_FILE_NOT_FOUND` (server between instances / pipe
+/// not yet created — Decision 9), then verifies the pipe owner is the current
+/// user (Decision 3, client side) before returning.
+#[cfg(windows)]
+pub fn sync_connect(path: &Path) -> io::Result<std::fs::File> {
+    const MAX_RETRIES: u32 = 50; // ~1s at 20ms
+    let mut tries = 0u32;
+    let file = loop {
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+        {
+            Ok(f) => break f,
+            Err(e)
+                if matches!(
+                    e.raw_os_error(),
+                    Some(c) if c == ERROR_PIPE_BUSY.0 as i32 || c == ERROR_FILE_NOT_FOUND.0 as i32
+                ) && tries < MAX_RETRIES =>
+            {
+                tries += 1;
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(e) => return Err(e),
+        }
+    };
+    win_sec::verify_pipe_owner_is_current_user(HANDLE(file.as_raw_handle()))?;
+    Ok(file)
+}
+
+// Fallback stub for any target that is neither unix nor windows. The hook-CLI
+// blocking callers drive the returned value with synchronous `Read`/`Write`, so
+// the `Ok` type must implement both even though it is never constructed.
+#[cfg(not(any(unix, windows)))]
 fn unsupported_sync() -> io::Error {
     io::Error::new(
         io::ErrorKind::Unsupported,
-        "synchronous IPC is not yet implemented on this platform (windows-ipc pending)",
+        "synchronous IPC is not implemented on this platform",
     )
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub struct UnsupportedSyncStream(());
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 impl io::Read for UnsupportedSyncStream {
     fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
         Err(unsupported_sync())
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 impl io::Write for UnsupportedSyncStream {
     fn write(&mut self, _: &[u8]) -> io::Result<usize> {
         Err(unsupported_sync())
@@ -854,9 +1095,282 @@ impl io::Write for UnsupportedSyncStream {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub fn sync_connect(_path: &Path) -> io::Result<UnsupportedSyncStream> {
     Err(unsupported_sync())
+}
+
+// ── Windows synchronous plan-review gate server (overlapped accept) ──────────
+//
+// The plan-review CLI is a blocking binary with no tokio runtime: it HOSTS the
+// approval endpoint and reads the decision the GUI writes (mirroring the Unix
+// mkfifo+poll model — Decision 6). The named-pipe analog of FIFO
+// `O_NONBLOCK`+`poll(timeout)` is an OVERLAPPED `ConnectNamedPipe` armed once,
+// then `WaitForSingleObject(event, tick)` per tick so the CLI can run the
+// `gui.pid` liveness check between waits (research §7).
+
+#[cfg(windows)]
+use windows::Win32::Storage::FileSystem::{
+    FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, FILE_FLAGS_AND_ATTRIBUTES, ReadFile,
+    WriteFile,
+};
+#[cfg(windows)]
+use windows::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
+#[cfg(windows)]
+use windows::Win32::System::Pipes::{
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, NAMED_PIPE_MODE, PIPE_ACCESS_DUPLEX,
+    PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_WAIT,
+};
+#[cfg(windows)]
+use windows::Win32::System::Threading::{
+    CreateEventW, INFINITE, ResetEvent, SetEvent, WAIT_OBJECT_0, WAIT_TIMEOUT, WaitForSingleObject,
+};
+
+#[cfg(windows)]
+fn coreerr(e: windows::core::Error) -> io::Error {
+    io::Error::other(e)
+}
+
+/// A blocking, owner-only named-pipe server for the plan-review approval gate.
+/// Single instance (one gate at a time). `accept_with_timeout` polls so the CLI
+/// can interleave liveness checks; the connected stream reads the decision.
+#[cfg(windows)]
+pub struct SyncPipeServer {
+    handle: Option<HANDLE>,
+    event: HANDLE,
+    overlapped: Box<OVERLAPPED>,
+    armed: bool,
+}
+
+/// Create the plan-review gate pipe with the owner-only SD + overlapped mode.
+/// `FILE_FLAG_OVERLAPPED` is REQUIRED or `ConnectNamedPipe` blocks with no
+/// timeout (research §7.2). MUST complete before the PlanReview notification is
+/// sent (the GUI then connects — Decision 6 ordering invariant).
+#[cfg(windows)]
+pub fn sync_listen(path: &Path) -> io::Result<SyncPipeServer> {
+    let name = path
+        .to_str()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "pipe name is not UTF-8"))?;
+    let name_w: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+    let sid = win_sec::current_user_sid_string()?;
+
+    let open_mode = FILE_FLAGS_AND_ATTRIBUTES(
+        PIPE_ACCESS_DUPLEX.0 | FILE_FLAG_OVERLAPPED.0 | FILE_FLAG_FIRST_PIPE_INSTANCE.0,
+    );
+    let pipe_mode = NAMED_PIPE_MODE(PIPE_TYPE_BYTE.0 | PIPE_WAIT.0 | PIPE_REJECT_REMOTE_CLIENTS.0);
+
+    let handle = win_sec::with_owner_only_security_attributes(&sid, |sa| {
+        // SAFETY: `name_w` is NUL-terminated and `sa` is a valid
+        // SECURITY_ATTRIBUTES for the call; the result is checked for validity.
+        let h = unsafe {
+            CreateNamedPipeW(
+                windows::core::PCWSTR(name_w.as_ptr()),
+                open_mode,
+                pipe_mode,
+                1,    // nMaxInstances: one gate at a time
+                4096, // out buffer
+                4096, // in buffer
+                0,    // default timeout (unused; we drive ConnectNamedPipe)
+                Some(sa as *const windows::Win32::Security::SECURITY_ATTRIBUTES),
+            )
+        };
+        if h.is_invalid() {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(h)
+    })?;
+
+    // SAFETY: standard manual-reset event creation.
+    let event = unsafe { CreateEventW(None, true, false, None) }.map_err(coreerr)?;
+    let mut overlapped = Box::new(OVERLAPPED::default());
+    overlapped.hEvent = event;
+
+    Ok(SyncPipeServer {
+        handle: Some(handle),
+        event,
+        overlapped,
+        armed: false,
+    })
+}
+
+#[cfg(windows)]
+impl SyncPipeServer {
+    /// Wait up to `tick_ms` for a client. `Ok(None)` = timeout (caller runs the
+    /// liveness check and calls again — the SAME pending op keeps waiting;
+    /// `ConnectNamedPipe` is NOT re-issued, research §7.4). `Ok(Some(..))` =
+    /// connected, with the verified peer identity.
+    pub fn accept_with_timeout(
+        &mut self,
+        tick_ms: u32,
+    ) -> io::Result<Option<(SyncPlatformStream, PeerIdentity)>> {
+        let handle = self
+            .handle
+            .ok_or_else(|| io::Error::other("sync pipe server already consumed"))?;
+
+        // Arm ConnectNamedPipe exactly once (research §7.1/§7.4).
+        if !self.armed {
+            // SAFETY: `handle` is a valid overlapped pipe; `overlapped` has a
+            // stable boxed address and a manual-reset event.
+            let res = unsafe { ConnectNamedPipe(handle, Some(&mut *self.overlapped)) };
+            match res {
+                // TRUE is unexpected for an overlapped pipe (research §7.3).
+                Ok(()) => {
+                    return Err(io::Error::other(
+                        "ConnectNamedPipe returned TRUE on an overlapped pipe",
+                    ));
+                }
+                Err(e) if e.code() == windows::Win32::Foundation::ERROR_IO_PENDING.to_hresult() => {
+                    // Normal: pending.
+                }
+                Err(e)
+                    if e.code()
+                        == windows::Win32::Foundation::ERROR_PIPE_CONNECTED.to_hresult() =>
+                {
+                    // Client connected before the call — signal the event so the
+                    // wait loop completes on the next tick (research §7.3).
+                    // SAFETY: `self.event` is a valid manual-reset event.
+                    unsafe { SetEvent(self.event) }.map_err(coreerr)?;
+                }
+                Err(e) => return Err(coreerr(e)),
+            }
+            self.armed = true;
+        }
+
+        // SAFETY: `self.event` is valid; WaitForSingleObject is always safe.
+        let status = unsafe { WaitForSingleObject(self.event, tick_ms) };
+        if status == WAIT_TIMEOUT {
+            return Ok(None);
+        }
+        if status != WAIT_OBJECT_0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        // Completed: confirm and extract bytes-transferred (bwait=false: done).
+        let mut transferred = 0u32;
+        // SAFETY: the op is complete (event signaled); overlapped is the same
+        // boxed struct passed to ConnectNamedPipe.
+        unsafe { GetOverlappedResult(handle, &*self.overlapped, &mut transferred, false) }
+            .map_err(coreerr)?;
+
+        // Synchronous SID extraction — no await anywhere in the CLI (Decision 5).
+        let sid = win_sec::client_sid_of(handle)?;
+        let peer = PeerIdentity::Sid(sid);
+
+        // Hand the connected pipe to the stream; the server keeps only the event
+        // (closed on drop). The connect op is done, so the boxed OVERLAPPED is
+        // no longer referenced by the kernel.
+        let pipe = self.handle.take().expect("handle present");
+        self.armed = false; // op consumed
+        // SAFETY: fresh manual-reset event for the stream's overlapped reads.
+        let read_event = unsafe { CreateEventW(None, true, false, None) }.map_err(coreerr)?;
+        Ok(Some((
+            SyncPlatformStream {
+                handle: pipe,
+                event: read_event,
+            },
+            peer,
+        )))
+    }
+}
+
+#[cfg(windows)]
+impl Drop for SyncPipeServer {
+    fn drop(&mut self) {
+        // SAFETY: best-effort teardown of owned handles. If a connect op is
+        // still armed, cancel it and drain the completion before closing
+        // (research §7.4: the kernel holds a pointer to the OVERLAPPED).
+        unsafe {
+            if let Some(h) = self.handle {
+                if self.armed {
+                    let _ = CancelIoEx(h, Some(&*self.overlapped));
+                    let _ = WaitForSingleObject(self.event, INFINITE);
+                }
+                let _ = DisconnectNamedPipe(h);
+                let _ = windows::Win32::Foundation::CloseHandle(h);
+            }
+            let _ = windows::Win32::Foundation::CloseHandle(self.event);
+        }
+    }
+}
+
+/// The connected plan-review pipe (server side). `Read`/`Write` over the
+/// overlapped handle via a per-call OVERLAPPED + blocking `GetOverlappedResult`.
+#[cfg(windows)]
+pub struct SyncPlatformStream {
+    handle: HANDLE,
+    event: HANDLE,
+}
+
+#[cfg(windows)]
+impl io::Read for SyncPlatformStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        // SAFETY: overlapped read on a valid handle with the stream's event;
+        // GetOverlappedResult(bwait=true) blocks until done.
+        unsafe {
+            let mut ol = OVERLAPPED::default();
+            ol.hEvent = self.event;
+            let _ = ResetEvent(self.event);
+            let pending_or_ok = ReadFile(self.handle, Some(buf), None, Some(&mut ol));
+            match pending_or_ok {
+                Ok(()) => {}
+                Err(e) if e.code() == windows::Win32::Foundation::ERROR_IO_PENDING.to_hresult() => {
+                }
+                Err(e)
+                    if e.code() == windows::Win32::Foundation::ERROR_BROKEN_PIPE.to_hresult() =>
+                {
+                    return Ok(0); // peer closed → EOF
+                }
+                Err(e) => return Err(coreerr(e)),
+            }
+            let mut n = 0u32;
+            match GetOverlappedResult(self.handle, &ol, &mut n, true) {
+                Ok(()) => Ok(n as usize),
+                Err(e)
+                    if e.code() == windows::Win32::Foundation::ERROR_BROKEN_PIPE.to_hresult() =>
+                {
+                    Ok(0)
+                }
+                Err(e) => Err(coreerr(e)),
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+impl io::Write for SyncPlatformStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        // SAFETY: overlapped write mirroring `read`.
+        unsafe {
+            let mut ol = OVERLAPPED::default();
+            ol.hEvent = self.event;
+            let _ = ResetEvent(self.event);
+            match WriteFile(self.handle, Some(buf), None, Some(&mut ol)) {
+                Ok(()) => {}
+                Err(e) if e.code() == windows::Win32::Foundation::ERROR_IO_PENDING.to_hresult() => {
+                }
+                Err(e) => return Err(coreerr(e)),
+            }
+            let mut n = 0u32;
+            GetOverlappedResult(self.handle, &ol, &mut n, true).map_err(coreerr)?;
+            Ok(n as usize)
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+impl Drop for SyncPlatformStream {
+    fn drop(&mut self) {
+        // SAFETY: owned handles closed once.
+        unsafe {
+            let _ = DisconnectNamedPipe(self.handle);
+            let _ = windows::Win32::Foundation::CloseHandle(self.handle);
+            let _ = windows::Win32::Foundation::CloseHandle(self.event);
+        }
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -865,36 +1379,49 @@ pub fn sync_connect(_path: &Path) -> io::Result<UnsupportedSyncStream> {
 mod tests {
     use super::*;
 
-    // 5.1 Comparison-branch test (CI, mocked peer uid)
+    // 5.1 Comparison-branch test (CI) — exercises `PeerIdentity::
+    // matches_current_process`, the only enforced access control at every
+    // accept loop. The branch that silently disappears if a refactor drops
+    // the peer check.
     //
-    // Verifies the `!=` comparison rejects a foreign uid. This is the branch
-    // that would silently disappear if a refactor dropped the uid check.
-    //
-    // IMPORTANT: This test mocks `peer_uid` — it does NOT verify that
-    // `peer_cred().uid()` returns the real foreign uid from the OS. That is
-    // task 6.3 (the `sudo -u nobody` acceptance harness), which cannot run
-    // in CI without privileged setup.
+    // IMPORTANT: this asserts the SELF-vs-FOREIGN comparison, NOT that the OS
+    // delivers the real foreign principal. The real two-account harness
+    // (`sudo -u nobody` on Unix / a second Windows user) is UNVERIFIED-pending
+    // and cannot run in single-account CI.
+    #[cfg(unix)]
     #[test]
-    fn comparison_branch_rejects_foreign_uid() {
-        let app_uid: u32 = 1000;
-        let foreign_uid: u32 = 9999;
-
-        // Simulate what the hook server and MCP daemon accept loops do:
-        // compare the peer uid to the app uid, reject if different.
-        let should_reject = |peer: u32| peer != app_uid;
-
+    fn peer_identity_rejects_foreign_uid() {
+        let me = unsafe { libc::getuid() };
         assert!(
-            should_reject(foreign_uid),
-            "foreign uid {foreign_uid} must be rejected (comparison branch)"
+            PeerIdentity::Uid(me).matches_current_process(),
+            "self uid {me} must be accepted"
         );
         assert!(
-            !should_reject(app_uid),
-            "same uid {app_uid} must be accepted"
+            !PeerIdentity::Uid(me.wrapping_add(1)).matches_current_process(),
+            "foreign uid must be rejected (comparison branch)"
         );
-        // Zero uid (root) is also foreign when the app runs as non-root
+        // uid 0 (root) is foreign when the app runs non-root (skip if CI is root).
         assert!(
-            should_reject(0),
-            "uid 0 (root) must be rejected when app uid is {app_uid}"
+            me == 0 || !PeerIdentity::Uid(0).matches_current_process(),
+            "uid 0 must be rejected when the app is non-root"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn peer_identity_rejects_foreign_sid() {
+        // The current process owner SID must match itself.
+        let me = win_sec::process_owner_sid().expect("current process owner SID");
+        assert!(
+            PeerIdentity::Sid(me).matches_current_process(),
+            "self SID must be accepted"
+        );
+        // Well-known "Everyone" SID (S-1-1-0), a valid SID that is never the
+        // interactive user — exercises the reject branch.
+        let everyone: Box<[u8]> = Box::new([0x01, 0x01, 0, 0, 0, 0, 0, 0x01, 0, 0, 0, 0]);
+        assert!(
+            !PeerIdentity::Sid(everyone).matches_current_process(),
+            "foreign (Everyone) SID must be rejected (comparison branch)"
         );
     }
 

@@ -426,11 +426,31 @@ pub fn submit_plan_decision(
         serde_json::json!({ "approved": false, "message": deny_msg })
     };
 
-    std::fs::write(
-        &decision_path,
-        serde_json::to_string(&decision).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| format!("writing decision to FIFO: {e}"))?;
+    let payload = serde_json::to_string(&decision).map_err(|e| e.to_string())?;
+
+    // Unix: write the decision into the FIFO the hook CLI is reading.
+    #[cfg(unix)]
+    std::fs::write(&decision_path, &payload)
+        .map_err(|e| format!("writing decision to FIFO: {e}"))?;
+
+    // Windows: connect to the CLI's gate pipe at submit time (single
+    // invocation, no held state — Decision 6) and write the decision. The
+    // sync client verifies the pipe owner is us + retries ERROR_PIPE_BUSY /
+    // ERROR_FILE_NOT_FOUND. Dropping the stream closes the pipe → the gate's
+    // read sees EOF.
+    #[cfg(windows)]
+    {
+        use std::io::Write;
+        let mut stream = crate::platform::sync_connect(std::path::Path::new(&decision_path))
+            .map_err(|e| format!("connecting to plan-review gate pipe: {e}"))?;
+        stream
+            .write_all(payload.as_bytes())
+            .map_err(|e| format!("writing decision to gate pipe: {e}"))?;
+        stream.flush().map_err(|e| e.to_string())?;
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    std::fs::write(&decision_path, &payload).map_err(|e| e.to_string())?;
 
     Ok(())
 }

@@ -194,17 +194,12 @@ pub fn plan_review(socket_path: &Path) -> Result<()> {
     // RAII guard: removes any pre-existing hostile FIFO + unlinks on exit.
     #[cfg(unix)]
     let _guard = FifoGuard::create(fifo_path.clone())?;
-    #[cfg(not(unix))]
-    {
-        if fifo_path.exists() {
-            std::fs::remove_file(&fifo_path)?;
-        }
-        std::process::Command::new("mkfifo")
-            .arg(&fifo_path)
-            .status()
-            .context("creating FIFO")?;
-        let _guard = FifoGuard(fifo_path.clone());
-    }
+    // Windows: the CLI hosts the gate via an owner-only named-pipe server
+    // (Decision 6). `sync_listen` (CreateNamedPipeW) MUST complete BEFORE the
+    // PlanReview notification is sent so the GUI never races a not-yet-created
+    // pipe (Decision 6 ordering invariant, mirroring Unix mkfifo-before-send).
+    #[cfg(windows)]
+    let mut pipe_server = crate::platform::sync_listen(&fifo_path)?;
 
     // Build PlanReview event for the socket server
     let session_id = stdin_json
@@ -241,13 +236,13 @@ pub fn plan_review(socket_path: &Path) -> Result<()> {
     stream.flush().context("flushing socket")?;
     drop(stream);
 
-    // Liveness-aware blocking read from the FIFO.
+    // Liveness-aware blocking read from the endpoint.
     // Read the GUI liveness token written at startup by the Nergal GUI.
-    let gui_token = crate::platform::read_gui_pid(
-        fifo_path
-            .parent()
-            .ok_or_else(|| anyhow::anyhow!("FIFO has no parent dir"))?,
-    );
+    // gui_pid_dir() is the same dir the GUI wrote to on both platforms (on
+    // Unix it equals the FIFO's parent IPC dir; on Windows the FIFO path is a
+    // pipe name with no usable parent, so resolve the token dir explicitly).
+    let gui_dir = crate::platform::gui_pid_dir().context("resolving gui.pid dir")?;
+    let gui_token = crate::platform::read_gui_pid(&gui_dir);
 
     #[cfg(unix)]
     {
@@ -270,12 +265,9 @@ pub fn plan_review(socket_path: &Path) -> Result<()> {
             output_deny(message)?;
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        // Non-unix: fall back to simple blocking read (no liveness check)
-        let _ = gui_token;
-        let decision_str =
-            std::fs::read_to_string(&fifo_path).context("reading decision from FIFO")?;
+        let decision_str = blocking_pipe_read_liveness_aware(&mut pipe_server, gui_token)?;
         let decision: serde_json::Value =
             serde_json::from_str(decision_str.trim()).context("parsing decision JSON")?;
         let approved = decision
@@ -413,6 +405,66 @@ fn blocking_fifo_read_liveness_aware(
     }
 
     String::from_utf8(buf).context("FIFO decision is not UTF-8")
+}
+
+/// Windows analog of `blocking_fifo_read_liveness_aware`: the CLI hosts the gate
+/// pipe and polls `accept_with_timeout(~1s)`, running the SAME `gui.pid`
+/// liveness check + wall-clock backstop between waits (Decision 6). On connect
+/// it re-verifies the peer is the same principal (defence-in-depth behind the
+/// owner-only SD), then reads the decision JSON the GUI wrote.
+#[cfg(windows)]
+fn blocking_pipe_read_liveness_aware(
+    server: &mut crate::platform::SyncPipeServer,
+    gui_token: Option<(u32, u64)>,
+) -> anyhow::Result<String> {
+    use std::io::Read;
+    const TICK_MS: u32 = 1000;
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs(PLAN_REVIEW_WALL_CLOCK_SECS);
+
+    loop {
+        if std::time::Instant::now() >= deadline {
+            tracing::warn!(
+                ipc_event = "dead_peer_deny",
+                "plan-review wall-clock backstop reached; resolving to safe deny"
+            );
+            output_deny("Plan review timed out — please resubmit")
+                .context("writing wall-clock deny")?;
+            return Ok(r#"{"approved":false,"message":"wall_clock_backstop"}"#.to_string());
+        }
+
+        match server.accept_with_timeout(TICK_MS)? {
+            None => {
+                // No client yet — check GUI liveness (mirrors the Unix tick).
+                if let Some((pid, start_time)) = gui_token
+                    && !crate::platform::check_gui_liveness(pid, start_time)
+                {
+                    output_deny("Nergal GUI is no longer running — plan review cancelled")
+                        .context("writing dead-GUI deny")?;
+                    return Ok(r#"{"approved":false,"message":"gui_dead"}"#.to_string());
+                }
+                // GUI alive (or unknown) — keep waiting.
+            }
+            Some((mut stream, peer)) => {
+                // Same-principal wall (defence-in-depth behind the owner-only SD).
+                if !peer.matches_current_process() {
+                    tracing::warn!(
+                        ipc_event = "peer_rejected",
+                        principal = %peer.display(),
+                        "plan-review connection from a foreign principal — denying"
+                    );
+                    output_deny("Plan review rejected — connection from another user")
+                        .context("writing foreign-principal deny")?;
+                    return Ok(r#"{"approved":false,"message":"foreign_principal"}"#.to_string());
+                }
+                let mut decision = String::new();
+                stream
+                    .read_to_string(&mut decision)
+                    .context("reading decision from gate pipe")?;
+                return Ok(decision);
+            }
+        }
+    }
 }
 
 /// Returns immediately so CC's TUI keeps owning the dialog; we only fire a

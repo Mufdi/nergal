@@ -4,8 +4,6 @@ use std::sync::Arc;
 use anyhow::Result;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::AsyncBufReadExt;
-#[cfg(unix)]
-use tokio::net::UnixListener;
 
 use super::events::HookEvent;
 use crate::agents::AgentId;
@@ -191,8 +189,9 @@ impl FrontendHookEvent {
     }
 }
 
-/// Starts the Unix socket server that receives hook events from Claude CLI.
-#[cfg(unix)]
+/// Starts the IPC server that receives hook events from the agent CLI. Bound
+/// through `PlatformListener` (Unix socket / Windows named pipe); the peer is
+/// gated by `PeerIdentity::matches_current_process()` on both platforms.
 pub async fn start_hook_server(
     socket_path: &Path,
     app: AppHandle,
@@ -200,75 +199,46 @@ pub async fn start_hook_server(
     plan_state: SharedPlanState,
     agent_state: AgentRuntimeState,
 ) -> Result<()> {
-    // Conditional probe: ECONNREFUSED = provably dead stale socket → safe to unlink.
-    // Do NOT unlink unconditionally — a second launch must not evict the live server.
-    // (The flock in IpcLockFile is the primary guard; this is the per-bind backstop.)
-    #[cfg(unix)]
-    if socket_path.exists() {
-        if crate::platform::probe_socket_alive(socket_path) {
+    use crate::platform::PlatformListener;
+
+    // `PlatformListener::bind` handles the stale-endpoint probe + owner-only
+    // permissions (0600 behind the 0700 dir on Unix; owner-only security
+    // descriptor on Windows). A live peer surfaces as `AddrInUse`, which means
+    // an instance is already serving → return Ok and let it serve.
+    let listener = match PlatformListener::bind(socket_path) {
+        Ok(l) => l,
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
             tracing::warn!(
                 ipc_event = "bind_deferred",
                 path = %socket_path.display(),
-                "live hook socket found at startup; deferring bind"
+                "live hook endpoint found at startup; deferring bind"
             );
-            // Return Ok — the live instance is already serving.
             return Ok(());
         }
-        std::fs::remove_file(socket_path)?;
-    }
-    #[cfg(not(unix))]
-    if socket_path.exists() {
-        std::fs::remove_file(socket_path)?;
-    }
-
-    let listener = UnixListener::bind(socket_path)?;
-    // 0600: defence-in-depth behind the per-user 0700 IPC dir. A permissive
-    // umask would otherwise let other local users inject spoofed hook events
-    // (session state, attention indicators, Obsidian writes).
-    // Gated #[cfg(unix)] matching mcp/transport.rs:83 so the crate compiles
-    // under a Windows target (owner-only ACL provided by the named-pipe
-    // security descriptor there — deferred Windows iteration).
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))?;
-    }
+        Err(e) => return Err(e.into()),
+    };
     tracing::info!("hook server listening on {}", socket_path.display());
-
-    // Current process uid — connections from any other uid are rejected.
-    // WHY: the per-user 0700 IPC dir makes this unreachable by a different uid
-    // in normal operation. The check is defence-in-depth closing the brief
-    // create→chmod TOCTOU window on the socket file itself.
-    #[cfg(unix)]
-    let app_uid = unsafe { libc::getuid() };
 
     let rejection_log: Arc<RejectionRateLimit> = Arc::new(RejectionRateLimit::new());
 
     loop {
-        let (stream, _addr) = listener.accept().await?;
-
-        // Peer-uid gate: reject and log any connection from a foreign uid
-        // BEFORE reading any line. This closes the create→chmod TOCTOU window
-        // and provides defence-in-depth behind the 0700 IPC dir.
-        // The rejection_log rate-limits so a spammer cannot fill the disk.
-        #[cfg(unix)]
-        {
-            match crate::platform::peer_uid_of(&stream) {
-                Ok(uid) if uid != app_uid => {
-                    rejection_log.report(uid, "hook");
-                    // stream dropped here → connection closed without reading
-                    continue;
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        ipc_event = "peer_rejected",
-                        error = %e,
-                        "hook: could not extract peer uid; dropping connection"
-                    );
-                    continue;
-                }
-                Ok(_) => {} // same uid — proceed
+        // A single bad connection (I/O error, SID-extraction failure on
+        // Windows) must not kill the server — log and keep accepting.
+        let (stream, peer) = match listener.accept().await {
+            Ok(pair) => pair,
+            Err(e) => {
+                tracing::warn!(ipc_event = "accept_error", error = %e, "hook accept failed");
+                continue;
             }
+        };
+
+        // Peer gate: reject + rate-limited log any connection from a foreign
+        // principal BEFORE reading any line. Defence-in-depth behind the
+        // per-user endpoint isolation (0700 dir on Unix, owner-only SD on
+        // Windows). The rejection_log coalesces so a spammer cannot fill disk.
+        if !peer.matches_current_process() {
+            rejection_log.report(&peer.display(), "hook");
+            continue; // stream dropped here → connection closed without reading
         }
 
         let app = app.clone();
@@ -326,24 +296,6 @@ pub async fn start_hook_server(
             }
         });
     }
-}
-
-/// Windows stub: the named-pipe hook server is deferred to windows-ipc. Returns
-/// `Unsupported` so the spawn task logs a clean error instead of the crate
-/// failing to compile; hook events are unavailable until the Windows transport
-/// lands. Signature mirrors the Unix one so the ungated caller in `lib.rs`
-/// resolves on every target.
-#[cfg(not(unix))]
-pub async fn start_hook_server(
-    _socket_path: &Path,
-    _app: AppHandle,
-    _db: SharedDb,
-    _plan_state: SharedPlanState,
-    _agent_state: AgentRuntimeState,
-) -> Result<()> {
-    Err(anyhow::anyhow!(
-        "hook server unsupported on this platform until windows-ipc lands"
-    ))
 }
 
 /// Handle a `kind=control` message off the hook socket. Today the only op is

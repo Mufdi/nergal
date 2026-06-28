@@ -286,7 +286,6 @@ mod tests {
         DaemonContext {
             db,
             agents,
-            app_uid: 0,
             delivery: std::sync::Arc::new(crate::mcp::delivery::NoopDelivery),
             worktree_gate: Default::default(),
         }

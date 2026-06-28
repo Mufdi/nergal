@@ -1153,7 +1153,6 @@ mod tests {
         DaemonContext {
             db,
             agents: AgentRuntimeState::bootstrap().unwrap(),
-            app_uid: 0,
             delivery: Arc::new(crate::mcp::delivery::NoopDelivery),
             worktree_gate: WorktreeGateState::default(),
         }

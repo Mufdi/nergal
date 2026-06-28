@@ -3190,6 +3190,7 @@ dependencies = [
  "webkit2gtk",
  "wezterm-term",
  "which",
+ "windows 0.62.2",
 ]
 
 [[package]]

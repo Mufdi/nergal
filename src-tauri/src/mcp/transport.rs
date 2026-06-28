@@ -1,23 +1,20 @@
-//! Dedicated MCP transport: length-framed JSON over a Unix socket.
+//! Dedicated MCP transport framing: length-framed JSON over the daemon endpoint.
 //!
-//! This is a NEW socket (`/tmp/nergal-mcp.sock`), deliberately NOT the hook
-//! socket (`hooks/server.rs:202`), which is fire-and-forget (newline-delimited,
-//! no response path) and cannot carry MCP request→response. Framing is a
-//! 4-byte little-endian length prefix + payload, which — unlike the hook
-//! socket's `BufReader::lines()` — tolerates newlines inside JSON-RPC bodies.
+//! This is a NEW endpoint (a dedicated MCP socket / named pipe), deliberately
+//! NOT the hook endpoint, which is fire-and-forget (newline-delimited, no
+//! response path) and cannot carry MCP request→response. Framing is a 4-byte
+//! little-endian length prefix + payload, which — unlike the hook socket's
+//! `BufReader::lines()` — tolerates newlines inside JSON-RPC bodies.
 //!
 //! The framing helpers ([`read_frame`] / [`write_frame`]) are generic over any
-//! async reader/writer so they unit-test against in-memory duplex pipes; the
-//! Unix specifics (bind, perms, peer uid) live in [`UnixSocketTransport`] so a
-//! future Windows named-pipe transport drops in without touching dispatch.
+//! async reader/writer, so they unit-test against in-memory duplex pipes and
+//! frame over `platform::PlatformStream` (Unix socket / Windows named pipe)
+//! unchanged. The bind/accept/peer-identity specifics live in
+//! `platform::PlatformListener`.
 
 use std::io;
-#[cfg(unix)]
-use std::path::{Path, PathBuf};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-#[cfg(unix)]
-use tokio::net::{UnixListener, UnixStream};
 
 /// Hard ceiling on a single frame. A JSON-RPC tool result for the directory is
 /// kilobytes; 16 MiB is a generous bound that still rejects a corrupt/hostile
@@ -66,70 +63,10 @@ pub async fn write_frame<W: AsyncWriteExt + Unpin>(
     Ok(())
 }
 
-/// Owner-only Unix-socket transport for the daemon. Holds the bound listener;
-/// `accept` yields a connected `UnixStream` plus the peer's uid for the uid
-/// boundary check (the only enforced access control — design Decision 2).
-#[cfg(unix)]
-pub struct UnixSocketTransport {
-    listener: UnixListener,
-    path: PathBuf,
-}
-
-#[cfg(unix)]
-impl UnixSocketTransport {
-    /// Bind the daemon socket at `path` with mode `0600`, removing any stale
-    /// socket first (mirrors `hooks/server.rs:198`).
-    pub fn bind(path: &Path) -> io::Result<Self> {
-        if path.exists() {
-            std::fs::remove_file(path)?;
-        }
-        let listener = UnixListener::bind(path)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-        }
-        Ok(Self {
-            listener,
-            path: path.to_path_buf(),
-        })
-    }
-
-    /// Accept one connection, returning the stream and the peer process uid.
-    pub async fn accept(&self) -> io::Result<(UnixStream, u32)> {
-        let (stream, _addr) = self.listener.accept().await?;
-        let uid = peer_uid(&stream)?;
-        Ok((stream, uid))
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-#[cfg(unix)]
-impl Drop for UnixSocketTransport {
-    fn drop(&mut self) {
-        // Best-effort cleanup so a restart re-binds cleanly.
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
-/// Peer credential uid via `SO_PEERCRED`. The uid wall is the real boundary:
-/// a different-uid process is rejected outright. No Windows counterpart — the
-/// named-pipe transport (windows-ipc) enforces the equivalent via the client
-/// SID, and no ungated caller references `peer_uid` on Windows.
-#[cfg(unix)]
-pub fn peer_uid(stream: &UnixStream) -> io::Result<u32> {
-    let cred = stream.peer_cred()?;
-    Ok(cred.uid())
-}
-
-/// Connect to the daemon socket (shim side).
-#[cfg(unix)]
-pub async fn connect(path: &Path) -> io::Result<UnixStream> {
-    UnixStream::connect(path).await
-}
+// The daemon transport (bind / accept / peer identity) now lives in
+// `platform::PlatformListener` (Unix socket / Windows named pipe). This module
+// keeps only the length-framing helpers, which are generic over any
+// `AsyncRead`/`AsyncWrite` — they frame over `PlatformStream` unchanged.
 
 #[cfg(test)]
 mod tests {

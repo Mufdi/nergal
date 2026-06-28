@@ -78,8 +78,6 @@ pub fn mcp_set_enabled(enabled: bool) -> Result<(), String> {
 pub struct DaemonContext {
     pub db: SharedDb,
     pub agents: AgentRuntimeState,
-    /// The app process uid; connections from any other uid are rejected.
-    pub app_uid: u32,
     /// Bridge to the live app: PTY wake + frontend events. `NoopDelivery` in
     /// tests / headless. Cross-session messaging actuates delivery through this.
     pub delivery: Arc<dyn SessionDelivery>,
@@ -577,26 +575,24 @@ pub fn dispatch(
     }
 }
 
-/// Daemon accept loop. Binds the socket, enforces the uid wall, and spawns a
+/// Daemon accept loop. Binds the endpoint via `PlatformListener` (Unix socket /
+/// Windows named pipe), enforces the same-principal wall, and spawns a
 /// per-connection task. Returns only on a fatal accept error.
 ///
-/// A semaphore caps concurrent connections so a runaway same-uid spawner can't
-/// pin unbounded tasks/heap (each connection can allocate up to MAX_FRAME_BYTES
-/// per read). The threat is same-uid (already full-trust), so the cap is a
-/// resource backstop, not an authz boundary.
-#[cfg(unix)]
-pub async fn serve(transport: transport::UnixSocketTransport, ctx: DaemonContext) {
+/// A semaphore caps concurrent connections so a runaway same-principal spawner
+/// can't pin unbounded tasks/heap (each connection can allocate up to
+/// MAX_FRAME_BYTES per read). The threat is same-principal (already full-trust),
+/// so the cap is a resource backstop, not an authz boundary.
+pub async fn serve(listener: crate::platform::PlatformListener, ctx: DaemonContext) {
     const MAX_CONNECTIONS: usize = 32;
     let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
-    tracing::info!("mcp daemon listening on {}", transport.path().display());
+    let rejection_log = crate::platform::RejectionRateLimit::new();
+    tracing::info!("mcp daemon listening on {}", listener.path().display());
     loop {
-        match transport.accept().await {
-            Ok((stream, uid)) => {
-                if uid != ctx.app_uid {
-                    tracing::warn!(
-                        "mcp: rejected connection from uid {uid} (app uid {})",
-                        ctx.app_uid
-                    );
+        match listener.accept().await {
+            Ok((stream, peer)) => {
+                if !peer.matches_current_process() {
+                    rejection_log.report(&peer.display(), "mcp");
                     continue; // stream dropped → closed
                 }
                 let Ok(permit) = sem.clone().try_acquire_owned() else {
@@ -617,8 +613,7 @@ pub async fn serve(transport: transport::UnixSocketTransport, ctx: DaemonContext
     }
 }
 
-#[cfg(unix)]
-async fn handle_connection(mut stream: tokio::net::UnixStream, ctx: DaemonContext) {
+async fn handle_connection(mut stream: crate::platform::PlatformStream, ctx: DaemonContext) {
     // Per-connection cooperative identity hint, captured from `initialize`.
     // Re-resolved against the live registry on every tool call (lazy
     // re-validation handles the connect-before-register race).
@@ -669,9 +664,8 @@ async fn handle_connection(mut stream: tokio::net::UnixStream, ctx: DaemonContex
     }
 }
 
-#[cfg(unix)]
 async fn write_response(
-    stream: &mut tokio::net::UnixStream,
+    stream: &mut crate::platform::PlatformStream,
     resp: &JsonRpcResponse,
 ) -> std::io::Result<()> {
     let bytes = serde_json::to_vec(resp).unwrap_or_else(|_| {
@@ -693,7 +687,6 @@ mod tests {
         DaemonContext {
             db,
             agents,
-            app_uid: 0,
             delivery: Arc::new(crate::mcp::delivery::NoopDelivery),
             worktree_gate: Default::default(),
         }

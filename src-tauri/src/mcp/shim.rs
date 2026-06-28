@@ -16,23 +16,13 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use super::transport;
 
 /// Entry point for the `nergal mcp` subcommand. Builds a runtime and runs the
-/// stdio relay loop until stdin EOF.
-#[cfg(unix)]
+/// stdio relay loop until stdin EOF. Cross-platform: the daemon connection goes
+/// through `PlatformStream` (Unix socket / Windows named pipe).
 pub fn run() -> anyhow::Result<()> {
     let rt = tokio::runtime::Runtime::new().context("mcp shim runtime")?;
     rt.block_on(run_async())
 }
 
-/// Windows stub: the named-pipe MCP transport is deferred to windows-ipc. The
-/// `nergal mcp` subcommand exits cleanly (Ok) so an agent that spawns it does
-/// not hang — MCP is simply unavailable until the Windows transport lands.
-#[cfg(not(unix))]
-pub fn run() -> anyhow::Result<()> {
-    eprintln!("nergal mcp: shim unsupported on this platform until windows-ipc lands");
-    Ok(())
-}
-
-#[cfg(unix)]
 async fn run_async() -> anyhow::Result<()> {
     let hint = std::env::var("NERGAL_SESSION_ID")
         .ok()
@@ -51,8 +41,10 @@ async fn run_async() -> anyhow::Result<()> {
             crate::platform_proc::ancestor_env(&["NERGAL_SESSION_ID", "CLAUDE_CODE_SESSION_ID"], 8)
         });
 
-    // Fast, non-hanging connect: a missing/dead socket → degraded mode.
-    let mut daemon = transport::connect(&super::socket_path()).await.ok();
+    // Fast, non-hanging connect: a missing/dead endpoint → degraded mode.
+    let mut daemon = crate::platform::PlatformStream::connect(&super::socket_path())
+        .await
+        .ok();
 
     let mut reader = BufReader::new(tokio::io::stdin());
     let mut stdout = tokio::io::stdout();
@@ -123,8 +115,7 @@ async fn run_async() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
-async fn relay(conn: &mut tokio::net::UnixStream, msg: &Value) -> anyhow::Result<Value> {
+async fn relay(conn: &mut crate::platform::PlatformStream, msg: &Value) -> anyhow::Result<Value> {
     let bytes = serde_json::to_vec(msg)?;
     transport::write_frame(conn, &bytes).await?;
     let frame = transport::read_frame(conn)

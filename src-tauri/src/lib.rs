@@ -647,13 +647,11 @@ pub fn run() {
             let transcripts_dir = config.transcripts_directory.clone();
 
             // Write the GUI liveness token so hook-CLI plan-review can detect
-            // GUI death without relying on a connection (FIFO is connectionless).
-            // Gated #[cfg(unix)]: ipc_dir() is unix-only, and the FIFO plan-review
-            // this token backs is unix-only until windows-ipc lands the named-pipe
-            // path (which will resolve a Windows gui.pid dir of its own).
-            #[cfg(unix)]
-            if let Ok(ipc_dir) = crate::platform::ipc_dir()
-                && let Err(e) = crate::platform::write_gui_pid(&ipc_dir)
+            // GUI death without relying on a connection (the endpoint is
+            // connectionless). gui_pid_dir() resolves the per-user IPC dir on
+            // Unix and the per-user local-data dir on Windows.
+            if let Ok(dir) = crate::platform::gui_pid_dir()
+                && let Err(e) = crate::platform::write_gui_pid(&dir)
             {
                 tracing::warn!("failed to write gui.pid liveness token: {e:#}");
             }
@@ -690,12 +688,11 @@ pub fn run() {
             });
 
             // MCP daemon: exposes the live session directory to agents over a
-            // dedicated socket. It binds unconditionally (so a registered shim
-            // always gets a clean connection); `tools/call` is gated by
-            // `mcp_server_enabled` (default off) per request.
-            // Gated #[cfg(unix)] including the local clones so they are not
-            // unused on Windows; the named-pipe MCP daemon is windows-ipc.
-            #[cfg(unix)]
+            // dedicated endpoint (Unix socket / Windows named pipe). It binds
+            // unconditionally (so a registered shim always gets a clean
+            // connection); `tools/call` is gated by `mcp_server_enabled`
+            // (default off) per request. The same-principal wall is enforced
+            // inside `serve` via `PeerIdentity` (no raw uid here).
             {
                 let mcp_db = db.clone();
                 let mcp_agents = agent_state.clone();
@@ -703,19 +700,17 @@ pub fn run() {
                 let mcp_worktree_gate = worktree_gate.clone();
                 tauri::async_runtime::spawn(async move {
                     let path = crate::mcp::socket_path();
-                    match crate::mcp::transport::UnixSocketTransport::bind(&path) {
-                        Ok(transport) => {
-                            let app_uid = unsafe { libc::getuid() };
+                    match crate::platform::PlatformListener::bind(&path) {
+                        Ok(listener) => {
                             let ctx = crate::mcp::DaemonContext {
                                 db: mcp_db,
                                 agents: mcp_agents,
-                                app_uid,
                                 delivery: std::sync::Arc::new(
                                     crate::mcp::delivery::AppBridge::new(mcp_app),
                                 ),
                                 worktree_gate: mcp_worktree_gate,
                             };
-                            crate::mcp::serve(transport, ctx).await;
+                            crate::mcp::serve(listener, ctx).await;
                         }
                         Err(e) => {
                             tracing::error!(ipc_event = "bind_failure", "mcp daemon bind error: {e}")

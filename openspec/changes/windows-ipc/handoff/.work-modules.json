@@ -1,0 +1,19 @@
+{
+  "tier": "XL",
+  "tier_source": "user-stated",
+  "ceremony": "deep",
+  "risk_tier": "critical",
+  "files_estimate": 7,
+  "tags": ["windows-port", "cross-platform"],
+  "visibility": "public",
+  "spec_target": "platform-ipc-transport",
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "iprev_rounds": 4,
+    "reviewer_mode": "iprev-adversarial-opus",
+    "gates_phases_run": ["authoring-only"],
+    "per_phase_models": { "design": "opus", "validation": "opus", "exploration": "sonnet" }
+  },
+  "notes": "Authoring-only phase (no code implemented). Part of the 5-change Windows port; sequenced compile->ipc->proc->desktop->bundle-ci. Implementation + Windows-machine walk deferred to the user.",
+  "interview_ts": "2026-06-28"
+}

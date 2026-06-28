@@ -26,6 +26,23 @@ export function buildReleaseBody(changelog, version) {
   return stripVersionHeader(section);
 }
 
+export const prereleasePlaceholder = (version) =>
+  `Pre-release \`v${version}\` — CI pipeline smoke-test, not a user-facing release.`;
+
+// CLI/CI resolution. A pre-release tag (normalized version contains `-`, e.g.
+// `0.0.0-test1`) is a pipeline smoke-test that intentionally ships without a
+// CHANGELOG section, so fall back to a placeholder body instead of failing the
+// publish job. Stable tags still hard-require their section (a missing one is a
+// real release mistake). Returns `{ body }` or `{ error }`.
+export function resolveReleaseBody(changelog, normalizedVersion) {
+  const body = buildReleaseBody(changelog, normalizedVersion);
+  if (body !== null) return { body };
+  if (normalizedVersion.includes('-')) {
+    return { body: prereleasePlaceholder(normalizedVersion) };
+  }
+  return { error: `CHANGELOG.md has no section for v${normalizedVersion}.` };
+}
+
 function main() {
   const version = process.argv[2];
   if (!version) {
@@ -34,9 +51,9 @@ function main() {
   }
   const normalized = version.replace(/^v/, '');
   const content = fs.readFileSync(CHANGELOG, 'utf8');
-  const body = buildReleaseBody(content, normalized);
-  if (body === null) {
-    process.stderr.write(`CHANGELOG.md has no section for v${normalized}.\n`);
+  const { body, error } = resolveReleaseBody(content, normalized);
+  if (error) {
+    process.stderr.write(`${error}\n`);
     process.exit(1);
   }
   process.stdout.write(body);

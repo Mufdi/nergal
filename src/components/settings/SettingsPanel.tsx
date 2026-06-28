@@ -1997,7 +1997,7 @@ const SECTIONS: { id: SectionId; label: string; icon: typeof FolderTree }[] = [
   { id: "about", label: "About", icon: Info },
 ];
 
-type InstallSource = "deb" | "appimage" | "mac_app" | "dev" | "unknown";
+type InstallSource = "deb" | "appimage" | "mac_app" | "windows" | "dev" | "unknown";
 
 interface UpdateCheckResult {
   currentVersion: string;
@@ -2206,6 +2206,7 @@ function AboutSection({ appVersion }: { appVersion: string }) {
     deb: ".deb (system install)",
     appimage: "AppImage (portable)",
     mac_app: ".app (macOS)",
+    windows: "Windows (installer)",
     dev: "Dev build",
     unknown: "Unknown",
   }[installSource];
@@ -2510,7 +2511,10 @@ function renderUpdateButton({
           </Button>
         );
       }
-      if (installSource === "appimage") {
+      // appimage + windows share the OS-agnostic auto-install action
+      // (tauri-plugin-updater downloadAndInstall). Windows has no asset-size
+      // field on the result, so the size suffix only shows for AppImage.
+      if (installSource === "appimage" || installSource === "windows") {
         const size = result.appimageAssetSize ? formatBytes(result.appimageAssetSize) : null;
         return (
           <Button variant="default" size="sm" onClick={onUpdateAppImage} className="w-fit">
@@ -2589,6 +2593,12 @@ function renderUpdateSupplementary({
               The installer replaces the running AppImage in place. Nergal needs to restart afterwards.
             </p>
           )}
+          {installSource === "windows" && (
+            <p className="text-xs text-muted-foreground">
+              The installer updates Nergal in place; Windows SmartScreen may show a one-time prompt
+              until the app is code-signed. Nergal needs to restart afterwards.
+            </p>
+          )}
           {result.releaseNotes && (
             <details className="rounded-md border border-border/40 bg-card/30 p-2 text-xs" open>
               <summary className="cursor-pointer select-none text-foreground">
@@ -2648,7 +2658,8 @@ function renderUpdateSupplementary({
     case "appimage_downloading":
       return (
         <p className="text-xs text-muted-foreground">
-          Downloading signed AppImage and verifying the signature against the embedded pubkey…
+          Downloading the signed {installSource === "windows" ? "installer" : "AppImage"} and
+          verifying the signature against the embedded pubkey…
         </p>
       );
     case "appimage_installed":

@@ -2,9 +2,10 @@
 //!
 //! Source-aware on purpose: nergal must never trigger a sudo prompt, so
 //! `.deb` installs only ever stage the new package in `~/Downloads/` and
-//! defer the elevation to the user's own package-manager UI. AppImage
-//! signed auto-install is a future addition; today both paths share the
-//! same download-and-reveal flow.
+//! defer the elevation to the user's own package-manager UI. The AppImage
+//! branch IS the live signed auto-install path (`tauri-plugin-updater`
+//! `downloadAndInstall`); the Windows installer shares that same OS-agnostic
+//! action. `.deb`/`.app` stay download-and-reveal (sudo / Gatekeeper).
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -21,6 +22,11 @@ pub enum InstallSource {
     Deb,
     Appimage,
     MacApp,
+    // Only constructed under #[cfg(windows)] (installed-build verdict); the
+    // serde-driven frontend uses it on every target, but dead-code analysis
+    // can't see that, so silence it off-Windows.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Windows,
     Dev,
     Unknown,
 }
@@ -42,10 +48,27 @@ fn install_source_for_path(exe_str: &str, appimage_env: bool) -> InstallSource {
     if matches!(exe_str, "/usr/bin/nergal" | "/usr/local/bin/nergal") {
         return InstallSource::Deb;
     }
-    if exe_str.contains("/target/release/") || exe_str.contains("/target/debug/") {
+    // Backslash forms classify a Windows dev build as Dev too — kept
+    // unconditional (a pure string check) so the Linux `cargo test` covers it;
+    // no CI runs Windows `cargo test`.
+    if exe_str.contains("/target/release/")
+        || exe_str.contains("/target/debug/")
+        || exe_str.contains("\\target\\release\\")
+        || exe_str.contains("\\target\\debug\\")
+    {
         return InstallSource::Dev;
     }
-    InstallSource::Unknown
+    // An installed Windows build (NSIS/MSI) lands outside all the prefixes
+    // above; the installed→Windows verdict is the only half gated to the
+    // Windows target, so non-Windows hosts still fall through to Unknown.
+    #[cfg(windows)]
+    {
+        InstallSource::Windows
+    }
+    #[cfg(not(windows))]
+    {
+        InstallSource::Unknown
+    }
 }
 
 pub fn detect_install_source() -> InstallSource {
@@ -488,6 +511,30 @@ mod tests {
                 false,
             ),
             InstallSource::MacApp,
+        );
+    }
+
+    #[test]
+    fn install_source_recognizes_windows_dev_build_path() {
+        // Backslash dev path → Dev on any host (pure string classifier, so the
+        // Linux job covers the Windows dev-detection half).
+        assert_eq!(
+            install_source_for_path(
+                "C:\\Users\\dev\\nergal\\src-tauri\\target\\release\\nergal.exe",
+                false,
+            ),
+            InstallSource::Dev,
+        );
+    }
+
+    // The installed→Windows verdict only compiles on the Windows target, so this
+    // runs on the user's machine / a future Windows test runner, not Linux CI.
+    #[cfg(windows)]
+    #[test]
+    fn install_source_installed_windows_is_windows() {
+        assert_eq!(
+            install_source_for_path("C:\\Program Files\\Nergal\\nergal.exe", false),
+            InstallSource::Windows,
         );
     }
 

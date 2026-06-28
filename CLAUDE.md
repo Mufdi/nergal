@@ -56,7 +56,7 @@ Two-step ship flow (see OpenSpec changes `release-script` + `release-ci-signed`)
 
 1. **In a Claude session**: say "cortemos v0.1.X" (or equivalent). Claude reads `git log <prev-tag>..HEAD` + relevant diffs + BUG-NN entries from the just-archived working file, writes a contextual user-facing CHANGELOG section, and prepends it to `CHANGELOG.md`. **The section must be COMPLETE, not a highlights reel** — but it is reader-facing release notes, not a commit log. Cross-check BOTH `git log <prev-tag>..HEAD` AND the BUG-NN registry so nothing user-perceivable is dropped (internal-only churn — refactors, openspec archival, the mechanical half of a rename — stays out). Grouping rule: **distinct capabilities each get their own line** (e.g. each Linear sub-feature, each MCP capability), but **facets of one feature/surface share a line** (e.g. the ports-popover fixes, two status-bar-layout fixes, two "modal didn't close" fixes) — completeness without a 50-bullet wall.
 2. **Run the script**: `pnpm release <patch|minor|major>` (or explicit `pnpm release 0.1.10`). The script verifies the CHANGELOG section is present, bumps versions in `package.json` + `src-tauri/Cargo.toml` + `src-tauri/tauri.conf.json`, refreshes `Cargo.lock`, commits `chore(release): vX.Y.Z`, tags, and pushes `main` + tag.
-3. **CI takes it from there**: `.github/workflows/release.yml` (triggered on `v*` tag push) runs **three parallel jobs** — `build-linux` (ubuntu-22.04) and `build-macos` (macos-latest, Apple Silicon) build and sign their respective bundles independently, then `publish` downloads both artifact sets, merges the per-platform JSON fragments into a single `latest.json` (via `scripts/merge-latest-json.mjs`), creates the GitHub release with all assets (`.deb`, `.rpm`, `.AppImage`, `.AppImage.sig`, `.dmg`, `.app.tar.gz`, `.app.tar.gz.sig`, `latest.json`), and prepends a "Latest release →" banner to the previous release. Tags containing a `-` (e.g. `v0.0.0-test1`) publish as pre-releases and skip the banner, protecting `/releases/latest`. Monitor at https://github.com/Mufdi/nergal/actions.
+3. **CI takes it from there**: `.github/workflows/release.yml` (triggered on `v*` tag push) runs **four parallel build jobs** — `build-linux` (ubuntu-22.04), `build-macos` (macos-latest, Apple Silicon), and `build-windows` (windows-latest, NSIS+MSI) build and sign their respective bundles independently, then `publish` downloads all three artifact sets, merges the per-platform JSON fragments into a single `latest.json` (via `scripts/merge-latest-json.mjs`), creates the GitHub release with all assets (`.deb`, `.rpm`, `.AppImage`, `.AppImage.sig`, `.dmg`, `.app.tar.gz`, `.app.tar.gz.sig`, `.msi`, `*-setup.exe`, `*-setup.nsis.zip`, `*-setup.nsis.zip.sig`, `latest.json`), and prepends a "Latest release →" banner to the previous release. Tags containing a `-` (e.g. `v0.0.0-test1`) publish as pre-releases and skip the banner, protecting `/releases/latest`. Monitor at https://github.com/Mufdi/nergal/actions.
 
 Versioning policy (when to pick `patch` vs `minor`, what counts as "breaking" while still in `0.x`, expectations for the eventual `1.0` cut) lives in the project's private notes — ask the user if you need it.
 
@@ -102,6 +102,16 @@ macOS bundles ship unsigned today (Gatekeeper warning on first launch; bypass vi
 4. Add a `codesign` + `notarytool submit --staple` step to the `build-macos` CI job in `.github/workflows/release.yml`, after `pnpm tauri build`.
 5. Cut a release; Gatekeeper warnings disappear for new `.dmg` downloads.
 6. Upgrade the About UI: change the `mac_app` branch in `renderUpdateButton` to call the `tauri-plugin-updater` auto-install path instead of the download-and-reveal flow (one-line change in `SettingsPanel.tsx`).
+
+### Deferred: Windows Authenticode (Windows OS-level signing)
+
+Windows bundles ship unsigned today (SmartScreen "unknown publisher" prompt on first launch; bypass via More info → Run anyway). The About UI already surfaces this (`installSource === "windows"` copy block). When ready:
+
+1. Acquire an Authenticode code-signing certificate (OV ~$200/yr, or an EV cert/token for instant SmartScreen reputation) from a CA (DigiCert, Sectigo, …).
+2. Export the cert as `.pfx`/`.p12`, base64-encode it, and add two GH repo secrets: `WINDOWS_CERTIFICATE` (base64 content) and `WINDOWS_CERTIFICATE_PASSWORD`.
+3. Wire Tauri's built-in signing: set `bundle.windows.certificateThumbprint` (or use `signtool` directly) and add a sign step to the `build-windows` CI job after `pnpm tauri build`, or configure `tauri.conf.json` `bundle.windows.signCommand`.
+4. Cut a release; SmartScreen warnings fade as the cert builds reputation (immediate with an EV cert).
+5. The `windows` About-UI branch already uses the auto-install path — no UI change needed (unlike the `mac_app` step 6 above).
 
 ## Documentation TOC
 

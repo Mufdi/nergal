@@ -168,8 +168,82 @@ jobs:
           name: macos-platform
           path: macos-platform.json
 
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install JS deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build signed bundles
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri build
+
+      - name: Emit Windows platform fragment
+        shell: pwsh
+        # The updater consumes the zipped NSIS installer (*-setup.nsis.zip) +
+        # its .sig, mirroring the macOS .app.tar.gz fragment.
+        run: |
+          $zip = (Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.nsis.zip).Name
+          node scripts/generate-latest-json.mjs --fragment windows-x86_64 `
+            "src-tauri/target/release/bundle/nsis/$zip.sig" `
+            "https://github.com/Mufdi/nergal/releases/download/$env:GITHUB_REF_NAME/$zip" `
+            "$env:GITHUB_REF_NAME" `
+            ./windows-platform.json
+
+      - name: Upload Windows bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifacts
+          # Same fail-loud contract as Linux/macOS: a drifted bundle subdir
+          # (nsis/ vs msi/) becomes a hard failure, not a silently missing asset.
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/bundle/nsis/*-setup.nsis.zip
+            src-tauri/target/release/bundle/nsis/*-setup.nsis.zip.sig
+
+      - name: Upload Windows platform fragment
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-platform
+          path: windows-platform.json
+
   publish:
-    needs: [build-linux, build-macos]
+    needs: [build-linux, build-macos, build-windows]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -205,6 +279,7 @@ jobs:
           node scripts/merge-latest-json.mjs \
             artifacts/linux-platform/linux-platform.json \
             artifacts/macos-platform/macos-platform.json \
+            artifacts/windows-platform/windows-platform.json \
             /tmp/latest.json
 
       - name: Create GitHub release
@@ -219,7 +294,7 @@ jobs:
         run: |
           PRERELEASE=""
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then PRERELEASE="--prerelease"; fi
-          ASSETS=$(find artifacts/linux-artifacts artifacts/macos-artifacts -type f)
+          ASSETS=$(find artifacts/linux-artifacts artifacts/macos-artifacts artifacts/windows-artifacts -type f)
           gh release create "$GITHUB_REF_NAME" \
             $PRERELEASE \
             --title "Nergal $GITHUB_REF_NAME" \

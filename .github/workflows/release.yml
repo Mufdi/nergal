@@ -213,13 +213,15 @@ jobs:
 
       - name: Emit Windows platform fragment
         shell: pwsh
-        # The updater consumes the zipped NSIS installer (*-setup.nsis.zip) +
-        # its .sig, mirroring the macOS .app.tar.gz fragment.
+        # createUpdaterArtifacts signs the NSIS installer in place: the updater
+        # target is *-setup.exe and its detached signature is *-setup.exe.sig
+        # (this Tauri version emits NO *-setup.nsis.zip). Mirrors the macOS
+        # .app.tar.gz(.sig) fragment.
         run: |
-          $zip = (Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.nsis.zip).Name
+          $exe = (Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe).Name
           node scripts/generate-latest-json.mjs --fragment windows-x86_64 `
-            "src-tauri/target/release/bundle/nsis/$zip.sig" `
-            "https://github.com/Mufdi/nergal/releases/download/$env:GITHUB_REF_NAME/$zip" `
+            "src-tauri/target/release/bundle/nsis/$exe.sig" `
+            "https://github.com/Mufdi/nergal/releases/download/$env:GITHUB_REF_NAME/$exe" `
             "$env:GITHUB_REF_NAME" `
             ./windows-platform.json
 
@@ -233,13 +235,15 @@ jobs:
           path: |
             src-tauri/target/release/bundle/msi/*.msi
             src-tauri/target/release/bundle/nsis/*-setup.exe
-            src-tauri/target/release/bundle/nsis/*-setup.nsis.zip
-            src-tauri/target/release/bundle/nsis/*-setup.nsis.zip.sig
+            src-tauri/target/release/bundle/nsis/*-setup.exe.sig
 
       - name: Upload Windows platform fragment
         uses: actions/upload-artifact@v4
         with:
           name: windows-platform
+          # Fail loud if the fragment never got written (e.g. a bad bundle-name
+          # glob in the emit step), instead of warning + failing publish later.
+          if-no-files-found: error
           path: windows-platform.json
 
   publish:

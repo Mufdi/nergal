@@ -5,7 +5,7 @@ Depends on `windows-compile`/`-ipc`/`-proc`/`-desktop` (the crate must build + r
 ## 1. build-windows CI job
 
 - [x] 1.1 `.github/workflows/release.yml` — added `build-windows` on `windows-latest` mirroring `build-macos` (checkout, pnpm, node+cache, rust stable, cargo cache keyed by `runner.os`, `pnpm install --frozen-lockfile`, `pnpm tauri build` with the signing secrets). No apt/GStreamer.
-- [x] 1.2 Emit the Windows fragment via a `shell: pwsh` step (`Get-ChildItem …/nsis/*-setup.nsis.zip` → `generate-latest-json.mjs --fragment windows-x86_64 <zip.sig> <url> <ref> windows-platform.json`). Upload `windows-artifacts` (`.msi`, `*-setup.exe`, `*-setup.nsis.zip`, `.nsis.zip.sig`) with `if-no-files-found: error`, and upload `windows-platform`. **Exact `bundle/nsis/`+`bundle/msi/` subdirs confirmed only on the first real CI run (smoke-test 7.1) — `if-no-files-found: error` turns any drift into a hard failure.**
+- [x] 1.2 Emit the Windows fragment via a `shell: pwsh` step. **Smoke-test correction**: this Tauri version's `createUpdaterArtifacts` signs the NSIS installer in place → the updater target is `*-setup.exe` + `*-setup.exe.sig`, NOT a `*-setup.nsis.zip` (the first smoke-test assumed `.nsis.zip`, which matched nothing → empty fragment → publish ENOENT). Fixed to `Get-ChildItem …/nsis/*-setup.exe` → `generate-latest-json.mjs --fragment windows-x86_64 <exe.sig> <url> <ref> windows-platform.json`. Upload `windows-artifacts` (`.msi`, `*-setup.exe`, `*-setup.exe.sig`) `if-no-files-found: error`; upload `windows-platform` **also** `if-no-files-found: error` (so a future emit miss fails loud, not a silent publish break). Bundle subdirs `nsis/`+`msi/` confirmed on the real CI run.
 
 ## 2. publish job → four jobs
 

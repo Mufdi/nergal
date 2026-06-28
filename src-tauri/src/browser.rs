@@ -5,13 +5,14 @@
 //!      a compromised frontend cannot navigate the iframe to file:// or
 //!      javascript: URLs).
 //!   2. Localhost listening-port scanner: polls `platform_proc::listening_ports`
-//!      (backed by `listeners` on Linux/macOS) every 3s to find TCP LISTEN
-//!      ports in the user range, applies hysteresis (1-scan add, 2-scan
-//!      remove) to absorb transient flap, emits `localhost:ports-changed`
-//!      events.
+//!      every 3s to find TCP LISTEN ports in the user range, applies hysteresis
+//!      (1-scan add, 2-scan remove) to absorb transient flap, emits
+//!      `localhost:ports-changed` events.
 //!
-//! Cross-platform: port data comes from `listeners` (pure Rust, no bindgen
-//! on Linux/macOS) rather than the previous `/proc/net/tcp` file reads.
+//! Cross-platform: the system-wide LISTEN list comes from `/proc/net/tcp` on
+//! Linux (so root-owned docker-proxy ports show up, which `listeners` misses
+//! since it only sees the current user's sockets) and from `listeners` on
+//! macOS. Per-process owner attribution uses `listeners` on both.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -321,7 +322,7 @@ pub async fn run_port_scanner(app: AppHandle) {
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     tracing::info!(
-        "browser port scanner started: listeners every {:?} (range {MIN_PORT}-{MAX_PORT})",
+        "browser port scanner started: scanning every {:?} (range {MIN_PORT}-{MAX_PORT})",
         SCAN_INTERVAL,
     );
 

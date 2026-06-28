@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { focusIfPanelZone } from "@/lib/panelFocus";
+import { appStore } from "@/stores/jotaiStore";
+import { focusZoneAtom } from "@/stores/shortcuts";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
@@ -273,7 +275,12 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
         t?.tagName === "INPUT" || t?.tagName === "TEXTAREA"
         || !!t?.closest(".cm-editor") || t?.getAttribute("contenteditable") === "true"
       ) return;
-      if (!t?.closest("[data-focus-zone='panel']")) return;
+      // See PlanPanel: gate on the active zone, not DOM ancestry — annotation
+      // mode orphans activeElement to <body> and a closest() check wrongly bails.
+      if (
+        !t?.closest("[data-focus-zone='panel']")
+        && appStore.get(focusZoneAtom) !== "panel"
+      ) return;
       if (e.code === "KeyC") {
         e.preventDefault();
         document.dispatchEvent(new CustomEvent("nergal:toggle-global-comment"));

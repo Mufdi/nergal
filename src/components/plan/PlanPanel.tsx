@@ -9,6 +9,8 @@ import { invoke } from "@/lib/tauri";
 import { confirm } from "@/lib/confirm";
 import { AnnotatableMarkdownView } from "./AnnotatableMarkdownView";
 import { useObsidianMentionPicker } from "@/hooks/useObsidianMentionPicker";
+import { appStore } from "@/stores/jotaiStore";
+import { focusZoneAtom } from "@/stores/shortcuts";
 import { MessageSquare, Trash2, Highlighter } from "lucide-react";
 import {
   Tooltip,
@@ -177,7 +179,15 @@ export function PlanPanel({ path }: PlanPanelProps) {
         t?.tagName === "INPUT" || t?.tagName === "TEXTAREA"
         || !!t?.closest(".cm-editor") || t?.getAttribute("contenteditable") === "true"
       ) return;
-      if (!t?.closest("[data-focus-zone='panel']")) return;
+      // Gate on the active focus zone, not the keydown target's DOM ancestry:
+      // entering annotation mode orphans activeElement to <body> (the highlight
+      // surface isn't focusable), so a `closest()` check wrongly bails and the
+      // bare-letter verbs die. The panel's onMouseDown keeps focusZoneAtom in
+      // sync on every click inside it, so it stays the canonical signal.
+      if (
+        !t?.closest("[data-focus-zone='panel']")
+        && appStore.get(focusZoneAtom) !== "panel"
+      ) return;
       if (e.code === "KeyA") {
         e.preventDefault();
         document.dispatchEvent(new CustomEvent("nergal:approve-plan"));

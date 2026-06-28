@@ -333,15 +333,25 @@ pub async fn download_app_update(
     Ok(target.to_string_lossy().into_owned())
 }
 
+/// Resolve the default application id for a MIME type via `xdg-mime`, or
+/// `None` when no handler is registered (empty output) / the query fails.
+#[cfg(target_os = "linux")]
+fn default_app_for_mime(mime: &str) -> Option<String> {
+    let out = std::process::Command::new("xdg-mime")
+        .args(["query", "default", mime])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let app = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!app.is_empty()).then_some(app)
+}
+
 /// Open the app log for diagnostics. The log only exists when launched under
 /// journald redirect (the GNOME launcher path — see
 /// `redirect_journald_stdio_to_logfile`); a terminal/dev run logs to stderr,
 /// so report a clear error instead of opening a non-existent file.
-///
-/// `opener::open_path` delegates to the OS handler for the file's MIME type
-/// directly (LaunchServices on macOS, gio/xdg-open on Linux), sidestepping the
-/// extension-to-MIME mapping bug that caused `xdg-open nergal.log` to exit 0
-/// without opening anything in v0.3.0.
 #[tauri::command]
 pub fn open_log_file(app: tauri::AppHandle) -> Result<(), String> {
     let log_path = dirs::cache_dir()
@@ -354,6 +364,43 @@ pub fn open_log_file(app: tauri::AppHandle) -> Result<(), String> {
             log_path.display()
         ));
     }
+    open_log_path(&app, &log_path)
+}
+
+/// On Linux `xdg-open`/the opener plugin resolve the handler by EXTENSION:
+/// `.log` maps to `text/x-log`, which has no registered default app on a stock
+/// desktop, so the call exits 0 without opening anything (the v0.3.0 "0 action,
+/// 0 feedback" bug — and the platform-desktop regression when this was replaced
+/// by a bare `opener().open_path`). Launch the `text/plain` default app
+/// directly — the content IS plain text — to bypass the extension mapping,
+/// falling back to revealing the containing folder (directories always have a
+/// file-manager handler) so the log stays reachable on desktops without
+/// `gtk-launch` or a `text/plain` default.
+#[cfg(target_os = "linux")]
+fn open_log_path(_app: &tauri::AppHandle, log_path: &Path) -> Result<(), String> {
+    if let Some(app_id) = default_app_for_mime("text/plain")
+        && std::process::Command::new("gtk-launch")
+            .arg(&app_id)
+            .arg(log_path)
+            .spawn()
+            .is_ok()
+    {
+        return Ok(());
+    }
+    let dir = log_path
+        .parent()
+        .ok_or_else(|| "log path has no parent".to_string())?;
+    std::process::Command::new("xdg-open")
+        .arg(dir)
+        .spawn()
+        .map_err(|e| format!("xdg-open: {e}"))?;
+    Ok(())
+}
+
+/// macOS LaunchServices resolves `.log` to a real handler (Console/TextEdit),
+/// so the plugin's `open_path` works without the Linux workaround.
+#[cfg(not(target_os = "linux"))]
+fn open_log_path(app: &tauri::AppHandle, log_path: &Path) -> Result<(), String> {
     app.opener()
         .open_path(log_path.to_string_lossy().as_ref(), None::<&str>)
         .map_err(|e| e.to_string())

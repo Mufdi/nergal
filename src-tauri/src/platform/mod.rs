@@ -1110,20 +1110,22 @@ pub fn sync_connect(_path: &Path) -> io::Result<UnsupportedSyncStream> {
 // `gui.pid` liveness check between waits (research §7).
 
 #[cfg(windows)]
+use windows::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
+#[cfg(windows)]
 use windows::Win32::Storage::FileSystem::{
-    FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, FILE_FLAGS_AND_ATTRIBUTES, ReadFile,
-    WriteFile,
+    FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, FILE_FLAGS_AND_ATTRIBUTES,
+    PIPE_ACCESS_DUPLEX, ReadFile, WriteFile,
 };
 #[cfg(windows)]
 use windows::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 #[cfg(windows)]
 use windows::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, NAMED_PIPE_MODE, PIPE_ACCESS_DUPLEX,
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, NAMED_PIPE_MODE,
     PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_WAIT,
 };
 #[cfg(windows)]
 use windows::Win32::System::Threading::{
-    CreateEventW, INFINITE, ResetEvent, SetEvent, WAIT_OBJECT_0, WAIT_TIMEOUT, WaitForSingleObject,
+    CreateEventW, INFINITE, ResetEvent, SetEvent, WaitForSingleObject,
 };
 
 #[cfg(windows)]

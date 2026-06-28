@@ -41,7 +41,7 @@ Strategy (iprev #5): gate the transport types `#[cfg(unix)]` with **no Windows s
 ## 7. CI Windows gate
 
 - [x] 7.1 `.github/workflows/ci.yml` — add a `windows-check` job: `runs-on: windows-latest`, `targets: x86_64-pc-windows-msvc`, `cargo check --target x86_64-pc-windows-msvc`, path-filtered to `src-tauri/**`. No GStreamer/webkit system deps (Windows uses bundled WebView2).
-- [ ] 7.2 Iterate on the gate until green: the first run may surface `arboard`/`wezterm`/`tao` per-target gating not predictable locally — fix as additive Cargo gates within this change. **(Pending first CI run.)**
+- [x] 7.2 Iterate on the gate until green: the first run surfaced **one** real error — `ipc_dir()` ungated at `lib.rs:651` (the gui.pid write); fixed by gating that block `#[cfg(unix)]` (commit `a52fa77`). NO `arboard`/`wezterm`/`tao` Cargo gating needed — all deps compiled clean on windows-msvc. Green on the re-run.
 
 ## 8. CLAUDE.md convention
 
@@ -49,8 +49,8 @@ Strategy (iprev #5): gate the transport types `#[cfg(unix)]` with **no Windows s
 
 ## 9. Verification
 
-- [ ] 9.1 **Windows gate green** — `cargo check --target x86_64-pc-windows-msvc` on `windows-latest` (CI; cannot run on the Linux dev host — `ring`/MSVC). Authoritative pass/fail for this change. **(Pending first CI run.)**
-- [ ] 9.2 **macOS gate green** — `cargo check --target aarch64-apple-darwin` (CI, unchanged). **(Pending CI run.)**
+- [x] 9.1 **Windows gate green** — `cargo check --target x86_64-pc-windows-msvc` on `windows-latest` ✅ (CI run `28330840955`, commit `a52fa77`). Authoritative pass for this change.
+- [x] 9.2 **macOS gate green** — `cargo check --target aarch64-apple-darwin` ✅ (same run, unchanged).
 - [x] 9.3 **Linux full check** — `cargo clippy -- -D warnings` (no issues) + `cargo test` (699 passed, 1 ignored) + `cargo fmt --check` (clean). `npx tsc --noEmit` unaffected (zero TS changes).
 - [ ] 9.4 **Linux keyring round-trip** — store + read back a ClickUp/Linear token via the Secret Service backend (regression guard for the Cargo target-table edit). **(Manual; low-risk — the Cargo edit is an additive Windows-only target block, Linux/macOS keyring blocks byte-identical.)**
 - [x] 9.5 **No ungated unix seams remain** — re-ran `rg "std::os::unix" src/` + `rg "libc::" src/`; every production hit is inside a `#[cfg(unix)]`/`#[cfg(target_os=…)]` gate (Category-A list fully consumed).

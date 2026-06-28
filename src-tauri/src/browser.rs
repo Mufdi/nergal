@@ -253,10 +253,9 @@ pub fn port_process_info(port: u16) -> Option<PortProcess> {
 /// the same way `port_process_info` does, then lets the dev server shut down.
 #[tauri::command]
 pub fn kill_port(port: u16) -> Result<(), String> {
-    // Owned process → SIGTERM. A Docker-published port has no user-visible
+    // Owned process → terminate. A Docker-published port has no user-visible
     // owner (the listener is root `docker-proxy`), so fall back to stopping
     // the owning container by name.
-    #[cfg(unix)]
     if let Some(owner) = crate::platform_proc::port_owner(port) {
         return crate::platform_proc::kill_pid(owner.pid)
             .map_err(|e| format!("kill({}) failed: {e}", owner.pid));

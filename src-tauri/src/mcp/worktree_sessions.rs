@@ -618,13 +618,21 @@ fn free_disk_bytes(path: &std::path::Path) -> u64 {
     }
 }
 
-// WHY 0: the free-disk soft-cap check treats 0 as "unknown / no headroom data"
-// and skips the warning. The functional Windows impl (GetDiskFreeSpaceExW /
-// sysinfo::Disks) lands in windows-proc; until then disk pressure is unreported
-// on Windows, never a false cap.
+// Non-unix (Windows): `sysinfo::Disks` enumerates mounted volumes; pick the one
+// whose mount point is the longest prefix of `path` and report its available
+// space. Falls back to 0 ("unknown / no headroom data" — never a false cap)
+// when no disk matches.
 #[cfg(not(unix))]
-fn free_disk_bytes(_path: &std::path::Path) -> u64 {
-    0
+fn free_disk_bytes(path: &std::path::Path) -> u64 {
+    use sysinfo::Disks;
+    let disks = Disks::new_with_refreshed_list();
+    disks
+        .list()
+        .iter()
+        .filter(|d| path.starts_with(d.mount_point()))
+        .max_by_key(|d| d.mount_point().as_os_str().len())
+        .map(|d| d.available_space())
+        .unwrap_or(0)
 }
 
 fn resource_info(repo_path: &std::path::Path, soft_cap: u32) -> GateResourceInfo {

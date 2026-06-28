@@ -1,11 +1,14 @@
 //! Cross-platform process and port introspection — replaces the three
 //! hand-rolled `/proc` subsystems (port scanner, process-tree kill, ancestor
 //! env recovery) with `sysinfo` + `listeners` so the same code compiles and
-//! works on Linux and macOS.
+//! works on Linux, macOS, and Windows.
 //!
-//! Signals stay `libc::kill` under `cfg(unix)`: POSIX semantics are identical
-//! on both platforms, and `sysinfo`'s `Process::kill_with` lacks the `kill(-pgid)`
-//! call that BUG-06 requires (kills processes in a *new* process group).
+//! The kill path is the one platform split: `libc::kill` under `cfg(unix)`
+//! (POSIX semantics + the `kill(-pgid)` group sweep BUG-06 requires), and raw
+//! `OpenProcess` + `TerminateProcess` under `cfg(windows)`. We avoid
+//! `sysinfo`'s `Process::kill()` on Windows because it shells out to
+//! `taskkill.exe /F` per pid (a console flash + PATH dependency on a GUI app's
+//! teardown); the descendant BFS is the whole reach (no process-group analog).
 
 use listeners::Protocol;
 // SocketState only filters the listeners-backed list, which is the non-Linux path.
@@ -119,6 +122,70 @@ pub fn kill_pid(pid: u32) -> std::io::Result<()> {
         return Err(std::io::Error::last_os_error());
     }
     Ok(())
+}
+
+/// Raw `OpenProcess(PROCESS_TERMINATE)` → `TerminateProcess` → `CloseHandle`.
+/// Guards pid 0 (System Idle) and 4 (System). A failed open (process gone,
+/// access denied) is silently ignored — the tree teardown is best-effort.
+#[cfg(windows)]
+fn terminate(pid: u32) {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess};
+    if pid <= 4 {
+        return;
+    }
+    // SAFETY: handle from a successful OpenProcess, terminated then closed once.
+    unsafe {
+        if let Ok(h) = OpenProcess(PROCESS_TERMINATE, false, pid) {
+            let _ = TerminateProcess(h, 1);
+            let _ = CloseHandle(h);
+        }
+    }
+}
+
+/// Windows analog of the Unix `kill_tree`: no POSIX process group exists, so the
+/// reversed-BFS `descendants()` set (leaves first) + the root is the entire
+/// reach. Guards `root > 4`.
+#[cfg(windows)]
+pub fn kill_tree(root: u32) {
+    if root <= 4 {
+        return;
+    }
+    for pid in descendants(root).into_iter().rev() {
+        terminate(pid);
+    }
+    terminate(root);
+}
+
+/// Windows `kill_pid`: raw open+terminate, mapping a failed open/terminate to
+/// `io::Error`. Refuses system pids.
+#[cfg(windows)]
+pub fn kill_pid(pid: u32) -> std::io::Result<()> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess};
+    if pid <= 4 {
+        return Err(std::io::Error::other("refusing to terminate a system pid"));
+    }
+    // SAFETY: handle from a successful OpenProcess, terminated then closed once.
+    unsafe {
+        let h = OpenProcess(PROCESS_TERMINATE, false, pid)
+            .map_err(|e| std::io::Error::other(format!("OpenProcess({pid}): {e}")))?;
+        let r = TerminateProcess(h, 1);
+        let _ = CloseHandle(h);
+        r.map_err(|e| std::io::Error::other(format!("TerminateProcess({pid}): {e}")))
+    }
+}
+
+/// Catch-all for a hypothetical non-unix, non-windows target so the un-gated
+/// callers (`pty.rs` teardown, `browser.rs` free-port) still resolve.
+#[cfg(not(any(unix, windows)))]
+pub fn kill_tree(_root: u32) {}
+
+#[cfg(not(any(unix, windows)))]
+pub fn kill_pid(_pid: u32) -> std::io::Result<()> {
+    Err(std::io::Error::other(
+        "kill_pid unsupported on this platform",
+    ))
 }
 
 // ── Port scanner ─────────────────────────────────────────────────────────────

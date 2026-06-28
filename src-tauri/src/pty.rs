@@ -49,9 +49,8 @@ impl Drop for PtyInstance {
     fn drop(&mut self) {
         // Stop processes started in the shell when the session (or the whole
         // app) closes — otherwise dev servers / watchers leak (BUG-06).
-        // `kill_tree` handles descendants cross-platform (sysinfo BFS + libc
-        // POSIX signals); the old per-OS split is gone.
-        #[cfg(unix)]
+        // `kill_tree` handles descendants cross-platform (sysinfo BFS + POSIX
+        // signals on unix, raw TerminateProcess on Windows).
         if let Some(pid) = self.child_pid
             && pid > 1
         {

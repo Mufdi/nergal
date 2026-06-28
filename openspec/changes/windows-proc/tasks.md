@@ -14,7 +14,7 @@ Depends on `windows-compile` (the `#[cfg(unix)]` gating of the kill callers this
 
 ## 3. Confirm the already-cross-platform paths on Windows
 
-- [ ] 3.1 Confirm via the Windows gate + a `cargo test` on `windows-latest` that `listening_ports()` / `port_owner()` (listeners `GetExtendedTcpTable` backend) and `process_cwd`/`ancestor_env`/`kernel_version`/`os_name` (sysinfo) compile + run; no code change expected.
+- [~] 3.1 Compile half ✅ — the Windows gate confirms `listening_ports()`/`port_owner()` (listeners `GetExtendedTcpTable` backend) + `process_cwd`/`ancestor_env`/`kernel_version`/`os_name` (sysinfo) compile on `x86_64-pc-windows-msvc`; no code change was needed. Run half (`cargo test` on `windows-latest`) is **walk-pending** — CI `windows-check` runs `cargo check` only.
 
 ## 4. (Optional) free_disk_bytes Windows impl
 
@@ -22,8 +22,8 @@ Depends on `windows-compile` (the `#[cfg(unix)]` gating of the kill callers this
 
 ## 5. Verification
 
-- [ ] 5.1 **Windows gate green** — `cargo check --target x86_64-pc-windows-msvc`.
-- [ ] 5.2 **`cargo test` on `windows-latest`** — kill round-trip (spawn throwaway child → `kill_pid` → assert exit) + `listening_ports()` returns the runner's listeners.
+- [x] 5.1 **Windows gate green** ✅ — `cargo check --target x86_64-pc-windows-msvc` (CI run `28333472114`, first-try green; the OpenProcess/TerminateProcess/CloseHandle imports needed no relocation).
+- [ ] 5.2 **`cargo test` on `windows-latest`** — WALK-PENDING (CI `windows-check` is `cargo check` only). Kill round-trip (spawn throwaway child → `kill_pid` → assert exit) + `listening_ports()` returns the runner's listeners. Batched into the end-of-port Windows-machine walk.
 - [x] 5.3 **Linux full check** ✅ — `cargo clippy -- -D warnings` (no issues) + `cargo test` (699 passed, 1 ignored) + `cargo fmt --check` (clean). The `#[cfg(unix)]` kill path is untouched.
-- [ ] 5.4 **macOS gate green** — `cargo check --target aarch64-apple-darwin`.
+- [x] 5.4 **macOS gate green** ✅ — `cargo check --target aarch64-apple-darwin` (same CI run `28333472114`; the `#[cfg(not(any(unix, windows)))]` catch-alls don't disturb the macOS=unix build).
 - [ ] 5.5 **User Windows-machine walk (UNVERIFIED-pending)** — ports chip shows dev servers, free-port works, quake-shell teardown kills the dev-server tree, quake cwd resolves or degrades to None.

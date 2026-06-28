@@ -17,6 +17,8 @@ Windows support via `LockFileEx`/`UnlockFile`. All `fs2::FileExt` uses are safe 
 
 > **iprev revision (2026-06-28):** the adversarial plan review caught a missed cluster — the MCP **shim** entry (`mcp/shim.rs:20,25,44` + its ungated caller `main.rs:135`). Added below. Category-A production count: **23** (was 20). The shim is a real ungated unix-bound entry point: `cargo check --target x86_64-pc-windows-msvc` would still fail without gating it.
 
+> **CI revision (2026-06-28, first `windows-check` run):** the gate caught a **24th** seam static analysis missed — `lib.rs:651` `crate::platform::ipc_dir()` (a `#[cfg(unix)]` fn) called ungated to write the gui.pid liveness token (the only `E0425` in the run; every dep — arboard/tao/wry — compiled clean, no Cargo gating needed). Fixed by gating the gui.pid block `#[cfg(unix)]` (the FIFO plan-review it backs is unix-only until windows-ipc). Lesson: `ipc_dir()` had direct callers beyond the socket-path helpers the Category-B note enumerated — the Windows gate is the real backstop, the static sweep is necessary-not-sufficient.
+
 ## Category A — UNGATED (breaks Windows; needs `#[cfg]` gate + Windows stub/alternative)
 
 | File:line | Symbol | What it does | Enclosing gate (NONE if ungated) | Windows note |

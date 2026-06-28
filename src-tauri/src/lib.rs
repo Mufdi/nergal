@@ -648,6 +648,10 @@ pub fn run() {
 
             // Write the GUI liveness token so hook-CLI plan-review can detect
             // GUI death without relying on a connection (FIFO is connectionless).
+            // Gated #[cfg(unix)]: ipc_dir() is unix-only, and the FIFO plan-review
+            // this token backs is unix-only until windows-ipc lands the named-pipe
+            // path (which will resolve a Windows gui.pid dir of its own).
+            #[cfg(unix)]
             if let Ok(ipc_dir) = crate::platform::ipc_dir()
                 && let Err(e) = crate::platform::write_gui_pid(&ipc_dir)
             {

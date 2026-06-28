@@ -1055,19 +1055,11 @@ mark[data-ws-hidden] {
   from { transform: translateY(0); }
   to { transform: translateY(calc(-100% - 8px)); }
 }
-/* will-change promotes the overlay to its own compositor layer up-front, so
-   WebKitGTK animates the translateY on the GPU instead of repainting the
-   heavy subtree (terminal canvas + shadow + border) every frame — that
-   per-frame repaint was the "trabada" stutter on both enter and exit.
-   Layer isolation also lets the exit play over a repainting subtree below,
-   which the bare-transform path could skip. */
 .quake-enter {
   animation: quake-slide-down 200ms ease-out;
-  will-change: transform;
 }
 .quake-exit {
   animation: quake-slide-up 200ms ease-in forwards;
-  will-change: transform;
 }
 
 /* Indeterminate progress sliver (ProgressBar). Travels left→right on loop;

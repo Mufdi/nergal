@@ -80,6 +80,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: linux-artifacts
+          # Fail loudly if a bundle path drifts, instead of shipping a release
+          # missing an asset (see the macOS .dmg path bug).
+          if-no-files-found: error
           path: |
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/rpm/*.rpm
@@ -148,8 +151,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: macos-artifacts
+          # Tauri bundles the .dmg under bundle/dmg/ and the .app/.app.tar.gz
+          # under bundle/macos/ — distinct dirs. A bundle/macos/*.dmg glob
+          # matches nothing and upload-artifact only warns, so the .dmg
+          # silently never reached the release. if-no-files-found: error turns
+          # any future path drift into a hard failure instead of a missing asset.
+          if-no-files-found: error
           path: |
-            src-tauri/target/release/bundle/macos/*.dmg
+            src-tauri/target/release/bundle/dmg/*.dmg
             src-tauri/target/release/bundle/macos/*.app.tar.gz
             src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
 

@@ -187,6 +187,13 @@ pub fn stop_compose_projects(owned_dirs: &[String]) {
                 });
             }
         }
+        // Windows analog: DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP severs it
+        // from the GUI console so the compose stop completes after Nergal exits.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0000_0008 | 0x0000_0200);
+        }
         let _ = cmd.spawn();
     }
 }

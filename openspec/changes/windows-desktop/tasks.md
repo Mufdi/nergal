@@ -4,8 +4,8 @@ Depends on `windows-compile` (compile gate). Notification AUMID + `nergal://` sc
 
 ## 1. Windows detached spawn
 
-- [ ] 1.1 `obsidian/post_session.rs` — split the `#[cfg(not(target_os = "linux"))]` no-op into a `#[cfg(windows)]` real spawn (`creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)`, re-exec `current_exe() post-session`, null stdio) + a `#[cfg(not(any(windows, target_os = "linux")))]` no-op (covers macOS AND every other non-linux/non-windows target — the call sites are ungated, so a bare `cfg(target_os="macos")` would leave FreeBSD undefined; matches the sibling `probe_spawn_health` idiom). Note the `CREATE_BREAKAWAY_FROM_JOB` fallback if a Tauri job object kills the child (verify on the Windows machine).
-- [ ] 1.2 `pty.rs:181` — add a `#[cfg(windows)]` arm to the docker-stop spawn setting `creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)` (alongside the existing `#[cfg(unix)]` `setsid` block).
+- [x] 1.1 `obsidian/post_session.rs` — split the `#[cfg(not(target_os = "linux"))]` no-op into a `#[cfg(windows)]` real spawn (`creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)`, re-exec `current_exe() post-session`, null stdio) + a `#[cfg(not(any(windows, target_os = "linux")))]` no-op (covers macOS AND every other non-linux/non-windows target). `CREATE_BREAKAWAY_FROM_JOB` fallback noted in the doc comment if the Windows walk shows a job object killing the child.
+- [x] 1.2 `pty.rs` docker-stop — added a `#[cfg(windows)]` arm setting `creation_flags(0x8 | 0x200)` (DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP) alongside the existing `#[cfg(unix)]` `setsid` block.
 
 ## 2. Confirm cross-platform plugin paths on Windows (no code)
 
@@ -14,6 +14,6 @@ Depends on `windows-compile` (compile gate). Notification AUMID + `nergal://` sc
 ## 3. Verification
 
 - [ ] 3.1 **Windows gate green** — `cargo check --target x86_64-pc-windows-msvc`.
-- [ ] 3.2 **Linux full check** — `cd src-tauri && cargo clippy -- -D warnings && cargo test && cargo fmt --check` (the `#[cfg(target_os = "linux")]`/`#[cfg(unix)]` detach paths untouched).
+- [x] 3.2 **Linux full check** ✅ — `cargo clippy -- -D warnings` (no issues) + `cargo test` (699 passed, 1 ignored) + `cargo fmt --check` (clean). The `#[cfg(target_os = "linux")]`/`#[cfg(unix)]` detach paths untouched.
 - [ ] 3.3 **macOS gate green** — `cargo check --target aarch64-apple-darwin` (the `#[cfg(not(any(windows, target_os = "linux")))]` no-op catch-all compiles).
 - [ ] 3.4 **User Windows-machine walk (UNVERIFIED-pending)** — post-session runner survives GUI exit (add BREAKAWAY if a job object kills it); docker-stop completes after Nergal exit; open-log / reveal / open-`nergal://` / notification (post-install) / downloads all work.

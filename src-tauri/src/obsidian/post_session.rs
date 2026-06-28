@@ -136,7 +136,32 @@ pub fn spawn_runner_detached() -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_os = "linux"))]
+/// Windows analog: no `setsid`, but `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`
+/// severs the child from the GUI's console + Ctrl-C group so it outlives the app
+/// exit. (If a Tauri job object kills it on the Windows walk, OR in
+/// `CREATE_BREAKAWAY_FROM_JOB = 0x0100_0000`.)
+#[cfg(windows)]
+pub fn spawn_runner_detached() -> Result<()> {
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+
+    let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("nergal.exe"));
+    Command::new(exe)
+        .arg("post-session")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
+        .spawn()
+        .context("spawning detached nergal post-session")?;
+    Ok(())
+}
+
+// macOS + any other non-linux/non-windows target: pre-existing no-op (detached
+// bg processing out of scope). Catch-all so the ungated call sites still resolve.
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn spawn_runner_detached() -> Result<()> {
     Ok(())
 }

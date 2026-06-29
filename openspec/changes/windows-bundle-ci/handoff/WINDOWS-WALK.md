@@ -19,7 +19,8 @@ pnpm tauri build
 Artefactos en `src-tauri\target\release\bundle\`:
 - `nsis\*-setup.exe` (instalador NSIS)
 - `msi\*.msi` (instalador WiX)
-- `nsis\*-setup.nsis.zip` (+ `.sig`) — el artefacto del updater
+- `nsis\*-setup.exe` (+ `.sig`) — este Tauri firma el `-setup.exe` in-place; el
+  artefacto del updater es el `.exe` + `.exe.sig`, NO un `.nsis.zip`
 
 Instala con el `*-setup.exe` (o el `.msi`). **SmartScreen** mostrará "editor
 desconocido" (sin firmar) → *Más información → Ejecutar de todas formas*.
@@ -36,6 +37,27 @@ Debe pasar el suite completo, incluyendo `install_source_installed_windows_is_wi
 > Visual Studio Build Tools (MSVC) y WebView2 (preinstalado en Win11).
 
 ---
+
+## Round 2 — re-verificar los fixes del walk-1
+
+El primer walk (2026-06-28) cazó 4 bugs de runtime; todos corregidos en
+`fix(platform): unblock Windows session creation…`. Re-caminar primero esto:
+
+- [ ] **Sesión arranca y el panel renderiza** (era el bloqueante): crear una
+      sesión muestra el prompt de PowerShell en el panel central (no negro). El
+      PTY ahora lee `config.default_shell` (default `powershell.exe`), no `$SHELL`.
+- [ ] **Sin flash de consola**: tras crear la sesión, **no** parpadea una ventana
+      `cmd` cada pocos segundos (los pollers git/agent-version ahora usan
+      `CREATE_NO_WINDOW`).
+- [ ] **Log file existe**: Settings › diagnostics "copy logs" muestra el tail real
+      (no "no log file"); el archivo está en
+      `%LOCALAPPDATA%\nergal\nergal.log`. **Si algo falla, este log es lo que
+      necesito** — pasámelo.
+- [ ] **Shell configurable**: cambiar `default_shell` en Settings (ej. a `cmd.exe`)
+      y crear una sesión nueva la usa **sin reiniciar** la app.
+- [ ] **Ports chip sin ruido de sistema**: los ports detectados al arranque ya no
+      incluyen los del kernel (pid ≤ 4); no debería aparecer el error
+      "refusing to terminate a system pid" salvo que mates algo de sistema a mano.
 
 ## 1. Arranque + IPC (windows-compile + windows-ipc)
 

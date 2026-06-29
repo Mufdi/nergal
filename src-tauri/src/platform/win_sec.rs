@@ -1,14 +1,14 @@
 //! Windows named-pipe security helpers (Win32-only). Mirrors the Unix
 //! peer-cred + `0700`-dir model: an owner-only security descriptor on the pipe
-//! and a client-SID peer check on accept. All functions are synchronous Win32
-//! — the impersonation→token→revert sequence MUST NOT straddle an `.await`
-//! (Decision 5), so callers run `client_sid_of` after `connect().await`
-//! returns, never across an await point.
+//! and a client-SID peer check on accept. The client SID is read from the
+//! connecting process's token, located via `GetNamedPipeClientProcessId` — NOT
+//! by impersonation: `ImpersonateNamedPipeClient` is rejected with
+//! `ERROR_CANNOT_IMPERSONATE (0x80070558)` until the server has read from the
+//! pipe, but the peer SID must be known at accept time, before any payload
+//! read. All functions are synchronous Win32.
 //!
 //! Signatures verified against `windows` 0.62.2 (see
-//! `handoff/windows-namedpipe-research.md`). UNVERIFIED runtime behaviour
-//! (`EqualSid` Err=not-equal, `OWNER_SECURITY_INFORMATION` module) is walked on
-//! the user's Windows machine.
+//! `handoff/windows-namedpipe-research.md`).
 
 use std::ffi::c_void;
 use std::io;
@@ -20,11 +20,11 @@ use windows::Win32::Security::Authorization::{
 };
 use windows::Win32::Security::{
     EqualSid, GetLengthSid, GetTokenInformation, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
-    PSID, RevertToSelf, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    PSID, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
-use windows::Win32::System::Pipes::ImpersonateNamedPipeClient;
+use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
 use windows::Win32::System::Threading::{
-    GetCurrentProcess, GetCurrentThread, OpenProcessToken, OpenThreadToken,
+    GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::core::{PCWSTR, PWSTR};
 
@@ -36,25 +36,6 @@ fn winerr(ctx: &str, e: windows::core::Error) -> io::Error {
 }
 
 // ── RAII guards ──────────────────────────────────────────────────────────────
-
-/// Reverts the calling thread out of client impersonation on EVERY exit path
-/// (the Decision 5 invariant). Constructed immediately after a successful
-/// `ImpersonateNamedPipeClient`, before any fallible call, so no `?` can skip it.
-struct RevertGuard;
-impl Drop for RevertGuard {
-    fn drop(&mut self) {
-        // SAFETY: only constructed while the thread is impersonating; reverting
-        // is always valid there. A failure here is unrecoverable but logged.
-        unsafe {
-            if RevertToSelf().is_err() {
-                tracing::error!(
-                    ipc_event = "revert_failed",
-                    "RevertToSelf failed — thread may still be impersonating"
-                );
-            }
-        }
-    }
-}
 
 /// Closes an owned `HANDLE` on drop.
 struct HandleGuard(HANDLE);
@@ -127,26 +108,32 @@ pub fn process_owner_sid() -> io::Result<Box<[u8]>> {
     }
 }
 
-/// The connected client's SID, read by briefly impersonating the pipe client.
-/// FULLY SYNCHRONOUS — never call across an `.await` (Decision 5): an await
-/// inside the impersonation window could migrate the task to another worker
-/// thread, leaving a thread impersonating the client.
+/// The connected client's SID, read from the connecting process's token.
 ///
-/// `server_handle` is the SERVER end of the pipe (research gotcha 4).
+/// Uses `GetNamedPipeClientProcessId` + `OpenProcess`/`OpenProcessToken` rather
+/// than `ImpersonateNamedPipeClient`, which Windows rejects with
+/// `ERROR_CANNOT_IMPERSONATE (0x80070558)` until the server has read from the
+/// pipe — but the peer SID must be known at accept time, before any read. This
+/// also sidesteps the impersonation thread-migration hazard, so there is no
+/// "never across an await" rule on this path.
+///
+/// `server_handle` is the SERVER end of the pipe.
 pub fn client_sid_of(server_handle: HANDLE) -> io::Result<Box<[u8]>> {
-    // SAFETY: impersonate→revert is bracketed by the RAII guard; the token is
-    // closed by its guard; the SID is copied out before either drops.
+    // SAFETY: the client PID comes from the OS for this pipe; the process and
+    // token handles are each closed by their guard; the SID is copied out
+    // before the token handle drops.
     unsafe {
-        ImpersonateNamedPipeClient(server_handle)
-            .map_err(|e| winerr("ImpersonateNamedPipeClient", e))?;
-        // CRITICAL: revert on every exit path. Constructed before any `?`.
-        let _revert = RevertGuard;
+        let mut pid = 0u32;
+        GetNamedPipeClientProcessId(server_handle, &mut pid)
+            .map_err(|e| winerr("GetNamedPipeClientProcessId", e))?;
+
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+            .map_err(|e| winerr("OpenProcess", e))?;
+        let _process_guard = HandleGuard(process);
 
         let mut token = HANDLE::default();
-        // openasself=true: open the token in the server's own context, not the
-        // impersonated (possibly lower-privilege) client's (research gotcha 6).
-        OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, true, &mut token)
-            .map_err(|e| winerr("OpenThreadToken", e))?;
+        OpenProcessToken(process, TOKEN_QUERY, &mut token)
+            .map_err(|e| winerr("OpenProcessToken", e))?;
         let _token_guard = HandleGuard(token);
 
         token_user_sid(token)
@@ -208,7 +195,12 @@ pub fn with_owner_only_security_attributes<F, R>(sid_str: &str, f: F) -> io::Res
 where
     F: FnOnce(*mut c_void) -> io::Result<R>,
 {
-    let sddl = format!("D:P(A;;GA;;;{sid_str})");
+    // O:{sid} pins the pipe OWNER to the current user. Without it the owner
+    // defaults to the creating token's default owner — Administrators for an
+    // elevated process — which then fails the client-side owner check
+    // (verify_pipe_owner_is_current_user, Decision 3). The DACL still grants
+    // GENERIC_ALL to the same user only.
+    let sddl = format!("O:{sid_str}D:P(A;;GA;;;{sid_str})");
     let sddl_w: Vec<u16> = sddl.encode_utf16().chain(std::iter::once(0)).collect();
     // SAFETY: the SD pointer is valid for the duration of `f` (freed by the
     // guard afterwards); `sa` lives on the stack across the `f` call.

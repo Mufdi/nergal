@@ -918,9 +918,9 @@ impl PlatformListener {
             }
         }
 
-        // Synchronous SID extraction — NO await between connect() and here, and
-        // none inside client_sid_of (Decision 5: an await in the impersonation
-        // window could migrate the task and strand the impersonation).
+        // SID extraction from the connecting client's process token. No
+        // impersonation, so there is no read-ordering or thread-migration
+        // constraint on this path (see win_sec::client_sid_of).
         let handle = HANDLE(server.as_raw_handle());
         let sid = win_sec::client_sid_of(handle)?;
         Ok((PlatformStream::Server(server), PeerIdentity::Sid(sid)))

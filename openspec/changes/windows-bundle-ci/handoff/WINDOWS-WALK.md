@@ -38,26 +38,34 @@ Debe pasar el suite completo, incluyendo `install_source_installed_windows_is_wi
 
 ---
 
-## Round 2 — re-verificar los fixes del walk-1
+## Round 3 — re-verificar los fixes de walk-1 + walk-2
 
-El primer walk (2026-06-28) cazó 4 bugs de runtime; todos corregidos en
-`fix(platform): unblock Windows session creation…`. Re-caminar primero esto:
+Walk-1 (2026-06-28) cazó 4 bugs; walk-2 (2026-06-29) cazó 2 más. Todos
+corregidos (`fix(platform): unblock Windows session creation…` +
+`fix(platform): shell-aware agent boot command…`). Re-caminar esto primero:
 
-- [ ] **Sesión arranca y el panel renderiza** (era el bloqueante): crear una
-      sesión muestra el prompt de PowerShell en el panel central (no negro). El
-      PTY ahora lee `config.default_shell` (default `powershell.exe`), no `$SHELL`.
+**De walk-1 (ya verificado parcialmente):**
+- [x] **Panel renderiza** (era el bloqueante): la shell aparece en el panel ✅
+      (walk-2 lo confirmó).
 - [ ] **Sin flash de consola**: tras crear la sesión, **no** parpadea una ventana
-      `cmd` cada pocos segundos (los pollers git/agent-version ahora usan
-      `CREATE_NO_WINDOW`).
-- [ ] **Log file existe**: Settings › diagnostics "copy logs" muestra el tail real
-      (no "no log file"); el archivo está en
-      `%LOCALAPPDATA%\nergal\nergal.log`. **Si algo falla, este log es lo que
-      necesito** — pasámelo.
-- [ ] **Shell configurable**: cambiar `default_shell` en Settings (ej. a `cmd.exe`)
-      y crear una sesión nueva la usa **sin reiniciar** la app.
-- [ ] **Ports chip sin ruido de sistema**: los ports detectados al arranque ya no
-      incluyen los del kernel (pid ≤ 4); no debería aparecer el error
-      "refusing to terminate a system pid" salvo que mates algo de sistema a mano.
+      `cmd` cada pocos segundos (pollers git/agent-version con `CREATE_NO_WINDOW`).
+- [x] **Log file existe** ✅ (walk-2 lo confirmó: `%LOCALAPPDATA%\nergal\nergal.log`,
+      el "copy logs" y "open log" andan).
+
+**De walk-2 (los nuevos fixes a verificar):**
+- [ ] **El agente AUTO-ARRANCA** (era el bloqueante de walk-2): crear una sesión
+      escribe el comando y **se ejecuta solo** — el agente (`claude`) levanta sin
+      que tengas que apretar Enter, y **sin** el error `&&` de PowerShell. El boot
+      command ahora detecta la shell y emite la sintaxis correcta: PowerShell usa
+      `;` + `& '...'` + Enter (`\r`); cmd usa `cd /d`; POSIX igual que antes.
+- [ ] **Probar con cmd.exe también**: cambiá `default_shell` a `cmd.exe` en Settings,
+      creá una sesión → el agente arranca igual (sintaxis cmd, no PowerShell).
+- [ ] **Ports chip sin servicios de Windows**: los `5040 / 5939 / 7680` (svchost:
+      Delivery Optimization, CDPSvc) **ya no aparecen** en el chip — se filtran los
+      owners bajo `%SystemRoot%`. Lo que quede debería ser tu dev server real
+      (matable).
+- [ ] **Shell configurable sin reiniciar**: cambiar `default_shell` y crear sesión
+      nueva la usa sin reiniciar la app.
 
 ## 1. Arranque + IPC (windows-compile + windows-ipc)
 

@@ -13,6 +13,7 @@ use crate::db::SharedDb;
 use crate::hooks::state::HookState;
 use crate::models::{Session, SessionStatus, Workspace};
 use crate::plan_state::SharedPlanState;
+use crate::platform_spawn::NoWindow;
 use crate::tasks::Task;
 
 fn strip_diacritics(s: &str) -> String {
@@ -1080,6 +1081,7 @@ pub fn list_prs(db: State<'_, SharedDb>, workspace_id: String) -> Result<Vec<PrS
         .ok_or("workspace not found")?;
 
     let output = std::process::Command::new("gh")
+        .no_window()
         .args([
             "pr",
             "list",
@@ -1146,6 +1148,7 @@ pub fn get_pr_diff(
         .ok_or("workspace not found")?;
 
     let output = std::process::Command::new("gh")
+        .no_window()
         .args(["pr", "diff", &pr_number.to_string()])
         .current_dir(&repo_path)
         .output()
@@ -1206,6 +1209,7 @@ pub fn gh_pr_merge(
     let pr_arg = pr_number.to_string();
 
     let output = std::process::Command::new("gh")
+        .no_window()
         .args(["pr", "merge", &pr_arg, &strategy_flag])
         .current_dir(&cwd)
         .output()
@@ -2732,6 +2736,7 @@ pub fn build_conflict_prompt(
     let branch = crate::worktree::current_branch(&cwd).unwrap_or_else(|_| "HEAD".into());
 
     let status_out = std::process::Command::new("git")
+        .no_window()
         .args(["status", "--short"])
         .current_dir(&cwd)
         .output();
@@ -2780,6 +2785,7 @@ pub fn enqueue_conflict_context(
     let branch = crate::worktree::current_branch(&cwd).unwrap_or_else(|_| "HEAD".into());
 
     let status_out = std::process::Command::new("git")
+        .no_window()
         .args(["status", "--short"])
         .current_dir(&cwd)
         .output();
@@ -2888,6 +2894,7 @@ pub fn get_commit_files(
     let cwd = resolve_session_cwd(&db, &session_id)?;
 
     let output = std::process::Command::new("git")
+        .no_window()
         .args(["diff-tree", "--no-commit-id", "-r", "--name-only", &hash])
         .current_dir(&cwd)
         .output()

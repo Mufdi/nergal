@@ -22,6 +22,8 @@ use tauri::{AppHandle, Emitter};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use url::Url;
 
+use crate::platform_spawn::NoWindow;
+
 /// Reserved shortcuts intercepted at the Tauri runtime level so they fire
 /// regardless of cross-origin iframe focus. Pairs (key chord, frontend
 /// event payload). Adding entries here makes them registerable via
@@ -189,6 +191,7 @@ fn resolve_label(args: &[String], exe_base: Option<&str>, comm: Option<&str>) ->
 /// `docker` CLI is absent or the user lacks access.
 fn docker_container_for_port(port: u16) -> Option<PortProcess> {
     let out = std::process::Command::new("docker")
+        .no_window()
         .args(["ps", "--format", "{{.Names}}\t{{.Image}}\t{{.Ports}}"])
         .output()
         .ok()?;
@@ -262,6 +265,7 @@ pub fn kill_port(port: u16) -> Result<(), String> {
     }
     if let Some(dp) = docker_container_for_port(port) {
         let out = std::process::Command::new("docker")
+            .no_window()
             .args(["stop", &dp.label])
             .output()
             .map_err(|e| format!("docker stop {}: {e}", dp.label))?;

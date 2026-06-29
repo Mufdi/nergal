@@ -247,6 +247,7 @@ fn collect_ripgrep_hits(
     }
 
     let mut cmd = Command::new("rg");
+    crate::platform_spawn::NoWindow::no_window(&mut cmd);
     cmd.arg("--json")
         .arg("--line-number")
         .arg("--fixed-strings")

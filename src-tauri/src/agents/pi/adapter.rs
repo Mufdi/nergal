@@ -127,11 +127,9 @@ impl AgentAdapter for PiAdapter {
 
     async fn refresh_version(&self) -> Option<String> {
         let bin = self.binary_path.read().clone()?;
-        let out = tokio::process::Command::new(&bin)
-            .arg("--version")
-            .output()
-            .await
-            .ok()?;
+        let mut cmd = tokio::process::Command::new(&bin);
+        crate::platform_spawn::NoWindow::no_window(&mut cmd);
+        let out = cmd.arg("--version").output().await.ok()?;
         let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
         if raw.is_empty() { None } else { Some(raw) }
     }

@@ -60,7 +60,9 @@ impl Summarizer for AgentCliBackend {
             _ => None,
         };
 
-        let child = Command::new(&self.cmd.binary)
+        let mut cmd = Command::new(&self.cmd.binary);
+        crate::platform_spawn::NoWindow::no_window(&mut cmd);
+        let child = cmd
             .args(&args)
             .arg(&prompt)
             .stdin(std::process::Stdio::null())

@@ -163,11 +163,9 @@ impl AgentAdapter for OpenCodeAdapter {
 
     async fn refresh_version(&self) -> Option<String> {
         let binary = self.cached_binary()?;
-        let out = tokio::process::Command::new(&binary)
-            .arg("--version")
-            .output()
-            .await
-            .ok()?;
+        let mut cmd = tokio::process::Command::new(&binary);
+        crate::platform_spawn::NoWindow::no_window(&mut cmd);
+        let out = cmd.arg("--version").output().await.ok()?;
         let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
         if raw.is_empty() { None } else { Some(raw) }
     }

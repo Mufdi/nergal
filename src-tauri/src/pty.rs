@@ -4,6 +4,7 @@ use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, State};
 
+use crate::platform_spawn::NoWindow;
 use crate::terminal::{NergalTerminalConfig, TerminalHandle, TerminalKeyEvent, TerminalSession};
 
 /// Shared PTY writer. wezterm-term (for answerbacks + key encoding) and the
@@ -135,6 +136,7 @@ pub fn stop_compose_projects(owned_dirs: &[String]) {
         return;
     }
     let out = std::process::Command::new("docker")
+        .no_window()
         .args(["compose", "ls", "--format", "json"])
         .output();
     let Ok(out) = out else { return };
@@ -233,9 +235,16 @@ fn spawn_pty(
         })
         .map_err(|e| e.to_string())?;
 
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+    // Resolve from the user's configured `default_shell` (Settings), not raw
+    // `$SHELL`: on Windows `$SHELL` is unset and a Settings change must take
+    // effect on the next session without a restart. Fresh load is cheap — a
+    // session spawn is never a hot path.
+    let configured = crate::config::Config::load().default_shell;
+    let (shell, shell_args) = crate::config::resolve_pty_shell(&configured);
     let mut cmd = CommandBuilder::new(&shell);
-    cmd.arg("-l");
+    for arg in &shell_args {
+        cmd.arg(arg);
+    }
 
     if let Some(dir) = cwd {
         cmd.cwd(dir);

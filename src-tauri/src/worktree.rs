@@ -3,6 +3,17 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 
+use crate::platform_spawn::NoWindow;
+
+/// A `git` command with its console window suppressed on Windows. Every git
+/// invocation here runs in the background; without this each would flash a
+/// `cmd` window on Windows. No-op off Windows.
+fn git() -> Command {
+    let mut c = Command::new("git");
+    c.no_window();
+    c
+}
+
 /// Check whether a path is inside a git repository.
 pub fn is_git_repo(path: &Path) -> bool {
     path.join(".git").exists()
@@ -10,7 +21,7 @@ pub fn is_git_repo(path: &Path) -> bool {
 
 /// Initialize a fresh git repository ("Init git" on a non-git workspace).
 pub fn init_repo(path: &Path) -> Result<()> {
-    let output = Command::new("git")
+    let output = git()
         .args(["init"])
         .current_dir(path)
         .output()
@@ -24,7 +35,7 @@ pub fn init_repo(path: &Path) -> Result<()> {
 
 /// List local branch names in the repository.
 pub fn list_branches(repo_path: &Path) -> Result<Vec<String>> {
-    let output = Command::new("git")
+    let output = git()
         .args(["branch", "--list", "--format=%(refname:short)"])
         .current_dir(repo_path)
         .output()
@@ -52,7 +63,7 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
 
     // Clean up any leftover temp worktree
     if tmp_dir.exists() {
-        let _ = Command::new("git")
+        let _ = git()
             .args(["worktree", "remove", "--force"])
             .arg(&tmp_dir)
             .current_dir(repo_path)
@@ -60,7 +71,7 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
     }
 
     // Create temp worktree detached at target branch tip
-    let add = Command::new("git")
+    let add = git()
         .args(["worktree", "add", "--detach"])
         .arg(&tmp_dir)
         .arg(target)
@@ -74,7 +85,7 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
     }
 
     // Squash merge in the temp worktree
-    let merge = Command::new("git")
+    let merge = git()
         .args(["merge", "--squash", source])
         .current_dir(&tmp_dir)
         .output()
@@ -88,11 +99,11 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
         } else {
             stderr
         };
-        let _ = Command::new("git")
+        let _ = git()
             .args(["merge", "--abort"])
             .current_dir(&tmp_dir)
             .output();
-        let _ = Command::new("git")
+        let _ = git()
             .args(["worktree", "remove", "--force"])
             .arg(&tmp_dir)
             .current_dir(repo_path)
@@ -101,7 +112,7 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
     }
 
     // Commit in the temp worktree (detached HEAD)
-    let commit = Command::new("git")
+    let commit = git()
         .args(["commit", "-m", message])
         .current_dir(&tmp_dir)
         .output()
@@ -112,7 +123,7 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
         let stdout = String::from_utf8_lossy(&commit.stdout);
         // "nothing to commit" can appear in stdout or stderr
         if stderr.contains("nothing to commit") || stdout.contains("nothing to commit") {
-            let _ = Command::new("git")
+            let _ = git()
                 .args(["worktree", "remove", "--force"])
                 .arg(&tmp_dir)
                 .current_dir(repo_path)
@@ -124,7 +135,7 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
         } else {
             stderr
         };
-        let _ = Command::new("git")
+        let _ = git()
             .args(["worktree", "remove", "--force"])
             .arg(&tmp_dir)
             .current_dir(repo_path)
@@ -133,7 +144,7 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
     }
 
     // Get the new commit hash from the detached HEAD
-    let rev = Command::new("git")
+    let rev = git()
         .args(["rev-parse", "HEAD"])
         .current_dir(&tmp_dir)
         .output()
@@ -141,7 +152,7 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
     let merge_commit = String::from_utf8_lossy(&rev.stdout).trim().to_string();
 
     // Fast-forward the target branch ref to include the merge commit
-    let update = Command::new("git")
+    let update = git()
         .args(["update-ref", &format!("refs/heads/{target}"), &merge_commit])
         .current_dir(repo_path)
         .output()
@@ -149,7 +160,7 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
 
     if !update.status.success() {
         let stderr = String::from_utf8_lossy(&update.stderr);
-        let _ = Command::new("git")
+        let _ = git()
             .args(["worktree", "remove", "--force"])
             .arg(&tmp_dir)
             .current_dir(repo_path)
@@ -158,7 +169,7 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
     }
 
     // Clean up temp worktree
-    let _ = Command::new("git")
+    let _ = git()
         .args(["worktree", "remove", "--force"])
         .arg(&tmp_dir)
         .current_dir(repo_path)
@@ -169,7 +180,7 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
 
 /// Delete a local git branch forcefully.
 pub fn delete_branch(repo_path: &Path, branch: &str) -> Result<()> {
-    let output = Command::new("git")
+    let output = git()
         .args(["branch", "-D", branch])
         .current_dir(repo_path)
         .output()
@@ -186,7 +197,7 @@ pub fn delete_branch(repo_path: &Path, branch: &str) -> Result<()> {
 /// Check if the worktree branch has commits ahead of main_branch.
 pub fn has_commits_ahead(worktree_path: &Path, main_branch: &str) -> Result<bool> {
     let range = format!("{main_branch}..HEAD");
-    let output = Command::new("git")
+    let output = git()
         .args(["log", &range, "--oneline"])
         .current_dir(worktree_path)
         .output()
@@ -204,7 +215,7 @@ pub fn has_commits_ahead(worktree_path: &Path, main_branch: &str) -> Result<bool
 /// Count how many commits the current branch is ahead of `main_branch`.
 pub fn commits_ahead_count(worktree_path: &Path, main_branch: &str) -> Result<u32> {
     let range = format!("{main_branch}..HEAD");
-    let output = Command::new("git")
+    let output = git()
         .args(["rev-list", "--count", &range])
         .current_dir(worktree_path)
         .output()
@@ -222,7 +233,7 @@ pub fn commits_ahead_count(worktree_path: &Path, main_branch: &str) -> Result<u3
 
 /// Get the current branch name for a path.
 pub fn current_branch(path: &Path) -> Result<String> {
-    let output = Command::new("git")
+    let output = git()
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(path)
         .output()
@@ -239,7 +250,7 @@ pub fn current_branch(path: &Path) -> Result<String> {
 /// Check if a worktree has uncommitted changes.
 #[allow(dead_code)]
 pub fn is_worktree_dirty(path: &Path) -> Result<bool> {
-    let output = Command::new("git")
+    let output = git()
         .args(["status", "--porcelain"])
         .current_dir(path)
         .output()
@@ -268,7 +279,7 @@ pub fn create_worktree(repo_path: &Path, slug: &str) -> Result<PathBuf> {
     }
 
     // Try creating with new branch first
-    let output = Command::new("git")
+    let output = git()
         .args(["worktree", "add", "-b", &branch_name])
         .arg(&worktree_path)
         .current_dir(repo_path)
@@ -280,7 +291,7 @@ pub fn create_worktree(repo_path: &Path, slug: &str) -> Result<PathBuf> {
     }
 
     // Branch might already exist — try without -b
-    let output2 = Command::new("git")
+    let output2 = git()
         .args(["worktree", "add"])
         .arg(&worktree_path)
         .arg(&branch_name)
@@ -301,7 +312,7 @@ pub fn create_worktree(repo_path: &Path, slug: &str) -> Result<PathBuf> {
 /// deleting the directory and pruning the stale registration — otherwise
 /// the entry lingers in `git worktree list` forever.
 pub fn remove_worktree(repo_path: &Path, worktree_path: &Path) -> Result<()> {
-    let output = Command::new("git")
+    let output = git()
         .args(["worktree", "remove", "--force"])
         .arg(worktree_path)
         .current_dir(repo_path)
@@ -318,7 +329,7 @@ pub fn remove_worktree(repo_path: &Path, worktree_path: &Path) -> Result<()> {
             format!("removing orphaned worktree dir {}", worktree_path.display())
         })?;
     }
-    let prune = Command::new("git")
+    let prune = git()
         .args(["worktree", "prune"])
         .current_dir(repo_path)
         .output()
@@ -341,7 +352,7 @@ pub fn file_diff(cwd: &Path, file_path: &str) -> Result<String> {
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| file_path.to_string());
 
-    let output = Command::new("git")
+    let output = git()
         .args(["diff", "HEAD", "--", &rel_path])
         .current_dir(cwd)
         .output()
@@ -364,7 +375,7 @@ pub fn file_diff(cwd: &Path, file_path: &str) -> Result<String> {
         return Ok(String::new());
     }
 
-    let output = Command::new("git")
+    let output = git()
         .args(["diff", "--no-index", "/dev/null", &rel_path])
         .current_dir(cwd)
         .output()
@@ -382,7 +393,7 @@ pub struct DiffShortstat {
 
 /// Get total lines added/removed in the working tree compared to HEAD.
 pub fn diff_shortstat(cwd: &Path) -> Result<DiffShortstat> {
-    let output = Command::new("git")
+    let output = git()
         .args(["diff", "HEAD", "--shortstat"])
         .current_dir(cwd)
         .output()
@@ -423,7 +434,7 @@ pub struct ChangedFile {
 ///
 /// Runs `git status --porcelain` and parses the output.
 pub fn changed_files(cwd: &Path) -> Result<Vec<ChangedFile>> {
-    let output = Command::new("git")
+    let output = git()
         .args(["status", "--porcelain"])
         .current_dir(cwd)
         .output()
@@ -465,7 +476,7 @@ pub fn changed_files(cwd: &Path) -> Result<Vec<ChangedFile>> {
 
 /// List staged files via `git diff --cached --name-status`.
 pub fn staged_files(cwd: &Path) -> Result<Vec<ChangedFile>> {
-    let output = Command::new("git")
+    let output = git()
         .args(["diff", "--cached", "--name-status"])
         .current_dir(cwd)
         .output()
@@ -496,7 +507,7 @@ pub fn staged_files(cwd: &Path) -> Result<Vec<ChangedFile>> {
 
 /// List unstaged (modified tracked) files via `git diff --name-status`.
 pub fn unstaged_files(cwd: &Path) -> Result<Vec<ChangedFile>> {
-    let output = Command::new("git")
+    let output = git()
         .args(["diff", "--name-status"])
         .current_dir(cwd)
         .output()
@@ -525,7 +536,7 @@ pub fn unstaged_files(cwd: &Path) -> Result<Vec<ChangedFile>> {
 
 /// List untracked files via `git ls-files --others --exclude-standard`.
 pub fn untracked_files(cwd: &Path) -> Result<Vec<String>> {
-    let output = Command::new("git")
+    let output = git()
         .args(["ls-files", "--others", "--exclude-standard"])
         .current_dir(cwd)
         .output()
@@ -542,7 +553,7 @@ pub fn untracked_files(cwd: &Path) -> Result<Vec<String>> {
 /// Rename the current branch in place. Local-only by design: the remote
 /// branch (and any open PR) keeps its name; the next push re-links via -u.
 pub fn rename_current_branch(cwd: &Path, new_name: &str) -> Result<()> {
-    let output = Command::new("git")
+    let output = git()
         .args(["branch", "-m", "--", new_name])
         .current_dir(cwd)
         .output()
@@ -556,7 +567,7 @@ pub fn rename_current_branch(cwd: &Path, new_name: &str) -> Result<()> {
 
 /// Stage a single file.
 pub fn stage_file(cwd: &Path, path: &str) -> Result<()> {
-    let output = Command::new("git")
+    let output = git()
         .args(["add", "--", path])
         .current_dir(cwd)
         .output()
@@ -570,7 +581,7 @@ pub fn stage_file(cwd: &Path, path: &str) -> Result<()> {
 
 /// Unstage a single file.
 pub fn unstage_file(cwd: &Path, path: &str) -> Result<()> {
-    let output = Command::new("git")
+    let output = git()
         .args(["restore", "--staged", "--", path])
         .current_dir(cwd)
         .output()
@@ -584,7 +595,7 @@ pub fn unstage_file(cwd: &Path, path: &str) -> Result<()> {
 
 /// Stage all changes.
 pub fn stage_all(cwd: &Path) -> Result<()> {
-    let output = Command::new("git")
+    let output = git()
         .args(["add", "-A"])
         .current_dir(cwd)
         .output()
@@ -598,7 +609,7 @@ pub fn stage_all(cwd: &Path) -> Result<()> {
 
 /// Unstage all staged changes.
 pub fn unstage_all(cwd: &Path) -> Result<()> {
-    let output = Command::new("git")
+    let output = git()
         .args(["reset", "HEAD"])
         .current_dir(cwd)
         .output()
@@ -612,7 +623,7 @@ pub fn unstage_all(cwd: &Path) -> Result<()> {
 
 /// Commit staged changes with a message. Returns the short commit hash.
 pub fn commit(cwd: &Path, message: &str) -> Result<String> {
-    let output = Command::new("git")
+    let output = git()
         .args(["commit", "-m", message])
         .current_dir(cwd)
         .output()
@@ -627,7 +638,7 @@ pub fn commit(cwd: &Path, message: &str) -> Result<String> {
         };
         anyhow::bail!("{detail}");
     }
-    let rev = Command::new("git")
+    let rev = git()
         .args(["rev-parse", "--short", "HEAD"])
         .current_dir(cwd)
         .output()
@@ -654,7 +665,7 @@ pub fn recent_commits(cwd: &Path, count: u32, range: Option<&str>) -> Result<Vec
         args.push(&range_owned);
     }
 
-    let output = Command::new("git")
+    let output = git()
         .args(&args)
         .current_dir(cwd)
         .output()
@@ -765,7 +776,7 @@ pub fn create_pr(cwd: &Path, branch: &str, base: &str, title: &str, body: &str) 
 /// Push the current branch to `origin` with upstream tracking.
 /// Returns `true` if new commits were pushed, `false` if already up-to-date.
 pub fn push(cwd: &Path, branch: &str) -> Result<bool> {
-    let output = Command::new("git")
+    let output = git()
         .args(["push", "-u", "origin", branch])
         .current_dir(cwd)
         .output()
@@ -809,7 +820,7 @@ pub struct PrPreviewData {
 pub fn pr_preview_data(cwd: &Path, base: &str, head: &str) -> Result<PrPreviewData> {
     let range = format!("{base}..{head}");
 
-    let log_out = Command::new("git")
+    let log_out = git()
         .args(["log", &range, "--format=%h%x00%s"])
         .current_dir(cwd)
         .output()
@@ -837,7 +848,7 @@ pub fn pr_preview_data(cwd: &Path, base: &str, head: &str) -> Result<PrPreviewDa
         });
     }
 
-    let diff_out = Command::new("git")
+    let diff_out = git()
         .args(["diff", "--shortstat", &range])
         .current_dir(cwd)
         .output()
@@ -868,7 +879,7 @@ pub fn pr_preview_data(cwd: &Path, base: &str, head: &str) -> Result<PrPreviewDa
     let staged_count = staged.len() as u32;
     let mut has_staged_diffstat = false;
     if staged_count > 0 {
-        let staged_diff = Command::new("git")
+        let staged_diff = git()
             .args(["diff", "--cached", "--shortstat"])
             .current_dir(cwd)
             .output();
@@ -965,7 +976,7 @@ pub fn gh_available() -> bool {
 /// leaving conflict markers on disk so the conflict tab can surface them.
 /// Returns the list of conflicted files.
 pub fn pull_target_into_worktree(cwd: &Path, target: &str) -> Result<Vec<String>> {
-    let output = Command::new("git")
+    let output = git()
         .args(["merge", "--no-ff", "--no-commit", target])
         .current_dir(cwd)
         .output()
@@ -977,7 +988,7 @@ pub fn pull_target_into_worktree(cwd: &Path, target: &str) -> Result<Vec<String>
 
 /// Finish a pending merge by committing staged resolutions.
 pub fn complete_pending_merge(cwd: &Path) -> Result<String> {
-    let output = Command::new("git")
+    let output = git()
         .args(["commit", "--no-edit"])
         .current_dir(cwd)
         .output()
@@ -986,7 +997,7 @@ pub fn complete_pending_merge(cwd: &Path) -> Result<String> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("git commit --no-edit failed: {stderr}");
     }
-    let rev = Command::new("git")
+    let rev = git()
         .args(["rev-parse", "--short", "HEAD"])
         .current_dir(cwd)
         .output()
@@ -996,7 +1007,7 @@ pub fn complete_pending_merge(cwd: &Path) -> Result<String> {
 
 /// Whether the working tree is in the middle of a merge (MERGE_HEAD exists).
 pub fn has_pending_merge(cwd: &Path) -> bool {
-    let output = Command::new("git")
+    let output = git()
         .args(["rev-parse", "--verify", "--quiet", "MERGE_HEAD"])
         .current_dir(cwd)
         .output();
@@ -1005,7 +1016,7 @@ pub fn has_pending_merge(cwd: &Path) -> bool {
 
 /// List files with merge conflicts.
 pub fn conflicted_files(cwd: &Path) -> Result<Vec<String>> {
-    let output = Command::new("git")
+    let output = git()
         .args(["status", "--porcelain"])
         .current_dir(cwd)
         .output()
@@ -1042,10 +1053,7 @@ pub struct ConflictVersions {
 
 fn git_show_stage(cwd: &Path, stage: u8, path: &str) -> String {
     let spec = format!(":{stage}:{path}");
-    let output = Command::new("git")
-        .args(["show", &spec])
-        .current_dir(cwd)
-        .output();
+    let output = git().args(["show", &spec]).current_dir(cwd).output();
     match output {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
         _ => String::new(),
@@ -1166,7 +1174,7 @@ pub fn ship<F: Fn(ShipStage, bool)>(
 /// Parses the porcelain output of `git worktree list --porcelain`.
 #[allow(dead_code)]
 pub fn list_worktrees(repo_path: &Path) -> Result<Vec<String>> {
-    let output = Command::new("git")
+    let output = git()
         .args(["worktree", "list", "--porcelain"])
         .current_dir(repo_path)
         .output()
@@ -1237,7 +1245,7 @@ fn parse_stash_line(line: &str) -> Option<StashEntry> {
 
 /// List all stashes on the stack.
 pub fn stash_list(cwd: &Path) -> Result<Vec<StashEntry>> {
-    let output = Command::new("git")
+    let output = git()
         .args(["stash", "list", "--format=%gd%x09%cr%x09%gs"])
         .current_dir(cwd)
         .output()
@@ -1265,7 +1273,7 @@ pub fn stash_create(cwd: &Path, message: &str) -> Result<()> {
         args.push("-m");
         args.push(message);
     }
-    let output = Command::new("git")
+    let output = git()
         .args(&args)
         .current_dir(cwd)
         .output()
@@ -1302,7 +1310,7 @@ pub struct StashApplyOutcome {
 /// the apply are returned as data — git exits non-zero when conflicts arise
 /// but the apply itself succeeded with markers in the working tree.
 pub fn stash_apply(cwd: &Path, index: u32) -> Result<StashApplyOutcome> {
-    let output = Command::new("git")
+    let output = git()
         .args(["stash", "apply", &stash_ref(index)])
         .current_dir(cwd)
         .output()
@@ -1328,7 +1336,7 @@ pub fn stash_apply(cwd: &Path, index: u32) -> Result<StashApplyOutcome> {
 /// keeps the stash (so the user can retry), and we surface that via
 /// `stash_kept = true`.
 pub fn stash_pop(cwd: &Path, index: u32) -> Result<StashApplyOutcome> {
-    let output = Command::new("git")
+    let output = git()
         .args(["stash", "pop", &stash_ref(index)])
         .current_dir(cwd)
         .output()
@@ -1352,7 +1360,7 @@ pub fn stash_pop(cwd: &Path, index: u32) -> Result<StashApplyOutcome> {
 
 /// Drop a stash without applying.
 pub fn stash_drop(cwd: &Path, index: u32) -> Result<()> {
-    let output = Command::new("git")
+    let output = git()
         .args(["stash", "drop", &stash_ref(index)])
         .current_dir(cwd)
         .output()
@@ -1366,7 +1374,7 @@ pub fn stash_drop(cwd: &Path, index: u32) -> Result<()> {
 
 /// Show the file list of a stash via `git stash show --name-only`.
 pub fn stash_show(cwd: &Path, index: u32) -> Result<Vec<String>> {
-    let output = Command::new("git")
+    let output = git()
         .args(["stash", "show", "--name-only", &stash_ref(index)])
         .current_dir(cwd)
         .output()
@@ -1385,7 +1393,7 @@ pub fn stash_show(cwd: &Path, index: u32) -> Result<Vec<String>> {
 /// Create a new branch from a stash via `git stash branch <name> <ref>`.
 /// The stash is dropped on success per git's default behavior.
 pub fn stash_branch(cwd: &Path, index: u32, branch_name: &str) -> Result<()> {
-    let output = Command::new("git")
+    let output = git()
         .args(["stash", "branch", branch_name, &stash_ref(index)])
         .current_dir(cwd)
         .output()

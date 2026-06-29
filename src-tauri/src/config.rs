@@ -7,6 +7,72 @@ fn default_true() -> bool {
     true
 }
 
+/// Platform-appropriate default interactive shell for a fresh config. POSIX
+/// reads `$SHELL`; Windows has no `$SHELL`, so an older build's hardcoded
+/// `/bin/bash` left the PTY unable to spawn (os error 3) — default to
+/// PowerShell, which ships on every Windows 10/11.
+pub fn default_shell() -> String {
+    #[cfg(unix)]
+    {
+        std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
+    }
+    #[cfg(windows)]
+    {
+        "powershell.exe".to_string()
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        "/bin/sh".to_string()
+    }
+}
+
+/// Resolve the shell binary + launch args for an interactive PTY from the user's
+/// configured `default_shell`. POSIX shells get a login flag; on Windows a stale
+/// `/bin/…` value (persisted by builds whose default was hardcoded to bash) is
+/// ignored in favour of PowerShell, and `-l` (a bash/zsh flag PowerShell rejects)
+/// is dropped — PowerShell gets `-NoLogo` instead, cmd.exe gets nothing.
+pub fn resolve_pty_shell(configured: &str) -> (String, Vec<String>) {
+    #[cfg(unix)]
+    {
+        let shell = if configured.is_empty() {
+            default_shell()
+        } else {
+            configured.to_string()
+        };
+        (shell, vec!["-l".to_string()])
+    }
+    #[cfg(windows)]
+    {
+        // A configured value counts only if it's a real Windows shell, not a
+        // POSIX path inherited from a build that defaulted to `/bin/bash`.
+        let shell = if configured.is_empty() || configured.starts_with('/') {
+            default_shell()
+        } else {
+            configured.to_string()
+        };
+        let base = Path::new(&shell)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let args = if base == "powershell" || base == "pwsh" {
+            vec!["-NoLogo".to_string()]
+        } else {
+            Vec::new()
+        };
+        (shell, args)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let shell = if configured.is_empty() {
+            default_shell()
+        } else {
+            configured.to_string()
+        };
+        (shell, Vec::new())
+    }
+}
+
 /// Map legacy theme ids ("dark"/"light") to the namespaced ones used by the
 /// theme registry. Unknown / new theme ids pass through unchanged so the
 /// frontend (`normalizeThemeId` in `lib/themes.ts`) is the single source of
@@ -297,13 +363,12 @@ impl Default for Config {
     fn default() -> Self {
         let home = dirs::home_dir().expect("home directory must exist");
         let claude_dir = home.join(".claude");
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
 
         Self {
             claude_binary: "claude".into(),
             transcripts_directory: claude_dir.join("projects"),
             hook_socket_path: std::env::temp_dir().join("nergal.sock"),
-            default_shell: shell,
+            default_shell: default_shell(),
             theme_mode: "v1-dark".into(),
             preferred_editor: String::new(),
             terminal_kitty_keyboard: true,
@@ -409,6 +474,32 @@ mod tests {
         let c = Config::default();
         assert!(c.default_agent.is_none());
         assert!(c.agent_overrides.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_pty_shell_unix_keeps_configured_and_login_flag() {
+        let (shell, args) = resolve_pty_shell("/usr/bin/fish");
+        assert_eq!(shell, "/usr/bin/fish");
+        assert_eq!(args, vec!["-l".to_string()]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolve_pty_shell_windows_ignores_stale_posix_default() {
+        // A `/bin/bash` value persisted by an older build must not reach the
+        // Windows PTY (os error 3) — fall back to PowerShell with `-NoLogo`.
+        let (shell, args) = resolve_pty_shell("/bin/bash");
+        assert_eq!(shell, "powershell.exe");
+        assert_eq!(args, vec!["-NoLogo".to_string()]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolve_pty_shell_windows_keeps_real_shell_without_login_flag() {
+        let (shell, args) = resolve_pty_shell("cmd.exe");
+        assert_eq!(shell, "cmd.exe");
+        assert!(args.is_empty());
     }
 
     #[test]

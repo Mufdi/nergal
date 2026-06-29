@@ -218,6 +218,20 @@ pub fn listening_ports() -> Vec<u16> {
 /// Docker Desktop on macOS forwards ports through a user-owned helper process,
 /// so those ports remain visible here (the root-owned-proxy problem is a Linux
 /// networking detail that does not arise on macOS).
+/// On Windows the kernel/System process (pid 0 = Idle, 4 = System) owns many
+/// user-range LISTEN ports (HTTP.sys, RPC, SMB). Surfacing them as killable dev
+/// ports is noise — the kill path correctly refuses system pids anyway. Drop
+/// them from the chip. macOS has no kernel-owned user-range ports, so it keeps
+/// every owner.
+#[cfg(all(not(target_os = "linux"), windows))]
+fn keep_owner_pid(pid: u32) -> bool {
+    pid > 4
+}
+#[cfg(all(not(target_os = "linux"), not(windows)))]
+fn keep_owner_pid(_pid: u32) -> bool {
+    true
+}
+
 #[cfg(not(target_os = "linux"))]
 pub fn listening_ports() -> Vec<u16> {
     let Ok(all) = listeners::get_all() else {
@@ -226,6 +240,7 @@ pub fn listening_ports() -> Vec<u16> {
     let mut ports: Vec<u16> = all
         .iter()
         .filter(|l| l.protocol == Protocol::TCP && l.state == SocketState::Listen)
+        .filter(|l| keep_owner_pid(l.process.pid))
         .map(|l| l.socket.port())
         .collect();
     ports.sort_unstable();

@@ -17,6 +17,7 @@ mod openspec;
 mod plan_state;
 pub mod platform;
 mod platform_proc;
+mod platform_spawn;
 mod pty;
 pub mod scratchpad;
 mod search;
@@ -101,6 +102,35 @@ fn redirect_journald_stdio_to_logfile() {
 
 #[cfg(not(target_os = "linux"))]
 fn redirect_journald_stdio_to_logfile() {}
+
+/// Shared on-disk log location: `<cache>/nergal/nergal.log`. On Windows
+/// `dirs::cache_dir()` is `%LOCALAPPDATA%`, matching what the in-app diagnostics
+/// + "open log file" action read.
+#[cfg(windows)]
+fn log_file_path() -> PathBuf {
+    dirs::cache_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("nergal")
+        .join("nergal.log")
+}
+
+/// Windows GUI processes have no console, so `tracing`'s default stderr writer is
+/// discarded and `nergal.log` never exists — leaving the diagnostics panel blind.
+/// Open the log file so it can back the `fmt` writer (parity with the Linux
+/// journald redirect). Returns `None` if the path can't be created.
+#[cfg(windows)]
+fn open_windows_log_file() -> Option<std::fs::File> {
+    let log_path = log_file_path();
+    if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent).ok()?;
+    }
+    std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&log_path)
+        .ok()
+}
 
 /// File written to `~/.nergal-active` while the app is running, so the
 /// `nergal-conditional.sh` hook wrapper can detect whether forwarding
@@ -190,12 +220,19 @@ fn augment_path_from_user_shell() {
 pub fn run() {
     redirect_journald_stdio_to_logfile();
     let _sentinel = SentinelGuard::new();
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    #[cfg(windows)]
+    match open_windows_log_file() {
+        Some(file) => tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .with_ansi(false)
+            .with_writer(Mutex::new(file))
+            .init(),
+        None => tracing_subscriber::fmt().with_env_filter(env_filter).init(),
+    }
+    #[cfg(not(windows))]
+    tracing_subscriber::fmt().with_env_filter(env_filter).init();
 
     // Rename any legacy `cluihud` machine-local state to `nergal` before config
     // and DB load read the new paths. Idempotent + non-destructive (see module).

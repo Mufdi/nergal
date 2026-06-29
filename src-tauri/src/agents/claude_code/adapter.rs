@@ -154,11 +154,9 @@ impl AgentAdapter for ClaudeCodeAdapter {
     }
 
     async fn refresh_version(&self) -> Option<String> {
-        let out = tokio::process::Command::new("claude")
-            .arg("--version")
-            .output()
-            .await
-            .ok()?;
+        let mut cmd = tokio::process::Command::new("claude");
+        crate::platform_spawn::NoWindow::no_window(&mut cmd);
+        let out = cmd.arg("--version").output().await.ok()?;
         let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
         if raw.is_empty() { None } else { Some(raw) }
     }

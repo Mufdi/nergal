@@ -35,7 +35,11 @@ pub fn send(app: &tauri::AppHandle, title: &str, body: &str) {
         }
     }
 
-    #[cfg(target_os = "macos")]
+    // macOS and Windows both use the Tauri notification plugin. The WebKitGTK
+    // silent-no-display caveat (Decision 3a) is Linux-only; on macOS (Cocoa) and
+    // Windows (WinRT toasts via the bundle AUMID `com.nergal.app`) the plugin
+    // displays reliably.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
         use tauri_plugin_notification::NotificationExt;
         if let Err(e) = app.notification().builder().title(title).body(body).show() {
@@ -43,9 +47,7 @@ pub fn send(app: &tauri::AppHandle, title: &str, body: &str) {
         }
     }
 
-    // Windows is a non-goal this pass; stub keeps the helper born-gated so a
-    // future Windows build's behavior is intentional rather than an empty body.
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         let _ = app;
         tracing::warn!(

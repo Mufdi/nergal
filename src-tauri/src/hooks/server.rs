@@ -901,6 +901,13 @@ fn process_event(
                     .and_then(|v| v.as_str())
                     .map(std::path::PathBuf::from)
                     .or_else(|| {
+                        // CC writes plans to its plansDirectory: the project-local
+                        // cwd/.claude/plans (Linux project layout) OR CC's home
+                        // default ~/.claude/plans — which is where CC writes on
+                        // Windows. Check the session's cwd dir first (preserves the
+                        // Linux behavior), then CC's home default, then the
+                        // runtime's own watcher dir.
+                        let mut dirs: Vec<std::path::PathBuf> = Vec::new();
                         if let Some(csid) = nergal_session_id
                             && let Ok(db_guard) = db.lock()
                             && let Ok(Some(session)) = db_guard.find_session(csid)
@@ -912,15 +919,23 @@ fn process_event(
                                     .flatten()
                             });
                             if let Some(cwd) = cwd {
-                                let local_plans =
-                                    crate::agents::claude_code::resolve_cc_plans_directory(&cwd);
-                                if local_plans.exists() {
-                                    let local_mgr =
-                                        crate::agents::claude_code::plan::PlanManager::new(
-                                            local_plans,
-                                        );
-                                    return local_mgr.find_latest_plan().ok().flatten();
-                                }
+                                dirs.push(crate::agents::claude_code::resolve_cc_plans_directory(
+                                    &cwd,
+                                ));
+                            }
+                        }
+                        if let Some(home) = dirs::home_dir() {
+                            dirs.push(home.join(".claude").join("plans"));
+                        }
+                        for dir in dirs {
+                            if dir.exists()
+                                && let Some(p) =
+                                    crate::agents::claude_code::plan::PlanManager::new(dir)
+                                        .find_latest_plan()
+                                        .ok()
+                                        .flatten()
+                            {
+                                return Some(p);
                             }
                         }
                         runtime.find_latest_plan().ok().flatten()

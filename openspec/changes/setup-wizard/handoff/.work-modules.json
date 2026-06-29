@@ -1,0 +1,31 @@
+{
+  "tier": "L",
+  "tier_source": "user-stated",
+  "ceremony": "deep",
+  "risk_tier": "medium",
+  "files_estimate": 9,
+  "tags": ["feature", "onboarding", "ux"],
+  "visibility": "public",
+  "spec_target": "setup-wizard",
+  "rigor_applied": {
+    "discovery_invoked": true,
+    "iprev_rounds": 0,
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": [],
+    "per_phase_models": {
+      "design": "opus",
+      "implementation": "sonnet",
+      "implementation_mechanical": "haiku",
+      "validation": "opus",
+      "exploration": "sonnet"
+    }
+  },
+  "interview_answers": {
+    "trigger_model": "first-run + non-blocking health-gate banner on regression + manual re-open from Settings",
+    "hooks_autoconfig": "one-click consented (detect + Configure button applies setup_hooks)",
+    "blocking": "skippable, non-blocking; pending checks reachable from a status indicator"
+  },
+  "events": [],
+  "notes": "DOC-ONLY for now (user constraint): produce proposal + specs + design + implementation + tasks, then park. Implementation happens AFTER the Windows port walk completes. Walk findings related to onboarding may be folded into this same change."
+}

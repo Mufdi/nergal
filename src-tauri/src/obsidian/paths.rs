@@ -20,7 +20,14 @@ pub fn relative_to_vault(cfg: &ResolvedObsidianConfig, abs: &Path) -> Option<Str
     let root_canon = dunce::canonicalize(&root_pb).unwrap_or(root_pb);
     let abs_canon = dunce::canonicalize(abs).unwrap_or_else(|_| abs.to_path_buf());
     let rel = abs_canon.strip_prefix(&root_canon).ok()?;
-    let mut s = rel.to_string_lossy().into_owned();
+    // Obsidian's `file=` parameter is '/'-separated on every OS; join the
+    // components with '/' so a Windows '\' never leaks into the deep link
+    // (which would percent-encode to a malformed `%5C` Obsidian can't resolve).
+    let mut s = rel
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/");
     if let Some(stripped) = s.strip_suffix(".md") {
         s = stripped.to_string();
     }

@@ -297,6 +297,7 @@ fn read_fallback_file(path: &std::path::Path) -> Result<Option<StoredKey>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     const KEY: &str = "lin_api_SECRETSECRETSECRET";
@@ -321,8 +322,11 @@ mod tests {
 
         write_fallback_file(&path, KEY).unwrap();
 
-        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600);
+        #[cfg(unix)]
+        {
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
 
         let loaded = read_fallback_file(&path).unwrap().unwrap();
         assert_eq!(loaded.key, KEY);
@@ -336,8 +340,11 @@ mod tests {
         write_fallback_file(&path, "first-key").unwrap();
         write_fallback_file(&path, KEY).unwrap();
 
-        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600);
+        #[cfg(unix)]
+        {
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
         assert_eq!(read_fallback_file(&path).unwrap().unwrap().key, KEY);
         let leftovers: Vec<_> = std::fs::read_dir(dir.path())
             .unwrap()

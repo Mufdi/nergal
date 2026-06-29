@@ -538,6 +538,9 @@ mod tests {
         );
     }
 
+    // Linux install-source classifications (`/usr/bin` → Deb, `/opt` → Unknown):
+    // on Windows every non-dev installed path classifies as `Windows`.
+    #[cfg(unix)]
     #[test]
     fn install_source_classifier_regression() {
         // Existing sources must be unaffected by the new MacApp probe.

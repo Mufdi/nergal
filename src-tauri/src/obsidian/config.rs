@@ -328,6 +328,10 @@ mod tests {
         assert_eq!(expand_home("~name/foo"), "~name/foo");
     }
 
+    // The normalize pipeline routes through `resolve_case_insensitive`, which is
+    // Linux-case-sensitivity machinery: on Windows it rebuilds the path with native
+    // `\` separators, so the `/`-joined expectations below are Unix-specific.
+    #[cfg(unix)]
     #[test]
     fn normalize_expands_tilde_in_all_path_fields() {
         let home = dirs::home_dir().unwrap();
@@ -353,6 +357,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)] // case-correction is a no-op on Windows's case-insensitive FS
     #[test]
     fn case_insensitive_corrects_unique_match() {
         let dir = tempfile::tempdir().unwrap();
@@ -389,6 +394,7 @@ mod tests {
         assert_eq!(resolve_case_insensitive(&typed), typed);
     }
 
+    #[cfg(unix)] // case-correction is a no-op on Windows's case-insensitive FS
     #[test]
     fn case_insensitive_leaves_nonexistent_tail_as_typed() {
         let dir = tempfile::tempdir().unwrap();

@@ -49,6 +49,7 @@ mod win_sec;
 #[cfg(target_os = "macos")]
 const SUN_PATH_MAX: usize = 103; // 104 - 1 for null
 #[cfg(not(target_os = "macos"))]
+#[cfg(unix)]
 const SUN_PATH_MAX: usize = 107; // 108 - 1 for null
 
 // ── IPC directory resolver ────────────────────────────────────────────────────
@@ -253,6 +254,7 @@ fn home_from_getpwuid(uid: u32) -> io::Result<PathBuf> {
 /// WHY at derivation time not bind time: `sockaddr_un.sun_path` is a fixed
 /// C array; a silent truncation at `bind` would produce a wrong path, not an
 /// error. Checking here gives a clear error with the full path in the message.
+#[cfg(unix)]
 fn endpoint_path_within(dir: &Path, name: &str) -> PathBuf {
     let candidate = dir.join(name);
     let candidate_str = candidate.to_str().unwrap_or_default();
@@ -266,6 +268,7 @@ fn endpoint_path_within(dir: &Path, name: &str) -> PathBuf {
     dir.join(format!("{hash:08x}.sock"))
 }
 
+#[cfg(unix)]
 fn fnv1a_32(data: &[u8]) -> u32 {
     let mut h: u32 = 2166136261;
     for &b in data {
@@ -1507,7 +1510,9 @@ mod tests {
         );
     }
 
-    // Confirm fnv1a hash is deterministic and produces short filenames
+    // Confirm fnv1a hash is deterministic and produces short filenames.
+    // Unix-only: the hash backs the `AF_UNIX` `sun_path` overflow fallback.
+    #[cfg(unix)]
     #[test]
     fn endpoint_path_hash_is_deterministic() {
         let hash1 = fnv1a_32(b"hook.sock");

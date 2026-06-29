@@ -108,6 +108,9 @@ mod tests {
         assert_eq!(got, l.cwd.join("notes/plans"));
     }
 
+    // `/custom/path/plans` is not an absolute path on Windows (no drive), so the
+    // passthrough-vs-join branch differs by platform — assert the Unix form here.
+    #[cfg(unix)]
     #[test]
     fn absolute_path_passes_through() {
         let l = setup();
@@ -130,6 +133,7 @@ mod tests {
         assert_eq!(got, l.home.join("notes/plans"));
     }
 
+    #[cfg(unix)] // asserts Unix-absolute plansDirectory literals
     #[test]
     fn project_local_overrides_home() {
         let l = setup();
@@ -145,6 +149,7 @@ mod tests {
         assert_eq!(got, PathBuf::from("/project"));
     }
 
+    #[cfg(unix)] // asserts Unix-absolute plansDirectory literals
     #[test]
     fn settings_local_overrides_settings_in_cwd() {
         let l = setup();
@@ -179,6 +184,7 @@ mod tests {
         assert_eq!(got, l.cwd.join(".claude/plans"));
     }
 
+    #[cfg(unix)] // asserts a Unix-absolute plansDirectory literal
     #[test]
     fn missing_home_falls_back_to_cwd_layers() {
         let l = setup();

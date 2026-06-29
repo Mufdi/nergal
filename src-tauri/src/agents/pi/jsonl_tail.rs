@@ -251,7 +251,8 @@ mod tests {
         let mut input = json!({"path": "./foo.js"});
         absolutize_path_field(&mut input, Path::new("/home/x/proj"));
         let s = input.get("path").unwrap().as_str().unwrap();
-        assert!(s.ends_with("/foo.js"), "got {s}");
+        // Windows joins under cwd with `\`; normalize for the suffix check.
+        assert!(s.replace('\\', "/").ends_with("/foo.js"), "got {s}");
         assert!(s.starts_with('/'), "got {s}");
     }
 
@@ -271,8 +272,8 @@ mod tests {
         absolutize_path_field(&mut input, Path::new("/proj"));
         let a = input.get("file_path").unwrap().as_str().unwrap();
         let b = input.get("filePath").unwrap().as_str().unwrap();
-        assert!(a.ends_with("/src/a.rs"));
-        assert!(b.ends_with("/src/b.rs"));
+        assert!(a.replace('\\', "/").ends_with("/src/a.rs"), "got {a}");
+        assert!(b.replace('\\', "/").ends_with("/src/b.rs"), "got {b}");
     }
 
     #[test]

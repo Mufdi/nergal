@@ -3732,7 +3732,13 @@ fn resolve_note_in_vault(vault_root: &std::path::Path, name: &str) -> Option<Str
             continue;
         }
         let rel = p.strip_prefix(vault_root).unwrap_or(p);
-        let rel_noext = rel.with_extension("").to_string_lossy().to_lowercase();
+        // Wikilink path-qualifiers are '/'-separated (Obsidian convention); match
+        // the OS separator to it so a Windows '\' rel-path still compares equal.
+        let rel_noext = rel
+            .with_extension("")
+            .to_string_lossy()
+            .to_lowercase()
+            .replace('\\', "/");
         if rel_noext == want_path {
             return Some(p.display().to_string());
         }
@@ -3819,7 +3825,8 @@ mod vault_read_tests {
         write_note(dir.path(), "A/Target.md", "a");
         write_note(dir.path(), "B/Target.md", "b");
         let hit = resolve_note_in_vault(dir.path(), "B/Target").unwrap();
-        assert!(hit.ends_with("B/Target.md"), "got {hit}");
+        // Resolved hit is an internal fs path — native `\` on Windows; normalize.
+        assert!(hit.replace('\\', "/").ends_with("B/Target.md"), "got {hit}");
     }
 
     #[test]
@@ -3827,7 +3834,10 @@ mod vault_read_tests {
         let dir = tempfile::tempdir().unwrap();
         write_note(dir.path(), "Projects/Beta.md", "b");
         let hit = resolve_note_in_vault(dir.path(), "Projects/Beta").unwrap();
-        assert!(hit.ends_with("Projects/Beta.md"));
+        assert!(
+            hit.replace('\\', "/").ends_with("Projects/Beta.md"),
+            "got {hit}"
+        );
     }
 
     #[test]

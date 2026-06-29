@@ -185,7 +185,14 @@ mod tests {
     fn suggested_paths_under_project_dir() {
         let cfg = cfg_with_vault("/home/user/Vault");
         let (log, mocs) = suggested_layout_paths(&cfg, "demo").unwrap();
-        assert_eq!(log, "/home/user/Vault/Projects/demo/log.md");
-        assert_eq!(mocs, "/home/user/Vault/Projects/demo/MOCs");
+        // Suggested paths are internal fs paths — native `\` on Windows; normalize.
+        assert_eq!(
+            log.replace('\\', "/"),
+            "/home/user/Vault/Projects/demo/log.md"
+        );
+        assert_eq!(
+            mocs.replace('\\', "/"),
+            "/home/user/Vault/Projects/demo/MOCs"
+        );
     }
 }

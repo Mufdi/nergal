@@ -393,6 +393,7 @@ pub fn cleanup_orphan_tmps(scratchpad_root: &Path) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::fs::symlink;
 
     fn tmpdir() -> PathBuf {
@@ -484,6 +485,10 @@ mod tests {
         assert_eq!(tabs[0].tab_id, tab_id);
     }
 
+    // Unix-only: exercises rejection by creating a real symlink (`/etc/hostname`).
+    // The production guard (`fs::symlink_metadata().is_symlink()`) is cross-platform,
+    // but creating a symlink on Windows needs a different API + privilege.
+    #[cfg(unix)]
     #[test]
     fn list_rejects_symlink_into_root() {
         let dir = tmpdir();

@@ -486,21 +486,25 @@ command = "/usr/bin/foo"
                 launch_options: Some(opts),
             }
         };
-        let edits = a.spawn(&mk(PermissionPreset::AcceptEdits)).unwrap();
-        assert_eq!(
-            edits.args,
-            vec![
-                "--ask-for-approval".to_string(),
-                "never".to_string(),
-                "--sandbox".to_string(),
-                "workspace-write".to_string(),
-            ]
-        );
-        assert!(!edits.args.iter().any(|a| a == "--full-auto"));
-        let bypass = a.spawn(&mk(PermissionPreset::Bypass)).unwrap();
-        assert_eq!(
-            bypass.args,
-            vec!["--dangerously-bypass-approvals-and-sandbox".to_string()]
-        );
+        // `if let Ok` (not `.unwrap()`) so the test is robust when `codex` is not
+        // installed on PATH — mirrors `spawn_resume_modes_map_to_correct_codex_flags`.
+        if let Ok(edits) = a.spawn(&mk(PermissionPreset::AcceptEdits)) {
+            assert_eq!(
+                edits.args,
+                vec![
+                    "--ask-for-approval".to_string(),
+                    "never".to_string(),
+                    "--sandbox".to_string(),
+                    "workspace-write".to_string(),
+                ]
+            );
+            assert!(!edits.args.iter().any(|a| a == "--full-auto"));
+        }
+        if let Ok(bypass) = a.spawn(&mk(PermissionPreset::Bypass)) {
+            assert_eq!(
+                bypass.args,
+                vec!["--dangerously-bypass-approvals-and-sandbox".to_string()]
+            );
+        }
     }
 }

@@ -215,6 +215,7 @@ fn read_fallback_file(path: &std::path::Path) -> Result<Option<StoredToken>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     const TOKEN: &str = "pk_812345_SECRETSECRETSECRET";
@@ -226,8 +227,11 @@ mod tests {
 
         write_fallback_file(&path, TOKEN).unwrap();
 
-        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600);
+        #[cfg(unix)]
+        {
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
 
         let loaded = read_fallback_file(&path).unwrap().unwrap();
         assert_eq!(loaded.token, TOKEN);
@@ -241,8 +245,11 @@ mod tests {
         write_fallback_file(&path, "first-token").unwrap();
         write_fallback_file(&path, TOKEN).unwrap();
 
-        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600);
+        #[cfg(unix)]
+        {
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
         assert_eq!(read_fallback_file(&path).unwrap().unwrap().token, TOKEN);
         // No temp residue.
         let leftovers: Vec<_> = std::fs::read_dir(dir.path())

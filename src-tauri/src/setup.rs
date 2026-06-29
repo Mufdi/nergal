@@ -722,12 +722,18 @@ mod tests {
 
         let def = send_user_prompt_def();
         assert!(merge_hook(&mut hooks_map, &def, prefix.as_deref()));
-        assert_eq!(
-            hooks_map["UserPromptSubmit"][0]["hooks"][0]["command"]
-                .as_str()
-                .unwrap(),
-            ASYNC_TEST_COMMAND,
-        );
+        let cmd = hooks_map["UserPromptSubmit"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap();
+        #[cfg(unix)]
+        assert_eq!(cmd, ASYNC_TEST_COMMAND);
+        // 382f949: Windows pins the absolute exe path → `"<abs>\nergal.exe" hook send …`,
+        // so the inserted command is the absolute form, not the bare `nergal hook send`.
+        #[cfg(windows)]
+        {
+            assert!(cmd.ends_with("hook send user-prompt"), "got {cmd}");
+            assert!(cmd.contains(".exe"), "got {cmd}");
+        }
     }
 
     #[test]

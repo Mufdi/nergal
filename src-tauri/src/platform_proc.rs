@@ -258,6 +258,31 @@ pub fn listening_ports() -> Vec<u16> {
     ports
 }
 
+/// Diagnostic dump (temporary, walk-3): every in-range TCP LISTEN socket with
+/// the exact fields the filter sees — port, pid, name, path, and the
+/// `keep_owner` verdict. Lets the Windows port-noise filter be fixed against
+/// real `listeners` output instead of a guess. Non-Linux only.
+#[cfg(not(target_os = "linux"))]
+pub fn diagnose_listeners() -> Vec<String> {
+    let Ok(all) = listeners::get_all() else {
+        return vec!["listeners::get_all() failed".to_string()];
+    };
+    all.iter()
+        .filter(|l| l.protocol == Protocol::TCP && l.state == SocketState::Listen)
+        .filter(|l| (MIN_PORT..=MAX_PORT).contains(&l.socket.port()))
+        .map(|l| {
+            format!(
+                "port={} pid={} name={:?} path={:?} kept={}",
+                l.socket.port(),
+                l.process.pid,
+                l.process.name,
+                l.process.path,
+                keep_owner(l.process.pid, &l.process.path),
+            )
+        })
+        .collect()
+}
+
 /// Parse the LISTEN local ports out of a `/proc/net/tcp{,6}` buffer. Columns
 /// are whitespace-separated; field 1 is `local_addr:port` (hex), field 3 is the
 /// connection state (`0A` == TCP_LISTEN). Unparseable lines are skipped.

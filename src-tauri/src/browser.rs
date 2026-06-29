@@ -336,6 +336,10 @@ pub async fn run_port_scanner(app: AppHandle) {
         let next = apply_hysteresis(&raw, &previous, &mut inactive_streaks);
         if next != previous {
             tracing::info!("browser ports changed: {previous:?} -> {next:?}");
+            #[cfg(not(target_os = "linux"))]
+            for line in crate::platform_proc::diagnose_listeners() {
+                tracing::info!("port-diag: {line}");
+            }
             if let Err(e) = app.emit("localhost:ports-changed", &next) {
                 tracing::warn!("emit localhost:ports-changed failed: {e}");
             }

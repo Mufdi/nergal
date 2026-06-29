@@ -218,6 +218,18 @@ fn matches_hook_command(cmd: &str, target: &str) -> bool {
     {
         return cmd.ends_with(args);
     }
+    // Absolute-exe form (Windows): the bundled command pins the install path
+    // (`"<…\nergal.exe>" hook send …`, see `platform_command`) because the
+    // install dir is not on PATH. It no longer starts with `nergal ` but keeps
+    // the same `hook …` tail — match on that so cleanup/idempotency recognize
+    // their own entries. The `hook ` token (absent from the wrapper form) keeps
+    // this from colliding with the wrapper branch above.
+    if let Some(tail) = target.strip_prefix("nergal ")
+        && cmd.contains("nergal")
+        && cmd.ends_with(tail)
+    {
+        return true;
+    }
     false
 }
 
@@ -258,12 +270,47 @@ fn detect_wrapper_prefix(hooks_map: &Map<String, Value>) -> Option<String> {
     None
 }
 
+/// Format a hook command pinned to an absolute executable path:
+/// `"<exe>" hook send …`. Quoted so an install path with spaces (Windows
+/// `Program Files`) survives Claude Code's shell split. Pure string logic,
+/// unit-tested directly.
+#[cfg(any(windows, test))]
+fn abs_exe_command(exe: &str, def_command: &str) -> String {
+    match def_command.strip_prefix("nergal ") {
+        Some(args) => format!("\"{exe}\" {args}"),
+        None => def_command.to_string(),
+    }
+}
+
+/// Platform-resolved command for a NEW hook entry. On Windows the bundled app
+/// dir is not on PATH (the NSIS installer adds no PATH entry), so a bare
+/// `nergal …` command can't be spawned — Claude Code fails to find the binary
+/// and the hook silently no-ops (dead Activities/Tasks/plan-review/ask-user).
+/// Pin the absolute current-exe path, mirroring the MCP shim
+/// (`mcp::registration::shim_command`). Unix keeps the bare form: the
+/// `.deb`/`.rpm` puts `nergal` on PATH and the conditional-wrapper + cleanup
+/// matching key off the bare string.
+fn platform_command(def_command: &str) -> String {
+    #[cfg(windows)]
+    {
+        let exe = std::env::current_exe()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| "nergal".to_string());
+        abs_exe_command(&exe, def_command)
+    }
+    #[cfg(not(windows))]
+    {
+        def_command.to_string()
+    }
+}
+
 /// Synthesize the on-disk command for a new entry: wrapper form when the
-/// settings already route nergal hooks through the wrapper, bare otherwise.
+/// settings already route nergal hooks through the wrapper, otherwise the
+/// platform-resolved form (absolute exe on Windows, bare on Unix).
 fn synthesize_command(def_command: &str, wrapper_prefix: Option<&str>) -> String {
     match (wrapper_prefix, def_command.strip_prefix("nergal hook ")) {
         (Some(prefix), Some(args)) => format!("{prefix}{args}"),
-        _ => def_command.to_string(),
+        _ => platform_command(def_command),
     }
 }
 
@@ -459,6 +506,34 @@ mod tests {
             "/usr/bin/not-nergal-conditional.sh send tool-done",
             "nergal hook send tool-done",
         ));
+    }
+
+    #[test]
+    fn matcher_accepts_absolute_exe_form() {
+        // Windows bundled form: install path pinned + quoted (dir not on PATH).
+        assert!(matches_hook_command(
+            "\"C:\\Program Files\\nergal\\nergal.exe\" hook send tool-done",
+            "nergal hook send tool-done",
+        ));
+    }
+
+    #[test]
+    fn matcher_rejects_wrong_args_via_absolute_exe() {
+        assert!(!matches_hook_command(
+            "\"C:\\Program Files\\nergal\\nergal.exe\" hook send tool-done",
+            "nergal hook send cwd-changed",
+        ));
+    }
+
+    #[test]
+    fn abs_exe_command_quotes_path_and_keeps_hook_tail() {
+        assert_eq!(
+            abs_exe_command(
+                "C:\\Program Files\\nergal\\nergal.exe",
+                "nergal hook send session-start"
+            ),
+            "\"C:\\Program Files\\nergal\\nergal.exe\" hook send session-start"
+        );
     }
 
     #[test]

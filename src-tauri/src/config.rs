@@ -26,6 +26,35 @@ pub fn default_shell() -> String {
     }
 }
 
+/// Shell family for syntax-sensitive input (the agent boot command typed into
+/// the PTY). The command separator + quoting + submit key differ per family, so
+/// nothing shell-specific may be hardcoded — `shell_kind` detects it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ShellKind {
+    /// bash / zsh / sh / fish — `&&` chaining, `'…'` POSIX quoting.
+    Posix,
+    /// Windows PowerShell 5.1 (`powershell.exe`) + PowerShell 7 (`pwsh`). `&&` is
+    /// invalid in 5.1; `;` sequences, `& '…'` calls a program by path.
+    PowerShell,
+    /// `cmd.exe` — `&&` chaining, `"…"` quoting, `cd /d`.
+    Cmd,
+}
+
+/// Classify a shell binary path into its [`ShellKind`] by basename. Unknown
+/// shells default to POSIX (the broadest interactive grammar).
+pub fn shell_kind(shell: &str) -> ShellKind {
+    let base = Path::new(shell)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match base.as_str() {
+        "powershell" | "pwsh" => ShellKind::PowerShell,
+        "cmd" => ShellKind::Cmd,
+        _ => ShellKind::Posix,
+    }
+}
+
 /// Resolve the shell binary + launch args for an interactive PTY from the user's
 /// configured `default_shell`. POSIX shells get a login flag; on Windows a stale
 /// `/bin/…` value (persisted by builds whose default was hardcoded to bash) is
@@ -50,12 +79,7 @@ pub fn resolve_pty_shell(configured: &str) -> (String, Vec<String>) {
         } else {
             configured.to_string()
         };
-        let base = Path::new(&shell)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_ascii_lowercase();
-        let args = if base == "powershell" || base == "pwsh" {
+        let args = if shell_kind(&shell) == ShellKind::PowerShell {
             vec!["-NoLogo".to_string()]
         } else {
             Vec::new()

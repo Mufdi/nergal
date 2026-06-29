@@ -218,17 +218,26 @@ pub fn listening_ports() -> Vec<u16> {
 /// Docker Desktop on macOS forwards ports through a user-owned helper process,
 /// so those ports remain visible here (the root-owned-proxy problem is a Linux
 /// networking detail that does not arise on macOS).
-/// On Windows the kernel/System process (pid 0 = Idle, 4 = System) owns many
-/// user-range LISTEN ports (HTTP.sys, RPC, SMB). Surfacing them as killable dev
-/// ports is noise — the kill path correctly refuses system pids anyway. Drop
-/// them from the chip. macOS has no kernel-owned user-range ports, so it keeps
-/// every owner.
+/// On Windows the kernel + Windows services own many user-range LISTEN ports the
+/// user can't (and shouldn't) kill: pid 0/4 (Idle/System), plus svchost-hosted
+/// services (HTTP.sys, Delivery Optimization :7680, CDPSvc :5040, …) which run
+/// from `%SystemRoot%` under normal pids. Surfacing them as killable dev ports is
+/// noise — the kill path refuses or is access-denied. A dev server never runs
+/// from the Windows directory, so excluding owners under `%SystemRoot%` filters
+/// the service noise without hiding real servers. macOS has no such kernel-owned
+/// user-range ports, so it keeps every owner.
 #[cfg(all(not(target_os = "linux"), windows))]
-fn keep_owner_pid(pid: u32) -> bool {
-    pid > 4
+fn keep_owner(pid: u32, exe_path: &str) -> bool {
+    if pid <= 4 {
+        return false;
+    }
+    let windir = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+    !exe_path
+        .to_ascii_lowercase()
+        .starts_with(&windir.to_ascii_lowercase())
 }
 #[cfg(all(not(target_os = "linux"), not(windows)))]
-fn keep_owner_pid(_pid: u32) -> bool {
+fn keep_owner(_pid: u32, _exe_path: &str) -> bool {
     true
 }
 
@@ -240,7 +249,7 @@ pub fn listening_ports() -> Vec<u16> {
     let mut ports: Vec<u16> = all
         .iter()
         .filter(|l| l.protocol == Protocol::TCP && l.state == SocketState::Listen)
-        .filter(|l| keep_owner_pid(l.process.pid))
+        .filter(|l| keep_owner(l.process.pid, &l.process.path))
         .map(|l| l.socket.port())
         .collect();
     ports.sort_unstable();

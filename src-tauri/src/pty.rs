@@ -200,6 +200,132 @@ pub fn stop_compose_projects(owned_dirs: &[String]) {
     }
 }
 
+/// Build the agent boot command typed into the PTY's shell, in the grammar of
+/// `kind`. Anchors the cwd, runs the optional user prelude, then invokes the
+/// agent binary with its args. The statement separator, quoting, and submit key
+/// all vary by shell family — nothing is hardcoded to one shell. `kind` is data
+/// (not a `cfg`), so every branch compiles and is unit-testable on any host.
+fn build_launch_command(
+    kind: crate::config::ShellKind,
+    cwd: &str,
+    prelude: Option<&str>,
+    binary: &std::path::Path,
+    args: &[String],
+) -> String {
+    use crate::config::ShellKind;
+    let bin = binary.display().to_string();
+    match kind {
+        ShellKind::Posix => {
+            // Leading space keeps it out of history (HISTCONTROL=ignorespace).
+            let mut cmd = format!(" cd {}", posix_quote(cwd));
+            if let Some(p) = prelude {
+                cmd.push_str(" && ");
+                cmd.push_str(p);
+            }
+            cmd.push_str(" && ");
+            cmd.push_str(&posix_maybe_quote(&bin));
+            for arg in args {
+                cmd.push(' ');
+                cmd.push_str(&posix_maybe_quote(arg));
+            }
+            // POSIX PTY line discipline accepts `\n` as line submit.
+            cmd.push('\n');
+            cmd
+        }
+        ShellKind::PowerShell => {
+            // `&&` is invalid in Windows PowerShell 5.1; sequence with `;`. The
+            // call operator `&` runs a program given a quoted path. ConPTY's
+            // Enter is `\r`, not `\n` (a `\n` leaves PSReadLine at the `>>`
+            // continuation prompt).
+            let mut cmd = format!("Set-Location -LiteralPath {}", ps_quote(cwd));
+            if let Some(p) = prelude {
+                cmd.push_str("; ");
+                cmd.push_str(p);
+            }
+            cmd.push_str("; & ");
+            cmd.push_str(&ps_quote(&bin));
+            for arg in args {
+                cmd.push(' ');
+                cmd.push_str(&ps_maybe_quote(arg));
+            }
+            cmd.push('\r');
+            cmd
+        }
+        ShellKind::Cmd => {
+            // cmd.exe supports `&&`; `cd /d` switches drive+dir; quoting is `"…"`.
+            let mut cmd = format!("cd /d {}", cmd_quote(cwd));
+            if let Some(p) = prelude {
+                cmd.push_str(" && ");
+                cmd.push_str(p);
+            }
+            cmd.push_str(" && ");
+            cmd.push_str(&cmd_quote(&bin));
+            for arg in args {
+                cmd.push(' ');
+                cmd.push_str(&cmd_maybe_quote(arg));
+            }
+            cmd.push('\r');
+            cmd
+        }
+    }
+}
+
+/// POSIX single-quote: wrap in `'…'`, escaping embedded `'` as `'\''`.
+fn posix_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Quote only when the value carries whitespace or POSIX shell metacharacters;
+/// the args we emit today (`--continue`, `--resume`, UUIDs) pass through.
+fn posix_maybe_quote(s: &str) -> String {
+    if s.chars().any(|c| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '"' | '\'' | '$' | '`' | '\\' | '&' | ';' | '|' | '(' | ')' | '<' | '>'
+            )
+    }) {
+        posix_quote(s)
+    } else {
+        s.to_string()
+    }
+}
+
+/// PowerShell single-quote: wrap in `'…'`, escaping embedded `'` as `''`.
+fn ps_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
+fn ps_maybe_quote(s: &str) -> String {
+    if s.chars().any(|c| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '"' | '\'' | '`' | '$' | ';' | '&' | '|' | '(' | ')' | '<' | '>' | '@' | '{' | '}'
+            )
+    }) {
+        ps_quote(s)
+    } else {
+        s.to_string()
+    }
+}
+
+/// cmd.exe double-quote. cmd has no in-string escape for `"`; our paths/args
+/// never contain `"`, so a plain wrap is correct.
+fn cmd_quote(s: &str) -> String {
+    format!("\"{s}\"")
+}
+
+fn cmd_maybe_quote(s: &str) -> String {
+    if s.chars()
+        .any(|c| c.is_whitespace() || matches!(c, '&' | '|' | '(' | ')' | '<' | '>' | '^'))
+    {
+        cmd_quote(s)
+    } else {
+        s.to_string()
+    }
+}
+
 #[derive(Clone, serde::Serialize)]
 pub struct StartClaudeResult {
     pty_id: String,
@@ -538,36 +664,26 @@ pub async fn start_claude_session(
         // conversation on `--continue`. Anchoring the cwd via an explicit
         // `cd` right before the binary closes that gap.
         let cwd_str = cwd_path.display().to_string();
-        let cwd_escaped = cwd_str.replace('\'', "'\\''");
         // The user's startup prelude runs between `cd` and the agent binary,
         // verbatim (it's the user's own shell on their own machine — same
-        // trust level as typing it). A failing prelude aborts the launch via
-        // `&&`, which is the honest outcome: the user asked for setup first.
+        // trust level as typing it). A failing prelude aborts the launch (POSIX
+        // `&&` / cmd `&&`), which is the honest outcome: the user asked for setup
+        // first. PowerShell sequences with `;` (no native short-circuit).
         let prelude = launch_options
             .as_ref()
             .and_then(|o| o.startup_command.as_deref())
             .map(str::trim)
             .filter(|s| !s.is_empty());
-        let mut cmd = match prelude {
-            Some(p) => format!(" cd '{cwd_escaped}' && {p} && {}", spec.binary.display()),
-            None => format!(" cd '{cwd_escaped}' && {}", spec.binary.display()),
+        // The boot command is typed into the *user's* shell, whose grammar
+        // varies: `&&` is invalid in Windows PowerShell 5.1, quoting differs,
+        // and ConPTY submits on `\r` while a POSIX PTY accepts `\n`. Detect the
+        // shell family and emit accordingly — never hardcode one syntax.
+        let kind = {
+            let (shell_path, _) =
+                crate::config::resolve_pty_shell(&crate::config::Config::load().default_shell);
+            crate::config::shell_kind(&shell_path)
         };
-        for arg in &spec.args {
-            // Quote args containing whitespace/special chars; for the args we
-            // emit today (`--continue`, `--resume`, plain UUIDs) this is a
-            // no-op pass-through, but it keeps us safe against future args.
-            if arg
-                .chars()
-                .any(|c| c.is_whitespace() || matches!(c, '"' | '\'' | '$' | '`' | '\\'))
-            {
-                let escaped = arg.replace('\'', "'\\''");
-                cmd.push_str(&format!(" '{escaped}'"));
-            } else {
-                cmd.push(' ');
-                cmd.push_str(arg);
-            }
-        }
-        cmd.push('\n');
+        let cmd = build_launch_command(kind, &cwd_str, prelude, &spec.binary, &spec.args);
 
         {
             let instances = state.instances.lock().map_err(|e| e.to_string())?;
@@ -1515,7 +1631,71 @@ pub fn terminal_get_full_grid(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ShellKind;
     use crate::models::{Session, SessionStatus};
+    use std::path::Path;
+
+    // ── Agent boot command (shell-family-aware) ──
+
+    #[test]
+    fn launch_posix_uses_and_chaining_and_lf() {
+        let cmd = build_launch_command(
+            ShellKind::Posix,
+            "/home/u/proj",
+            None,
+            Path::new("claude"),
+            &["--continue".to_string()],
+        );
+        assert_eq!(cmd, " cd '/home/u/proj' && claude --continue\n");
+    }
+
+    #[test]
+    fn launch_powershell_sequences_with_semicolon_and_cr() {
+        // `&&` is invalid in Windows PowerShell 5.1, and ConPTY submits on `\r`.
+        let cmd = build_launch_command(
+            ShellKind::PowerShell,
+            r"C:\Users\m\Lockton",
+            None,
+            Path::new(r"C:\Users\m\.local\bin\claude.exe"),
+            &["--permission-mode".to_string(), "auto".to_string()],
+        );
+        assert_eq!(
+            cmd,
+            "Set-Location -LiteralPath 'C:\\Users\\m\\Lockton'; & 'C:\\Users\\m\\.local\\bin\\claude.exe' --permission-mode auto\r"
+        );
+        assert!(!cmd.contains("&&"));
+        assert!(cmd.ends_with('\r'));
+    }
+
+    #[test]
+    fn launch_cmd_uses_cd_slash_d_and_double_quotes() {
+        let cmd = build_launch_command(
+            ShellKind::Cmd,
+            r"C:\Users\m\Lockton",
+            None,
+            Path::new(r"C:\bin\claude.exe"),
+            &[],
+        );
+        assert_eq!(
+            cmd,
+            "cd /d \"C:\\Users\\m\\Lockton\" && \"C:\\bin\\claude.exe\"\r"
+        );
+    }
+
+    #[test]
+    fn launch_powershell_folds_prelude_with_semicolon() {
+        let cmd = build_launch_command(
+            ShellKind::PowerShell,
+            r"C:\p",
+            Some("$env:FOO='bar'"),
+            Path::new("claude.exe"),
+            &[],
+        );
+        assert_eq!(
+            cmd,
+            "Set-Location -LiteralPath 'C:\\p'; $env:FOO='bar'; & 'claude.exe'\r"
+        );
+    }
 
     // ── Bracketed-paste encoder (send-as-prompt delivery primitive) ──
 

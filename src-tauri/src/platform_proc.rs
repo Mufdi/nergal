@@ -226,15 +226,40 @@ pub fn listening_ports() -> Vec<u16> {
 /// from the Windows directory, so excluding owners under `%SystemRoot%` filters
 /// the service noise without hiding real servers. macOS has no such kernel-owned
 /// user-range ports, so it keeps every owner.
+/// The Windows session a process runs in. Services live in session 0; the
+/// interactive desktop is session 1+. `None` if the session can't be resolved.
+#[cfg(all(not(target_os = "linux"), windows))]
+fn process_session_id(pid: u32) -> Option<u32> {
+    use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
+    let mut session = 0u32;
+    // SAFETY: ProcessIdToSessionId writes `session` only on success.
+    unsafe { ProcessIdToSessionId(pid, &mut session).ok()? };
+    Some(session)
+}
+
 #[cfg(all(not(target_os = "linux"), windows))]
 fn keep_owner(pid: u32, exe_path: &str) -> bool {
     if pid <= 4 {
         return false;
     }
+    // Fast backstop: drop anything running from the Windows directory (svchost,
+    // …); also the fallback if the session check below can't resolve.
     let windir = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
-    !exe_path
+    if exe_path
         .to_ascii_lowercase()
         .starts_with(&windir.to_ascii_lowercase())
+    {
+        return false;
+    }
+    // Show every user-range LISTEN port EXCEPT those a user can't close: Windows
+    // services and system processes run in session 0, while the interactive
+    // desktop (ANY app the user launched, inside or outside Nergal) is session
+    // 1+. Keeping `session != 0` surfaces other dev servers too, not just the
+    // ones Nergal spawned, and drops only the uncloseable system/service ports.
+    // Some services live in Program Files (e.g. TeamViewer_Service), so the
+    // %SystemRoot% check alone misses them. An unresolvable session falls back to
+    // keep: better a stray noise port than a hidden real dev server.
+    process_session_id(pid).map(|s| s != 0).unwrap_or(true)
 }
 #[cfg(all(not(target_os = "linux"), not(windows)))]
 fn keep_owner(_pid: u32, _exe_path: &str) -> bool {

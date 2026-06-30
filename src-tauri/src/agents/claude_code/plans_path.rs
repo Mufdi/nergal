@@ -10,9 +10,26 @@ pub fn resolve_cc_plans_directory(cwd: &Path) -> PathBuf {
 }
 
 fn resolve_with_home(cwd: &Path, home: Option<&Path>) -> PathBuf {
-    let configured = read_plans_directory_from_layers(cwd, home)
-        .map(|raw| normalize_to_absolute(&raw, cwd, home));
-    configured.unwrap_or_else(|| cwd.join(".claude").join("plans"))
+    if let Some(raw) = read_plans_directory_from_layers(cwd, home) {
+        return normalize_to_absolute(&raw, cwd, home);
+    }
+    // No explicit plansDirectory — fall back to CC's default. Older CC wrote to
+    // the project-local `<cwd>/.claude/plans`; modern CC writes to the
+    // home-global `~/.claude/plans` (the only location that exists on Windows).
+    // Prefer the cwd-local dir when it already exists (keeps established project
+    // layouts intact), else the home-global dir when IT exists, else the
+    // cwd-local default for a fresh project (the watcher creates it on use).
+    let cwd_local = cwd.join(".claude").join("plans");
+    if cwd_local.exists() {
+        return cwd_local;
+    }
+    if let Some(home) = home {
+        let home_global = home.join(".claude").join("plans");
+        if home_global.exists() {
+            return home_global;
+        }
+    }
+    cwd_local
 }
 
 fn read_plans_directory_from_layers(cwd: &Path, home: Option<&Path>) -> Option<String> {
@@ -163,6 +180,27 @@ mod tests {
         );
         let got = resolve_with_home(&l.cwd, Some(&l.home));
         assert_eq!(got, PathBuf::from("/personal"));
+    }
+
+    #[test]
+    fn falls_back_to_home_global_when_cwd_local_absent() {
+        // Modern CC / Windows: no plansDirectory, no project-local plans dir,
+        // but the home-global ~/.claude/plans exists → resolve to home-global.
+        let l = setup();
+        std::fs::create_dir_all(l.home.join(".claude/plans")).unwrap();
+        let got = resolve_with_home(&l.cwd, Some(&l.home));
+        assert_eq!(got, l.home.join(".claude/plans"));
+    }
+
+    #[test]
+    fn prefers_cwd_local_over_home_global_when_both_exist() {
+        // Legacy project layout: an existing project-local plans dir wins over
+        // the home-global default so established setups are untouched.
+        let l = setup();
+        std::fs::create_dir_all(l.cwd.join(".claude/plans")).unwrap();
+        std::fs::create_dir_all(l.home.join(".claude/plans")).unwrap();
+        let got = resolve_with_home(&l.cwd, Some(&l.home));
+        assert_eq!(got, l.cwd.join(".claude/plans"));
     }
 
     #[test]

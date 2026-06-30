@@ -112,11 +112,28 @@ impl PlanManager {
         self.current_plan.as_ref().map(|p| p.content.as_str())
     }
 
+    /// Set the active plan from content already in hand, skipping the disk read.
+    /// CC delivers the plan markdown inline in the ExitPlanMode hook payload, so
+    /// the exact text is known before (or without) a backing file — this avoids
+    /// the mtime race of re-reading "the latest file".
+    pub fn set_plan(&mut self, path: PathBuf, content: String) {
+        self.current_plan = Some(PlanFile {
+            path,
+            original: content.clone(),
+            content,
+        });
+    }
+
     pub fn current_path(&self) -> Option<&Path> {
         self.current_plan.as_ref().map(|p| p.path.as_path())
     }
 
     /// Scans plans_dir for the most recently modified `.md` file.
+    ///
+    /// This is the last-resort heuristic: prefer [`find_plan_file_by_content`]
+    /// when the plan's exact text is known (CC delivers it inline in the hook
+    /// payload), since "newest mtime" can pick the wrong plan when two sessions
+    /// emit concurrently.
     pub fn find_latest_plan(&self) -> Result<Option<PathBuf>> {
         if !self.plans_dir.exists() {
             return Ok(None);
@@ -159,6 +176,27 @@ impl PlanManager {
 
         Ok(plan.path.clone())
     }
+}
+
+/// Finds the `.md` file in `dir` whose content exactly matches `content`.
+///
+/// CC writes the plan to its plansDirectory AND delivers the same markdown
+/// inline in the ExitPlanMode hook payload. Matching by content identity
+/// locates the exact backing file without the mtime race of "newest file wins"
+/// — so the edit/re-inject round-trip writes back to the plan the user is
+/// actually looking at. Returns `None` if the dir is unreadable or no file
+/// matches (e.g. CC hasn't flushed it yet).
+pub fn find_plan_file_by_content(dir: &Path, content: &str) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_some_and(|ext| ext == "md")
+            && std::fs::read_to_string(&path).is_ok_and(|c| c == content)
+        {
+            return Some(path);
+        }
+    }
+    None
 }
 
 /// Thread-safe wrapper for PlanManager, managed as Tauri state.

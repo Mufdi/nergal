@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -532,6 +532,86 @@ pub(crate) fn finalize_session_obsidian(db: &SharedDb, csid: Option<&str>) {
     }
 }
 
+/// CC's candidate plansDirectory paths for a session, most-specific first.
+/// CC writes the plan markdown to one of these: modern CC defaults to the
+/// home-global `~/.claude/plans` (the only one that exists on Windows), older
+/// CC used the project-local `<cwd>/.claude/plans`. Resolving the session's cwd
+/// first preserves the project-local case; the home default covers modern CC.
+fn cc_plan_dirs(db: &SharedDb, nergal_session_id: Option<&str>) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(csid) = nergal_session_id
+        && let Ok(db_guard) = db.lock()
+        && let Ok(Some(session)) = db_guard.find_session(csid)
+    {
+        let cwd = session.worktree_path.or_else(|| {
+            db_guard
+                .workspace_repo_path(&session.workspace_id)
+                .ok()
+                .flatten()
+        });
+        if let Some(cwd) = cwd {
+            dirs.push(crate::agents::claude_code::resolve_cc_plans_directory(&cwd));
+        }
+    }
+    if let Some(home) = dirs::home_dir() {
+        let global = home.join(".claude").join("plans");
+        if !dirs.contains(&global) {
+            dirs.push(global);
+        }
+    }
+    dirs
+}
+
+/// Resolve the plan to surface for an ExitPlanMode / PlanReview event, preferring
+/// the exact source over the newest-mtime heuristic:
+///   1. `tool_input["plan_path"]` — an explicit path, honored if ever provided.
+///   2. `tool_input["plan"]` — the markdown CC delivers inline in the hook
+///      payload: the precise text the agent emitted, with no filesystem race.
+///      Its backing file is located by *content identity* so the edit/re-inject
+///      round-trip writes back to the right plan; if CC hasn't flushed the file
+///      yet, the inline content is still shown with the newest file as a
+///      best-effort writable path.
+///   3. Legacy fallback: newest `.md` across the candidate dirs.
+fn resolve_active_plan(
+    tool_input: &serde_json::Value,
+    dirs: &[PathBuf],
+) -> Option<(PathBuf, String)> {
+    use crate::agents::claude_code::plan::{PlanManager, find_plan_file_by_content};
+
+    let newest = |dirs: &[PathBuf]| -> Option<PathBuf> {
+        dirs.iter().find_map(|d| {
+            PlanManager::new(d.clone())
+                .find_latest_plan()
+                .ok()
+                .flatten()
+        })
+    };
+
+    if let Some(path) = tool_input.get("plan_path").and_then(|v| v.as_str()) {
+        let path = PathBuf::from(path);
+        let content = std::fs::read_to_string(&path).ok()?;
+        return Some((path, content));
+    }
+
+    if let Some(content) = tool_input
+        .get("plan")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        for dir in dirs {
+            if let Some(path) = find_plan_file_by_content(dir, content) {
+                return Some((path, content.to_string()));
+            }
+        }
+        let path = newest(dirs).unwrap_or_default();
+        return Some((path, content.to_string()));
+    }
+
+    let path = newest(dirs)?;
+    let content = std::fs::read_to_string(&path).ok()?;
+    Some((path, content))
+}
+
 fn process_event(
     app: &AppHandle,
     event: &HookEvent,
@@ -738,58 +818,31 @@ fn process_event(
             if tool_name == "ExitPlanMode"
                 && let Ok(mut state) = plan_state.lock()
             {
-                let runtime = state.get_or_create(session_id);
-                let plan_path = tool_input
-                    .get("plan_path")
-                    .and_then(|v| v.as_str())
-                    .map(std::path::PathBuf::from)
-                    .or_else(|| {
-                        // Fallback: find latest plan in project-local .claude/plans/
-                        if let Some(csid) = nergal_session_id
-                            && let Ok(db_guard) = db.lock()
-                            && let Ok(Some(session)) = db_guard.find_session(csid)
-                        {
-                            let cwd = session.worktree_path.or_else(|| {
-                                db_guard
-                                    .workspace_repo_path(&session.workspace_id)
-                                    .ok()
-                                    .flatten()
-                            });
-                            if let Some(cwd) = cwd {
-                                let local_plans =
-                                    crate::agents::claude_code::resolve_cc_plans_directory(&cwd);
-                                if local_plans.exists() {
-                                    let local_mgr =
-                                        crate::agents::claude_code::plan::PlanManager::new(
-                                            local_plans,
-                                        );
-                                    return local_mgr.find_latest_plan().ok().flatten();
-                                }
-                            }
-                        }
-                        // Last fallback: global plans dir
-                        runtime.find_latest_plan().ok().flatten()
-                    });
+                let mut dirs = cc_plan_dirs(db, nergal_session_id);
+                let runtime_dir = state.get_or_create(session_id).plans_dir.clone();
+                if !dirs.contains(&runtime_dir) {
+                    dirs.push(runtime_dir);
+                }
 
-                if let Some(path) = plan_path
-                    && let Ok(()) = runtime.load_plan(&path)
-                {
+                if let Some((path, content)) = resolve_active_plan(tool_input, &dirs) {
+                    state
+                        .get_or_create(session_id)
+                        .set_plan(path.clone(), content.clone());
+
                     #[derive(Clone, serde::Serialize)]
                     struct PlanReady {
                         path: String,
                         content: String,
                         session_id: String,
                     }
-                    if let Some(content) = runtime.current_content() {
-                        let _ = app.emit(
-                            "plan:ready",
-                            PlanReady {
-                                path: path.display().to_string(),
-                                content: content.to_string(),
-                                session_id: nergal_session_id.unwrap_or(session_id).to_string(),
-                            },
-                        );
-                    }
+                    let _ = app.emit(
+                        "plan:ready",
+                        PlanReady {
+                            path: path.display().to_string(),
+                            content,
+                            session_id: nergal_session_id.unwrap_or(session_id).to_string(),
+                        },
+                    );
                 }
             }
         }
@@ -895,55 +948,17 @@ fn process_event(
             }
 
             if let Ok(mut state) = plan_state.lock() {
-                let runtime = state.get_or_create(session_id);
-                let plan_path = tool_input
-                    .get("plan_path")
-                    .and_then(|v| v.as_str())
-                    .map(std::path::PathBuf::from)
-                    .or_else(|| {
-                        // CC writes plans to its plansDirectory: the project-local
-                        // cwd/.claude/plans (Linux project layout) OR CC's home
-                        // default ~/.claude/plans — which is where CC writes on
-                        // Windows. Check the session's cwd dir first (preserves the
-                        // Linux behavior), then CC's home default, then the
-                        // runtime's own watcher dir.
-                        let mut dirs: Vec<std::path::PathBuf> = Vec::new();
-                        if let Some(csid) = nergal_session_id
-                            && let Ok(db_guard) = db.lock()
-                            && let Ok(Some(session)) = db_guard.find_session(csid)
-                        {
-                            let cwd = session.worktree_path.or_else(|| {
-                                db_guard
-                                    .workspace_repo_path(&session.workspace_id)
-                                    .ok()
-                                    .flatten()
-                            });
-                            if let Some(cwd) = cwd {
-                                dirs.push(crate::agents::claude_code::resolve_cc_plans_directory(
-                                    &cwd,
-                                ));
-                            }
-                        }
-                        if let Some(home) = dirs::home_dir() {
-                            dirs.push(home.join(".claude").join("plans"));
-                        }
-                        for dir in dirs {
-                            if dir.exists()
-                                && let Some(p) =
-                                    crate::agents::claude_code::plan::PlanManager::new(dir)
-                                        .find_latest_plan()
-                                        .ok()
-                                        .flatten()
-                            {
-                                return Some(p);
-                            }
-                        }
-                        runtime.find_latest_plan().ok().flatten()
-                    });
+                let mut dirs = cc_plan_dirs(db, nergal_session_id);
+                let runtime_dir = state.get_or_create(session_id).plans_dir.clone();
+                if !dirs.contains(&runtime_dir) {
+                    dirs.push(runtime_dir);
+                }
 
-                if let Some(path) = plan_path
-                    && let Ok(()) = runtime.load_plan(&path)
-                {
+                if let Some((path, content)) = resolve_active_plan(tool_input, &dirs) {
+                    state
+                        .get_or_create(session_id)
+                        .set_plan(path.clone(), content.clone());
+
                     #[derive(Clone, serde::Serialize)]
                     struct PlanReady {
                         path: String,
@@ -951,17 +966,15 @@ fn process_event(
                         session_id: String,
                         decision_path: String,
                     }
-                    if let Some(content) = runtime.current_content() {
-                        let _ = app.emit(
-                            "plan:ready",
-                            PlanReady {
-                                path: path.display().to_string(),
-                                content: content.to_string(),
-                                session_id: nergal_session_id.unwrap_or(session_id).to_string(),
-                                decision_path: fifo_path.clone(),
-                            },
-                        );
-                    }
+                    let _ = app.emit(
+                        "plan:ready",
+                        PlanReady {
+                            path: path.display().to_string(),
+                            content,
+                            session_id: nergal_session_id.unwrap_or(session_id).to_string(),
+                            decision_path: fifo_path.clone(),
+                        },
+                    );
                 }
             }
         }

@@ -69,30 +69,35 @@ impl Drop for LocalGuard {
 ///
 /// SAFETY: `token` must be a valid token handle open for `TOKEN_QUERY`.
 unsafe fn token_user_sid(token: HANDLE) -> io::Result<Box<[u8]>> {
-    // Two-call pattern: first call (null buffer) yields the required size.
-    let mut needed = 0u32;
-    let _ = GetTokenInformation(token, TokenUser, None, 0, &mut needed);
-    if needed == 0 {
-        return Err(io::Error::other("GetTokenInformation returned zero size"));
-    }
-    let mut buf = vec![0u8; needed as usize];
-    GetTokenInformation(
-        token,
-        TokenUser,
-        Some(buf.as_mut_ptr() as *mut c_void),
-        needed,
-        &mut needed,
-    )
-    .map_err(|e| winerr("GetTokenInformation(TokenUser)", e))?;
+    // SAFETY: `token` is valid for `TOKEN_QUERY` (caller contract); the two-call
+    // GetTokenInformation pattern sizes the buffer, and the SID is read within
+    // the returned buffer's bounds (GetLengthSid gives its exact length).
+    unsafe {
+        // Two-call pattern: first call (null buffer) yields the required size.
+        let mut needed = 0u32;
+        let _ = GetTokenInformation(token, TokenUser, None, 0, &mut needed);
+        if needed == 0 {
+            return Err(io::Error::other("GetTokenInformation returned zero size"));
+        }
+        let mut buf = vec![0u8; needed as usize];
+        GetTokenInformation(
+            token,
+            TokenUser,
+            Some(buf.as_mut_ptr() as *mut c_void),
+            needed,
+            &mut needed,
+        )
+        .map_err(|e| winerr("GetTokenInformation(TokenUser)", e))?;
 
-    let token_user = &*(buf.as_ptr() as *const TOKEN_USER);
-    let psid = token_user.User.Sid;
-    let len = GetLengthSid(psid) as usize;
-    if len == 0 {
-        return Err(io::Error::other("GetLengthSid returned zero"));
+        let token_user = &*(buf.as_ptr() as *const TOKEN_USER);
+        let psid = token_user.User.Sid;
+        let len = GetLengthSid(psid) as usize;
+        if len == 0 {
+            return Err(io::Error::other("GetLengthSid returned zero"));
+        }
+        let bytes = std::slice::from_raw_parts(psid.0 as *const u8, len).to_vec();
+        Ok(bytes.into_boxed_slice())
     }
-    let bytes = std::slice::from_raw_parts(psid.0 as *const u8, len).to_vec();
-    Ok(bytes.into_boxed_slice())
 }
 
 /// The current process owner SID (= the current user) as owned bytes.

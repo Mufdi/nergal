@@ -44,7 +44,7 @@ pub async fn find_rollout_for_cwd(
     loop {
         let mut candidates: Vec<(PathBuf, SystemTime)> = Vec::new();
         collect_rollouts(sessions_root, &mut candidates).await;
-        candidates.sort_by(|a, b| b.1.cmp(&a.1));
+        candidates.sort_by_key(|c| std::cmp::Reverse(c.1));
         for (path, _) in &candidates {
             if rollout_cwd_matches(path, cwd).await {
                 return Ok(path.clone());

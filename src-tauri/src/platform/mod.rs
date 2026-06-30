@@ -869,7 +869,7 @@ impl PlatformListener {
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "pipe name is not UTF-8"))?
             .to_string();
         let sid = win_sec::current_user_sid_string()?;
-        let first = make_pipe_instance(&name, &sid, true).map_err(|e| {
+        let first = make_pipe_instance(&name, &sid, true).inspect_err(|e| {
             if e.kind() == io::ErrorKind::PermissionDenied {
                 tracing::error!(
                     ipc_event = "squat_detected",
@@ -877,7 +877,6 @@ impl PlatformListener {
                     "named pipe already exists at bind — refusing to start (possible squat)"
                 );
             }
-            e
         })?;
         Ok(Self {
             name,
@@ -1187,8 +1186,10 @@ pub fn sync_listen(path: &Path) -> io::Result<SyncPipeServer> {
 
     // SAFETY: standard manual-reset event creation.
     let event = unsafe { CreateEventW(None, true, false, None) }.map_err(coreerr)?;
-    let mut overlapped = Box::new(OVERLAPPED::default());
-    overlapped.hEvent = event;
+    let overlapped = Box::new(OVERLAPPED {
+        hEvent: event,
+        ..Default::default()
+    });
 
     Ok(SyncPipeServer {
         handle: Some(handle),
@@ -1312,8 +1313,10 @@ impl io::Read for SyncPlatformStream {
         // SAFETY: overlapped read on a valid handle with the stream's event;
         // GetOverlappedResult(bwait=true) blocks until done.
         unsafe {
-            let mut ol = OVERLAPPED::default();
-            ol.hEvent = self.event;
+            let mut ol = OVERLAPPED {
+                hEvent: self.event,
+                ..Default::default()
+            };
             let _ = ResetEvent(self.event);
             let pending_or_ok = ReadFile(self.handle, Some(buf), None, Some(&mut ol));
             match pending_or_ok {
@@ -1346,8 +1349,10 @@ impl io::Write for SyncPlatformStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         // SAFETY: overlapped write mirroring `read`.
         unsafe {
-            let mut ol = OVERLAPPED::default();
-            ol.hEvent = self.event;
+            let mut ol = OVERLAPPED {
+                hEvent: self.event,
+                ..Default::default()
+            };
             let _ = ResetEvent(self.event);
             match WriteFile(self.handle, Some(buf), None, Some(&mut ol)) {
                 Ok(()) => {}

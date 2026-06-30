@@ -499,7 +499,7 @@ fn scan_plans_dir(dir: &std::path::Path) -> Vec<PlanSummary> {
             modified,
         });
     }
-    plans.sort_by(|a, b| b.modified.cmp(&a.modified));
+    plans.sort_by_key(|p| std::cmp::Reverse(p.modified));
     plans
 }
 
@@ -3038,7 +3038,7 @@ pub fn search_files(
             }
         }
     }
-    hits.sort_by(|a, b| a.path.to_lowercase().cmp(&b.path.to_lowercase()));
+    hits.sort_by_key(|a| a.path.to_lowercase());
     Ok(hits)
 }
 

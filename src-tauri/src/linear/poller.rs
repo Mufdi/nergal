@@ -421,7 +421,7 @@ pub async fn run_cycle(
     // Merge + dedup sets 1 + 2.
     let mut seen = HashSet::new();
     let mut scope_issues = Vec::new();
-    for issue in win_issues.into_iter().chain(assigned_issues.into_iter()) {
+    for issue in win_issues.into_iter().chain(assigned_issues) {
         if seen.insert(issue.id.clone()) {
             scope_issues.push(issue);
         }

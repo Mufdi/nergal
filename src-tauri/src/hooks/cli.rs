@@ -577,6 +577,118 @@ pub fn ask_user(socket_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// statusLine feeder (non-blocking, best-effort).
+///
+/// CC runs the configured `statusLine.command` on every render and pipes its
+/// session snapshot (model, context-window usage, rate limits, effort) to
+/// stdin. This is the native, cross-platform replacement for the Linux bash+jq
+/// statusline feeder: it parses that snapshot, forwards it to the GUI as an
+/// `AgentStatus` socket event (so Nergal's status bar updates), and echoes a
+/// compact one-liner to stdout for CC's own TUI status row.
+///
+/// Never returns an error: a statusline command that fails its render loop
+/// leaves CC's status row blank, so all failures are swallowed (and traced).
+pub fn statusline(socket_path: &Path) {
+    let mut input = String::new();
+    if std::io::stdin().read_to_string(&mut input).is_err() {
+        return;
+    }
+    let Ok(cc) = serde_json::from_str::<serde_json::Value>(input.trim()) else {
+        tracing::debug!("statusline: stdin was not valid JSON");
+        return;
+    };
+
+    // Forward to the GUI only for sessions Nergal owns; outside Nergal the env
+    // var is absent and we just render the TUI line (mirrors `notification`).
+    let nergal_id = std::env::var("NERGAL_SESSION_ID").unwrap_or_default();
+    if !nergal_id.is_empty()
+        && let Ok(payload) = serde_json::to_string(&statusline_to_agent_status(&cc, &nergal_id))
+    {
+        match crate::platform::sync_connect(socket_path) {
+            Ok(mut stream) => {
+                let _ = stream.write_all(payload.as_bytes());
+                let _ = stream.write_all(b"\n");
+                let _ = stream.flush();
+            }
+            Err(e) => {
+                tracing::debug!(
+                    ipc_event = "statusline_connect_failed",
+                    error = %e,
+                    "statusline: connect failed (best-effort, GUI may not be running)"
+                );
+            }
+        }
+    }
+
+    // CC renders our stdout as its status row. Keep it to one compact line; the
+    // full breakdown lives in Nergal's own status bar.
+    let _ = std::io::stdout().write_all(statusline_tui_text(&cc).as_bytes());
+}
+
+/// Map CC's statusLine session snapshot (documented schema) to the
+/// agent-agnostic `AgentStatus` socket payload. Pure so the field paths stay
+/// unit-tested against the schema. Every field is optional: CC omits
+/// `rate_limits` for non-Pro/Max plans, `effort` for models without reasoning
+/// effort, and the `context_window` percentages early in a session.
+fn statusline_to_agent_status(cc: &serde_json::Value, nergal_id: &str) -> serde_json::Value {
+    let model = cc.get("model");
+    let ctx = cc.get("context_window");
+    let rate = cc.get("rate_limits");
+    let five = rate.and_then(|r| r.get("five_hour"));
+    let seven = rate.and_then(|r| r.get("seven_day"));
+
+    serde_json::json!({
+        "hook_event_name": "AgentStatus",
+        "session_id": cc.get("session_id").and_then(|v| v.as_str()).unwrap_or(""),
+        "agent_id": "claude-code",
+        "model_id": model.and_then(|m| m.get("id")).and_then(|v| v.as_str()),
+        "model_name": model.and_then(|m| m.get("display_name")).and_then(|v| v.as_str()),
+        "context_used_pct": ctx
+            .and_then(|c| c.get("used_percentage"))
+            .and_then(serde_json::Value::as_f64),
+        "context_window_size": ctx
+            .and_then(|c| c.get("context_window_size"))
+            .and_then(serde_json::Value::as_u64),
+        "rate_5h_pct": five
+            .and_then(|f| f.get("used_percentage"))
+            .and_then(serde_json::Value::as_f64),
+        "rate_5h_resets_at": five
+            .and_then(|f| f.get("resets_at"))
+            .and_then(serde_json::Value::as_u64),
+        "rate_7d_pct": seven
+            .and_then(|s| s.get("used_percentage"))
+            .and_then(serde_json::Value::as_f64),
+        "rate_7d_resets_at": seven
+            .and_then(|s| s.get("resets_at"))
+            .and_then(serde_json::Value::as_u64),
+        "effort_level": cc.get("effort").and_then(|e| e.get("level")).and_then(|v| v.as_str()),
+        "nergal_session_id": nergal_id,
+    })
+}
+
+/// Compact single-line text for CC's own TUI status row: model + context%.
+fn statusline_tui_text(cc: &serde_json::Value) -> String {
+    let mut out = String::new();
+    if let Some(name) = cc
+        .get("model")
+        .and_then(|m| m.get("display_name"))
+        .and_then(|v| v.as_str())
+    {
+        out.push_str(name);
+    }
+    if let Some(pct) = cc
+        .get("context_window")
+        .and_then(|c| c.get("used_percentage"))
+        .and_then(serde_json::Value::as_f64)
+    {
+        if !out.is_empty() {
+            out.push_str(" · ");
+        }
+        out.push_str(&format!("{}% ctx", pct.round() as i64));
+    }
+    out
+}
+
 fn output_allow() -> Result<()> {
     let output = serde_json::json!({
         "hookSpecificOutput": {
@@ -606,4 +718,91 @@ fn output_deny(message: &str) -> Result<()> {
         .write_all(serde_json::to_string(&output)?.as_bytes())
         .context("writing deny decision to stdout")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Mirrors the documented Claude Code statusLine stdin schema. Pro/Max
+    // accounts include `rate_limits`; reasoning-effort models include `effort`.
+    fn full_cc_snapshot() -> serde_json::Value {
+        serde_json::json!({
+            "session_id": "sess-abc",
+            "cwd": "/proj",
+            "model": { "id": "claude-opus-4-8", "display_name": "Opus" },
+            "context_window": {
+                "context_window_size": 200000,
+                "used_percentage": 8,
+                "remaining_percentage": 92
+            },
+            "rate_limits": {
+                "five_hour": { "used_percentage": 23.5, "resets_at": 1738425600u64 },
+                "seven_day": { "used_percentage": 41.2, "resets_at": 1738857600u64 }
+            },
+            "effort": { "level": "high" }
+        })
+    }
+
+    #[test]
+    fn maps_full_snapshot_to_agent_status() {
+        let out = statusline_to_agent_status(&full_cc_snapshot(), "nergal-1");
+        assert_eq!(out["hook_event_name"], "AgentStatus");
+        assert_eq!(out["session_id"], "sess-abc");
+        assert_eq!(out["agent_id"], "claude-code");
+        assert_eq!(out["model_id"], "claude-opus-4-8");
+        assert_eq!(out["model_name"], "Opus");
+        assert_eq!(out["context_used_pct"], 8.0);
+        assert_eq!(out["context_window_size"], 200000);
+        assert_eq!(out["rate_5h_pct"], 23.5);
+        assert_eq!(out["rate_5h_resets_at"], 1738425600u64);
+        assert_eq!(out["rate_7d_pct"], 41.2);
+        assert_eq!(out["rate_7d_resets_at"], 1738857600u64);
+        assert_eq!(out["effort_level"], "high");
+        assert_eq!(out["nergal_session_id"], "nergal-1");
+    }
+
+    #[test]
+    fn omitted_rate_limits_and_effort_become_null() {
+        // Free-tier, no reasoning effort: CC omits `rate_limits` and `effort`.
+        let snapshot = serde_json::json!({
+            "session_id": "s",
+            "model": { "id": "m", "display_name": "M" },
+            "context_window": { "used_percentage": 12, "context_window_size": 200000 }
+        });
+        let out = statusline_to_agent_status(&snapshot, "n");
+        assert!(out["rate_5h_pct"].is_null());
+        assert!(out["rate_5h_resets_at"].is_null());
+        assert!(out["rate_7d_pct"].is_null());
+        assert!(out["effort_level"].is_null());
+        // Present fields still map.
+        assert_eq!(out["model_name"], "M");
+        assert_eq!(out["context_used_pct"], 12.0);
+    }
+
+    #[test]
+    fn empty_snapshot_yields_only_invariant_fields() {
+        let out = statusline_to_agent_status(&serde_json::json!({}), "n");
+        assert_eq!(out["hook_event_name"], "AgentStatus");
+        assert_eq!(out["session_id"], "");
+        assert!(out["model_id"].is_null());
+        assert!(out["context_used_pct"].is_null());
+        assert_eq!(out["nergal_session_id"], "n");
+    }
+
+    #[test]
+    fn tui_text_combines_model_and_context() {
+        assert_eq!(statusline_tui_text(&full_cc_snapshot()), "Opus · 8% ctx");
+    }
+
+    #[test]
+    fn tui_text_model_only_when_context_absent() {
+        let snapshot = serde_json::json!({ "model": { "display_name": "Sonnet" } });
+        assert_eq!(statusline_tui_text(&snapshot), "Sonnet");
+    }
+
+    #[test]
+    fn tui_text_empty_for_empty_snapshot() {
+        assert_eq!(statusline_tui_text(&serde_json::json!({})), "");
+    }
 }

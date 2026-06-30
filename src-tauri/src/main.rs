@@ -44,6 +44,10 @@ enum HookAction {
     AskUser,
     /// Non-blocking Notification forwarder (permission prompts, idle prompts, …)
     Notification,
+    /// statusLine reader: parse CC's session snapshot from stdin, forward it to
+    /// the GUI as an AgentStatus, and echo a compact line for CC's own TUI.
+    /// Cross-platform native replacement for the Linux bash+jq statusline feeder.
+    Statusline,
     /// Configure Claude Code hooks in ~/.claude/settings.json
     Setup,
 }
@@ -103,6 +107,11 @@ fn main() {
                         eprintln!("nergal hook notification: {e:#}");
                         std::process::exit(1);
                     }
+                }
+                HookAction::Statusline => {
+                    // Best-effort: a statusline feeder must never break CC's
+                    // render loop, so failures are swallowed (logged inside).
+                    nergal::hooks::cli::statusline(&socket_path);
                 }
                 HookAction::Setup => {
                     if let Err(e) = nergal::setup::run() {

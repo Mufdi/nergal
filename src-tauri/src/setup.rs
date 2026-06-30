@@ -146,6 +146,11 @@ struct ObsoleteHook {
     only_without_matcher: bool,
 }
 
+/// Command for CC's top-level `statusLine` key (not a hook). CC runs it on
+/// every render and pipes its session snapshot to stdin; the native reader
+/// forwards it to the GUI as an AgentStatus.
+const STATUSLINE_COMMAND: &str = "nergal hook statusline";
+
 /// Run the setup command: configure Claude Code hooks in ~/.claude/settings.json.
 pub fn run() -> Result<()> {
     let settings_path = settings_path()?;
@@ -179,7 +184,11 @@ pub fn run() -> Result<()> {
         }
     }
 
-    if added.is_empty() && removed.is_empty() {
+    // `statusLine` is a top-level key, not under `hooks` — merge it after the
+    // hooks_map borrow ends.
+    let statusline_added = merge_statusline(&mut settings);
+
+    if added.is_empty() && removed.is_empty() && !statusline_added {
         println!("All nergal hooks already configured. Nothing to do.");
         return Ok(());
     }
@@ -194,6 +203,9 @@ pub fn run() -> Result<()> {
     }
     for event in &added {
         println!("  + {event}");
+    }
+    if statusline_added {
+        println!("  + statusLine");
     }
     for event in &skipped {
         println!("  ~ {event} (already present, kept existing)");
@@ -422,6 +434,27 @@ fn merge_hook(
             .insert("matcher".into(), Value::String(matcher.into()));
     }
     arr.push(entry);
+    true
+}
+
+/// Install CC's top-level `statusLine` key so the status bar is fed by the
+/// native `nergal hook statusline` reader instead of an external shell feeder
+/// (the Linux setup used a hand-authored bash+jq script, absent on Windows).
+///
+/// Never clobbers an existing `statusLine`: a user who wired their own command
+/// keeps it, and a re-run is a no-op. Returns true only when a fresh key was
+/// inserted.
+fn merge_statusline(settings: &mut Map<String, Value>) -> bool {
+    if settings.contains_key("statusLine") {
+        return false;
+    }
+    settings.insert(
+        "statusLine".into(),
+        json!({
+            "type": "command",
+            "command": platform_command(STATUSLINE_COMMAND),
+        }),
+    );
     true
 }
 
@@ -783,5 +816,43 @@ mod tests {
         assert!(!merge_hook(&mut hooks_map, &inject, None));
         assert!(!merge_hook(&mut hooks_map, &send_user_prompt_def(), None));
         assert_eq!(hooks_map["UserPromptSubmit"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn merge_statusline_inserts_when_absent() {
+        let mut settings = Map::new();
+        assert!(merge_statusline(&mut settings));
+        let sl = &settings["statusLine"];
+        assert_eq!(sl["type"], "command");
+        let cmd = sl["command"].as_str().unwrap();
+        // Unix keeps the bare form; Windows pins the absolute exe path (PATH
+        // gap), so assert on the stable `hook statusline` tail across both.
+        assert!(cmd.ends_with("hook statusline"), "got {cmd}");
+        #[cfg(unix)]
+        assert_eq!(cmd, STATUSLINE_COMMAND);
+        #[cfg(windows)]
+        assert!(cmd.contains(".exe"), "got {cmd}");
+    }
+
+    #[test]
+    fn merge_statusline_never_clobbers_existing() {
+        let mut settings = Map::new();
+        settings.insert(
+            "statusLine".into(),
+            json!({ "type": "command", "command": "/home/me/.claude/my-statusline.sh" }),
+        );
+        assert!(!merge_statusline(&mut settings));
+        assert_eq!(
+            settings["statusLine"]["command"].as_str().unwrap(),
+            "/home/me/.claude/my-statusline.sh",
+            "a user's own statusLine must be preserved"
+        );
+    }
+
+    #[test]
+    fn merge_statusline_is_idempotent() {
+        let mut settings = Map::new();
+        assert!(merge_statusline(&mut settings));
+        assert!(!merge_statusline(&mut settings));
     }
 }

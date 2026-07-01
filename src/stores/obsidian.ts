@@ -8,7 +8,6 @@ import {
   type ObsidianTemplate,
 } from "./obsidianTemplates";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { sileo } from "sileo";
 import { toastsAtom } from "./toast";
 
 export interface PinnedNoteChangedPayload {
@@ -163,12 +162,14 @@ export async function setupObsidianListeners(store: Store): Promise<UnlistenFn[]
   // never automatic, so a running agent isn't surprised mid-turn.
   unlisteners.push(
     await listen<PinnedNoteChangedPayload>("vault:pinned-note-changed", (payload) => {
-      sileo.action({
-        title: "Pinned note updated",
+      // Route through toastsAtom (not sileo directly) so it also lands in the
+      // notification history — an action toast the user may want to re-find.
+      store.set(toastsAtom, {
+        message: "Pinned note updated",
         description: `${noteName(payload.path)} changed in Obsidian.`,
-        fill: "#171717",
-        button: {
-          title: "Re-inject updated version",
+        type: "info",
+        action: {
+          label: "Re-inject updated version",
           onClick: () => {
             void invoke("reinject_pinned_note", {
               sessionId: payload.session_id,

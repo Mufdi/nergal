@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { KeyHints } from "@/components/ui/KeyHints";
 import {
   Dialog,
   DialogContent,
@@ -92,7 +93,14 @@ export function ProjectPickerModal({ open, onOpenChange, workspaces, preselected
             <p className="text-[11px] text-muted-foreground py-4 text-center">No projects. Add one with Ctrl+Shift+N.</p>
           )}
         </div>
-        <p className="text-[10px] text-muted-foreground/60">↑↓ navigate • 1–9 jump • Enter to pick • Esc to cancel</p>
+        <KeyHints
+          hints={[
+            { keys: "↑↓", label: "navigate" },
+            { keys: "1–9", label: "jump" },
+            { keys: "Enter", label: "pick" },
+            { keys: "Esc", label: "cancel" },
+          ]}
+        />
       </DialogContent>
     </Dialog>
   );

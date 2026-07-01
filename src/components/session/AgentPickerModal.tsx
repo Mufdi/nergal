@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Check, Plus, X } from "lucide-react";
+import { KeyHints } from "@/components/ui/KeyHints";
 import {
   Dialog,
   DialogContent,
@@ -662,9 +663,16 @@ export function AgentPickerModal({
             </div>
           )}
         </div>
-        <p className="text-[10px] text-muted-foreground/60">
-          ← → agent • ↑ ↓ options • Space toggle • 1–9 jump • Enter create • Esc cancel
-        </p>
+        <KeyHints
+          hints={[
+            { keys: "←→", label: "agent" },
+            { keys: "↑↓", label: "options" },
+            { keys: "Space", label: "toggle" },
+            { keys: "1–9", label: "jump" },
+            { keys: "Enter", label: "create" },
+            { keys: "Esc", label: "cancel" },
+          ]}
+        />
       </DialogContent>
     </Dialog>
   );

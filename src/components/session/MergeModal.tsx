@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useSetAtom } from "jotai";
 import { toastsAtom } from "@/stores/toast";
 import { invoke } from "@/lib/tauri";
+import { KeyHints } from "@/components/ui/KeyHints";
 import {
   Dialog,
   DialogContent,
@@ -136,7 +137,13 @@ export function MergeModal({
               </button>
             ))}
           </div>
-          <p className="text-[10px] text-muted-foreground/60">↑↓ navigate • Enter to merge • Esc to cancel</p>
+          <KeyHints
+            hints={[
+              { keys: "↑↓", label: "navigate" },
+              { keys: "Enter", label: "merge" },
+              { keys: "Esc", label: "cancel" },
+            ]}
+          />
 
           {error && (
             <p className="text-[11px] text-red-400">{error}</p>

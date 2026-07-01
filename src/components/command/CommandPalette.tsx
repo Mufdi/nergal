@@ -237,6 +237,9 @@ export function CommandPalette() {
                         <span className="text-[10px] text-muted-foreground">{t.description}</span>
                       )}
                     </span>
+                    <span className="shrink-0 self-center">
+                      <KeyBadges keys="Enter" />
+                    </span>
                   </button>
                 );
               })}

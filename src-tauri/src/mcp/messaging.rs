@@ -182,9 +182,13 @@ pub fn send_to_session(
     // (walk finding). So we wake on idle/completed/unknown — EXCEPT a target that
     // idled within the last couple seconds: its TUI may still be returning to the
     // prompt, and an immediate bracketed-paste-then-Enter then sticks unsent
-    // (walk regression). Such a target is mid-conversation and will emit another
-    // `Stop` momentarily, which drains it reliably; a *settled* idle (or an
-    // unknown-mode session that won't Stop on its own) is still woken now.
+    // (walk regression).
+    //
+    // IMPORTANT: do NOT conflate target_busy with just_idled. A busy target WILL
+    // produce a Stop that triggers the Stop-path drain in hooks::server. A
+    // just_idled target will NOT: its Stop already fired, and it stays silent
+    // until something new starts a turn. So a just_idled message MUST be retried
+    // after the settle window — otherwise it strands forever (BUG-08).
     let activity = ctx.agents.session_activity(to);
     let target_busy = matches!(
         activity.as_ref().map(|a| a.mode.as_str()),
@@ -194,7 +198,35 @@ pub fn send_to_session(
         .as_ref()
         .map(|a| a.mode == "idle" && now_secs().saturating_sub(a.last_activity) < IDLE_SETTLE_SECS)
         .unwrap_or(false);
-    let delivery_status = if target_busy || just_idled {
+    let delivery_status = if target_busy {
+        // Mid-turn: pasting into an active session is disruptive (walk finding).
+        // The working→idle Stop drain in hooks::server delivers queued messages.
+        "queued"
+    } else if just_idled {
+        // B's TUI is in the brief post-Stop transition window. A paste here
+        // races TUI exit from paste-mode and sticks unsent (walk regression).
+        // B will NOT emit another Stop on its own (it's already idle), so
+        // schedule a deferred wake after the settle window expires instead of
+        // relying on the Stop drain.
+        {
+            let db = ctx.db.clone();
+            let delivery = ctx.delivery.clone();
+            let agents = ctx.agents.clone();
+            let to_owned = to.to_string();
+            let enabled = cfg.enabled;
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(IDLE_SETTLE_SECS + 1)).await;
+                // Skip the paste if B started a new task while we waited;
+                // the working→idle Stop drain will handle those messages.
+                let now_busy = agents
+                    .session_activity(&to_owned)
+                    .map(|a| a.mode == "running" || a.mode == "needs_attention")
+                    .unwrap_or(false);
+                if !now_busy {
+                    delivery::drain_idle(&db, delivery.as_ref(), &to_owned, enabled);
+                }
+            });
+        }
         "queued"
     } else {
         delivery::drain_idle(&ctx.db, ctx.delivery.as_ref(), to, cfg.enabled);

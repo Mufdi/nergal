@@ -13,6 +13,7 @@ import {
 } from "@/stores/crossSession";
 import { workspacesAtom } from "@/stores/workspace";
 import { focusIfPanelZone } from "@/lib/panelFocus";
+import { focusZoneAtom } from "@/stores/shortcuts";
 
 function relativeTime(epochSecs: number): string {
   const delta = Math.max(0, Math.floor(Date.now() / 1000) - epochSecs);
@@ -28,6 +29,7 @@ export function CrossSessionPanel() {
   const messages = useAtomValue(crossSessionMessagesAtom);
   const unreadMap = useAtomValue(crossSessionUnreadMapAtom);
   const workspaces = useAtomValue(workspacesAtom);
+  const focusZone = useAtomValue(focusZoneAtom);
   const store = useStore();
   const rootRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
@@ -63,6 +65,14 @@ export function CrossSessionPanel() {
   const markActiveSeen = useCallback(() => {
     if (activeThreadId) void markCrossSessionSeen(store, activeThreadId);
   }, [store, activeThreadId]);
+
+  // A message arriving while the user is already on the panel (panel zone
+  // focused) is being read live — re-mark the active thread seen so the sidebar
+  // unread badge doesn't reappear. onMouseDown/onFocus only fire on the initial
+  // engagement, not on subsequent inbound messages.
+  useEffect(() => {
+    if (focusZone === "panel" && activeThreadId) markActiveSeen();
+  }, [messages, focusZone, activeThreadId, markActiveSeen]);
 
   // Mount-time focus + initial list cursor (canonical right-panel pattern,
   // patterns.md §5.2). focusIfPanelZone only grabs focus when the panel zone is

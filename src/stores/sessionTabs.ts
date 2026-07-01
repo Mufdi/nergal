@@ -3,6 +3,7 @@ import { createElement, useEffect, useState } from "react";
 import { sileo } from "sileo";
 import { activeSessionIdAtom, sessionTabIdsAtom, workspacesAtom } from "./workspace";
 import { appStore } from "./jotaiStore";
+import { pushNotificationAction } from "./notifications";
 import * as terminalService from "@/components/terminal/terminalService";
 
 const SOFT_CLOSE_TTL_MS = 5_000;
@@ -115,6 +116,15 @@ export const softCloseSessionAction = atom(null, (get, set, sessionId: string) =
       title: "Undo",
       onClick: () => appStore.set(undoSessionCloseAction, sessionId),
     },
+  });
+
+  // The sileo toast carries the live countdown + Undo, so it can't route
+  // through toastsAtom — mirror a static entry into the notification history
+  // separately so a closed session is re-findable there.
+  set(pushNotificationAction, {
+    message: "Session closed",
+    description: sessionName,
+    type: "info",
   });
 
   set(pendingSessionClosesAtom, (prev) => [

@@ -186,7 +186,7 @@ export function VaultNoteFinder({ onClose, className }: { onClose: () => void; c
           aria-label="Find a vault note"
           // Routes focusZone("panel") straight to the input.
           data-nav-container
-          className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/50"
+          className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/50"
         />
         {subdir && (
           <span className="shrink-0 text-[10px] text-muted-foreground/60" aria-hidden>
@@ -202,7 +202,7 @@ export function VaultNoteFinder({ onClose, className }: { onClose: () => void; c
               ? `Scope (Ctrl+D): ${scopeMode === "subdir" ? subdir : "whole vault"}`
               : "Set a search subdir in Settings → Obsidian to scope"
           }
-          className="rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground enabled:hover:text-foreground disabled:opacity-60"
+          className="min-w-0 max-w-[45%] truncate rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground enabled:hover:text-foreground disabled:opacity-60"
         >
           {scopeMode === "subdir" && subdir ? subdir : "Vault"}
         </button>

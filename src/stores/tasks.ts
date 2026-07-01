@@ -33,3 +33,10 @@ export const clearCompletedTasksAtom = atom(null, (get, set) => {
   });
   void invoke("clear_completed_tasks", { sessionId: id }).catch(() => {});
 });
+
+export const clearAllTasksAtom = atom(null, (get, set) => {
+  const id = get(activeSessionIdAtom);
+  if (!id) return;
+  set(taskMapAtom, (prev) => ({ ...prev, [id]: [] }));
+  void invoke("delete_all_tasks", { sessionId: id }).catch(() => {});
+});

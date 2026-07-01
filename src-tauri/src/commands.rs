@@ -281,6 +281,15 @@ pub fn delete_task(
         .map_err(|e| e.to_string())
 }
 
+/// Force-tombstone every task of a session (delete-all, incl. ghosts). Same
+/// persistence rationale as `clear_completed_tasks`.
+#[tauri::command]
+pub fn delete_all_tasks(session_id: String, db: State<'_, SharedDb>) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    db.mark_all_tasks_deleted(&session_id)
+        .map_err(|e| e.to_string())
+}
+
 // -- Plan commands --
 
 #[derive(Clone, serde::Serialize)]
@@ -3591,7 +3600,28 @@ pub async fn search(
         // Reject `..` components so the toggle can't climb out of the vault.
         let vault_root = match vault_subdir.as_deref().map(str::trim) {
             Some(sub) if !sub.is_empty() && !sub.split('/').any(|c| c == "..") => {
-                vault_root.map(|r| r.join(sub))
+                match vault_root {
+                    Some(root) => {
+                        // The saved subdir keeps whatever case the user typed;
+                        // on a case-sensitive FS a mismatch yields a non-existent
+                        // dir and the engine silently returns nothing. Case-correct
+                        // the join, and fall back to the whole vault if the scoped
+                        // dir still doesn't exist (mistyped subdir → search all,
+                        // not empty).
+                        let joined = root.join(sub);
+                        let resolved = std::path::PathBuf::from(
+                            crate::obsidian::config::resolve_case_insensitive(
+                                &joined.to_string_lossy(),
+                            ),
+                        );
+                        if resolved.is_dir() {
+                            Some(resolved)
+                        } else {
+                            Some(root)
+                        }
+                    }
+                    None => None,
+                }
             }
             _ => vault_root,
         };

@@ -405,6 +405,7 @@ pub fn run() {
             commands::get_tasks,
             commands::clear_completed_tasks,
             commands::delete_task,
+            commands::delete_all_tasks,
             // Plan commands
             commands::get_plan,
             commands::save_plan,

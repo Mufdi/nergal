@@ -1,8 +1,9 @@
 import { useAtomValue, useSetAtom } from "jotai";
-import { activeSessionTasksAtom, clearCompletedTasksAtom } from "@/stores/tasks";
+import { activeSessionTasksAtom, clearCompletedTasksAtom, clearAllTasksAtom } from "@/stores/tasks";
 import { hasCapabilityAtom } from "@/stores/agent";
 import { TaskItem } from "./TaskItem";
-import { Trash2 } from "lucide-react";
+import { Trash2, ListX } from "lucide-react";
+import { confirm } from "@/lib/confirm";
 import {
   Tooltip,
   TooltipTrigger,
@@ -13,6 +14,7 @@ export function TaskPanel() {
   const supportsTaskList = useAtomValue(hasCapabilityAtom("TASK_LIST"));
   const tasks = useAtomValue(activeSessionTasksAtom);
   const clearCompleted = useSetAtom(clearCompletedTasksAtom);
+  const clearAll = useSetAtom(clearAllTasksAtom);
 
   if (!supportsTaskList) {
     return (
@@ -40,23 +42,51 @@ export function TaskPanel() {
         <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
           Tasks ({tasks.length})
         </span>
-        {hasCompleted && (
+        <div className="flex items-center gap-1">
+          {hasCompleted && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <div
+                    role="button"
+                    onClick={clearCompleted}
+                    className="flex size-5 items-center justify-center rounded text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                    aria-label="Clear completed tasks"
+                  />
+                }
+              >
+                <Trash2 size={12} />
+              </TooltipTrigger>
+              <TooltipContent side="top">Clear completed</TooltipContent>
+            </Tooltip>
+          )}
           <Tooltip>
             <TooltipTrigger
               render={
                 <div
                   role="button"
-                  onClick={clearCompleted}
-                  className="flex size-5 items-center justify-center rounded text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                  aria-label="Clear completed tasks"
+                  onClick={async () => {
+                    if (
+                      await confirm({
+                        title: "Delete all tasks?",
+                        body: "Every task for this session will be removed, including ones the agent still tracks.",
+                        destructive: true,
+                        confirmLabel: "Delete all",
+                      })
+                    ) {
+                      clearAll();
+                    }
+                  }}
+                  className="flex size-5 items-center justify-center rounded text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
+                  aria-label="Delete all tasks"
                 />
               }
             >
-              <Trash2 size={12} />
+              <ListX size={12} />
             </TooltipTrigger>
-            <TooltipContent side="top">Clear completed</TooltipContent>
+            <TooltipContent side="top">Delete all</TooltipContent>
           </Tooltip>
-        )}
+        </div>
       </div>
       {tasks.map((task) => (
         <TaskItem key={task.id} task={task} />

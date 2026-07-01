@@ -1255,6 +1255,17 @@ impl Database {
         Ok(())
     }
 
+    /// Tombstone every task of a session (force-clear, incl. ghosts CC no longer
+    /// tracks). The TodoWrite sync skips user-tombstoned ids, so they don't
+    /// resurrect.
+    pub fn mark_all_tasks_deleted(&self, session_id: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE tasks SET status = 'deleted', updated_at = ?2 WHERE session_id = ?1 AND status != 'deleted'",
+            params![session_id, now_secs()],
+        )?;
+        Ok(())
+    }
+
     pub fn get_visible_tasks(&self, session_id: &str) -> Result<Vec<Task>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, subject, description, status, active_form, blocked_by FROM tasks WHERE session_id = ?1 AND status != 'deleted' ORDER BY created_at",

@@ -1304,10 +1304,107 @@ fn process_task_event(
     session_id: &str,
     db: &SharedDb,
 ) {
+    // TodoWrite is a full-replacement operation: the `todos` array is CC's
+    // authoritative state for the session. There is no `command` field — the
+    // old branch that checked for one silently dropped every TodoWrite event,
+    // which is the root cause of BUG-07(a).
+    if tool_name == "TodoWrite" {
+        let Some(todos) = tool_input.get("todos").and_then(|v| v.as_array()) else {
+            return;
+        };
+
+        let new_tasks: Vec<crate::tasks::Task> = todos
+            .iter()
+            .filter_map(|t| {
+                let id = t.get("id").and_then(|v| v.as_str())?.to_string();
+                // CC uses "content"; fall back to "subject" for non-CC adapters.
+                let subject = t
+                    .get("content")
+                    .or_else(|| t.get("subject"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let description = t
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let status = match t
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("pending")
+                {
+                    "completed" | "done" => crate::tasks::TaskStatus::Completed,
+                    "in_progress" => crate::tasks::TaskStatus::InProgress,
+                    _ => crate::tasks::TaskStatus::Pending,
+                };
+                Some(crate::tasks::Task {
+                    id,
+                    subject,
+                    description,
+                    status,
+                    active_form: None,
+                    blocked_by: vec![],
+                })
+            })
+            .collect();
+
+        let incoming_ids: std::collections::HashSet<&str> =
+            new_tasks.iter().map(|t| t.id.as_str()).collect();
+
+        let visible: Vec<crate::tasks::Task>;
+
+        if let Ok(db_guard) = db.lock() {
+            // User-tombstoned IDs must not be resurrected even when CC still
+            // carries the task in its in-memory list after "Clear completed".
+            let tombstoned: std::collections::HashSet<String> = db_guard
+                .get_tombstoned_task_ids(session_id)
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+
+            // Tombstone any visible task CC dropped from its list.
+            if let Ok(existing) = db_guard.get_visible_tasks(session_id) {
+                for task in &existing {
+                    if !incoming_ids.contains(task.id.as_str()) {
+                        let _ = db_guard.mark_task_deleted(session_id, &task.id);
+                    }
+                }
+            }
+
+            for task in &new_tasks {
+                if !tombstoned.contains(&task.id) {
+                    let _ = db_guard.upsert_task(session_id, task);
+                }
+            }
+
+            visible = new_tasks
+                .into_iter()
+                .filter(|t| !tombstoned.contains(&t.id))
+                .collect();
+        } else {
+            visible = new_tasks;
+        }
+
+        #[derive(Clone, serde::Serialize)]
+        struct TasksUpdate {
+            session_id: String,
+            tasks: Vec<crate::tasks::Task>,
+        }
+        let _ = app.emit(
+            "tasks:update",
+            TasksUpdate {
+                session_id: session_id.to_string(),
+                tasks: visible,
+            },
+        );
+        return;
+    }
+
     let is_task_create;
     let is_task_update;
 
-    if tool_name == "TodoWrite" || tool_name == "TodoUpdate" || tool_name == "Task" {
+    if tool_name == "TodoUpdate" || tool_name == "Task" {
         let command = tool_input
             .get("command")
             .and_then(|v| v.as_str())

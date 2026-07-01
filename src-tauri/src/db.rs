@@ -1282,6 +1282,20 @@ impl Database {
         Ok(tasks)
     }
 
+    /// IDs of user-tombstoned tasks for a session. Used by the TodoWrite sync
+    /// to avoid resurrecting tasks the user explicitly cleared — CC may still
+    /// carry them in its in-memory todo list after the user hit "Clear completed".
+    pub fn get_tombstoned_task_ids(&self, session_id: &str) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM tasks WHERE session_id = ?1 AND status = 'deleted'")?;
+        let ids = stmt
+            .query_map([session_id], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(ids)
+    }
+
     // ── Costs ──
 
     pub fn upsert_cost(&self, session_id: &str, cost: &CostSummary) -> Result<()> {

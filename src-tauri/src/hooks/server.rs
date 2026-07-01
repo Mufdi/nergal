@@ -537,28 +537,50 @@ pub(crate) fn finalize_session_obsidian(db: &SharedDb, csid: Option<&str>) {
 /// home-global `~/.claude/plans` (the only one that exists on Windows), older
 /// CC used the project-local `<cwd>/.claude/plans`. Resolving the session's cwd
 /// first preserves the project-local case; the home default covers modern CC.
+/// A workspace-level `plans_dir` override is prepended (additive: where to look,
+/// not where CC writes). Relative `plansDirectory` values are searched under
+/// both cwd and home so resolution is robust across agent host OSes.
 fn cc_plan_dirs(db: &SharedDb, nergal_session_id: Option<&str>) -> Vec<PathBuf> {
+    let home = dirs::home_dir();
     let mut dirs: Vec<PathBuf> = Vec::new();
+
     if let Some(csid) = nergal_session_id
         && let Ok(db_guard) = db.lock()
         && let Ok(Some(session)) = db_guard.find_session(csid)
     {
+        // Workspace-level override is prepended — additive, searched first
+        if let Ok(Some(ov)) = db_guard.get_workspace_plans_dir(&session.workspace_id) {
+            let p = PathBuf::from(&ov);
+            let abs = if p.is_absolute() {
+                p
+            } else {
+                home.as_deref().map(|h| h.join(&ov)).unwrap_or(p)
+            };
+            dirs.push(abs);
+        }
+
         let cwd = session.worktree_path.or_else(|| {
             db_guard
                 .workspace_repo_path(&session.workspace_id)
                 .ok()
                 .flatten()
         });
-        if let Some(cwd) = cwd {
-            dirs.push(crate::agents::claude_code::resolve_cc_plans_directory(&cwd));
+        if let Some(ref cwd) = cwd {
+            for d in crate::agents::claude_code::plans_path::candidate_dirs(cwd, home.as_deref()) {
+                if !dirs.contains(&d) {
+                    dirs.push(d);
+                }
+            }
         }
     }
-    if let Some(home) = dirs::home_dir() {
-        let global = home.join(".claude").join("plans");
+
+    if let Some(ref h) = home {
+        let global = h.join(".claude").join("plans");
         if !dirs.contains(&global) {
             dirs.push(global);
         }
     }
+
     dirs
 }
 

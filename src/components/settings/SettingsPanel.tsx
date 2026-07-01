@@ -40,7 +40,7 @@ import {
   resetObsidianDraftAtom,
   saveObsidianConfigAtom,
 } from "@/stores/obsidian";
-import { activeWorkspaceAtom, workspacesAtom, activeSessionIdAtom, selectedWorkspaceIdAtom, openspecDirDraftAtom, type Workspace, type EnvShellDef } from "@/stores/workspace";
+import { activeWorkspaceAtom, workspacesAtom, activeSessionIdAtom, selectedWorkspaceIdAtom, openspecDirDraftAtom, plansDirDraftAtom, type Workspace, type EnvShellDef } from "@/stores/workspace";
 import {
   clickupSyncStatusAtom,
   clickupTokenOnDiskAtom,
@@ -336,6 +336,72 @@ function OpenSpecPathField() {
         kind="dir"
         caseInsensitive
         help="Where this workspace's openspec/ lives. Set a path outside the repo to keep specs separate from code; clear (or match the default) to use <repo>/openspec. Saved with Settings."
+        value={draft?.value ?? ""}
+        onChange={(v) => setDraft((prev) => (prev ? { ...prev, value: v } : prev))}
+      />
+    </div>
+  );
+}
+
+function PlansPathField() {
+  const workspaces = useAtomValue(workspacesAtom);
+  const activeWorkspace = useAtomValue(activeWorkspaceAtom);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedWorkspaceId = useAtomValue(selectedWorkspaceIdAtom);
+  const effective = activeWorkspace ?? workspaces.find((w) => w.id === selectedId) ?? workspaces.find((w) => w.id === selectedWorkspaceId) ?? workspaces[0] ?? null;
+  const [draft, setDraft] = useAtom(plansDirDraftAtom);
+
+  useEffect(() => {
+    if (!effective) {
+      setDraft(null);
+      return;
+    }
+    let cancelled = false;
+    invoke<{ configured: string | null; default_dir: string }>("get_workspace_plans_dir", {
+      workspaceId: effective.id,
+    })
+      .then((info) => {
+        if (cancelled) return;
+        const initial = info.configured ?? "";
+        setDraft({
+          workspaceId: effective.id,
+          value: initial,
+          defaultDir: info.default_dir,
+          baseline: initial,
+        });
+      })
+      .catch((err) => console.error("[settings] get_workspace_plans_dir failed:", err));
+    return () => {
+      cancelled = true;
+    };
+  }, [effective?.id, setDraft]);
+
+  if (!effective) {
+    return (
+      <div className="grid gap-1.5">
+        <Label>Plans Directory</Label>
+        <p className="text-xs text-muted-foreground">Add a workspace to configure its plans path.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-2">
+      {workspaces.length > 1 && !activeWorkspace && (
+        <Select
+          id="setting-plans-workspace"
+          value={effective.id}
+          onValueChange={setSelectedId}
+          options={workspaces.map((w) => ({ value: w.id, label: w.name }))}
+        />
+      )}
+      <ValidatedPathField
+        configKey="plans_dir"
+        label="Plans Directory"
+        placeholder={draft?.defaultDir ?? "~/.claude/plans"}
+        kind="dir"
+        caseInsensitive
+        help="Where Nergal LOOKS for Claude Code's plans (additive — it does not change where CC writes). Set this if the plan panel stays empty. Saved with Settings."
         value={draft?.value ?? ""}
         onChange={(v) => setDraft((prev) => (prev ? { ...prev, value: v } : prev))}
       />
@@ -2978,6 +3044,13 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
         .then(() => invoke("watch_openspec_for_session", { sessionId: activeSessionId }).catch(() => {}))
         .catch((err) => console.error("[settings] set_workspace_openspec_dir failed:", err));
     }
+    // Per-workspace plans-dir override rides the same Save
+    const pd = appStore.get(plansDirDraftAtom);
+    if (pd && pd.value.trim() !== pd.baseline.trim()) {
+      const next = pd.value.trim() === pd.defaultDir.trim() ? null : pd.value.trim() || null;
+      invoke("set_workspace_plans_dir", { workspaceId: pd.workspaceId, plansDir: next })
+        .catch((err) => console.error("[settings] set_workspace_plans_dir failed:", err));
+    }
     onOpenChange(false);
   }
 
@@ -3090,6 +3163,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
                   </p>
                 </div>
                 <OpenSpecPathField />
+                <PlansPathField />
                 <EnvShellSuggestionsField />
               </div>
             )}

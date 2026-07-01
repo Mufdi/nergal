@@ -32,6 +32,28 @@ fn resolve_with_home(cwd: &Path, home: Option<&Path>) -> PathBuf {
     cwd_local
 }
 
+/// Candidate directories to search for a workspace CWD, ordered most-specific
+/// first. When the configured `plansDirectory` is relative, returns BOTH
+/// `cwd/rel` and `home/rel` — CC may resolve relatives against home on Windows.
+pub(crate) fn candidate_dirs(cwd: &Path, home: Option<&Path>) -> Vec<PathBuf> {
+    if let Some(raw) = read_plans_directory_from_layers(cwd, home) {
+        let expanded = expand_tilde(&raw, home);
+        if expanded.is_absolute() {
+            return vec![expanded];
+        }
+        // Relative — search cwd-resolved (primary) and home-resolved (Windows fallback)
+        let mut out = vec![cwd.join(&raw)];
+        if let Some(h) = home {
+            let hv = h.join(&raw);
+            if !out.contains(&hv) {
+                out.push(hv);
+            }
+        }
+        return out;
+    }
+    vec![resolve_with_home(cwd, home)]
+}
+
 fn read_plans_directory_from_layers(cwd: &Path, home: Option<&Path>) -> Option<String> {
     let mut result: Option<String> = None;
     if let Some(home) = home
@@ -105,6 +127,24 @@ mod tests {
 
     fn write_settings(path: &Path, json: &str) {
         std::fs::write(path, json).unwrap();
+    }
+
+    #[test]
+    fn relative_plansdir_yields_cwd_and_home_candidates() {
+        let l = setup();
+        write_settings(
+            &l.home.join(".claude/settings.json"),
+            r#"{"plansDirectory":"notes/plans"}"#,
+        );
+        let candidates = candidate_dirs(&l.cwd, Some(&l.home));
+        assert!(
+            candidates.contains(&l.cwd.join("notes/plans")),
+            "cwd candidate missing"
+        );
+        assert!(
+            candidates.contains(&l.home.join("notes/plans")),
+            "home candidate missing"
+        );
     }
 
     #[test]

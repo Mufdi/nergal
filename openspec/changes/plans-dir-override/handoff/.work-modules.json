@@ -1,0 +1,28 @@
+{
+  "tier": "M",
+  "tier_source": "user-stated",
+  "ceremony": "quick-fix",
+  "risk_tier": "low",
+  "files_estimate": 9,
+  "tags": ["feature", "ux"],
+  "visibility": "public",
+  "spec_target": "plans-directory",
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "iprev_rounds": 0,
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": ["compile", "test", "lint"],
+    "per_phase_models": {
+      "design": "opus",
+      "implementation": "sonnet",
+      "implementation_mechanical": "haiku",
+      "validation": "opus",
+      "exploration": "haiku"
+    }
+  },
+  "interview_answers": {
+    "ceremony": "lean (user-chosen: sin iprev, sin discovery Phase-3, proposal+tasks, single code-quality reviewer, full check gate)"
+  },
+  "notes": "Lean M — mirror 1:1 del feature per-workspace openspec_dir. Additive override + relative hardening + empty-state hint. Windows visual check deferred al walk final; la lógica es Linux-testable."
+}

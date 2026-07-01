@@ -267,6 +267,7 @@ impl Database {
             include_str!("../migrations/027_linear_estimation_type.sql"),
             include_str!("../migrations/028_cross_session.sql"),
             include_str!("../migrations/029_workspace_sort_order.sql"),
+            include_str!("../migrations/030_workspace_plans_dir.sql"),
         ];
 
         for (i, sql) in migrations.iter().enumerate() {
@@ -1648,6 +1649,39 @@ impl Database {
         Ok(())
     }
 
+    // ── Per-workspace plans-dir override ──
+
+    /// The configured plans directory for a workspace, or `None` when it uses
+    /// the auto-resolved default. Empty string is treated as None.
+    pub fn get_workspace_plans_dir(&self, workspace_id: &str) -> Result<Option<String>> {
+        let raw: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT plans_dir FROM workspace_config WHERE workspace_id = ?1",
+                [workspace_id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(raw.filter(|s| !s.trim().is_empty()))
+    }
+
+    /// Set (or clear, with `None`) the plans-dir override for a workspace.
+    pub fn set_workspace_plans_dir(
+        &self,
+        workspace_id: &str,
+        plans_dir: Option<&str>,
+    ) -> Result<()> {
+        let value = plans_dir.map(str::trim).filter(|s| !s.is_empty());
+        self.conn.execute(
+            "INSERT INTO workspace_config (workspace_id, plans_dir, updated_at) \
+             VALUES (?1, ?2, ?3) \
+             ON CONFLICT(workspace_id) DO UPDATE SET plans_dir=?2, updated_at=?3",
+            params![workspace_id, value, now_secs()],
+        )?;
+        Ok(())
+    }
+
     // ── Per-workspace environment-shell suggestions ──
 
     pub fn get_workspace_env_shell_suggestions(
@@ -1945,6 +1979,24 @@ mod tests {
         // Empty string clears to default.
         db.set_workspace_openspec_dir("ws1", Some("  ")).unwrap();
         assert!(db.get_workspace_openspec_dir("ws1").unwrap().is_none());
+    }
+
+    #[test]
+    fn workspace_plans_dir_override() {
+        let db = in_memory();
+        db.create_workspace("ws1", "ws", "/tmp/repo").unwrap();
+        // Default: none.
+        assert!(db.get_workspace_plans_dir("ws1").unwrap().is_none());
+        // Set + read back.
+        db.set_workspace_plans_dir("ws1", Some("/plans/ws1"))
+            .unwrap();
+        assert_eq!(
+            db.get_workspace_plans_dir("ws1").unwrap().as_deref(),
+            Some("/plans/ws1")
+        );
+        // Empty string clears to default.
+        db.set_workspace_plans_dir("ws1", Some("  ")).unwrap();
+        assert!(db.get_workspace_plans_dir("ws1").unwrap().is_none());
     }
 
     #[test]

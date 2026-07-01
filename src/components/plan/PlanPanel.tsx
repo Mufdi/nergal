@@ -11,6 +11,7 @@ import { AnnotatableMarkdownView } from "./AnnotatableMarkdownView";
 import { useObsidianMentionPicker } from "@/hooks/useObsidianMentionPicker";
 import { appStore } from "@/stores/jotaiStore";
 import { focusZoneAtom } from "@/stores/shortcuts";
+import { settingsOpenAtom } from "@/stores/config";
 import { MessageSquare, Trash2, Highlighter } from "lucide-react";
 import {
   Tooltip,
@@ -39,6 +40,7 @@ export function PlanPanel({ path }: PlanPanelProps) {
   const [annotationMode, setAnnotationMode] = useAtom(annotationModeAtom);
   const setScope = useSetAtom(annotationScopeAtom);
   const canEnterAnnotationMode = useAtomValue(canEnterAnnotationModeAtom);
+  const setSettingsOpen = useSetAtom(settingsOpenAtom);
 
   // Claim plan scope while mounted; release on unmount so other panels' scope
   // (null → plan fallback) isn't confused by a stale spec scope.
@@ -218,8 +220,14 @@ export function PlanPanel({ path }: PlanPanelProps) {
 
   if (!hasPlan) {
     return (
-      <div className="flex h-full items-center justify-center">
+      <div className="flex h-full flex-col items-center justify-center gap-1">
         <span className="text-[11px] text-muted-foreground">No plan yet</span>
+        <button
+          onClick={() => setSettingsOpen(true)}
+          className="text-[11px] text-muted-foreground/60 hover:text-muted-foreground transition-colors"
+        >
+          No plans found · set the plans directory in Settings
+        </button>
       </div>
     );
   }

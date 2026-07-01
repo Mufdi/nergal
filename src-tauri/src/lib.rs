@@ -458,6 +458,8 @@ pub fn run() {
             commands::write_openspec_artifact,
             commands::get_workspace_openspec_dir,
             commands::set_workspace_openspec_dir,
+            commands::get_workspace_plans_dir,
+            commands::set_workspace_plans_dir,
             commands::get_workspace_env_shell_suggestions,
             commands::set_workspace_env_shell_suggestions,
             commands::update_session_env_shells,

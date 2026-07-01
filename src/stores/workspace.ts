@@ -133,6 +133,16 @@ export interface OpenspecDirDraft {
 }
 export const openspecDirDraftAtom = atom<OpenspecDirDraft | null>(null);
 
+/// Draft state for the Settings → Paths Plans Dir field. Held in an atom so
+/// the global Settings Save button can flush it without a dedicated Apply button.
+export interface PlansDirDraft {
+  workspaceId: string;
+  value: string;
+  defaultDir: string;
+  baseline: string;
+}
+export const plansDirDraftAtom = atom<PlansDirDraft | null>(null);
+
 // Session tabs — ordered list of session IDs open as tabs in the TopBar
 export const sessionTabIdsAtom = atom<string[]>([]);
 

@@ -1942,6 +1942,49 @@ pub fn set_workspace_openspec_dir(
         .map_err(|e| e.to_string())
 }
 
+/// The plans-dir override for a workspace, plus the computed default
+/// (auto-resolved `plansDirectory` for the workspace's repo path) so the
+/// settings field can show what Nergal resolved. `configured` is None when
+/// the workspace uses the auto-detected default.
+#[derive(serde::Serialize)]
+pub struct PlansDirInfo {
+    pub configured: Option<String>,
+    pub default_dir: String,
+}
+
+#[tauri::command]
+pub fn get_workspace_plans_dir(
+    db: State<'_, SharedDb>,
+    workspace_id: String,
+) -> Result<PlansDirInfo, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let repo_path = db
+        .workspace_repo_path(&workspace_id)
+        .map_err(|e| e.to_string())?
+        .ok_or("workspace not found")?;
+    let configured = db
+        .get_workspace_plans_dir(&workspace_id)
+        .map_err(|e| e.to_string())?;
+    Ok(PlansDirInfo {
+        configured,
+        default_dir: crate::agents::claude_code::resolve_cc_plans_directory(&repo_path)
+            .display()
+            .to_string(),
+    })
+}
+
+/// Set (empty/whitespace → clear to default) the workspace plans-dir override.
+#[tauri::command]
+pub fn set_workspace_plans_dir(
+    db: State<'_, SharedDb>,
+    workspace_id: String,
+    plans_dir: Option<String>,
+) -> Result<(), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    db.set_workspace_plans_dir(&workspace_id, plans_dir.as_deref())
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn update_session_env_shells(
     db: State<'_, SharedDb>,

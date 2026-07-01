@@ -36,6 +36,14 @@ function filesFromToolInput(input: unknown): string[] {
   return typeof p === "string" && p ? [p] : [];
 }
 
+/// The shell command a Bash tool ran, so the Activities panel shows the actual
+/// command instead of a bare "Bash".
+function commandFromToolInput(input: unknown): string | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const c = (input as Record<string, unknown>).command;
+  return typeof c === "string" && c ? c : undefined;
+}
+
 function clearKey<T extends Record<string, unknown>>(prev: T, key: string): T {
   if (!(key in prev)) return prev;
   const next = { ...prev };
@@ -63,6 +71,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
               ...createActivity("tool_use", tool_name ?? "tool"),
               status: "running",
               toolName: tool_name,
+              command: commandFromToolInput(event.tool_input),
               files: filesFromToolInput(event.tool_input),
             },
           });
@@ -80,6 +89,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
                 ...createActivity("tool_use", tool_name ?? "tool"),
                 status: "done",
                 toolName: tool_name,
+                command: commandFromToolInput(event.tool_input),
                 files: filesFromToolInput(event.tool_input),
               },
             });

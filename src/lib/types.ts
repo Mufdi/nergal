@@ -174,6 +174,9 @@ export interface ActivityEntry {
   files?: string[];
   /// Raw tool name (for pre/post pairing, filtering, grouping).
   toolName?: string;
+  /// The shell command a Bash tool ran — surfaced so "Bash" isn't opaque.
+  /// Kept separate from `detail` (the >50-char "thinking" collapse path).
+  command?: string;
 }
 
 export interface DiffLine {

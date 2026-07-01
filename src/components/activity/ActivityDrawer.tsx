@@ -327,6 +327,11 @@ export function ActivityDrawer() {
                 </span>
               )}
             </div>
+            {entry.command && (
+              <p title={entry.command} className="truncate font-mono text-[10px] text-muted-foreground/80">
+                {entry.command}
+              </p>
+            )}
             {hasFiles && (
               <div className="flex flex-wrap gap-x-2">
                 {entry.files!.map((f) => (

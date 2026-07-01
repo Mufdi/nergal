@@ -54,6 +54,11 @@ export function ActivityLog() {
 
                 <div className="min-w-0 flex-1">
                   <p className="text-xs text-foreground">{entry.message}</p>
+                  {entry.command && (
+                    <p title={entry.command} className="truncate font-mono text-[10px] text-muted-foreground/80">
+                      {entry.command}
+                    </p>
+                  )}
                   {entry.detail && (
                     <p className="truncate text-[10px] text-muted-foreground">
                       {entry.detail}

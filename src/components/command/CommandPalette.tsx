@@ -36,7 +36,10 @@ export function CommandPalette() {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
         e.preventDefault();
+        // Dismissing the palette returns focus to the terminal prompt.
         setOpen(false);
+        setFocusZone("terminal");
+        requestAnimationFrame(() => terminalService.focusActive());
         return;
       }
       if (e.key === "ArrowDown") {
@@ -146,7 +149,14 @@ export function CommandPalette() {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-center pt-[20vh]" onClick={() => setOpen(false)}>
+    <div
+      className="fixed inset-0 z-50 flex justify-center pt-[20vh]"
+      onClick={() => {
+        setOpen(false);
+        setFocusZone("terminal");
+        requestAnimationFrame(() => terminalService.focusActive());
+      }}
+    >
       <div className="fixed inset-0 bg-scrim nergal-blur-md" />
       <div
         className="nergal-glow relative z-10 w-full max-w-lg rounded-lg border-2 border-primary bg-card shadow-lg max-h-[70vh] flex flex-col"

@@ -18,9 +18,12 @@ import {
 /// matching the branch-rename mini-modal (iconless, `Kbd` chips in the footer
 /// buttons). One instance lives in Workspace; `@/lib/confirm` drives it.
 ///
-/// Keyboard: Esc cancels (safe default also gets initial focus); Enter confirms
-/// via the content-level handler. `preventDefault` there suppresses the focused
-/// Cancel button's native Enter-activation, so a single confirm fires.
+/// Keyboard: Esc cancels, Enter confirms — both handled at the dialog level
+/// (Enter via the content-level `onKeyDownCapture`, Esc via Base UI). Cancel
+/// still takes initial focus so the capture handler receives the keydown, but
+/// the footer buttons suppress their focus ring: the keyboard model is
+/// dialog-level and a ring on Cancel while Enter confirms is misleading — the
+/// `Kbd` chips (esc / enter) are the real affordance.
 export function ConfirmHost() {
   const active = useSyncExternalStore(
     subscribeConfirm,
@@ -76,6 +79,7 @@ export function ConfirmHost() {
               ref={cancelRef}
               size="sm"
               variant="secondary"
+              className="focus-visible:ring-0 focus-visible:outline-none"
               onClick={() => resolveConfirm(false)}
             >
               {opts.cancelLabel ?? "Cancel"}
@@ -84,6 +88,7 @@ export function ConfirmHost() {
             <Button
               size="sm"
               variant={destructive ? "destructive" : "default"}
+              className="focus-visible:ring-0 focus-visible:outline-none"
               onClick={() => resolveConfirm(true)}
             >
               {opts.confirmLabel ?? "Confirm"}

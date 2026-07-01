@@ -186,6 +186,18 @@ from the `alt+left/right` cycle** — it's an overlay, reached only via its
 own shortcut (`Ctrl+}`, which cycles hidden→open+focus →focus →hide). It
 keeps the accent-border focus convention of the other zones.
 
+**Dismissing an overlay returns focus to the terminal prompt.** When a modal,
+floating panel, popover, or command palette is *dismissed* (Escape, backdrop
+click, or its close button — not an action that intentionally moves focus
+elsewhere, like opening a panel), restore the terminal:
+`setFocusZone("terminal"); requestAnimationFrame(() => terminalService.focusActive())`.
+The `requestAnimationFrame` defers the focus until after the overlay unmounts.
+Precedents: `VaultSearchModal`, `CommandPalette` (Escape + backdrop),
+`QuickCapturePanel` (`onClose`), the ports popover (`closeAndFocusTerminal`,
+Escape only — its click-away dismiss is intentionally non-consuming so the
+click can focus whatever it lands on). Action-triggered closes leave focus to
+the action's handler.
+
 ### 5.2 Nav-item attributes
 
 Inside any zone, list items participate in arrow-key navigation by setting:

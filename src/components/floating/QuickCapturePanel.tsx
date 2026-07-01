@@ -5,6 +5,8 @@ import { invoke } from "@/lib/tauri";
 import { activeWorkspaceAtom } from "@/stores/workspace";
 import { obsidianConfigAtom } from "@/stores/obsidian";
 import { toastsAtom } from "@/stores/toast";
+import { focusZoneAtom } from "@/stores/shortcuts";
+import * as terminalService from "@/components/terminal/terminalService";
 import {
   QUICK_CAPTURE_PANEL_ID,
   clampToViewport,
@@ -26,6 +28,7 @@ export function QuickCapturePanel() {
   const activeWorkspace = useAtomValue(activeWorkspaceAtom);
   const cfg = useAtomValue(obsidianConfigAtom);
   const setToasts = useSetAtom(toastsAtom);
+  const setFocusZone = useSetAtom(focusZoneAtom);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -101,7 +104,12 @@ export function QuickCapturePanel() {
     <FloatingPanel
       panelId={QUICK_CAPTURE_PANEL_ID}
       open={open}
-      onClose={() => setOpen(false)}
+      onClose={() => {
+        // Closing an overlay returns focus to the terminal prompt (patterns.md §focus).
+        setOpen(false);
+        setFocusZone("terminal");
+        requestAnimationFrame(() => terminalService.focusActive());
+      }}
       geometry={geometry}
       onGeometryChange={(next) => {
         setGeometry(next);

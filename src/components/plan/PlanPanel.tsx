@@ -226,7 +226,7 @@ export function PlanPanel({ path }: PlanPanelProps) {
           onClick={() => setSettingsOpen(true)}
           className="text-[11px] text-muted-foreground/60 hover:text-muted-foreground transition-colors"
         >
-          No plans found · set the plans directory in Settings
+          Set the plans directory in Settings
         </button>
       </div>
     );

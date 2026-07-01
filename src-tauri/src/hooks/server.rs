@@ -548,23 +548,27 @@ fn cc_plan_dirs(db: &SharedDb, nergal_session_id: Option<&str>) -> Vec<PathBuf> 
         && let Ok(db_guard) = db.lock()
         && let Ok(Some(session)) = db_guard.find_session(csid)
     {
-        // Workspace-level override is prepended — additive, searched first
-        if let Ok(Some(ov)) = db_guard.get_workspace_plans_dir(&session.workspace_id) {
-            let p = PathBuf::from(&ov);
-            let abs = if p.is_absolute() {
-                p
-            } else {
-                home.as_deref().map(|h| h.join(&ov)).unwrap_or(p)
-            };
-            dirs.push(abs);
-        }
-
         let cwd = session.worktree_path.or_else(|| {
             db_guard
                 .workspace_repo_path(&session.workspace_id)
                 .ok()
                 .flatten()
         });
+
+        // Workspace-level override is prepended — additive, searched first. A
+        // relative override resolves against the workspace cwd (its natural base).
+        if let Ok(Some(ov)) = db_guard.get_workspace_plans_dir(&session.workspace_id) {
+            let p = PathBuf::from(&ov);
+            let abs = if p.is_absolute() {
+                p
+            } else if let Some(ref cwd) = cwd {
+                cwd.join(&ov)
+            } else {
+                p
+            };
+            dirs.push(abs);
+        }
+
         if let Some(ref cwd) = cwd {
             for d in crate::agents::claude_code::plans_path::candidate_dirs(cwd, home.as_deref()) {
                 if !dirs.contains(&d) {

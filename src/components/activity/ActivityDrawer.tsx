@@ -6,6 +6,12 @@ import { activeSessionIdAtom } from "@/stores/workspace";
 import type { ActivityEntry } from "@/lib/types";
 import * as terminalService from "@/components/terminal/terminalService";
 import { PulseDots } from "@/components/ui/PulseDots";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+  TooltipProvider,
+} from "@/components/ui/tooltip";
 import { X, Zap, ChevronDown, ChevronRight, Search, Trash2 } from "lucide-react";
 
 const TYPE_COLORS: Record<ActivityEntry["type"], string> = {
@@ -328,9 +334,14 @@ export function ActivityDrawer() {
               )}
             </div>
             {entry.command && (
-              <p title={entry.command} className="truncate font-mono text-[10px] text-muted-foreground/80">
-                {entry.command}
-              </p>
+              <Tooltip>
+                <TooltipTrigger
+                  render={<p className="truncate font-mono text-[10px] text-muted-foreground/80" />}
+                >
+                  {entry.command}
+                </TooltipTrigger>
+                <TooltipContent className="max-w-md break-all font-mono">{entry.command}</TooltipContent>
+              </Tooltip>
             )}
             {hasFiles && (
               <div className="flex flex-wrap gap-x-2">
@@ -377,6 +388,7 @@ export function ActivityDrawer() {
   }
 
   return (
+    <TooltipProvider delay={0}>
     <div
       ref={rootRef}
       data-focus-zone="activity"
@@ -511,5 +523,6 @@ export function ActivityDrawer() {
         )}
       </div>
     </div>
+    </TooltipProvider>
   );
 }

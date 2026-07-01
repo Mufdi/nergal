@@ -2,6 +2,12 @@ import { useEffect, useRef } from "react";
 import { useAtomValue } from "jotai";
 import { activeActivityAtom } from "@/stores/activity";
 import type { ActivityEntry } from "@/lib/types";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+  TooltipProvider,
+} from "@/components/ui/tooltip";
 
 const TYPE_DOT_COLORS: Record<ActivityEntry["type"], string> = {
   tool_use: "bg-muted-foreground",
@@ -30,6 +36,7 @@ export function ActivityLog() {
   }, [entries.length]);
 
   return (
+    <TooltipProvider delay={0}>
     <section className="flex h-full w-full flex-col" aria-label="Activity log">
       <header className="flex h-9 shrink-0 items-center border-b border-border px-3">
         <h2 className="text-xs font-medium text-muted-foreground">Activity</h2>
@@ -55,9 +62,14 @@ export function ActivityLog() {
                 <div className="min-w-0 flex-1">
                   <p className="text-xs text-foreground">{entry.message}</p>
                   {entry.command && (
-                    <p title={entry.command} className="truncate font-mono text-[10px] text-muted-foreground/80">
-                      {entry.command}
-                    </p>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={<p className="truncate font-mono text-[10px] text-muted-foreground/80" />}
+                      >
+                        {entry.command}
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-md break-all font-mono">{entry.command}</TooltipContent>
+                    </Tooltip>
                   )}
                   {entry.detail && (
                     <p className="truncate text-[10px] text-muted-foreground">
@@ -75,5 +87,6 @@ export function ActivityLog() {
         </div>
       )}
     </section>
+    </TooltipProvider>
   );
 }

@@ -445,12 +445,11 @@ pub fn linear_compose_issue_prompt(
 pub fn linear_send_issue_as_prompt(
     session_id: String,
     issue_id: String,
+    app: tauri::AppHandle,
     db: tauri::State<'_, crate::db::SharedDb>,
-    pty: tauri::State<'_, crate::pty::PtyManager>,
 ) -> Result<(), String> {
     let text = compose_issue_for_delivery(&db, &issue_id)?;
-    crate::pty::paste_to_session(&pty, &session_id, &text, true)
-        .map_err(|e| format!("pty write failed: {e}"))
+    crate::pty::paste_and_submit_settled(&app, &session_id, &text)
 }
 
 /// Deliver an issue's composed block to a live session via bracketed paste.
@@ -462,12 +461,18 @@ pub fn linear_reinject_issue(
     session_id: String,
     issue_id: String,
     submit: Option<bool>,
+    app: tauri::AppHandle,
     db: tauri::State<'_, crate::db::SharedDb>,
     pty: tauri::State<'_, crate::pty::PtyManager>,
 ) -> Result<(), String> {
     let text = compose_issue_for_delivery(&db, &issue_id)?;
-    crate::pty::paste_to_session(&pty, &session_id, &text, submit.unwrap_or(false))
-        .map_err(|e| format!("pty write failed: {e}"))
+    // Bind submits as a turn — split the Enter from the paste (settled submit)
+    // so it can't race the TUI's paste-mode exit; pin/refresh pastes unsubmitted.
+    if submit.unwrap_or(false) {
+        crate::pty::paste_and_submit_settled(&app, &session_id, &text)
+    } else {
+        crate::pty::paste_to_session(&pty, &session_id, &text, false)
+    }
 }
 
 /// Spawn a new worktree session seeded with the issue: derive the slug from the

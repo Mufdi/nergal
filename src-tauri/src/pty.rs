@@ -1359,6 +1359,34 @@ pub(crate) fn submit_to_session(state: &PtyManager, session_id: &str) -> Result<
     w.flush().map_err(|e| e.to_string())
 }
 
+/// Paste `text` to an agent session's PTY, then submit it as a turn after a
+/// short settle. Splitting the Enter from the bracketed-paste end marker is the
+/// same race fix cross-session delivery uses: an Enter in the same write burst
+/// as the `\x1b[201~` marker can land before the TUI leaves paste mode, so the
+/// brief is left unsent while the Enter submits whatever was already in the
+/// input line (the "bind only sent the current prompt" bug). Use this instead
+/// of `paste_to_session(.., true)` wherever a reliable submit matters.
+pub(crate) fn paste_and_submit_settled(
+    app: &tauri::AppHandle,
+    session_id: &str,
+    text: &str,
+) -> Result<(), String> {
+    use tauri::Manager;
+    let pty = app
+        .try_state::<PtyManager>()
+        .ok_or_else(|| "PtyManager state unavailable".to_string())?;
+    paste_to_session(pty.inner(), session_id, text, false)?;
+    let app = app.clone();
+    let sid = session_id.to_string();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        if let Some(pty) = app.try_state::<PtyManager>() {
+            let _ = submit_to_session(pty.inner(), &sid);
+        }
+    });
+    Ok(())
+}
+
 /// Encode a frontend key event via wezterm-term and write the resulting
 /// bytes to the PTY. The encoder owns Kitty keyboard protocol, CSI-u,
 /// cursor-mode translations, and everything else — the frontend only

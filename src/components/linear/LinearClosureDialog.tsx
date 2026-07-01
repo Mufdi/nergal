@@ -21,6 +21,7 @@ import {
   linearClosureOfferAtom,
   linearDetailIssueIdAtom,
   linearIssuesAtom,
+  linearPinsMapAtom,
   type WorkflowStateView,
 } from "@/stores/linear";
 
@@ -57,6 +58,7 @@ export function LinearClosureDialog() {
   const setBindingMap = useSetAtom(linearBindingMapAtom);
   const setClosedOut = useSetAtom(linearClosedOutAtom);
   const setDetailIssueId = useSetAtom(linearDetailIssueIdAtom);
+  const setPinsMap = useSetAtom(linearPinsMapAtom);
 
   const [states, setStates] = useState<WorkflowStateView[]>([]);
   const [statesLoading, setStatesLoading] = useState(false);
@@ -147,6 +149,11 @@ export function LinearClosureDialog() {
       setClosedOut((prev) => new Set([...prev, closedIssueId]));
       // Reflect the unbind in the runtime binding map (backend already unbound).
       setBindingMap((prev) => ({ ...prev, [closedSessionId]: null }));
+      // Reflect the auto-unpin (backend closure.rs already removed the pin).
+      setPinsMap((prev) => ({
+        ...prev,
+        [closedSessionId]: (prev[closedSessionId] ?? []).filter((id) => id !== closedIssueId),
+      }));
       // Close the detail modal so it doesn't linger on the closed issue.
       setDetailIssueId(null);
     }

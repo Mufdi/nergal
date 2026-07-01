@@ -415,6 +415,13 @@ pub async fn linear_execute_gated_write(
         } {
             tracing::warn!(session = %session_id, "linear closure unbind failed: {e:#}");
         }
+        // A closed issue is done — drop its pin so it stops re-seeding spawns.
+        if let Err(e) = {
+            let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+            guard.remove_pinned_linear_issue(&session_id, &tok.issue_id)
+        } {
+            tracing::warn!(session = %session_id, "linear closure unpin failed: {e:#}");
+        }
         // Durable worked-closed marker.
         let now_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

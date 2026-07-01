@@ -19,6 +19,7 @@ import {
   clickupBindingMapAtom,
   clickupClosedOutAtom,
   clickupClosureOfferAtom,
+  clickupPinsMapAtom,
   clickupTasksAtom,
   type ClickUpListStatus,
 } from "@/stores/clickup";
@@ -60,6 +61,7 @@ export function ClickUpClosureDialog() {
   const addToast = useSetAtom(toastsAtom);
   const setBindingMap = useSetAtom(clickupBindingMapAtom);
   const setClosedOut = useSetAtom(clickupClosedOutAtom);
+  const setPinsMap = useSetAtom(clickupPinsMapAtom);
 
   const [statuses, setStatuses] = useState<ClickUpListStatus[]>([]);
   const [statusesLoading, setStatusesLoading] = useState(false);
@@ -159,6 +161,10 @@ export function ClickUpClosureDialog() {
       setClosedOut((prev) => (prev.includes(closedTaskId) ? prev : [...prev, closedTaskId]));
       void invoke("clickup_unbind_task", { sessionId: closedSessionId })
         .then(() => setBindingMap((prev) => ({ ...prev, [closedSessionId]: null })))
+        .catch(() => {});
+      // A closed task is done — drop its pin so it stops re-seeding spawns.
+      void invoke<string[]>("clickup_unpin_task", { sessionId: closedSessionId, taskId: closedTaskId })
+        .then((ids) => setPinsMap((prev) => ({ ...prev, [closedSessionId]: ids })))
         .catch(() => {});
     }
     addToast({ message: "Task closed out", description, type: "success" });

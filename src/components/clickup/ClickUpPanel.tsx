@@ -83,6 +83,8 @@ import {
 } from "@/stores/clickup";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { toastsAtom } from "@/stores/toast";
+import { appStore } from "@/stores/jotaiStore";
+import { focusZoneAtom } from "@/stores/shortcuts";
 
 /// Chip-strip views: "mine" is a preset (assigned-to-me filter + grouped by
 /// status); the rest are plain group-by modes over the current filter state.
@@ -484,6 +486,16 @@ export function ClickUpPanel() {
       }
       if (e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
       if (inField) return;
+      // Bind keyboard authority to the active focus zone, not just DOM ancestry:
+      // after a session switch the terminal owns focus (focusZone="terminal") but
+      // this window listener would otherwise still drive nav from arrow keys
+      // (BUG-21). Proceed only when the panel is the focus zone or the event
+      // originated inside it.
+      if (
+        !target?.closest("[data-focus-zone='panel']")
+        && !target?.closest("[data-focus-zone='clickup']")
+        && appStore.get(focusZoneAtom) !== "panel"
+      ) return;
       // The sidebar, open dialogs (incl. swal confirms) and the select's
       // own popup own their keys.
       if (
@@ -1198,13 +1210,21 @@ function TaskRow({
           <TooltipContent side="bottom" className="text-[10px]">Copy task ID</TooltipContent>
         </Tooltip>
       )}
-      <span
-        className={`min-w-0 flex-1 truncate text-[11px] ${
-          closed ? "text-muted-foreground line-through" : "text-foreground/80"
-        }`}
-      >
-        {task.name}
-      </span>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              tabIndex={-1}
+              className={`min-w-0 flex-1 truncate text-left text-[11px] ${
+                closed ? "text-muted-foreground line-through" : "text-foreground/80"
+              }`}
+            />
+          }
+        >
+          {task.name}
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="max-w-xs text-[10px]">{task.name}</TooltipContent>
+      </Tooltip>
 
       {/* Only the list name yields to the hover actions — priority, tags and
           the rest of the meta stay visible and shift next to the buttons. */}

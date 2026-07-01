@@ -782,12 +782,11 @@ pub fn clickup_compose_task_prompt(
 pub fn clickup_send_task_as_prompt(
     session_id: String,
     task_id: String,
+    app: tauri::AppHandle,
     db: tauri::State<'_, crate::db::SharedDb>,
-    pty: tauri::State<'_, crate::pty::PtyManager>,
 ) -> Result<(), String> {
     let text = compose_for_delivery(&db, &task_id)?;
-    crate::pty::paste_to_session(&pty, &session_id, &text, true)
-        .map_err(|e| format!("pty write failed: {e}"))
+    crate::pty::paste_and_submit_settled(&app, &session_id, &text)
 }
 
 /// Deliver a task's composed block to a live session via bracketed paste —
@@ -801,11 +800,18 @@ pub fn clickup_reinject_task(
     session_id: String,
     task_id: String,
     submit: Option<bool>,
+    app: tauri::AppHandle,
     db: tauri::State<'_, crate::db::SharedDb>,
     pty: tauri::State<'_, crate::pty::PtyManager>,
 ) -> Result<(), String> {
     let text = compose_for_delivery(&db, &task_id)?;
-    crate::pty::paste_to_session(&pty, &session_id, &text, submit.unwrap_or(false))
+    // Bind submits as a turn — split the Enter from the paste (settled submit)
+    // so it can't race the TUI's paste-mode exit; pin/refresh pastes unsubmitted.
+    if submit.unwrap_or(false) {
+        crate::pty::paste_and_submit_settled(&app, &session_id, &text)
+    } else {
+        crate::pty::paste_to_session(&pty, &session_id, &text, false)
+    }
 }
 
 /// Spawn a new worktree session seeded with the task: derive the slug from

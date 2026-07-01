@@ -39,6 +39,8 @@ import { StatePicker } from "@/components/linear/StatePicker";
 import { PriorityIcon } from "@/components/clickup/PriorityIcon";
 import { zenModeAtom } from "@/stores/zenMode";
 import { configAtom } from "@/stores/config";
+import { appStore } from "@/stores/jotaiStore";
+import { focusZoneAtom } from "@/stores/shortcuts";
 import {
   GROUP_BY_ORDER,
   LINEAR_ACTION_LABELS,
@@ -582,6 +584,16 @@ export function LinearPanel() {
 
       if (e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
       if (inField) return;
+      // Bind keyboard authority to the active focus zone, not just DOM ancestry:
+      // after a session switch the terminal owns focus (focusZone="terminal") but
+      // this window listener would otherwise still drive nav from arrow keys
+      // (BUG-21). Proceed only when the panel is the focus zone or the event
+      // originated inside it.
+      if (
+        !target?.closest("[data-focus-zone='panel']") &&
+        !target?.closest("[data-focus-zone='linear']") &&
+        appStore.get(focusZoneAtom) !== "panel"
+      ) return;
       if (
         target?.closest("[data-focus-zone='sidebar']") ||
         target?.closest("[role='dialog']") ||
@@ -1435,9 +1447,14 @@ function LinearIssueRow({
         </Tooltip>
       )}
 
-      <span className="min-w-0 flex-1 truncate text-[11px] text-foreground/80">
-        {issue.title}
-      </span>
+      <Tooltip>
+        <TooltipTrigger
+          render={<span tabIndex={-1} className="min-w-0 flex-1 truncate text-left text-[11px] text-foreground/80" />}
+        >
+          {issue.title}
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="max-w-xs text-[10px]">{issue.title}</TooltipContent>
+      </Tooltip>
 
       {/* Trailing meta: detail/attachment indicators, sub-issue progress, labels,
           estimate, due, assignee avatar. Stays visible on hover (the title

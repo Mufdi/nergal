@@ -72,18 +72,35 @@ impl std::fmt::Debug for FallbackFile {
     }
 }
 
-fn config_dir() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("/tmp"))
-                .join(".config")
-        })
-        .join("nergal")
+/// Directory for the plaintext fallback files. On Windows this is the NON-roaming
+/// local app-data dir (`%LOCALAPPDATA%`) so a plaintext key is never synced to an
+/// AD roaming-profile share; on other platforms the user config dir. Keyring
+/// (Credential Manager on Windows) stays the primary store — these files only
+/// appear when the keyring is unavailable.
+fn fallback_dir() -> PathBuf {
+    #[cfg(windows)]
+    let base = dirs::data_local_dir();
+    #[cfg(not(windows))]
+    let base = dirs::config_dir();
+    base.unwrap_or_else(|| {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("/tmp"))
+            .join(".config")
+    })
+    .join("nergal")
 }
 
 fn fallback_path() -> PathBuf {
-    config_dir().join(FALLBACK_FILE)
+    fallback_dir().join(FALLBACK_FILE)
+}
+
+/// Pre-hardening roaming counterpart (`%APPDATA%\nergal\<name>`) of a local
+/// fallback path — read + cleaned on Windows so a key written by an older build
+/// migrates to the local dir instead of being lost.
+#[cfg(windows)]
+fn roaming_counterpart(local: &std::path::Path) -> Option<PathBuf> {
+    let name = local.file_name()?;
+    dirs::config_dir().map(|d| d.join("nergal").join(name))
 }
 
 /// Defense in depth: `org_id` comes from the Linear API (a UUID) and is
@@ -111,7 +128,7 @@ fn account_for(org_id: &str) -> String {
 /// Per-workspace 0600 fallback file when the keyring is unavailable.
 fn fallback_path_for(org_id: &str) -> PathBuf {
     // org_id is a Linear UUID (no path separators); safe as a filename component.
-    config_dir().join(format!("linear-{org_id}.toml"))
+    fallback_dir().join(format!("linear-{org_id}.toml"))
 }
 
 fn keyring_entry_for(account: &str) -> Result<keyring::Entry> {
@@ -163,12 +180,22 @@ fn load_from(account: &str, fallback: &std::path::Path) -> Result<Option<StoredK
             keyring_err = Some(e);
         }
     }
-    match read_fallback_file(fallback)? {
-        Some(stored) => Ok(Some(stored)),
-        None => match keyring_err {
-            Some(e) => Err(e),
-            None => Ok(None),
-        },
+    if let Some(stored) = read_fallback_file(fallback)? {
+        return Ok(Some(stored));
+    }
+    // Windows: migrate a key left in the pre-hardening roaming location to the
+    // non-roaming dir, then drop the roaming plaintext copy.
+    #[cfg(windows)]
+    if let Some(legacy) = roaming_counterpart(fallback)
+        && let Some(stored) = read_fallback_file(&legacy)?
+    {
+        let _ = write_fallback_file(fallback, &stored.key);
+        let _ = std::fs::remove_file(&legacy);
+        return Ok(Some(stored));
+    }
+    match keyring_err {
+        Some(e) => Err(e),
+        None => Ok(None),
     }
 }
 
@@ -222,6 +249,17 @@ pub fn clear_key() -> Result<()> {
 }
 
 fn remove_fallback_at(path: &std::path::Path) -> Result<()> {
+    remove_one(path)?;
+    // Windows: also drop any pre-hardening roaming copy so a cleared/rotated key
+    // can't survive in the old location.
+    #[cfg(windows)]
+    if let Some(legacy) = roaming_counterpart(path) {
+        remove_one(&legacy)?;
+    }
+    Ok(())
+}
+
+fn remove_one(path: &std::path::Path) -> Result<()> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -246,7 +284,8 @@ fn write_fallback_file(path: &std::path::Path, key: &str) -> Result<()> {
     let _ = std::fs::remove_file(&tmp);
     let mut opts = OpenOptions::new();
     opts.write(true).create_new(true);
-    // 0o600 on Unix; Windows has no POSIX mode bits — the per-user config dir +
+    // 0o600 on Unix; Windows has no POSIX mode bits — the per-user (non-roaming
+    // local) dir ACL +
     // Credential Manager (keyring) is the real boundary for this fallback file.
     #[cfg(unix)]
     {

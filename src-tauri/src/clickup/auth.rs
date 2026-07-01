@@ -51,18 +51,34 @@ impl std::fmt::Debug for FallbackFile {
     }
 }
 
-fn config_dir() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("/tmp"))
-                .join(".config")
-        })
-        .join("nergal")
+/// Directory for the plaintext fallback file. On Windows this is the NON-roaming
+/// local app-data dir (`%LOCALAPPDATA%`) so a plaintext token is never synced to
+/// an AD roaming-profile share; on other platforms the user config dir. Keyring
+/// (Credential Manager on Windows) stays the primary store — this file only
+/// appears when the keyring is unavailable.
+fn fallback_dir() -> PathBuf {
+    #[cfg(windows)]
+    let base = dirs::data_local_dir();
+    #[cfg(not(windows))]
+    let base = dirs::config_dir();
+    base.unwrap_or_else(|| {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("/tmp"))
+            .join(".config")
+    })
+    .join("nergal")
 }
 
 fn fallback_path() -> PathBuf {
-    config_dir().join(FALLBACK_FILE)
+    fallback_dir().join(FALLBACK_FILE)
+}
+
+/// Pre-hardening roaming location (`%APPDATA%\nergal`). Read + cleaned on Windows
+/// so a token written by an older build migrates to the local dir instead of
+/// being lost — and its roaming plaintext copy is removed.
+#[cfg(windows)]
+fn legacy_fallback_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|d| d.join("nergal").join(FALLBACK_FILE))
 }
 
 fn keyring_entry() -> Result<keyring::Entry> {
@@ -122,12 +138,22 @@ pub fn load_token() -> Result<Option<StoredToken>> {
             keyring_err = Some(e);
         }
     }
-    match read_fallback_file(&fallback_path())? {
-        Some(stored) => Ok(Some(stored)),
-        None => match keyring_err {
-            Some(e) => Err(e),
-            None => Ok(None),
-        },
+    if let Some(stored) = read_fallback_file(&fallback_path())? {
+        return Ok(Some(stored));
+    }
+    // Windows: migrate a token left in the pre-hardening roaming location to the
+    // non-roaming dir, then drop the roaming plaintext copy.
+    #[cfg(windows)]
+    if let Some(legacy) = legacy_fallback_path()
+        && let Some(stored) = read_fallback_file(&legacy)?
+    {
+        let _ = write_fallback_file(&fallback_path(), &stored.token);
+        let _ = std::fs::remove_file(&legacy);
+        return Ok(Some(stored));
+    }
+    match keyring_err {
+        Some(e) => Err(e),
+        None => Ok(None),
     }
 }
 
@@ -142,13 +168,23 @@ pub fn clear_token() -> Result<()> {
     remove_fallback_file()
 }
 
-fn remove_fallback_file() -> Result<()> {
-    let path = fallback_path();
-    match std::fs::remove_file(&path) {
+fn remove_if_present(path: &std::path::Path) -> Result<()> {
+    match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(anyhow!("removing {}: {e}", path.display())),
     }
+}
+
+fn remove_fallback_file() -> Result<()> {
+    remove_if_present(&fallback_path())?;
+    // Windows: also drop any pre-hardening roaming copy so a cleared/rotated
+    // token can't survive in the old location.
+    #[cfg(windows)]
+    if let Some(legacy) = legacy_fallback_path() {
+        remove_if_present(&legacy)?;
+    }
+    Ok(())
 }
 
 fn write_fallback_file(path: &std::path::Path, token: &str) -> Result<()> {
@@ -164,8 +200,8 @@ fn write_fallback_file(path: &std::path::Path, token: &str) -> Result<()> {
     let _ = std::fs::remove_file(&tmp);
     let mut opts = OpenOptions::new();
     opts.write(true).create_new(true);
-    // 0o600 on Unix; Windows has no POSIX mode bits — the per-user config dir +
-    // Credential Manager (keyring) is the real boundary for this fallback file.
+    // 0o600 on Unix; Windows has no POSIX mode bits — the per-user (non-roaming
+    // local) dir ACL + Credential Manager (keyring) is the real boundary here.
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;

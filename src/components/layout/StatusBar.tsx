@@ -210,9 +210,10 @@ export function StatusBar() {
             {summary.lastAction ? (
               <>
                 <Zap className="size-3 shrink-0 text-primary" />
-                {/* Content-sized (not fixed w-44): short tool names like "Bash"
-                    sit flush against the icon; long MCP names cap + truncate. */}
-                <span className="min-w-0 max-w-44 truncate">{summary.lastAction}</span>
+                {/* Content-sized cap: short tool names like "Bash" sit flush
+                    against the icon; long MCP names truncate (full name on hover)
+                    so the model segment on the right never gets squeezed to wrap. */}
+                <span className="min-w-0 max-w-28 truncate">{summary.lastAction}</span>
                 <span className="shrink-0 text-muted-foreground/60">│</span>
                 <span className="shrink-0 whitespace-nowrap tabular-nums">
                   <span className="inline-block min-w-[1.25rem] text-right">{summary.actionCount}</span> actions
@@ -225,7 +226,7 @@ export function StatusBar() {
             )}
             <ChevronUp className="ml-1 size-3 shrink-0" />
           </TooltipTrigger>
-          <TooltipContent>Click to toggle the activity drawer</TooltipContent>
+          <TooltipContent>{summary.lastAction ?? "Click to toggle the activity drawer"}</TooltipContent>
         </Tooltip>
 
         <LocalhostPortChips />
@@ -280,7 +281,7 @@ export function StatusBar() {
 
         {sl.model_name && (
           <Tooltip>
-            <TooltipTrigger className="min-w-0 max-w-40 cursor-default truncate font-medium text-foreground">
+            <TooltipTrigger className="cursor-default whitespace-nowrap font-medium text-foreground">
               {sl.model_name}
             </TooltipTrigger>
             <TooltipContent>{sl.model_id ?? sl.model_name}</TooltipContent>

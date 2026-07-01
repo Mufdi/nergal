@@ -452,6 +452,7 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
   }, [activeSpec, activeTab, tabs.length]);
 
   return (
+    <TooltipProvider delay={0}>
     <div className="flex h-full flex-col overflow-hidden">
       {/* Change header: metadata (left) + annotation toolbar (right) */}
       <div className="flex shrink-0 items-center gap-2 border-b border-border/50 px-3 py-1">
@@ -470,7 +471,6 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
         )}
 
         {isEditable && showingContent && (
-          <TooltipProvider delay={0}>
           <div className="ml-auto flex shrink-0 items-center gap-1.5">
             {totalAnnotations > 0 && (
               <Tooltip>
@@ -566,7 +566,6 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
               </>
             )}
           </div>
-          </TooltipProvider>
         )}
       </div>
 
@@ -594,12 +593,16 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
                     <span className="text-[10px] text-muted-foreground/60">{change.specs.length}</span>
                   )}
                   {annCount > 0 && (
-                    <span
-                      className="flex h-3.5 items-center justify-center rounded-full bg-primary/15 px-1 text-[9px] font-medium text-primary tabular-nums"
-                      title={`${annCount} annotation${annCount !== 1 ? "s" : ""}`}
-                    >
-                      {annCount}
-                    </span>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <span className="flex h-3.5 items-center justify-center rounded-full bg-primary/15 px-1 text-[9px] font-medium text-primary tabular-nums" />
+                        }
+                      >
+                        {annCount}
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="text-[10px]">{`${annCount} annotation${annCount !== 1 ? "s" : ""}`}</TooltipContent>
+                    </Tooltip>
                   )}
                 </button>
               );
@@ -690,6 +693,7 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
         )}
       </div>
     </div>
+    </TooltipProvider>
   );
 }
 

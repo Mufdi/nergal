@@ -710,20 +710,26 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
 
         {/* Conflict badge */}
         {sessionId && activeConflictedFiles.length > 0 && (
-          <button
-            onClick={() => {
-              if (!sessionId) return;
-              const first = activeConflictedFiles[0];
-              setSelectedConflictMap((prev) => ({ ...prev, [sessionId]: first }));
-              setChipModeMap((prev) => ({ ...prev, [sessionId]: "conflicts" }));
-              handleOpenPanel("git");
-            }}
-            className="mr-1 flex h-6 items-center gap-1 rounded bg-red-500/20 px-2 text-[10px] font-medium text-red-300 hover:bg-red-500/30 transition-colors animate-pulse"
-            title="Open Conflicts chip"
-          >
-            <AlertTriangle size={11} />
-            CONFLICT · {activeConflictedFiles.length}
-          </button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  onClick={() => {
+                    if (!sessionId) return;
+                    const first = activeConflictedFiles[0];
+                    setSelectedConflictMap((prev) => ({ ...prev, [sessionId]: first }));
+                    setChipModeMap((prev) => ({ ...prev, [sessionId]: "conflicts" }));
+                    handleOpenPanel("git");
+                  }}
+                  className="mr-1 flex h-6 items-center gap-1 rounded bg-red-500/20 px-2 text-[10px] font-medium text-red-300 hover:bg-red-500/30 transition-colors animate-pulse"
+                />
+              }
+            >
+              <AlertTriangle size={11} />
+              CONFLICT · {activeConflictedFiles.length}
+            </TooltipTrigger>
+            <TooltipContent>Open Conflicts chip</TooltipContent>
+          </Tooltip>
         )}
 
         {/* Git session actions */}

@@ -32,29 +32,39 @@ export function BrowserTabStrip({ sessionId }: Props) {
                   : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
               }`}
             >
-              <button
-                type="button"
-                onClick={() => activate({ sessionId, tabId: tab.id })}
-                onMouseDown={(e) => {
-                  // Middle-click to close — standard browser convention.
-                  if (e.button === 1) {
-                    e.preventDefault();
-                    close({ sessionId, tabId: tab.id });
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      onClick={() => activate({ sessionId, tabId: tab.id })}
+                      onMouseDown={(e) => {
+                        // Middle-click to close — standard browser convention.
+                        if (e.button === 1) {
+                          e.preventDefault();
+                          close({ sessionId, tabId: tab.id });
+                        }
+                      }}
+                      onAuxClick={(e) => {
+                        // Some browsers route the middle-click to auxclick
+                        // instead of mousedown. Belt-and-suspenders.
+                        if (e.button === 1) {
+                          e.preventDefault();
+                          close({ sessionId, tabId: tab.id });
+                        }
+                      }}
+                      className="max-w-44 truncate font-mono"
+                    />
                   }
-                }}
-                onAuxClick={(e) => {
-                  // Some browsers route the middle-click to auxclick
-                  // instead of mousedown. Belt-and-suspenders.
-                  if (e.button === 1) {
-                    e.preventDefault();
-                    close({ sessionId, tabId: tab.id });
-                  }
-                }}
-                className="max-w-44 truncate font-mono"
-                title={tab.url}
-              >
-                {tab.label}
-              </button>
+                >
+                  {tab.label}
+                </TooltipTrigger>
+                {tab.url ? (
+                  <TooltipContent side="bottom" className="text-[10px]">
+                    {tab.url}
+                  </TooltipContent>
+                ) : null}
+              </Tooltip>
               <Tooltip>
                 <TooltipTrigger
                   render={

@@ -7,6 +7,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import type { AvailableAgent } from "@/lib/types";
 import type { EnvShellDef, LaunchOptions, PermissionPreset } from "@/stores/workspace";
 import { invoke } from "@/lib/tauri";
@@ -422,27 +423,35 @@ export function AgentPickerModal({
                 }`}
               >
                 <span className="shrink-0 font-mono text-[10px] text-muted-foreground/70">$</span>
-                <input
-                  ref={startupInputRef}
-                  type="text"
-                  value={startupCmd}
-                  onChange={(e) => setStartupCmd(e.target.value)}
-                  onFocus={() => setOptIdx(startupRowIdx)}
-                  onKeyDown={(e) => {
-                    if (e.key === "ArrowUp") {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setOptIdx(startupRowIdx - 1 >= 0 ? startupRowIdx - 1 : -1);
-                    } else if (e.key === "Enter") {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      commit(selectedIdx);
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <input
+                        ref={startupInputRef}
+                        type="text"
+                        value={startupCmd}
+                        onChange={(e) => setStartupCmd(e.target.value)}
+                        onFocus={() => setOptIdx(startupRowIdx)}
+                        onKeyDown={(e) => {
+                          if (e.key === "ArrowUp") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setOptIdx(startupRowIdx - 1 >= 0 ? startupRowIdx - 1 : -1);
+                          } else if (e.key === "Enter") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            commit(selectedIdx);
+                          }
+                        }}
+                        placeholder="Prelude — must exit (nvm use, source .env…)"
+                        className="w-full bg-transparent font-mono text-[10px] text-foreground outline-none placeholder:text-muted-foreground/40"
+                      />
                     }
-                  }}
-                  placeholder="Prelude — must exit (nvm use, source .env…)"
-                  title="Runs in the agent terminal before the agent, which inherits its env. A command that never exits blocks the agent — long-running commands go in Environment shells below."
-                  className="w-full bg-transparent font-mono text-[10px] text-foreground outline-none placeholder:text-muted-foreground/40"
-                />
+                  />
+                  <TooltipContent>
+                    Runs in the agent terminal before the agent, which inherits its env. A command that never exits blocks the agent — long-running commands go in Environment shells below.
+                  </TooltipContent>
+                </Tooltip>
               </div>
             </div>
           )}
@@ -459,53 +468,60 @@ export function AgentPickerModal({
                       (sh) => sh.command.trim() === sg.command.trim(),
                     );
                     return (
-                      <button
-                        key={i}
-                        ref={(el) => {
-                          sugRefs.current[i] = el;
-                        }}
-                        disabled={added}
-                        title={sg.cwd ? `${sg.cwd} $ ${sg.command}` : sg.command}
-                        onFocus={() => setOptIdx(suggRowIdx)}
-                        onClick={() => {
-                          setEnvShells((prev) => [...prev, { ...sg }]);
-                          // The chip becomes disabled (added) and drops focus —
-                          // hand it to the freshly autofilled shell row so
-                          // keyboard nav continues.
-                          setOptIdx(envRowStart + envShells.length);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            const dir = e.key === "ArrowRight" ? 1 : -1;
-                            for (let j = i + dir; j >= 0 && j < suggestions.length; j += dir) {
-                              const el = sugRefs.current[j];
-                              if (el && !el.disabled) {
-                                el.focus();
-                                return;
-                              }
-                            }
-                          } else if (e.key === " ") {
-                            // Native button behavior triggers click on Space;
-                            // just keep it from bubbling into the container's
-                            // option-toggle handler.
-                            e.stopPropagation();
-                          } else if (e.key === "Enter") {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setEnvShells((prev) => [...prev, { ...sg }]);
-                            setOptIdx(envRowStart + envShells.length);
+                      <Tooltip key={i}>
+                        <TooltipTrigger
+                          render={
+                            <button
+                              ref={(el) => {
+                                sugRefs.current[i] = el;
+                              }}
+                              disabled={added}
+                              onFocus={() => setOptIdx(suggRowIdx)}
+                              onClick={() => {
+                                setEnvShells((prev) => [...prev, { ...sg }]);
+                                // The chip becomes disabled (added) and drops focus —
+                                // hand it to the freshly autofilled shell row so
+                                // keyboard nav continues.
+                                setOptIdx(envRowStart + envShells.length);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  const dir = e.key === "ArrowRight" ? 1 : -1;
+                                  for (let j = i + dir; j >= 0 && j < suggestions.length; j += dir) {
+                                    const el = sugRefs.current[j];
+                                    if (el && !el.disabled) {
+                                      el.focus();
+                                      return;
+                                    }
+                                  }
+                                } else if (e.key === " ") {
+                                  // Native button behavior triggers click on Space;
+                                  // just keep it from bubbling into the container's
+                                  // option-toggle handler.
+                                  e.stopPropagation();
+                                } else if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setEnvShells((prev) => [...prev, { ...sg }]);
+                                  setOptIdx(envRowStart + envShells.length);
+                                }
+                              }}
+                              className={`rounded-full border px-2 py-0.5 text-[10px] transition-colors outline-none focus:ring-1 focus:ring-orange-500/60 ${
+                                added
+                                  ? "border-border/40 text-muted-foreground/40 cursor-default"
+                                  : "border-border text-muted-foreground hover:bg-secondary hover:text-foreground"
+                              }`}
+                            />
                           }
-                        }}
-                        className={`rounded-full border px-2 py-0.5 text-[10px] transition-colors outline-none focus:ring-1 focus:ring-orange-500/60 ${
-                          added
-                            ? "border-border/40 text-muted-foreground/40 cursor-default"
-                            : "border-border text-muted-foreground hover:bg-secondary hover:text-foreground"
-                        }`}
-                      >
-                        {sg.label.trim() || sg.command}
-                      </button>
+                        >
+                          {sg.label.trim() || sg.command}
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {sg.cwd ? `${sg.cwd} $ ${sg.command}` : sg.command}
+                        </TooltipContent>
+                      </Tooltip>
                     );
                   })}
                 </div>
@@ -542,46 +558,54 @@ export function AgentPickerModal({
                     placeholder="label"
                     className="w-20 shrink-0 rounded border border-border/60 bg-transparent px-1.5 py-0.5 text-[10px] text-foreground outline-none placeholder:text-muted-foreground/40 focus:border-orange-500/60"
                   />
-                  <input
-                    ref={(el) => {
-                      envCwdRefs.current[i] = el;
-                    }}
-                    type="text"
-                    value={sh.cwd ?? ""}
-                    onChange={(e) => updateEnvShell(i, { cwd: e.target.value })}
-                    onFocus={() => setOptIdx(envRowStart + i)}
-                    onKeyDown={(e) => {
-                      const input = e.currentTarget;
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        commit(selectedIdx);
-                      } else if (
-                        e.key === "ArrowLeft"
-                        && input.selectionStart === 0
-                        && input.selectionEnd === 0
-                      ) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        envLabelRefs.current[i]?.focus();
-                      } else if (
-                        e.key === "ArrowRight"
-                        && input.selectionStart === input.value.length
-                        && input.selectionEnd === input.value.length
-                      ) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        envCmdRefs.current[i]?.focus();
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <input
+                          ref={(el) => {
+                            envCwdRefs.current[i] = el;
+                          }}
+                          type="text"
+                          value={sh.cwd ?? ""}
+                          onChange={(e) => updateEnvShell(i, { cwd: e.target.value })}
+                          onFocus={() => setOptIdx(envRowStart + i)}
+                          onKeyDown={(e) => {
+                            const input = e.currentTarget;
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              commit(selectedIdx);
+                            } else if (
+                              e.key === "ArrowLeft"
+                              && input.selectionStart === 0
+                              && input.selectionEnd === 0
+                            ) {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              envLabelRefs.current[i]?.focus();
+                            } else if (
+                              e.key === "ArrowRight"
+                              && input.selectionStart === input.value.length
+                              && input.selectionEnd === input.value.length
+                            ) {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              envCmdRefs.current[i]?.focus();
+                            }
+                          }}
+                          placeholder="cwd"
+                          className={`w-24 shrink-0 rounded border bg-transparent px-1.5 py-0.5 font-mono text-[10px] text-foreground outline-none placeholder:text-muted-foreground/40 ${
+                            sh.cwd?.trim() && cwdValid[i] === false
+                              ? "border-red-500/70 focus:border-red-500"
+                              : "border-border/60 focus:border-orange-500/60"
+                          }`}
+                        />
                       }
-                    }}
-                    placeholder="cwd"
-                    title="Working directory — ~ expands, relative paths resolve against the workspace root. Empty = session cwd."
-                    className={`w-24 shrink-0 rounded border bg-transparent px-1.5 py-0.5 font-mono text-[10px] text-foreground outline-none placeholder:text-muted-foreground/40 ${
-                      sh.cwd?.trim() && cwdValid[i] === false
-                        ? "border-red-500/70 focus:border-red-500"
-                        : "border-border/60 focus:border-orange-500/60"
-                    }`}
-                  />
+                    />
+                    <TooltipContent>
+                      Working directory — ~ expands, relative paths resolve against the workspace root. Empty = session cwd.
+                    </TooltipContent>
+                  </Tooltip>
                   <span className="shrink-0 font-mono text-[10px] text-muted-foreground/70">$</span>
                   <input
                     ref={(el) => {

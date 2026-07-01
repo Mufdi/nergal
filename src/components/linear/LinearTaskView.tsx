@@ -34,7 +34,7 @@ import { LinearEstimateIcon } from "@/components/linear/LinearEstimateIcon";
 import { PriorityIcon } from "@/components/clickup/PriorityIcon";
 import { AncestorBreadcrumb } from "@/components/ui/AncestorBreadcrumb";
 import { ProgressBar } from "@/components/ui/ProgressBar";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   activeSessionLinearIssueAtom,
   activeSessionLinearPinsAtom,
@@ -1097,23 +1097,31 @@ export function LinearIssueBody({
   // Linear's rail is three stacked cards: Properties (status/priority/assignee/
   // estimate/cycle + meta), Labels, Project.
   const propertiesEl = (
-    <>
+    // Provider scoped here: the detail body renders outside LinearTaskDetail's
+    // title/toolbar providers, so the rail tooltips need their own (no nesting).
+    <TooltipProvider delay={0}>
       <div className={cardClass}>
         <SectionCaps label="Properties" />
         <div className="flex flex-col gap-1.5 text-[11px]">
         {closedOut && issue && (
           <div className="flex items-center gap-1.5">
             <span className="rounded-full bg-green-500/15 px-1.5 text-[9px] font-medium text-green-400">done</span>
-            <button
-              type="button"
-              data-nav-key="unclose"
-              data-nav-selected={c.navKey === "unclose" || undefined}
-              onClick={() => void c.handleUncloseOut(issue.id)}
-              className="rounded px-1 text-[9px] text-muted-foreground outline-none hover:text-foreground"
-              title="Unmark closed out"
-            >
-              Mark undone
-            </button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    data-nav-key="unclose"
+                    data-nav-selected={c.navKey === "unclose" || undefined}
+                    onClick={() => void c.handleUncloseOut(issue.id)}
+                    className="rounded px-1 text-[9px] text-muted-foreground outline-none hover:text-foreground"
+                  />
+                }
+              >
+                Mark undone
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Unmark closed out</TooltipContent>
+            </Tooltip>
           </div>
         )}
         {issue.teamId && (
@@ -1190,16 +1198,22 @@ export function LinearIssueBody({
           </div>
         )}
         {issue.identifier && (
-          <button
-            type="button"
-            data-nav-key="copyid"
-            data-nav-selected={c.navKey === "copyid" || undefined}
-            onClick={() => c.activateNav("copyid")}
-            className="self-start rounded px-1 font-mono text-[10px] text-muted-foreground/60 outline-none hover:text-foreground"
-            title="Copy issue id"
-          >
-            {issue.identifier}
-          </button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  data-nav-key="copyid"
+                  data-nav-selected={c.navKey === "copyid" || undefined}
+                  onClick={() => c.activateNav("copyid")}
+                  className="self-start rounded px-1 font-mono text-[10px] text-muted-foreground/60 outline-none hover:text-foreground"
+                />
+              }
+            >
+              {issue.identifier}
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Copy issue id</TooltipContent>
+          </Tooltip>
         )}
         {issue.url && (
           <button
@@ -1244,7 +1258,7 @@ export function LinearIssueBody({
           </div>
         </div>
       )}
-    </>
+    </TooltipProvider>
   );
 
   const descEl = (

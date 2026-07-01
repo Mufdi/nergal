@@ -469,23 +469,32 @@ export function GitPanel({ sessionId }: GitPanelProps) {
 function CiBadge({ checks }: { checks: PrChecks }) {
   if (checks.failing > 0) {
     return (
-      <span title={`${checks.failing} failing / ${checks.total} total`} className="flex items-center gap-0.5 text-[10px] text-red-400">
-        <AlertTriangle size={10} /> {checks.failing}/{checks.total}
-      </span>
+      <Tooltip>
+        <TooltipTrigger render={<span className="flex items-center gap-0.5 text-[10px] text-red-400" />}>
+          <AlertTriangle size={10} /> {checks.failing}/{checks.total}
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="text-[10px]">{`${checks.failing} failing / ${checks.total} total`}</TooltipContent>
+      </Tooltip>
     );
   }
   if (checks.pending > 0) {
     return (
-      <span title={`${checks.pending} pending`} className="flex items-center gap-0.5 text-[10px] text-yellow-400">
-        <CircleDashed size={10} className="animate-spin" /> {checks.pending}
-      </span>
+      <Tooltip>
+        <TooltipTrigger render={<span className="flex items-center gap-0.5 text-[10px] text-yellow-400" />}>
+          <CircleDashed size={10} className="animate-spin" /> {checks.pending}
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="text-[10px]">{`${checks.pending} pending`}</TooltipContent>
+      </Tooltip>
     );
   }
   if (checks.passing > 0) {
     return (
-      <span title={`${checks.passing} checks passing`} className="flex items-center gap-0.5 text-[10px] text-green-400">
-        <Check size={10} /> {checks.passing}
-      </span>
+      <Tooltip>
+        <TooltipTrigger render={<span className="flex items-center gap-0.5 text-[10px] text-green-400" />}>
+          <Check size={10} /> {checks.passing}
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="text-[10px]">{`${checks.passing} checks passing`}</TooltipContent>
+      </Tooltip>
     );
   }
   return null;

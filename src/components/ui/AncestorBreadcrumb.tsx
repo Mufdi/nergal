@@ -19,37 +19,40 @@ export function AncestorBreadcrumb({ ancestors }: { ancestors: string[] }) {
   const shown = ancestors.slice(-VISIBLE);
 
   return (
+    <TooltipProvider delay={0}>
     <span className="flex min-w-0 shrink items-center gap-1 text-[11px] text-muted-foreground/70">
       {collapsed.length > 0 && (
         <>
-          <TooltipProvider delay={0}>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span
-                    tabIndex={-1}
-                    className="cursor-default rounded px-0.5 leading-none text-muted-foreground/60 outline-none hover:text-foreground"
-                  />
-                }
-              >
-                …
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="text-[10px]">
-                {ancestors.join(" / ")}
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span
+                  tabIndex={-1}
+                  className="cursor-default rounded px-0.5 leading-none text-muted-foreground/60 outline-none hover:text-foreground"
+                />
+              }
+            >
+              …
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">
+              {ancestors.join(" / ")}
+            </TooltipContent>
+          </Tooltip>
           <span className="text-muted-foreground/40">/</span>
         </>
       )}
       {shown.map((name, i) => (
         <span key={i} className="flex min-w-0 items-center gap-1">
-          <span className="max-w-[8rem] truncate" title={name}>
-            {name}
-          </span>
+          <Tooltip>
+            <TooltipTrigger render={<span className="max-w-[8rem] truncate" />}>
+              {name}
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">{name}</TooltipContent>
+          </Tooltip>
           <span className="text-muted-foreground/40">/</span>
         </span>
       ))}
     </span>
+    </TooltipProvider>
   );
 }

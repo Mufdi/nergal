@@ -8,6 +8,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { LinearStatusIcon } from "@/components/linear/LinearStatusIcon";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { type WorkflowStateView } from "@/stores/linear";
 
 export function StatePicker({
@@ -96,21 +97,28 @@ export function StatePicker({
     <div ref={wrapRef} className="relative">
       {/* span[role=button], not <button>: this picker renders inside panel rows
           that are themselves <button> — nested buttons are invalid HTML (same
-          convention as the row chevron / copy-id affordances). */}
-      <span
-        role="button"
-        tabIndex={-1}
-        onClick={() => onOpenChange(!open)}
-        className={`flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 outline-none transition-colors hover:bg-secondary/40 ${pending ? "opacity-60" : ""}`}
-        title={currentStateName ?? "No state"}
-      >
-        <LinearStatusIcon
-          stateType={currentStateType}
-          color={color}
-          size={13}
-          className="shrink-0"
-        />
-      </span>
+          convention as the row chevron / copy-id affordances). Provider comes
+          from LinearPanel (the only mount site). */}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              role="button"
+              tabIndex={-1}
+              onClick={() => onOpenChange(!open)}
+              className={`flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 outline-none transition-colors hover:bg-secondary/40 ${pending ? "opacity-60" : ""}`}
+            />
+          }
+        >
+          <LinearStatusIcon
+            stateType={currentStateType}
+            color={color}
+            size={13}
+            className="shrink-0"
+          />
+        </TooltipTrigger>
+        <TooltipContent>{currentStateName ?? "No state"}</TooltipContent>
+      </Tooltip>
       {open && (
         <div
           data-floating-popup

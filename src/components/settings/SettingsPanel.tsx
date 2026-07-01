@@ -980,7 +980,10 @@ function ClickUpSection() {
       {validationError && (
         <p className="flex items-center gap-1.5 text-xs text-red-400">
           <XCircle size={13} className="shrink-0" />
-          <span className="min-w-0 truncate" title={validationError}>{validationError}</span>
+          <Tooltip>
+            <TooltipTrigger render={<span className="min-w-0 truncate" />}>{validationError}</TooltipTrigger>
+            <TooltipContent>{validationError}</TooltipContent>
+          </Tooltip>
         </p>
       )}
 
@@ -1241,7 +1244,10 @@ function LinearSection() {
       {validationError && (
         <p className="flex items-center gap-1.5 text-xs text-red-400">
           <XCircle size={13} className="shrink-0" />
-          <span className="min-w-0 truncate" title={validationError}>{validationError}</span>
+          <Tooltip>
+            <TooltipTrigger render={<span className="min-w-0 truncate" />}>{validationError}</TooltipTrigger>
+            <TooltipContent>{validationError}</TooltipContent>
+          </Tooltip>
         </p>
       )}
 
@@ -1456,9 +1462,18 @@ function ThemePreviewCard({
           terminal) at a glance. */}
       <div className="flex items-center justify-between px-0.5">
         <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-          <span style={{ fontFamily: theme.fonts.interface }} title="Interface font">Aa</span>
-          <span style={{ fontFamily: theme.fonts.markdown }} title="Markdown font">Aa</span>
-          <span style={{ fontFamily: theme.fonts.terminal }} title="Terminal font">Aa</span>
+          <Tooltip>
+            <TooltipTrigger render={<span style={{ fontFamily: theme.fonts.interface }} />}>Aa</TooltipTrigger>
+            <TooltipContent>Interface font</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger render={<span style={{ fontFamily: theme.fonts.markdown }} />}>Aa</TooltipTrigger>
+            <TooltipContent>Markdown font</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger render={<span style={{ fontFamily: theme.fonts.terminal }} />}>Aa</TooltipTrigger>
+            <TooltipContent>Terminal font</TooltipContent>
+          </Tooltip>
         </div>
         <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus:opacity-100 group-focus-within:opacity-100">
           {/* Keyboard hints: "E" enters the editor for the focused card;
@@ -1655,17 +1670,22 @@ function ThemeEditor({
           {ACCENT_PRESETS.map((p) => {
             const active = p.value.toLowerCase() === custom.primary.toLowerCase();
             return (
-              <button
-                key={p.value}
-                type="button"
-                onClick={() => patch({ primary: p.value })}
-                onKeyDown={onSwatchKeyDown}
-                aria-label={p.label}
-                title={p.label}
-                data-accent-swatch
-                className={`nergal-focus-ring size-6 rounded-full border-2 transition-transform ${active ? "scale-110 border-foreground" : "border-border hover:scale-105"}`}
-                style={{ backgroundColor: p.value }}
-              />
+              <Tooltip key={p.value}>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      onClick={() => patch({ primary: p.value })}
+                      onKeyDown={onSwatchKeyDown}
+                      aria-label={p.label}
+                      data-accent-swatch
+                      className={`nergal-focus-ring size-6 rounded-full border-2 transition-transform ${active ? "scale-110 border-foreground" : "border-border hover:scale-105"}`}
+                      style={{ backgroundColor: p.value }}
+                    />
+                  }
+                />
+                <TooltipContent>{p.label}</TooltipContent>
+              </Tooltip>
             );
           })}
           <span className="ml-2 flex items-center gap-2">
@@ -1676,12 +1696,26 @@ function ThemeEditor({
               aria-label="Accent hex"
               placeholder="#22d3ee"
             />
-            <span
-              className="size-6 shrink-0 rounded-full border border-border"
-              style={{ backgroundColor: custom.primary }}
-              aria-label={`Current accent: ${custom.primary}`}
-              title={custom.primary}
-            />
+            {custom.primary ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span
+                      className="size-6 shrink-0 rounded-full border border-border"
+                      style={{ backgroundColor: custom.primary }}
+                      aria-label={`Current accent: ${custom.primary}`}
+                    />
+                  }
+                />
+                <TooltipContent>{custom.primary}</TooltipContent>
+              </Tooltip>
+            ) : (
+              <span
+                className="size-6 shrink-0 rounded-full border border-border"
+                style={{ backgroundColor: custom.primary }}
+                aria-label={`Current accent: ${custom.primary}`}
+              />
+            )}
           </span>
         </div>
         {/* Full color picker pad — saturation/value square + hue slider.
@@ -1773,13 +1807,19 @@ function FontSelectRow({
         options={selectOptions}
         className="h-8"
       />
-      <span
-        className="text-[14px] text-muted-foreground"
-        style={{ fontFamily: stack }}
-        title={stack}
-      >
-        Aa Bb
-      </span>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              className="text-[14px] text-muted-foreground"
+              style={{ fontFamily: stack }}
+            />
+          }
+        >
+          Aa Bb
+        </TooltipTrigger>
+        <TooltipContent>{stack}</TooltipContent>
+      </Tooltip>
     </div>
   );
 }

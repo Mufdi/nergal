@@ -178,26 +178,36 @@ export function BrowserToolbar({ sessionId, inputRef }: Props) {
           </div>
         )}
       </div>
-      <input
-        ref={ref}
-        value={draft}
-        onChange={(e) => {
-          setDraft(e.target.value);
-          if (error) setError(null);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            commit();
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <input
+              ref={ref}
+              value={draft}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                if (error) setError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  commit();
+                }
+              }}
+              spellCheck={false}
+              placeholder="http://localhost:5173"
+              className={`mx-1 h-7 flex-1 rounded-md border bg-background px-2 text-xs font-mono outline-none ring-1 ring-transparent transition focus:ring-primary/40 ${
+                error ? "border-destructive/60" : "border-border/60"
+              }`}
+            />
           }
-        }}
-        spellCheck={false}
-        placeholder="http://localhost:5173"
-        className={`mx-1 h-7 flex-1 rounded-md border bg-background px-2 text-xs font-mono outline-none ring-1 ring-transparent transition focus:ring-primary/40 ${
-          error ? "border-destructive/60" : "border-border/60"
-        }`}
-        title={error ?? undefined}
-      />
+        />
+        {error ? (
+          <TooltipContent side="bottom" className="text-[10px]">
+            {error}
+          </TooltipContent>
+        ) : null}
+      </Tooltip>
       <ToolbarButton
         title={colorScheme === "dark" ? "Switch to light" : "Switch to dark"}
         onClick={() =>

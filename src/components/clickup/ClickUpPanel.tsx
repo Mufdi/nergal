@@ -849,9 +849,14 @@ export function ClickUpPanel() {
       </div>
 
       {syncStatus?.state === "error" && syncStatus.error && (
-        <div className="shrink-0 truncate bg-destructive/10 px-3 py-1 text-[10px] text-red-400" title={syncStatus.error}>
-          Sync error: {syncStatus.error}
-        </div>
+        <Tooltip>
+          <TooltipTrigger
+            render={<div className="shrink-0 truncate bg-destructive/10 px-3 py-1 text-[10px] text-red-400" />}
+          >
+            Sync error: {syncStatus.error}
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="max-w-xs text-[10px]">{syncStatus.error}</TooltipContent>
+        </Tooltip>
       )}
 
       <div className="min-h-0 flex-1 overflow-y-auto" data-scrollable>
@@ -1272,16 +1277,25 @@ function TaskRow({
             {formatDueDate(task.due_date)}
           </span>
         )}
-        {task.assignees.slice(0, 2).map((a) => (
-          <span
-            key={a.id ?? a.username ?? "?"}
-            title={a.username ?? undefined}
-            className="flex size-4 shrink-0 items-center justify-center rounded-full text-[8px] font-medium text-white"
-            style={{ background: a.color ?? "var(--color-secondary)" }}
-          >
-            {a.initials ?? (a.username?.slice(0, 2).toUpperCase() ?? "?")}
-          </span>
-        ))}
+        {task.assignees.slice(0, 2).map((a) => {
+          const key = a.id ?? a.username ?? "?";
+          const initials = a.initials ?? (a.username?.slice(0, 2).toUpperCase() ?? "?");
+          const avatarClass =
+            "flex size-4 shrink-0 items-center justify-center rounded-full text-[8px] font-medium text-white";
+          const avatarStyle = { background: a.color ?? "var(--color-secondary)" };
+          return a.username ? (
+            <Tooltip key={key}>
+              <TooltipTrigger render={<span className={avatarClass} style={avatarStyle} />}>
+                {initials}
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-[10px]">{a.username}</TooltipContent>
+            </Tooltip>
+          ) : (
+            <span key={key} className={avatarClass} style={avatarStyle}>
+              {initials}
+            </span>
+          );
+        })}
       </span>
 
       {/* The keyboard cursor (data-nav-selected) mirrors the mouse hover:

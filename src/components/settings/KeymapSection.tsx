@@ -9,6 +9,7 @@ import {
 import { LOCKED_SHORTCUT_IDS, formatKeyParts, eventToKeys, validateCombo } from "@/lib/keymap";
 import { confirm } from "@/lib/confirm";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Lock, RotateCcw } from "lucide-react";
 
 const CATEGORY_ORDER = ["navigation", "session", "panel", "action"] as const;
@@ -175,12 +176,12 @@ export function KeymapSection() {
                         <KeyCombo keys={keys} />
                       )}
                       {locked ? (
-                        <span
-                          className="inline-flex items-center text-muted-foreground/50"
-                          title="This shortcut is structural and can't be remapped"
-                        >
-                          <Lock size={12} />
-                        </span>
+                        <Tooltip>
+                          <TooltipTrigger render={<span className="inline-flex items-center text-muted-foreground/50" />}>
+                            <Lock size={12} />
+                          </TooltipTrigger>
+                          <TooltipContent>This shortcut is structural and can't be remapped</TooltipContent>
+                        </Tooltip>
                       ) : (
                         <>
                           <button
@@ -193,15 +194,21 @@ export function KeymapSection() {
                           >
                             {isCapturing ? "Cancel" : "Rebind"}
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => resetOne(action.id)}
-                            disabled={!overridden}
-                            title="Reset to default"
-                            className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors disabled:opacity-30 disabled:hover:bg-transparent outline-none focus:ring-1 focus:ring-inset focus:ring-primary/70"
-                          >
-                            <RotateCcw size={12} />
-                          </button>
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <button
+                                  type="button"
+                                  onClick={() => resetOne(action.id)}
+                                  disabled={!overridden}
+                                  className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors disabled:opacity-30 disabled:hover:bg-transparent outline-none focus:ring-1 focus:ring-inset focus:ring-primary/70"
+                                />
+                              }
+                            >
+                              <RotateCcw size={12} />
+                            </TooltipTrigger>
+                            <TooltipContent>Reset to default</TooltipContent>
+                          </Tooltip>
                         </>
                       )}
                     </span>

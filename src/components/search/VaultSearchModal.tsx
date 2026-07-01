@@ -17,7 +17,7 @@ import { toastsAtom } from "@/stores/toast";
 import { openInObsidian } from "@/lib/obsidian";
 import { pinNoteAtom } from "@/stores/pinnedNotes";
 import { invoke } from "@/lib/tauri";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import * as terminalService from "@/components/terminal/terminalService";
 import {
   scratchpadActiveTabIdAtom,
@@ -208,6 +208,7 @@ export function VaultSearchModal() {
   if (!isOpen) return null;
 
   return (
+    <TooltipProvider delay={0}>
     <div className="fixed inset-0 z-50 flex justify-center pt-[20vh]" onClick={close}>
       <div className="fixed inset-0 bg-scrim nergal-blur-md" />
       <div
@@ -233,19 +234,25 @@ export function VaultSearchModal() {
               Ctrl+D
             </span>
           )}
-          <button
-            type="button"
-            onClick={toggleScope}
-            disabled={!subdir}
-            title={
-              subdir
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  onClick={toggleScope}
+                  disabled={!subdir}
+                  className="rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground enabled:hover:text-foreground disabled:opacity-60"
+                />
+              }
+            >
+              {scopeMode === "subdir" && subdir ? subdir : "Vault"}
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">
+              {subdir
                 ? `Scope (Ctrl+D): ${scopeMode === "subdir" ? subdir : "whole vault"}`
-                : "Set a search subdir in Settings → Obsidian to scope"
-            }
-            className="rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground enabled:hover:text-foreground disabled:opacity-60"
-          >
-            {scopeMode === "subdir" && subdir ? subdir : "Vault"}
-          </button>
+                : "Set a search subdir in Settings → Obsidian to scope"}
+            </TooltipContent>
+          </Tooltip>
         </div>
         <div ref={listRef} className="flex-1 overflow-y-auto py-1">
           {loading && results.length === 0 && (
@@ -314,6 +321,7 @@ export function VaultSearchModal() {
         </div>
       </div>
     </div>
+    </TooltipProvider>
   );
 }
 

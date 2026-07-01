@@ -1095,9 +1095,14 @@ export function LinearPanel() {
         )}
 
         {syncStatus?.state === "error" && syncStatus.error && (
-          <div className="shrink-0 truncate bg-destructive/10 px-3 py-1 text-[10px] text-red-400" title={syncStatus.error}>
-            Sync error: {syncStatus.error}
-          </div>
+          <Tooltip>
+            <TooltipTrigger
+              render={<div className="shrink-0 truncate bg-destructive/10 px-3 py-1 text-[10px] text-red-400" />}
+            >
+              Sync error: {syncStatus.error}
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="max-w-xs">{syncStatus.error}</TooltipContent>
+          </Tooltip>
         )}
 
         <div className="min-h-0 flex-1 overflow-y-auto" data-scrollable>
@@ -1211,24 +1216,34 @@ function AssigneeAvatarSmall({ name, avatarUrl }: { name: string; avatarUrl?: st
   const [imgFailed, setImgFailed] = useState(false);
   if (avatarUrl && !imgFailed) {
     return (
-      <img
-        src={avatarUrl}
-        alt={name}
-        width={14}
-        height={14}
-        onError={() => setImgFailed(true)}
-        title={name}
-        className="size-3.5 shrink-0 rounded-full object-cover"
-      />
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <img
+              src={avatarUrl}
+              alt={name}
+              width={14}
+              height={14}
+              onError={() => setImgFailed(true)}
+              className="size-3.5 shrink-0 rounded-full object-cover"
+            />
+          }
+        />
+        <TooltipContent side="bottom">{name}</TooltipContent>
+      </Tooltip>
     );
   }
   return (
-    <span
-      title={name}
-      className="flex size-3.5 shrink-0 items-center justify-center rounded-full bg-secondary text-[7px] font-medium text-foreground/70"
-    >
-      {name.slice(0, 2).toUpperCase()}
-    </span>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span className="flex size-3.5 shrink-0 items-center justify-center rounded-full bg-secondary text-[7px] font-medium text-foreground/70" />
+        }
+      >
+        {name.slice(0, 2).toUpperCase()}
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{name}</TooltipContent>
+    </Tooltip>
   );
 }
 

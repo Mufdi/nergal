@@ -760,9 +760,14 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
           }`}>
             PR #{prNumber}
           </span>
-          <span className="truncate text-[11px] font-medium text-foreground/90" title={title}>
-            {title}
-          </span>
+          {title && (
+            <Tooltip>
+              <TooltipTrigger render={<span className="truncate text-[11px] font-medium text-foreground/90" />}>
+                {title}
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-[10px]">{title}</TooltipContent>
+            </Tooltip>
+          )}
           <Tooltip>
             <TooltipTrigger
               render={

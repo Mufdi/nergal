@@ -981,7 +981,12 @@ function ConflictView({
             </Tooltip>
           </span>
         )}
-        <span className="truncate font-mono text-[11px] text-foreground/85" title={path}>{path}</span>
+        {path && (
+          <Tooltip>
+            <TooltipTrigger render={<span className="truncate font-mono text-[11px] text-foreground/85" />}>{path}</TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">{path}</TooltipContent>
+          </Tooltip>
+        )}
         {fileCount > 1 && (
           <span className="shrink-0 text-[9px] text-muted-foreground/70 tabular-nums">
             {files.indexOf(path) + 1}/{fileCount}

@@ -8,7 +8,7 @@ import {
   unpinNoteAtom,
 } from "@/stores/pinnedNotes";
 import { openTabAction } from "@/stores/rightPanel";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { type SearchHit } from "@/stores/search";
 import {
   obsidianConfigAtom,
@@ -168,6 +168,7 @@ export function VaultNoteFinder({ onClose, className }: { onClose: () => void; c
   }
 
   return (
+    <TooltipProvider delay={0}>
     <div
       role="dialog"
       aria-label="Find a vault note"
@@ -193,19 +194,25 @@ export function VaultNoteFinder({ onClose, className }: { onClose: () => void; c
             Ctrl+D
           </span>
         )}
-        <button
-          type="button"
-          onClick={toggleScope}
-          disabled={!subdir}
-          title={
-            subdir
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                onClick={toggleScope}
+                disabled={!subdir}
+                className="min-w-0 max-w-[45%] truncate rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground enabled:hover:text-foreground disabled:opacity-60"
+              />
+            }
+          >
+            {scopeMode === "subdir" && subdir ? subdir : "Vault"}
+          </TooltipTrigger>
+          <TooltipContent>
+            {subdir
               ? `Scope (Ctrl+D): ${scopeMode === "subdir" ? subdir : "whole vault"}`
-              : "Set a search subdir in Settings → Obsidian to scope"
-          }
-          className="min-w-0 max-w-[45%] truncate rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground enabled:hover:text-foreground disabled:opacity-60"
-        >
-          {scopeMode === "subdir" && subdir ? subdir : "Vault"}
-        </button>
+              : "Set a search subdir in Settings → Obsidian to scope"}
+          </TooltipContent>
+        </Tooltip>
       </div>
       <div ref={listRef} className="flex-1 overflow-y-auto py-1">
         {loading && results.length === 0 && (
@@ -277,5 +284,6 @@ export function VaultNoteFinder({ onClose, className }: { onClose: () => void; c
         })}
       </div>
     </div>
+    </TooltipProvider>
   );
 }

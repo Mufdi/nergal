@@ -370,6 +370,7 @@ export function PlanAnnotationFooter({ planPath, reviewStatus, onRevise, onAppro
   const isSubmitted = reviewStatus === "submitted";
 
   return (
+    <TooltipProvider delay={0}>
     <div className="border-t border-border">
       {isPending && showGlobalInput && (
         <div className="border-b border-border/50 p-2">
@@ -404,15 +405,21 @@ export function PlanAnnotationFooter({ planPath, reviewStatus, onRevise, onAppro
             <div className="flex items-center gap-2">
               <span className="text-xs text-muted-foreground">{annotations.length} annotation{annotations.length !== 1 ? "s" : ""}</span>
               {!showGlobalInput && (
-                <button
-                  type="button"
-                  onClick={() => setShowGlobalInput(true)}
-                  title="Add global comment"
-                  className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
-                >
-                  <MessageSquare className="size-3" />
-                  Comment
-                </button>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        onClick={() => setShowGlobalInput(true)}
+                        className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
+                      />
+                    }
+                  >
+                    <MessageSquare className="size-3" />
+                    Comment
+                  </TooltipTrigger>
+                  <TooltipContent>Add global comment</TooltipContent>
+                </Tooltip>
               )}
               <button
                 type="button"
@@ -444,5 +451,6 @@ export function PlanAnnotationFooter({ planPath, reviewStatus, onRevise, onAppro
         )}
       </div>
     </div>
+    </TooltipProvider>
   );
 }

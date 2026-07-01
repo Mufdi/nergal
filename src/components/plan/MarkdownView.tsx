@@ -4,6 +4,7 @@ import type { ComponentPropsWithoutRef } from "react";
 import { useEffect, useState } from "react";
 import { invoke } from "@/lib/tauri";
 import { useObsidianRemarkPlugin, isObsidianHref, openObsidianHref, obsidianUrlTransform } from "@/lib/markdown/obsidianMarkdown";
+import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
 interface MarkdownViewProps {
   content: string;
@@ -79,14 +80,22 @@ function GatedImage({ src, alt }: { src?: string; alt?: string }) {
     return <img src={src} alt={alt} className="max-w-full rounded" />;
   }
   return (
-    <button
-      type="button"
-      onClick={() => setRevealed(true)}
-      className="inline-flex items-center gap-1 rounded border border-border/50 bg-secondary/40 px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-secondary/70 hover:text-foreground transition-colors"
-      title={src ?? "image"}
-    >
-      [image{alt ? `: ${alt}` : ""} — click to load]
-    </button>
+    <TooltipProvider delay={0}>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              onClick={() => setRevealed(true)}
+              className="inline-flex items-center gap-1 rounded border border-border/50 bg-secondary/40 px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-secondary/70 hover:text-foreground transition-colors"
+            />
+          }
+        >
+          [image{alt ? `: ${alt}` : ""} — click to load]
+        </TooltipTrigger>
+        <TooltipContent className="max-w-md break-all">{src ?? "image"}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 

@@ -30,7 +30,7 @@ import { ObsidianIcon } from "@/components/icons/ObsidianIcon";
 import { ClickUpIcon } from "@/components/icons/ClickUpIcon";
 import { LinearIcon } from "@/components/icons/LinearIcon";
 import { activeSessionPinnedNotesAtom } from "@/stores/pinnedNotes";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import type { ComponentType } from "react";
 
 const TAB_ICONS: Record<TabType, ComponentType<{ size?: number | string; className?: string }>> = {
@@ -134,6 +134,7 @@ export function TabBar() {
   if (tabs.length === 0 && !showVirtual) return null;
 
   return (
+    <TooltipProvider delay={0}>
     <div className="flex shrink-0 items-center">
       <div
         ref={containerRef}
@@ -157,25 +158,31 @@ export function TabBar() {
         {viewPanel && showVirtual && ViewIcon && (
           // Virtual tab for a "tool" view panel. Active when no document tab is
           // selected; click to show it, close (X / middle-click) clears the view.
-          <div
-            data-tab-active={!activeTab}
-            onClick={() => setActiveTabId(null)}
-            onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); closeViewPanel(); } }}
-            title={viewPanelLabel(viewPanel)}
-            className={`group flex min-w-20 max-w-40 shrink-0 cursor-pointer items-center gap-1.5 px-2.5 py-1.5 text-xs transition-colors ${
-              !activeTab ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground/80"
-            }`}
-          >
-            <ViewIcon size={12} className="shrink-0" />
-            <span className="truncate">{viewPanelLabel(viewPanel)}</span>
-            <button
-              onClick={(e) => { e.stopPropagation(); closeViewPanel(); }}
-              className="ml-auto flex size-4 shrink-0 items-center justify-center rounded opacity-0 transition-opacity group-hover:opacity-100 hover:bg-secondary"
-              aria-label={`Close ${viewPanelLabel(viewPanel)}`}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <div
+                  data-tab-active={!activeTab}
+                  onClick={() => setActiveTabId(null)}
+                  onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); closeViewPanel(); } }}
+                  className={`group flex min-w-20 max-w-40 shrink-0 cursor-pointer items-center gap-1.5 px-2.5 py-1.5 text-xs transition-colors ${
+                    !activeTab ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground/80"
+                  }`}
+                />
+              }
             >
-              <X size={10} />
-            </button>
-          </div>
+              <ViewIcon size={12} className="shrink-0" />
+              <span className="truncate">{viewPanelLabel(viewPanel)}</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); closeViewPanel(); }}
+                className="ml-auto flex size-4 shrink-0 items-center justify-center rounded opacity-0 transition-opacity group-hover:opacity-100 hover:bg-secondary"
+                aria-label={`Close ${viewPanelLabel(viewPanel)}`}
+              >
+                <X size={10} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">{viewPanelLabel(viewPanel)}</TooltipContent>
+          </Tooltip>
         )}
       </div>
 
@@ -221,6 +228,7 @@ export function TabBar() {
         </div>
       )}
     </div>
+    </TooltipProvider>
   );
 }
 

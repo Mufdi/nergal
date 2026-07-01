@@ -35,6 +35,7 @@ import { PulseDots } from "@/components/ui/PulseDots";
 import {
   Tooltip,
   TooltipContent,
+  TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { activeSessionIdAtom } from "@/stores/workspace";
@@ -913,19 +914,25 @@ export function ClickUpTaskBody({ c, layout }: { c: TaskController; layout: "mod
   const closedOutEl = closedOut && task ? (
     <div className="flex items-center gap-1.5">
       <span className="rounded-full bg-green-500/15 px-1.5 text-[9px] font-medium text-green-400">done</span>
-      <button
-        type="button"
-        data-nav-key="unclose"
-        data-nav-selected={navKey === "unclose" || undefined}
-        onClick={(e) => {
-          e.stopPropagation();
-          void c.handleUncloseOut(task.id);
-        }}
-        className="rounded px-1 text-[9px] text-muted-foreground outline-none hover:text-foreground"
-        title="Unmark closed out"
-      >
-        Mark undone
-      </button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              data-nav-key="unclose"
+              data-nav-selected={navKey === "unclose" || undefined}
+              onClick={(e) => {
+                e.stopPropagation();
+                void c.handleUncloseOut(task.id);
+              }}
+              className="rounded px-1 text-[9px] text-muted-foreground outline-none hover:text-foreground"
+            />
+          }
+        >
+          Mark undone
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="text-[10px]">Unmark closed out</TooltipContent>
+      </Tooltip>
     </div>
   ) : null;
 
@@ -956,13 +963,28 @@ export function ClickUpTaskBody({ c, layout }: { c: TaskController; layout: "mod
       key={a.id ?? a.username ?? "?"}
       className="group flex items-center gap-1.5 text-[11px] text-foreground/80"
     >
-      <span
-        title={a.username ?? undefined}
-        className="flex size-4 shrink-0 items-center justify-center rounded-full text-[8px] font-medium text-white"
-        style={{ background: a.color ?? "var(--color-secondary)" }}
-      >
-        {a.initials ?? (a.username?.slice(0, 2).toUpperCase() ?? "?")}
-      </span>
+      {a.username ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                className="flex size-4 shrink-0 items-center justify-center rounded-full text-[8px] font-medium text-white"
+                style={{ background: a.color ?? "var(--color-secondary)" }}
+              />
+            }
+          >
+            {a.initials ?? (a.username?.slice(0, 2).toUpperCase() ?? "?")}
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-[10px]">{a.username}</TooltipContent>
+        </Tooltip>
+      ) : (
+        <span
+          className="flex size-4 shrink-0 items-center justify-center rounded-full text-[8px] font-medium text-white"
+          style={{ background: a.color ?? "var(--color-secondary)" }}
+        >
+          {a.initials ?? (a.username?.slice(0, 2).toUpperCase() ?? "?")}
+        </span>
+      )}
       <span className="min-w-0 flex-1 truncate">{a.username ?? "Unknown"}</span>
       {a.id !== null && (
         <Tooltip>
@@ -999,13 +1021,24 @@ export function ClickUpTaskBody({ c, layout }: { c: TaskController; layout: "mod
   );
 
   const listEl = task ? (
-    <span
-      className="inline-flex max-w-full items-center gap-1 self-start rounded bg-secondary/60 px-1.5 py-0.5 text-[10px] font-medium text-foreground/80"
-      title={task.list_name}
-    >
-      <List size={10} className="shrink-0 text-muted-foreground" />
-      <span className="truncate">{task.list_name}</span>
-    </span>
+    task.list_name ? (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span className="inline-flex max-w-full items-center gap-1 self-start rounded bg-secondary/60 px-1.5 py-0.5 text-[10px] font-medium text-foreground/80" />
+          }
+        >
+          <List size={10} className="shrink-0 text-muted-foreground" />
+          <span className="truncate">{task.list_name}</span>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="text-[10px]">{task.list_name}</TooltipContent>
+      </Tooltip>
+    ) : (
+      <span className="inline-flex max-w-full items-center gap-1 self-start rounded bg-secondary/60 px-1.5 py-0.5 text-[10px] font-medium text-foreground/80">
+        <List size={10} className="shrink-0 text-muted-foreground" />
+        <span className="truncate">{task.list_name}</span>
+      </span>
+    )
   ) : null;
 
   const tagsEl = task && task.tags.length > 0 ? (
@@ -1038,9 +1071,12 @@ export function ClickUpTaskBody({ c, layout }: { c: TaskController; layout: "mod
           return (
             <div key={cv.field_id} className="flex flex-col">
               <span className="text-[10px] text-muted-foreground">{cv.name}</span>
-              <span className="min-w-0 truncate text-foreground/80" title={rendered}>
-                {rendered}
-              </span>
+              <Tooltip>
+                <TooltipTrigger render={<span className="min-w-0 truncate text-foreground/80" />}>
+                  {rendered}
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-xs text-[10px]">{rendered}</TooltipContent>
+              </Tooltip>
             </div>
           );
         })}
@@ -1274,76 +1310,82 @@ export function ClickUpTaskBody({ c, layout }: { c: TaskController; layout: "mod
   if (isTab) {
     // Single column, centered for readability. Properties block leads (so the
     // index cursor still starts at status/due), then the main content stacks.
+    // TooltipProvider(delay-0) so the body's converted native-title tooltips
+    // fire instantly (the consumers only wrap the toolbar, not the body).
     return (
-      <div
-        ref={setOuterRef}
-        tabIndex={0}
-        data-clickup-nav-root
-        onKeyDown={c.handleNavKeyDown}
-        onClick={c.handleContainerClick}
-        className="h-full overflow-y-auto outline-none"
-      >
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-5 py-4">
-          <div className="flex flex-col gap-2">
-            <SectionCaps label="Properties" />
-            {closedOutEl}
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-              {statusEl}
-              {priorityEl}
-              {dueEl}
-              {listEl}
-              {taskIdEl}
+      <TooltipProvider delay={0}>
+        <div
+          ref={setOuterRef}
+          tabIndex={0}
+          data-clickup-nav-root
+          onKeyDown={c.handleNavKeyDown}
+          onClick={c.handleContainerClick}
+          className="h-full overflow-y-auto outline-none"
+        >
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-5 py-4">
+            <div className="flex flex-col gap-2">
+              <SectionCaps label="Properties" />
+              {closedOutEl}
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                {statusEl}
+                {priorityEl}
+                {dueEl}
+                {listEl}
+                {taskIdEl}
+              </div>
+              {assigneesEls && assigneesEls.length > 0 && (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1">{assigneesEls}</div>
+              )}
+              {tagsEl}
+              {fieldsEl}
             </div>
-            {assigneesEls && assigneesEls.length > 0 && (
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1">{assigneesEls}</div>
-            )}
-            {tagsEl}
-            {fieldsEl}
+            <div className="border-t border-border" />
+            {descriptionEl}
+            {subtasksEl}
+            {checklistsEl}
+            {attachmentsEl}
+            {commentsEl}
           </div>
-          <div className="border-t border-border" />
-          {descriptionEl}
-          {subtasksEl}
-          {checklistsEl}
-          {attachmentsEl}
-          {commentsEl}
         </div>
-      </div>
+      </TooltipProvider>
     );
   }
 
   // Modal: properties rail (DOM-first so the cursor leads with status/due,
   // order-2 places it visually on the right — Linear's issue-detail layout).
   return (
-    <div
-      ref={c.contentRef}
-      tabIndex={0}
-      onKeyDown={c.handleNavKeyDown}
-      onClick={c.handleContainerClick}
-      className="flex h-full outline-none"
-    >
-      <aside className="order-2 flex w-44 shrink-0 flex-col gap-3 border-l border-border/50 px-2.5 py-2">
-        <div className="flex flex-col gap-1.5">
-          <SectionCaps label="Properties" />
-          {closedOutEl}
-          {taskIdEl}
-          {statusEl}
-          {priorityEl}
-          {assigneesEls}
-          {dueEl}
-          {listEl}
-        </div>
-        {tagsEl}
-        {fieldsEl}
-      </aside>
+    <TooltipProvider delay={0}>
+      <div
+        ref={c.contentRef}
+        tabIndex={0}
+        onKeyDown={c.handleNavKeyDown}
+        onClick={c.handleContainerClick}
+        className="flex h-full outline-none"
+      >
+        <aside className="order-2 flex w-44 shrink-0 flex-col gap-3 border-l border-border/50 px-2.5 py-2">
+          <div className="flex flex-col gap-1.5">
+            <SectionCaps label="Properties" />
+            {closedOutEl}
+            {taskIdEl}
+            {statusEl}
+            {priorityEl}
+            {assigneesEls}
+            {dueEl}
+            {listEl}
+          </div>
+          {tagsEl}
+          {fieldsEl}
+        </aside>
 
-      <main ref={c.mainRef} className="order-1 flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-2">
-        {descriptionEl}
-        {subtasksEl}
-        {checklistsEl}
-        {attachmentsEl}
-        {commentsEl}
-      </main>
-    </div>
+        <main ref={c.mainRef} className="order-1 flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-2">
+          {descriptionEl}
+          {subtasksEl}
+          {checklistsEl}
+          {attachmentsEl}
+          {commentsEl}
+        </main>
+      </div>
+    </TooltipProvider>
   );
 }
 
@@ -1496,16 +1538,10 @@ function AttachmentChip({
     openExternalUrl(attachment.url);
   }
 
-  return (
-    <button
-      type="button"
-      data-nav-key={`att:${attachment.id}`}
-      data-nav-selected={navSelected || undefined}
-      onClick={openOriginal}
-      disabled={!attachment.url}
-      title={attachment.title ?? undefined}
-      className="group relative flex max-w-44 flex-col gap-1 rounded border border-border/60 bg-secondary/30 p-1.5 text-left outline-none transition-colors hover:border-border hover:bg-secondary/60 disabled:opacity-50"
-    >
+  const chipClass =
+    "group relative flex max-w-44 flex-col gap-1 rounded border border-border/60 bg-secondary/30 p-1.5 text-left outline-none transition-colors hover:border-border hover:bg-secondary/60 disabled:opacity-50";
+  const chipInner = (
+    <>
       {attachment.url && (
         // Download affordance: surfaces on hover (or keyboard nav-selection)
         // over the thumbnail. Decorative — the whole chip opens the URL in the
@@ -1532,6 +1568,37 @@ function AttachmentChip({
           <span className="shrink-0 text-muted-foreground">{formatBytes(attachment.size)}</span>
         )}
       </span>
+    </>
+  );
+
+  return attachment.title ? (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            data-nav-key={`att:${attachment.id}`}
+            data-nav-selected={navSelected || undefined}
+            onClick={openOriginal}
+            disabled={!attachment.url}
+            className={chipClass}
+          />
+        }
+      >
+        {chipInner}
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="max-w-xs text-[10px]">{attachment.title}</TooltipContent>
+    </Tooltip>
+  ) : (
+    <button
+      type="button"
+      data-nav-key={`att:${attachment.id}`}
+      data-nav-selected={navSelected || undefined}
+      onClick={openOriginal}
+      disabled={!attachment.url}
+      className={chipClass}
+    >
+      {chipInner}
     </button>
   );
 }

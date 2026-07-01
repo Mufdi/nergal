@@ -8,6 +8,7 @@ import { openZenModeAtom, zenModeAtom, zenActiveZoneAtom, prZenAtom } from "@/st
 import { conflictsZenOpenAtom } from "@/stores/conflict";
 import { Textarea } from "@/components/ui/textarea";
 import { Kbd } from "@/components/ui/kbd";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { DiffView } from "@/components/plan/DiffView";
 import {
   Plus,
@@ -455,13 +456,19 @@ function FileRow({
           <ChevronRight size={8} className={`transition-transform ${expanded ? "rotate-90" : ""}`} />
         </button>
         <span className={`shrink-0 font-mono text-[10px] font-bold w-3 ${color}`}>{letter}</span>
-        <button
-          onClick={onOpenZen}
-          className="min-w-0 flex-1 truncate text-left text-[11px] text-foreground/80 hover:text-foreground transition-colors"
-          title={path}
-        >
-          {filename}
-        </button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                onClick={onOpenZen}
+                className="min-w-0 flex-1 truncate text-left text-[11px] text-foreground/80 hover:text-foreground transition-colors"
+              />
+            }
+          >
+            {filename}
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-[10px]">{path}</TooltipContent>
+        </Tooltip>
         <button
           onClick={onAction}
           className="flex size-4 shrink-0 items-center justify-center rounded opacity-0 transition-opacity group-hover:opacity-100 hover:bg-secondary text-muted-foreground hover:text-foreground"

@@ -280,7 +280,7 @@ export function StatusBar() {
 
         {sl.model_name && (
           <Tooltip>
-            <TooltipTrigger className="cursor-default font-medium text-foreground">
+            <TooltipTrigger className="min-w-0 max-w-40 cursor-default truncate font-medium text-foreground">
               {sl.model_name}
             </TooltipTrigger>
             <TooltipContent>{sl.model_id ?? sl.model_name}</TooltipContent>
@@ -772,6 +772,16 @@ function LocalhostPortChips() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, ports, activeIdx]);
 
+  // Scroll the keyboard cursor into view as it moves past the fold (mirrors the
+  // notifications popover). scroll-mt on rows + a sticky hints header keep the
+  // top hints visible when wrapping last→first.
+  useEffect(() => {
+    if (!open) return;
+    popoverRef.current
+      ?.querySelector('[data-nav-selected="true"]')
+      ?.scrollIntoView({ block: "nearest" });
+  }, [activeIdx, open]);
+
   return (
     <div ref={containerRef} className="relative flex items-center">
       <Tooltip>
@@ -803,7 +813,7 @@ function LocalhostPortChips() {
             ref={popoverRef}
             className="absolute bottom-full left-1/2 z-50 mb-1.5 max-h-56 w-64 -translate-x-1/2 overflow-y-auto rounded-md border border-border bg-card py-1 shadow-lg"
           >
-            <div className="border-b border-border/40 px-2 pb-1 pt-0.5 text-[9px] text-muted-foreground/50">
+            <div className="sticky top-0 z-10 border-b border-border/40 bg-card px-2 pb-1 pt-0.5 text-[9px] text-muted-foreground/50">
               ↑↓ move · Enter free port · click opens
             </div>
             {ports.map((port, idx) => {
@@ -814,7 +824,7 @@ function LocalhostPortChips() {
                   key={port}
                   data-nav-selected={selected ? "true" : undefined}
                   onMouseEnter={() => setActiveIdx(idx)}
-                  className={`flex items-center gap-1 px-2 py-1 text-[10px] transition-colors ${selected ? "bg-secondary" : ""}`}
+                  className={`flex scroll-mt-7 items-center gap-1 px-2 py-1 text-[10px] transition-colors ${selected ? "bg-secondary" : ""}`}
                 >
                   <button
                     onClick={() => openPort(port)}

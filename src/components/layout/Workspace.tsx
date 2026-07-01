@@ -268,14 +268,18 @@ export function Workspace() {
     prevConflictCountRef.current = count;
   }, [activeSessionId, activeConflictedFiles, setSelectedConflictMap, setChipModeMap, setActivePanelView]);
 
-  // Auto-expand right panel when a plan review arrives for the active session
-  const prevPlanReviewRef = useRef<string | undefined>(undefined);
+  // Auto-expand right panel when a plan review arrives for the active session.
+  // Per-session prev-status: a single shared ref made a session switch look like
+  // a status transition (switch B→A re-satisfied pending && prev!==pending),
+  // re-opening the panel the user had hidden and stealing focus (BUG-18). The
+  // hide-gesture guard mirrors the session-switch handler above.
+  const prevPlanReviewRef = useRef<Record<string, string | undefined>>({});
   useEffect(() => {
     if (!activeSessionId) return;
     const status = planReviewMap[activeSessionId];
-    const prev = prevPlanReviewRef.current;
-    prevPlanReviewRef.current = status;
-    if (status === "pending_review" && prev !== "pending_review") {
+    const prev = prevPlanReviewRef.current[activeSessionId];
+    prevPlanReviewRef.current[activeSessionId] = status;
+    if (status === "pending_review" && prev !== "pending_review" && rightCollapsedMap[activeSessionId] !== true) {
       const planState = planStateMap[activeSessionId];
       if (planState) {
         const planName = planState.path.split("/").pop()?.replace(".md", "") ?? "Plan";
@@ -296,7 +300,7 @@ export function Workspace() {
         });
       }
     }
-  }, [activeSessionId, planReviewMap, planStateMap]);
+  }, [activeSessionId, planReviewMap, planStateMap, rightCollapsedMap]);
 
   useEffect(() => {
     if (sidebarToggle > 0) handleToggleSidebar();

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import {
   Dialog,
   DialogContent,
@@ -19,22 +19,26 @@ import {
 /// buttons). One instance lives in Workspace; `@/lib/confirm` drives it.
 ///
 /// Keyboard: Esc cancels, Enter confirms — both handled at the dialog level
-/// (Enter via the content-level `onKeyDownCapture`, Esc via Base UI). Cancel
-/// still takes initial focus so the capture handler receives the keydown, but
-/// the footer buttons suppress their focus ring: the keyboard model is
-/// dialog-level and a ring on Cancel while Enter confirms is misleading — the
-/// `Kbd` chips (esc / enter) are the real affordance.
+/// (Enter via the content-level `onKeyDownCapture`, Esc via Base UI). Initial
+/// focus goes to the dialog container (not a button): with no button focused,
+/// arrow keys can't land a ring on Cancel while the `Kbd` chip says Enter
+/// confirms, so Enter is unambiguously the proposed (destructive) action. The
+/// `Kbd` chips (esc / enter) are the affordance.
 export function ConfirmHost() {
   const active = useSyncExternalStore(
     subscribeConfirm,
     getActiveConfirm,
     getActiveConfirm,
   );
-  const cancelRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!active) return;
-    const raf = requestAnimationFrame(() => cancelRef.current?.focus());
+    const raf = requestAnimationFrame(() => {
+      // Focus the popup itself, not a footer button — the last mounted
+      // dialog-content is this confirm (portaled last while active is truthy).
+      const nodes = document.querySelectorAll<HTMLElement>('[data-slot="dialog-content"]');
+      nodes[nodes.length - 1]?.focus();
+    });
     return () => cancelAnimationFrame(raf);
   }, [active]);
 
@@ -51,6 +55,7 @@ export function ConfirmHost() {
       {opts && (
         <DialogContent
           showCloseButton={false}
+          tabIndex={-1}
           className="max-w-sm"
           onKeyDownCapture={(e) => {
             // Capture phase so Enter confirms even though focus rests on Cancel:
@@ -76,10 +81,8 @@ export function ConfirmHost() {
           )}
           <DialogFooter className="flex-nowrap gap-1.5">
             <Button
-              ref={cancelRef}
               size="sm"
               variant="secondary"
-              className="focus-visible:ring-0 focus-visible:outline-none"
               onClick={() => resolveConfirm(false)}
             >
               {opts.cancelLabel ?? "Cancel"}
@@ -88,7 +91,6 @@ export function ConfirmHost() {
             <Button
               size="sm"
               variant={destructive ? "destructive" : "default"}
-              className="focus-visible:ring-0 focus-visible:outline-none"
               onClick={() => resolveConfirm(true)}
             >
               {opts.confirmLabel ?? "Confirm"}

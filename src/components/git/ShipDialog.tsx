@@ -463,13 +463,19 @@ export function ShipDialog() {
         if (e.key === "Enter") {
           e.preventDefault();
           e.stopPropagation();
-          if (!shipping) dispatchAction(armedAction);
+          // With an existing PR the only visible primary button is Push;
+          // Ctrl+Enter must run it, not the armed commit-push action.
+          if (existingPr) {
+            if (!pushing) void pushOnly();
+          } else if (!shipping) {
+            dispatchAction(armedAction);
+          }
         }
       }
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [state.open, shipping, existingPr, armedAction, close, dispatchAction]);
+  }, [state.open, shipping, pushing, existingPr, armedAction, close, dispatchAction, pushOnly]);
 
   // Double rAF defers past Base UI's capture-phase focus trap; without it
   // focus parks on the popup wrapper and Space/Enter leak to background panels.
@@ -731,7 +737,11 @@ export function ShipDialog() {
           </Button>
           {existingPr ? (
             <Button size="sm" onClick={pushOnly} disabled={pushing || shipping || loading}>
-              {pushing ? (<>Pushing <PulseDots className="ml-1" /></>) : "Push (update PR)"}
+              {pushing ? (
+                <>Pushing <PulseDots className="ml-1" /></>
+              ) : (
+                <>Push (update PR) <Kbd keys="ctrl+enter" tone="onPrimary" className="ml-1.5" /></>
+              )}
             </Button>
           ) : (
             <>

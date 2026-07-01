@@ -23,6 +23,7 @@ Project-specific rules. Standard language conventions are not duplicated here.
 - Terminal lives outside React. `terminalService.ts` owns the canvas + glyph atlas and renders rows on `terminal:grid-update`. Do not introduce xterm.js.
 - Keyboard shortcuts use `event.code` (not `event.key`) — WebKitGTK Linux bug.
 - Verify `src/stores/shortcuts.ts` before adding a binding. Collisions silently break existing flows.
+- Keyboard-nav popovers: scroll must follow the index cursor (`scrollIntoView({ block: "nearest" })`) with a sticky hints header + `scroll-mt-*` rows — see `docs/patterns.md` §5.6.
 
 ## Comments
 

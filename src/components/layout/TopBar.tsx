@@ -15,7 +15,7 @@ import {
   currentSpecArtifactAtom,
   type TabType,
 } from "@/stores/rightPanel";
-import { toggleRightPanelAtom, triggerMergeAtom, focusZoneAtom, toggleQuake } from "@/stores/shortcuts";
+import { toggleRightPanelAtom, focusZoneAtom, toggleQuake } from "@/stores/shortcuts";
 import { quakeOpenMapAtom } from "@/stores/quake";
 import { softCloseSessionAction } from "@/stores/sessionTabs";
 import { triggerShipAtom } from "@/stores/ship";
@@ -66,7 +66,6 @@ import {
   X,
   Upload,
   Rocket,
-  GitMerge,
   AlertTriangle,
   Pin,
   SquareTerminal,
@@ -260,7 +259,6 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   const setExpand = useSetAtom(expandRightPanelAtom);
   const setFocusZone = useSetAtom(focusZoneAtom);
   const setToggleRight = useSetAtom(toggleRightPanelAtom);
-  const setTriggerMerge = useSetAtom(triggerMergeAtom);
   const setTriggerShip = useSetAtom(triggerShipAtom);
   const refreshGit = useSetAtom(refreshGitInfoAtom);
   const refreshConflicts = useSetAtom(refreshConflictedFilesAtom);
@@ -768,39 +766,21 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
             </Tooltip>
 
             {isWorktreeSession && (
-              <>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <div
-                        role="button"
-                        onClick={() => setTriggerShip({ tick: Date.now(), sessionId, inlineMessage: null })}
-                        className="flex size-7 items-center justify-center rounded text-green-500/80 hover:bg-green-500/10 hover:text-green-400 transition-colors cursor-pointer"
-                        aria-label="Ship"
-                      />
-                    }
-                  >
-                    <Rocket size={14} />
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">Ship: commit + push + PR (Ctrl+Shift+Y)</TooltipContent>
-                </Tooltip>
-
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <div
-                        role="button"
-                        onClick={() => setTriggerMerge((p) => p + 1)}
-                        className="flex size-7 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground transition-colors cursor-pointer"
-                        aria-label="Merge"
-                      />
-                    }
-                  >
-                    <GitMerge size={14} />
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">Merge (Ctrl+Shift+M)</TooltipContent>
-                </Tooltip>
-              </>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <div
+                      role="button"
+                      onClick={() => setTriggerShip({ tick: Date.now(), sessionId, inlineMessage: null })}
+                      className="flex size-7 items-center justify-center rounded text-green-500/80 hover:bg-green-500/10 hover:text-green-400 transition-colors cursor-pointer"
+                      aria-label="Ship"
+                    />
+                  }
+                >
+                  <Rocket size={14} />
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Ship: commit + push + PR (Ctrl+Shift+Y)</TooltipContent>
+              </Tooltip>
             )}
           </div>
         )}

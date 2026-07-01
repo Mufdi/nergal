@@ -286,6 +286,23 @@ Behavior contract:
 - A **textarea owns its own arrows**; `Esc` inside it backs out to the
   container. A nested popup (§7) owns the arrows entirely while open.
 
+### 5.6 Popover scroll follows the cursor
+
+A keyboard-nav popover with a scrollable list (status-bar popovers:
+`NotificationHistory`, `LocalhostPortChips` in `src/components/layout/StatusBar.tsx`)
+needs the scroll to track the index cursor — §5.5's "cursor is state, not DOM
+focus" means the container won't scroll on its own. Two parts:
+
+- **Follow the cursor**: an effect keyed on `[activeIdx, open]` that does
+  `popoverRef.current?.querySelector('[data-nav-selected="true"]')?.scrollIntoView({ block: "nearest" })`.
+  `block: "nearest"` is a no-op for already-visible rows, so mouse-hover doesn't
+  jump the list.
+- **Preserve the top hints on wrap** (last→first): don't reset `scrollTop`.
+  Make the hints header `sticky top-0 z-10 bg-card` and give each row a
+  `scroll-mt-*` equal to the header height (e.g. `scroll-mt-7` for a `~20px`
+  hint bar). `scrollIntoView` then lands the first row *below* the sticky
+  header instead of clipping it.
+
 ---
 
 ## 6. Immediate tooltips on action icons

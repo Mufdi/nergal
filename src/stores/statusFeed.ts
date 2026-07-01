@@ -19,3 +19,29 @@ export const activeIncidentsAtom = atom<ProviderStatus[]>((get) =>
     (s) => s.indicator !== "none" && s.indicator !== "unknown",
   ),
 );
+
+/// Mirrors the richer per-provider detail from `get_provider_status_detail`
+/// (src-tauri/src/feeds.rs) — rendered natively in the status-chip popover.
+export interface ProviderComponentStatus {
+  name: string;
+  status: string;
+}
+
+export interface ProviderIncidentSummary {
+  name: string;
+  impact: string;
+  status: string;
+  latest_update: string | null;
+  updated_at: string | null;
+  shortlink: string;
+}
+
+export interface ProviderStatusDetail {
+  provider: string;
+  page_name: string;
+  page_url: string;
+  indicator: string;
+  description: string;
+  components: ProviderComponentStatus[];
+  incidents: ProviderIncidentSummary[];
+}

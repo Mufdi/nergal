@@ -20,8 +20,8 @@ import { confirm as swalConfirm } from "@/lib/confirm";
 import { focusZoneAtom } from "@/stores/shortcuts";
 import * as terminalService from "@/components/terminal/terminalService";
 import { Badge } from "@/components/ui/badge";
-import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock, Globe, CalendarRange, Pencil, TriangleAlert, Timer, History, X, Copy } from "lucide-react";
-import { activeIncidentsAtom } from "@/stores/statusFeed";
+import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock, Globe, CalendarRange, Pencil, TriangleAlert, Timer, History, X, Copy, ExternalLink } from "lucide-react";
+import { activeIncidentsAtom, type ProviderStatusDetail } from "@/stores/statusFeed";
 import { notificationHistoryAtom, clearNotificationsAtom, notificationHistoryOpenAtom, type NotificationEntry } from "@/stores/notifications";
 import {
   Tooltip,
@@ -551,60 +551,157 @@ function NotificationHistory() {
 
 /// One chip per provider with an active incident (status.claude.com /
 /// status.openai.com, polled by the Rust feed). Hidden while everything is
-/// operational. Click opens the provider's status page in the in-app browser
-/// panel.
+/// operational. Clicking a chip opens a native popover with the affected
+/// components + unresolved incidents (fetched from the Statuspage summary),
+/// instead of the external browser — OpenAI's CSP blocks the in-app iframe.
 function IncidentChips() {
   const incidents = useAtomValue(activeIncidentsAtom);
-  const sessionId = useAtomValue(activeSessionIdAtom);
-  const newTab = useSetAtom(browserNewTabAction);
-  const setMode = useSetAtom(browserSetModeAction);
-  const openTab = useSetAtom(openTabAction);
-  const expandPanel = useSetAtom(expandRightPanelAtom);
+  const [openProvider, setOpenProvider] = useState<string | null>(null);
+  const [detail, setDetail] = useState<ProviderStatusDetail | null>(null);
+  const [loading, setLoading] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!openProvider) return;
+    let cancelled = false;
+    setDetail(null);
+    setLoading(true);
+    invoke<ProviderStatusDetail>("get_provider_status_detail", { provider: openProvider })
+      .then((d) => { if (!cancelled) setDetail(d); })
+      .catch(() => { if (!cancelled) setDetail(null); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [openProvider]);
+
+  useEffect(() => {
+    if (!openProvider) return;
+    function onDown(e: PointerEvent) {
+      if (!containerRef.current?.contains(e.target as Node)) setOpenProvider(null);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") { e.preventDefault(); setOpenProvider(null); }
+    }
+    document.addEventListener("pointerdown", onDown, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [openProvider]);
 
   if (incidents.length === 0) return null;
 
-  async function openStatusPage(url: string, provider: string) {
-    // status.openai.com sets frame-ancestors/CSP that the in-app iframe can't
-    // satisfy (renders a black box), so OpenAI opens externally; status.claude.com
-    // frames fine and stays in the panel.
-    if (provider !== "claude") {
-      void openShell(url).catch(() => {});
-      return;
-    }
-    if (!sessionId) return;
-    setMode({ sessionId, mode: "dock" });
-    openTab({ tab: { id: `browser:${sessionId}`, type: "browser", label: "Browser" } });
-    // Re-clicking after the right panel was hidden must re-open it — openTab only
-    // (re)activates the tab; expanding the collapsed panel needs this signal.
-    expandPanel((n) => n + 1);
-    try {
-      await newTab({ sessionId, url });
-    } catch {
-      /* status page URLs are hardcoded https — validate_url can't reject them */
-    }
-  }
-
   return (
-    <div className="flex shrink-0 items-center gap-1">
+    <div ref={containerRef} className="relative flex shrink-0 items-center gap-1">
       {incidents.map((s) => (
         <Tooltip key={s.provider}>
           <TooltipTrigger
-            onClick={() => void openStatusPage(s.url, s.provider)}
-            disabled={s.provider === "claude" && !sessionId}
-            className={`flex h-5 shrink-0 items-center gap-1 rounded px-1.5 text-[10px] font-medium leading-none whitespace-nowrap transition-colors disabled:opacity-40 ${
+            onClick={() => setOpenProvider((p) => (p === s.provider ? null : s.provider))}
+            aria-expanded={openProvider === s.provider}
+            className={`flex h-5 shrink-0 items-center gap-1 rounded px-1.5 text-[10px] font-medium leading-none whitespace-nowrap transition-colors ${
               s.indicator === "minor"
                 ? "bg-yellow-500/15 text-yellow-400 hover:bg-yellow-500/25"
                 : "bg-red-500/15 text-red-400 hover:bg-red-500/25"
-            }`}
+            } ${openProvider === s.provider ? "ring-1 ring-inset ring-current" : ""}`}
           >
             <TriangleAlert className="size-3 shrink-0" />
             {s.provider === "claude" ? "Claude" : "OpenAI"}
           </TooltipTrigger>
-          <TooltipContent>
-            {s.description} — click to open {s.url}
-          </TooltipContent>
+          <TooltipContent>{s.description}</TooltipContent>
         </Tooltip>
       ))}
+      {openProvider && (
+        <div className="absolute bottom-full right-0 z-50 mb-1.5 w-80 overflow-hidden rounded-md border border-border bg-card shadow-lg">
+          <StatusPopoverBody
+            providerLabel={openProvider === "claude" ? "Claude" : "OpenAI"}
+            detail={detail}
+            loading={loading}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function statusImpactColor(impact: string): string {
+  switch (impact) {
+    case "critical": return "bg-red-500";
+    case "major": return "bg-red-400";
+    case "minor": return "bg-yellow-500";
+    default: return "bg-muted-foreground";
+  }
+}
+
+function StatusPopoverBody({
+  providerLabel,
+  detail,
+  loading,
+}: {
+  providerLabel: string;
+  detail: ProviderStatusDetail | null;
+  loading: boolean;
+}) {
+  return (
+    <div className="max-h-80 overflow-y-auto">
+      <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-border/40 bg-card px-3 py-2">
+        <span className="min-w-0 truncate text-xs font-medium text-foreground">
+          {detail?.page_name ?? `${providerLabel} status`}
+        </span>
+        {detail && (
+          <button
+            type="button"
+            onClick={() => void openShell(detail.page_url).catch(() => {})}
+            className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+          >
+            Full page <ExternalLink className="size-3" />
+          </button>
+        )}
+      </div>
+      {loading && (
+        <div className="px-3 py-4 text-center text-[11px] text-muted-foreground">Loading…</div>
+      )}
+      {!loading && !detail && (
+        <div className="px-3 py-4 text-center text-[11px] text-muted-foreground">Couldn&apos;t load status.</div>
+      )}
+      {detail && (
+        <div className="flex flex-col gap-2 px-3 py-2">
+          {detail.description && (
+            <p className="text-[11px] text-muted-foreground">{detail.description}</p>
+          )}
+          {detail.incidents.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              {detail.incidents.map((inc) => (
+                <div key={inc.shortlink} className="rounded border border-border/40 bg-background/40 px-2 py-1.5">
+                  <div className="flex items-start gap-1.5">
+                    <span className={`mt-1 inline-block size-1.5 shrink-0 rounded-full ${statusImpactColor(inc.impact)}`} />
+                    <span className="min-w-0 flex-1 break-words text-[11px] font-medium text-foreground">{inc.name}</span>
+                    <span className="shrink-0 text-[9px] uppercase tracking-wide text-muted-foreground/70">{inc.status}</span>
+                  </div>
+                  {inc.latest_update && (
+                    <p className="mt-1 line-clamp-3 text-[10px] leading-relaxed text-muted-foreground">{inc.latest_update}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {detail.components.length > 0 && (
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                Affected components
+              </span>
+              {detail.components.map((c) => (
+                <div key={c.name} className="flex items-center justify-between gap-2 text-[10px]">
+                  <span className="min-w-0 break-words text-foreground/80">{c.name}</span>
+                  <span className="shrink-0 text-muted-foreground/70">{c.status.replace(/_/g, " ")}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {detail.incidents.length === 0 && detail.components.length === 0 && (
+            <p className="text-[11px] text-muted-foreground">No active incidents reported.</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

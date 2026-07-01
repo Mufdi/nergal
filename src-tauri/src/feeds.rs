@@ -133,6 +133,145 @@ pub async fn run_status_feed(app: AppHandle) {
     }
 }
 
+/// Richer per-provider status for the in-app popover: non-operational
+/// components + unresolved incidents, pulled from the Statuspage
+/// `summary.json` (the polled feed only carries the overall indicator).
+#[derive(Debug, Clone, Serialize)]
+pub struct ProviderStatusDetail {
+    pub provider: String,
+    pub page_name: String,
+    pub page_url: String,
+    pub indicator: String,
+    pub description: String,
+    pub components: Vec<ComponentStatus>,
+    pub incidents: Vec<IncidentSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ComponentStatus {
+    pub name: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct IncidentSummary {
+    pub name: String,
+    pub impact: String,
+    pub status: String,
+    pub latest_update: Option<String>,
+    pub updated_at: Option<String>,
+    pub shortlink: String,
+}
+
+#[derive(Deserialize)]
+struct SummaryResponse {
+    page: SummaryPage,
+    status: StatuspageStatus,
+    #[serde(default)]
+    components: Vec<SummaryComponent>,
+    #[serde(default)]
+    incidents: Vec<SummaryIncident>,
+}
+
+#[derive(Deserialize)]
+struct SummaryPage {
+    name: String,
+    url: String,
+}
+
+#[derive(Deserialize)]
+struct SummaryComponent {
+    name: String,
+    status: String,
+    /// Statuspage group headers aren't real components — skip them.
+    #[serde(default)]
+    group: bool,
+}
+
+#[derive(Deserialize)]
+struct SummaryIncident {
+    name: String,
+    impact: String,
+    status: String,
+    shortlink: String,
+    #[serde(default)]
+    incident_updates: Vec<SummaryIncidentUpdate>,
+}
+
+#[derive(Deserialize)]
+struct SummaryIncidentUpdate {
+    body: String,
+    created_at: String,
+}
+
+fn provider_summary_endpoint(provider: &str) -> Option<&'static str> {
+    match provider {
+        "claude" => Some("https://status.claude.com/api/v2/summary.json"),
+        "openai" => Some("https://status.openai.com/api/v2/summary.json"),
+        _ => None,
+    }
+}
+
+/// Fetch the provider's full Statuspage summary for the in-app status popover,
+/// so incidents render natively instead of opening the external browser
+/// (OpenAI's CSP blocks the in-app iframe).
+#[tauri::command]
+pub async fn get_provider_status_detail(provider: String) -> Result<ProviderStatusDetail, String> {
+    let endpoint = provider_summary_endpoint(&provider)
+        .ok_or_else(|| format!("unknown provider: {provider}"))?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .user_agent("nergal-status-feed")
+        .build()
+        .map_err(|e| e.to_string())?;
+    let body: SummaryResponse = client
+        .get(endpoint)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Only the actionable rows: non-operational components (skip group headers
+    // and healthy rows) and the unresolved incidents summary.json carries.
+    let components = body
+        .components
+        .into_iter()
+        .filter(|c| !c.group && c.status != "operational")
+        .map(|c| ComponentStatus {
+            name: c.name,
+            status: c.status,
+        })
+        .collect();
+    let incidents = body
+        .incidents
+        .into_iter()
+        .map(|i| {
+            // Statuspage orders incident_updates newest-first.
+            let latest = i.incident_updates.first();
+            IncidentSummary {
+                name: i.name,
+                impact: i.impact,
+                status: i.status,
+                latest_update: latest.map(|u| u.body.clone()),
+                updated_at: latest.map(|u| u.created_at.clone()),
+                shortlink: i.shortlink,
+            }
+        })
+        .collect();
+
+    Ok(ProviderStatusDetail {
+        provider,
+        page_name: body.page.name,
+        page_url: body.page.url,
+        indicator: body.status.indicator,
+        description: body.status.description,
+        components,
+        incidents,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,5 +282,35 @@ mod tests {
         let parsed: StatuspageResponse = serde_json::from_str(json).unwrap();
         assert_eq!(parsed.status.indicator, "minor");
         assert_eq!(parsed.status.description, "Partial outage");
+    }
+
+    #[test]
+    fn summary_response_parses_components_and_incidents() {
+        let json = r#"{
+            "page":{"name":"OpenAI","url":"https://status.openai.com"},
+            "status":{"indicator":"minor","description":"Partial outage"},
+            "components":[
+                {"name":"API","status":"operational","group":false},
+                {"name":"Group","status":"operational","group":true},
+                {"name":"ChatGPT","status":"degraded_performance","group":false}
+            ],
+            "incidents":[
+                {"name":"Elevated errors","impact":"minor","status":"investigating","shortlink":"https://stspg.io/x",
+                 "incident_updates":[{"body":"We are investigating.","created_at":"2026-07-01T10:00:00Z"}]}
+            ]
+        }"#;
+        let parsed: SummaryResponse = serde_json::from_str(json).unwrap();
+        let non_op: Vec<_> = parsed
+            .components
+            .iter()
+            .filter(|c| !c.group && c.status != "operational")
+            .collect();
+        assert_eq!(non_op.len(), 1);
+        assert_eq!(non_op[0].name, "ChatGPT");
+        assert_eq!(parsed.incidents.len(), 1);
+        assert_eq!(
+            parsed.incidents[0].incident_updates[0].body,
+            "We are investigating."
+        );
     }
 }

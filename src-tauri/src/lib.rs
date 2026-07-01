@@ -467,6 +467,7 @@ pub fn run() {
             commands::watch_openspec_for_session,
             commands::detect_editors,
             commands::open_in_editor,
+            feeds::get_provider_status_detail,
             commands::get_git_status,
             commands::init_git_repo,
             commands::git_rename_branch,

@@ -305,22 +305,35 @@ focus" means the container won't scroll on its own. Two parts:
 
 ---
 
-## 6. Immediate tooltips on action icons
+## 6. Immediate tooltips — the project hover, never native `title`
 
-Icon-only action buttons (panel toolbars, list-row actions, chip strips) use
-the `Tooltip` component under a `<TooltipProvider delay={0}>` — instant on
-hover, **not** the OS-delayed native `title`. Canonical: `TopBar.tsx`; reused
-in `ClickUpPanel.tsx` (`RowAction`) and `ClickUpTaskDetail.tsx`
-(`ToolbarAction`).
+Every hover tooltip in the app uses the `Tooltip` component under a
+`<TooltipProvider delay={0}>` — instant + styled, **not** the OS-delayed native
+`title`. This covers two cases:
+
+**(a) Icon-only action buttons** (panel toolbars, list-row actions, chip
+strips). Canonical: `TopBar.tsx`; reused in `ClickUpPanel.tsx` (`RowAction`) and
+`ClickUpTaskDetail.tsx` (`ToolbarAction`).
+
+**(b) Any truncated text.** Whenever text is `truncate`-clipped (branch chip,
+cwd, status-bar segments, ClickUp/Linear list-row names, file paths), it MUST
+carry the full value in a `Tooltip` — the truncation is only acceptable because
+the full string is one hover away. Canonical: the git branch chip in
+`StatusBar.tsx` (`max-w-40 truncate` + `TooltipContent` with the full branch).
 
 Contract:
 
-- Wrap the action cluster in `<TooltipProvider delay={0}>`; each button is a
-  `Tooltip` → `TooltipTrigger render={<button … />}` → `TooltipContent`.
+- A `<TooltipProvider delay={0}>` must be an ancestor. Most surfaces already
+  have one (app root in `main.tsx`, or the panel root); add one wrapping the
+  component root if not. Never nest providers.
+- Each tooltip is `Tooltip` → `TooltipTrigger render={<el … />}` →
+  `TooltipContent`. Use `render` so the SAME element (tag, className, handlers)
+  is preserved and layout doesn't change.
 - The tooltip text advertises the one-letter shortcut when one exists, e.g.
-  `"Close out task (C) — mark done & unbind"`, `"Assigned to me (A)"`.
-- Reserve native `title` for non-interactive affordances or surfaces where no
-  `TooltipProvider` is mounted.
+  `"Close out task (C) — mark done & unbind"`, `"Assigned to me (A)"`; for
+  truncated text it's just the full value.
+- Native `title` is reserved ONLY for non-hover a11y labels (e.g. an `<iframe
+  title>` accessibility name) — never as a visible hover tooltip.
 
 ## 7. Nested popups own Escape
 

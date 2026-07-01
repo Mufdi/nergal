@@ -21,7 +21,7 @@ import { focusZoneAtom } from "@/stores/shortcuts";
 import * as terminalService from "@/components/terminal/terminalService";
 import { Badge } from "@/components/ui/badge";
 import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock, Globe, CalendarRange, Pencil, TriangleAlert, Timer, History, X, Copy, ExternalLink } from "lucide-react";
-import { activeIncidentsAtom, type ProviderStatusDetail } from "@/stores/statusFeed";
+import { activeIncidentsAtom, toggleStatusPopoverAtom, type ProviderStatusDetail } from "@/stores/statusFeed";
 import { notificationHistoryAtom, clearNotificationsAtom, notificationHistoryOpenAtom, type NotificationEntry } from "@/stores/notifications";
 import {
   Tooltip,
@@ -187,13 +187,15 @@ export function StatusBar() {
           <TooltipTrigger>
             <Badge
               variant="secondary"
-              className="h-4 gap-1 px-1.5 text-[11px] leading-none"
+              className="h-4 min-w-0 max-w-40 gap-1 px-1.5 text-[11px] leading-none"
             >
               <span
                 className={`inline-block size-1.5 shrink-0 rounded-full ${dotColor}`}
                 aria-hidden="true"
               />
-              {mode}
+              {/* mode carries the running tool name during execution — truncate
+                  so a long MCP tool name can't collapse the rest of the bar. */}
+              <span className="truncate">{mode}</span>
             </Badge>
           </TooltipTrigger>
           <TooltipContent>Session mode: {mode}</TooltipContent>
@@ -556,10 +558,20 @@ function NotificationHistory() {
 /// instead of the external browser — OpenAI's CSP blocks the in-app iframe.
 function IncidentChips() {
   const incidents = useAtomValue(activeIncidentsAtom);
+  const toggleSignal = useAtomValue(toggleStatusPopoverAtom);
   const [openProvider, setOpenProvider] = useState<string | null>(null);
   const [detail, setDetail] = useState<ProviderStatusDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const firstToggleRef = useRef(true);
+
+  // Ctrl+Alt+S toggles the popover for the first provider with an incident.
+  useEffect(() => {
+    if (firstToggleRef.current) { firstToggleRef.current = false; return; }
+    if (incidents.length === 0) return;
+    setOpenProvider((p) => (p ? null : incidents[0].provider));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toggleSignal]);
 
   useEffect(() => {
     if (!openProvider) return;
@@ -671,7 +683,7 @@ function StatusPopoverBody({
           {detail.incidents.length > 0 && (
             <div className="flex flex-col gap-1.5">
               {detail.incidents.map((inc) => (
-                <div key={inc.shortlink} className="rounded border border-border/40 bg-background/40 px-2 py-1.5">
+                <div key={inc.id} className="rounded border border-border/40 bg-background/40 px-2 py-1.5">
                   <div className="flex items-start gap-1.5">
                     <span className={`mt-1 inline-block size-1.5 shrink-0 rounded-full ${statusImpactColor(inc.impact)}`} />
                     <span className="min-w-0 flex-1 break-words text-[11px] font-medium text-foreground">{inc.name}</span>

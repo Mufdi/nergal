@@ -26,6 +26,22 @@ function noteName(path: string): string {
   return base.replace(/\.md$/i, "");
 }
 
+/// Show + scope the search subdir by its vault-relative tail. A subdir
+/// configured as an absolute path (or the full path minus its leading slash)
+/// otherwise renders the whole path in the scope chip and breaks the backend
+/// join — strip the vault-root prefix so only the sub-directory shows.
+function relativeToVault(sub: string | null | undefined, root: string | null | undefined): string | null {
+  const s = sub?.trim();
+  if (!s) return null;
+  const r = root?.trim();
+  if (!r) return s;
+  const sNorm = s.replace(/^\/+/, "").replace(/\/+$/, "");
+  const rNorm = r.replace(/^\/+/, "").replace(/\/+$/, "");
+  if (sNorm === rNorm) return null; // subdir == vault root → whole vault
+  if (sNorm.startsWith(rNorm + "/")) return sNorm.slice(rNorm.length + 1);
+  return s; // already relative
+}
+
 /// Vault-note finder card, rendered inside the right panel: picker overlay
 /// over a note tab (Ctrl+Shift+K) or panel-view content when no note tab
 /// exists (Ctrl+Shift+Q). Pinned notes live as pinned tabs, so the finder
@@ -42,7 +58,7 @@ export function VaultNoteFinder({ onClose, className }: { onClose: () => void; c
 
   const scopeMode = useAtomValue(vaultSearchScopeAtom);
   const setScopeMode = useSetAtom(vaultSearchScopeAtom);
-  const subdir = cfg?.search_subdir?.trim() || null;
+  const subdir = relativeToVault(cfg?.search_subdir, cfg?.vault_root);
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchHit[]>([]);

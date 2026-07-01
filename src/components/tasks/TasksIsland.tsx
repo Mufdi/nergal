@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { activeSessionTasksAtom, clearCompletedTasksAtom, removeTaskAtom, taskMapAtom } from "@/stores/tasks";
+import { activeSessionTasksAtom, clearCompletedTasksAtom, clearAllTasksAtom, removeTaskAtom, taskMapAtom } from "@/stores/tasks";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { invoke } from "@/lib/tauri";
+import { confirm } from "@/lib/confirm";
 import type { Task } from "@/lib/types";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChevronDown, ChevronRight, Trash2, CheckCircle2, Circle } from "lucide-react";
+import { ChevronDown, ChevronRight, Trash2, ListX, CheckCircle2, Circle } from "lucide-react";
 import { PulseDots } from "@/components/ui/PulseDots";
 
 // in_progress renders as a pulsing dot (see below), not a static glyph.
@@ -23,7 +24,21 @@ const STATUS_COLOR: Record<string, string> = {
 export function TasksIsland() {
   const tasks = useAtomValue(activeSessionTasksAtom);
   const clearCompleted = useSetAtom(clearCompletedTasksAtom);
+  const clearAll = useSetAtom(clearAllTasksAtom);
   const removeTask = useSetAtom(removeTaskAtom);
+
+  async function handleDeleteAll() {
+    if (
+      await confirm({
+        title: "Delete all tasks?",
+        body: "Every task for this session will be removed, including ones the agent still tracks.",
+        destructive: true,
+        confirmLabel: "Delete all",
+      })
+    ) {
+      clearAll();
+    }
+  }
   const setTaskMap = useSetAtom(taskMapAtom);
   const sessionId = useAtomValue(activeSessionIdAtom);
   const taskMap = useAtomValue(taskMapAtom);
@@ -77,6 +92,16 @@ export function TasksIsland() {
             <Trash2 className="size-3" />
           </div>
         )}
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={(e) => { e.stopPropagation(); void handleDeleteAll(); }}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); void handleDeleteAll(); } }}
+          className={`rounded p-0.5 text-muted-foreground hover:text-destructive ${hasCompleted ? "" : "ml-1"}`}
+          aria-label="Delete all tasks"
+        >
+          <ListX className="size-3" />
+        </div>
       </button>
 
       {/* Task list */}

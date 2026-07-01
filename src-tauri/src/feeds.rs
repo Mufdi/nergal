@@ -155,12 +155,15 @@ pub struct ComponentStatus {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct IncidentSummary {
+    pub id: String,
     pub name: String,
     pub impact: String,
     pub status: String,
     pub latest_update: Option<String>,
     pub updated_at: Option<String>,
-    pub shortlink: String,
+    /// Statuspage sometimes omits the shortlink (null) — keep it optional so a
+    /// missing link doesn't fail the whole fetch.
+    pub shortlink: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -183,17 +186,21 @@ struct SummaryPage {
 struct SummaryComponent {
     name: String,
     status: String,
-    /// Statuspage group headers aren't real components — skip them.
+    /// Statuspage group headers aren't real components — skip them. The field
+    /// can be absent OR explicitly null, so it's an Option (a bare `bool` with
+    /// `#[serde(default)]` still fails on an explicit `null`).
     #[serde(default)]
-    group: bool,
+    group: Option<bool>,
 }
 
 #[derive(Deserialize)]
 struct SummaryIncident {
+    id: String,
     name: String,
     impact: String,
     status: String,
-    shortlink: String,
+    #[serde(default)]
+    shortlink: Option<String>,
     #[serde(default)]
     incident_updates: Vec<SummaryIncidentUpdate>,
 }
@@ -238,7 +245,7 @@ pub async fn get_provider_status_detail(provider: String) -> Result<ProviderStat
     let components = body
         .components
         .into_iter()
-        .filter(|c| !c.group && c.status != "operational")
+        .filter(|c| !c.group.unwrap_or(false) && c.status != "operational")
         .map(|c| ComponentStatus {
             name: c.name,
             status: c.status,
@@ -251,6 +258,7 @@ pub async fn get_provider_status_detail(provider: String) -> Result<ProviderStat
             // Statuspage orders incident_updates newest-first.
             let latest = i.incident_updates.first();
             IncidentSummary {
+                id: i.id,
                 name: i.name,
                 impact: i.impact,
                 status: i.status,
@@ -286,16 +294,18 @@ mod tests {
 
     #[test]
     fn summary_response_parses_components_and_incidents() {
+        // Real OpenAI/Claude payloads carry `group: null` on leaf components and
+        // `shortlink: null` on some incidents — both must parse, not fail.
         let json = r#"{
             "page":{"name":"OpenAI","url":"https://status.openai.com"},
             "status":{"indicator":"minor","description":"Partial outage"},
             "components":[
-                {"name":"API","status":"operational","group":false},
+                {"name":"API","status":"operational","group":null},
                 {"name":"Group","status":"operational","group":true},
-                {"name":"ChatGPT","status":"degraded_performance","group":false}
+                {"name":"ChatGPT","status":"degraded_performance","group":null}
             ],
             "incidents":[
-                {"name":"Elevated errors","impact":"minor","status":"investigating","shortlink":"https://stspg.io/x",
+                {"id":"abc","name":"Elevated errors","impact":"minor","status":"investigating","shortlink":null,
                  "incident_updates":[{"body":"We are investigating.","created_at":"2026-07-01T10:00:00Z"}]}
             ]
         }"#;
@@ -303,11 +313,13 @@ mod tests {
         let non_op: Vec<_> = parsed
             .components
             .iter()
-            .filter(|c| !c.group && c.status != "operational")
+            .filter(|c| !c.group.unwrap_or(false) && c.status != "operational")
             .collect();
         assert_eq!(non_op.len(), 1);
         assert_eq!(non_op[0].name, "ChatGPT");
         assert_eq!(parsed.incidents.len(), 1);
+        assert_eq!(parsed.incidents[0].id, "abc");
+        assert!(parsed.incidents[0].shortlink.is_none());
         assert_eq!(
             parsed.incidents[0].incident_updates[0].body,
             "We are investigating."

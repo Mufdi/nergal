@@ -5,7 +5,7 @@ import { closedTabsStackAtom } from "./shortcuts";
 import { pinnedNotesMapAtom } from "./pinnedNotes";
 import { toastsAtom } from "./toast";
 
-export type TabType = "plan" | "diff" | "spec" | "tasks" | "git" | "transcript" | "file" | "browser" | "obsidiannote" | "clickup" | "clickup-task" | "linear" | "linear-issue" | "crosssession";
+export type TabType = "plan" | "diff" | "spec" | "git" | "transcript" | "file" | "browser" | "obsidiannote" | "clickup" | "clickup-task" | "linear" | "linear-issue" | "crosssession";
 
 export type PanelCategory = "document" | "tool";
 
@@ -17,7 +17,6 @@ export function viewPanelLabel(view: TabType): string {
     file: "Files",
     diff: "Diff",
     spec: "Spec",
-    tasks: "Tasks",
     git: "Git",
     transcript: "Transcript",
     browser: "Browser",
@@ -38,7 +37,6 @@ export const PANEL_CATEGORY_MAP: Record<TabType, PanelCategory> = {
   file: "document",
   git: "tool",
   diff: "tool",
-  tasks: "document",
   browser: "tool",
   obsidiannote: "document",
   clickup: "tool",
@@ -66,7 +64,7 @@ export interface TabState {
   previewTabId: string | null;
 }
 
-const SINGLETON_TYPES: TabType[] = ["tasks", "git", "browser", "clickup", "linear", "crosssession"];
+const SINGLETON_TYPES: TabType[] = ["git", "browser", "clickup", "linear", "crosssession"];
 const defaultTabState: TabState = { tabs: [], activeTabId: null, previewTabId: null };
 
 export const expandRightPanelAtom = atom(0);

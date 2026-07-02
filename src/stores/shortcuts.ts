@@ -24,7 +24,6 @@ import { activeSessionTasksAtom, clearCompletedTasksAtom } from "./tasks";
 import { conflictsZenOpenAtom, selectedConflictFileMapAtom } from "./conflict";
 import { gitChipModeAtom } from "./git";
 import { triggerShipAtom } from "./ship";
-import { toggleStatusPopoverAtom } from "./statusFeed";
 import { toastsAtom } from "./toast";
 import { softCloseSessionAction, undoSessionCloseAction, hasPendingSessionCloseAtom } from "./sessionTabs";
 import { invoke as invokeCmd } from "@/lib/tauri";
@@ -454,7 +453,6 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     s.set(portsPopoverOpenAtom, (p) => !p);
   } },
   { id: "toggle-notifications", label: "Toggle Notification History", keys: "ctrl+alt+n", category: "navigation", keywords: ["notifications", "history", "toasts", "alerts", "log", "bell"], handler: () => store().set(notificationHistoryOpenAtom, (p) => !p) },
-  { id: "toggle-status-popover", label: "Toggle Provider Status", keys: "ctrl+alt+s", category: "navigation", keywords: ["status", "provider", "incident", "openai", "claude", "outage", "popover"], handler: () => store().set(toggleStatusPopoverAtom, (p) => p + 1) },
   { id: "nav-up", label: "Navigate Up", keys: "alt+arrowup", category: "navigation", keywords: ["navigate", "up", "item"], handler: () => navigateItems("up") },
   { id: "nav-down", label: "Navigate Down", keys: "alt+arrowdown", category: "navigation", keywords: ["navigate", "down", "item"], handler: () => navigateItems("down") },
 

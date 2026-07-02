@@ -12,10 +12,6 @@ export interface ProviderStatus {
 
 export const providerStatusAtom = atom<ProviderStatus[]>([]);
 
-/// Counter signal bumped by the Ctrl+Alt+S shortcut to toggle the provider
-/// status popover open/closed (the popover's open state is local to the chip).
-export const toggleStatusPopoverAtom = atom(0);
-
 /// Providers with an active incident — what the StatusBar chip renders.
 /// "unknown" is a fetch failure on our side, not an incident.
 export const activeIncidentsAtom = atom<ProviderStatus[]>((get) =>

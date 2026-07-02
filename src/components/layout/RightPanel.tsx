@@ -429,8 +429,6 @@ function ViewPanelContent({ view }: { view: TabType }) {
       return <FileBrowser />;
     case "diff":
       return null;
-    case "tasks":
-      return null;
     case "git":
       return <GitPanelWrapper />;
     case "spec":
@@ -452,8 +450,6 @@ function DocumentContent({ tab }: { tab: Tab }) {
   switch (tab.type) {
     case "plan":
       return <PlanContentWrapper tabId={tab.id} path={tab.data?.path as string} />;
-    case "tasks":
-      return null;
     case "transcript": {
       const sessionId = tab.data?.sessionId as string | undefined;
       return sessionId ? <TranscriptViewer sessionId={sessionId} /> : null;

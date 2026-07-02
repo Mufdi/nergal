@@ -21,7 +21,7 @@ import { focusZoneAtom } from "@/stores/shortcuts";
 import * as terminalService from "@/components/terminal/terminalService";
 import { Badge } from "@/components/ui/badge";
 import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock, Globe, CalendarRange, Pencil, TriangleAlert, Timer, History, X, Copy, ExternalLink } from "lucide-react";
-import { activeIncidentsAtom, toggleStatusPopoverAtom, type ProviderStatusDetail } from "@/stores/statusFeed";
+import { activeIncidentsAtom, type ProviderStatusDetail } from "@/stores/statusFeed";
 import { notificationHistoryAtom, clearNotificationsAtom, notificationHistoryOpenAtom, type NotificationEntry } from "@/stores/notifications";
 import {
   Tooltip,
@@ -558,20 +558,10 @@ function NotificationHistory() {
 /// instead of the external browser — OpenAI's CSP blocks the in-app iframe.
 function IncidentChips() {
   const incidents = useAtomValue(activeIncidentsAtom);
-  const toggleSignal = useAtomValue(toggleStatusPopoverAtom);
   const [openProvider, setOpenProvider] = useState<string | null>(null);
   const [detail, setDetail] = useState<ProviderStatusDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const firstToggleRef = useRef(true);
-
-  // Ctrl+Alt+S toggles the popover for the first provider with an incident.
-  useEffect(() => {
-    if (firstToggleRef.current) { firstToggleRef.current = false; return; }
-    if (incidents.length === 0) return;
-    setOpenProvider((p) => (p ? null : incidents[0].provider));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toggleSignal]);
 
   useEffect(() => {
     if (!openProvider) return;

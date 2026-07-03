@@ -47,11 +47,15 @@ Actions in the palette SHALL be grouped under category headers: Navigation, Sess
 - **THEN** actions appear under "Navigation", "Session", "Panel", "Action" category headers
 
 ### Requirement: Keybinding display
-Each action in the palette SHALL display its keyboard shortcut on the right side of the row, rendered as key badge elements (e.g., `Ctrl` `Shift` `P`).
+Each action row SHALL display its effective binding as key badges. Chord bindings (`"leader <key>"`) SHALL render as the leader combo followed by the continuation (e.g. `Ctrl+Space` `N`). Entries with `keys: ""` (palette-only actions) SHALL render with no badge and remain selectable/executable.
 
-#### Scenario: Shortcut visible
-- **WHEN** palette shows "Open Plan Panel"
-- **THEN** the row displays `Ctrl` `Shift` `P` as key badges on the right
+#### Scenario: Chord badge
+- **WHEN** the palette lists "New Session" bound to `leader n`
+- **THEN** the row shows `Ctrl+Space` `N` as badges
+
+#### Scenario: Unbound entry
+- **WHEN** the palette lists a palette-only action (e.g. "Provider status")
+- **THEN** the row shows no key badges and Enter executes it
 
 ### Requirement: Keyboard navigation in palette
 The user SHALL navigate the action list with Up/Down arrow keys. The highlighted action SHALL execute on Enter. Esc or clicking outside SHALL dismiss the palette.
@@ -110,14 +114,4 @@ The category SHALL be hidden entirely (not rendered) when no templates are prese
 - **WHEN** the palette is opened
 - **AND** no templates are registered (e.g. `templates_path` not configured)
 - **THEN** no "TEMPLATES" header SHALL render in the palette
-
-### Requirement: Backward compatibility
-Existing palette behavior MUST remain unchanged for users who never configure Obsidian. The static `shortcutRegistryAtom` literal SHALL not be reordered, renamed, or have entries removed. The dynamic-source plumbing is additive only.
-
-#### Scenario: User without templates sees no change
-
-- **WHEN** the user has no `templates_path` configured
-- **AND** opens the command palette
-- **THEN** the palette SHALL render the same categories and entries as before this change
-- **AND** the `templates` category SHALL not be rendered
 

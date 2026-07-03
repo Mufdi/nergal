@@ -53,8 +53,8 @@ Read `implementation.md` first — it carries the verified line refs and the rem
 
 - [x] 7.1 `npx tsc --noEmit` clean.
 - [x] 7.2 Frontend unit tests (keymap chord suite) green; `cd src-tauri && cargo check` (config struct) clean.
-- [ ] 7.3 Manual walk — leader: `Ctrl+Space` `c` opens ClickUp from terminal focus; timeout/Esc/re-tap cancel; which-key appears on hesitation and reflects a remap; breadcrumb visible.
-- [ ] 7.4 Manual walk — passthrough: `leader . Ctrl+K` reaches the PTY (CC kill-line); `leader Ctrl+Z` no-ops with hint (nothing reaches PTY); sloppy `Ctrl+Space Ctrl+p` fires Push.
-- [ ] 7.5 Manual walk — ownership: default mode `Ctrl+W` in terminal soft-closes session; switch to `agent` → `Ctrl+W` reaches PTY (delete-word) and `Alt+↑` reaches pi; outside terminal `Ctrl+W` still closes panel tab.
-- [ ] 7.6 Manual walk — digits: `Ctrl+Shift+3` then `Ctrl+2` lands on session 2 of project 3; `Ctrl+Shift+Enter` opens Ship from terminal.
-- [ ] 7.7 Override migration: seed a `focused-session-2` override in config, start app, confirm cleanup + notice; remap a leader continuation and confirm palette + which-key reflect it.
+- [x] 7.3 Manual walk — leader: `Ctrl+Space` `c` opens ClickUp from terminal focus; timeout/Esc/re-tap cancel; which-key appears on hesitation and reflects a remap; breadcrumb visible.
+- [x] 7.4 Manual walk — passthrough: `leader . Ctrl+K` reaches the PTY (CC kill-line); `leader Ctrl+Z` no-ops with hint (nothing reaches PTY); sloppy `Ctrl+Space Ctrl+p` fires Push.
+- [x] 7.5 Manual walk — ownership: default mode `Ctrl+W` in terminal soft-closes session; switch to `agent` → `Ctrl+W` reaches PTY (delete-word) and `Alt+↑` reaches pi; outside terminal `Ctrl+W` still closes panel tab.
+- [x] 7.6 Manual walk — digits: `Ctrl+Shift+3` then `Ctrl+2` lands on session 2 of project 3; `Ctrl+Shift+Enter` opens Ship from terminal.
+- [x] 7.7 Override migration: seed a `focused-session-2` override in config, start app, confirm cleanup + notice; remap a leader continuation and confirm palette + which-key reflect it.

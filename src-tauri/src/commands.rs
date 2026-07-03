@@ -6,6 +6,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::agents::AgentId;
 use crate::agents::ThemePalette;
 use crate::agents::claude_code::cost::{self, CostSummary};
+use crate::agents::claude_code::plan::PlanManager;
 use crate::agents::state::AgentRuntimeState;
 use crate::agents::{PlanCapability, PlanCapabilityWire};
 use crate::config::Config;
@@ -402,6 +403,20 @@ pub fn submit_ask_answer(
     Ok(())
 }
 
+/// Persists in-place edits to disk if the plan was modified, mirroring
+/// `save_plan`'s propagation so a failed write aborts the caller before a
+/// decision is sent for the still-stale-on-disk content.
+fn save_plan_edits_if_dirty(runtime: &mut PlanManager) -> Result<(), String> {
+    if let Some(plan) = &runtime.current_plan
+        && plan.content != plan.original
+    {
+        runtime
+            .save_edits(plan.content.clone())
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// Writes approval/denial decision to the FIFO, unblocking the plan-review CLI.
 #[tauri::command]
 pub fn submit_plan_decision(
@@ -414,11 +429,7 @@ pub fn submit_plan_decision(
     // If plan was edited, save to disk first
     if let Ok(mut mgr) = state.lock() {
         let runtime = mgr.get_or_create(&session_id);
-        if let Some(plan) = &runtime.current_plan
-            && plan.content != plan.original
-        {
-            let _ = runtime.save_edits(plan.content.clone());
-        }
+        save_plan_edits_if_dirty(runtime)?;
     }
 
     let decision = if approved {
@@ -463,6 +474,64 @@ pub fn submit_plan_decision(
     std::fs::write(&decision_path, &payload).map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod plan_edit_save_tests {
+    use super::{PlanManager, save_plan_edits_if_dirty};
+
+    fn dirty_plan(plans_dir: std::path::PathBuf, plan_path: std::path::PathBuf) -> PlanManager {
+        let mut mgr = PlanManager::new(plans_dir);
+        mgr.set_plan(plan_path, "original".to_string());
+        if let Some(plan) = mgr.current_plan.as_mut() {
+            plan.content = "edited".to_string();
+        }
+        mgr
+    }
+
+    #[test]
+    fn unedited_plan_is_not_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let plan_path = dir.path().join("plan.md");
+        let mut mgr = PlanManager::new(dir.path().to_path_buf());
+        mgr.set_plan(plan_path.clone(), "same".to_string());
+
+        assert!(save_plan_edits_if_dirty(&mut mgr).is_ok());
+        assert!(!plan_path.exists(), "no write when content == original");
+    }
+
+    #[test]
+    fn edited_plan_saves_successfully() {
+        let dir = tempfile::tempdir().unwrap();
+        let plan_path = dir.path().join("plan.md");
+        let mut mgr = dirty_plan(dir.path().to_path_buf(), plan_path.clone());
+
+        assert!(save_plan_edits_if_dirty(&mut mgr).is_ok());
+        assert_eq!(std::fs::read_to_string(&plan_path).unwrap(), "edited");
+    }
+
+    /// Proves the `submit_plan_decision` contract at its actual failure seam:
+    /// `?` on this call means a save failure returns before the decision
+    /// payload is ever built, so a stale-on-disk plan can never be reported
+    /// as approved. A full command-level test would need a live Tauri
+    /// `AppHandle`/`State`, which this crate has no mocking setup for
+    /// (`tauri::test` isn't enabled in Cargo.toml, and no other command test
+    /// in the codebase constructs one) — this is the closest real seam.
+    #[test]
+    fn edited_plan_save_failure_is_propagated_not_swallowed() {
+        // Nonexistent parent dir makes the write fail (NotFound), standing in
+        // for a disk-full or permissions failure without needing root.
+        let dir = tempfile::tempdir().unwrap();
+        let missing_parent = dir.path().join("does-not-exist");
+        let plan_path = missing_parent.join("plan.md");
+        let mut mgr = dirty_plan(dir.path().to_path_buf(), plan_path);
+
+        let result = save_plan_edits_if_dirty(&mut mgr);
+        assert!(
+            result.is_err(),
+            "save failure must surface as Err, not be discarded"
+        );
+    }
 }
 
 // -- Plan list command --

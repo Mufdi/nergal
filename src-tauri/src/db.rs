@@ -1883,6 +1883,38 @@ mod tests {
     }
 
     #[test]
+    fn cost_is_keyed_by_the_id_passed_in_not_a_second_id() {
+        // Guards the id-resolution fix at the Stop-handler call site: cost
+        // must be upserted under the Nergal session id, never the transient
+        // CC-internal id, or a resume (new CC-internal id) would fragment
+        // cost history across orphaned rows.
+        let db = in_memory();
+        let nergal_id = "nergal-s1";
+        let cc_internal_id = "cc-internal-abc123";
+        seed_session(&db, nergal_id);
+
+        let cost = CostSummary {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_read_tokens: 10,
+            cache_write_tokens: 5,
+            total_usd: 1.23,
+        };
+
+        // Mirrors `nergal_session_id.unwrap_or(session_id)` in the Stop handler.
+        let resolved_id = Some(nergal_id).unwrap_or(cc_internal_id);
+        db.upsert_cost(resolved_id, &cost).unwrap();
+
+        let got = db.get_cost(nergal_id).unwrap().unwrap();
+        assert_eq!(got.input_tokens, 100);
+        assert_eq!(got.total_usd, 1.23);
+        assert!(
+            db.get_cost(cc_internal_id).unwrap().is_none(),
+            "cost must not land under the CC-internal id"
+        );
+    }
+
+    #[test]
     fn deleting_session_cascades_summary_and_transcript() {
         let db = in_memory();
         seed_session(&db, "s1");

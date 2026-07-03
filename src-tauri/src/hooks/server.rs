@@ -906,8 +906,11 @@ fn process_event(
                 &std::path::PathBuf::from(path),
             );
 
-            if let Ok(db_guard) = db.lock() {
-                let _ = db_guard.upsert_cost(session_id, &cost);
+            let csid = nergal_session_id.unwrap_or(session_id);
+            if let Ok(db_guard) = db.lock()
+                && let Err(e) = db_guard.upsert_cost(csid, &cost)
+            {
+                tracing::warn!("upsert_cost failed for session {csid}: {e}");
             }
 
             #[derive(Clone, serde::Serialize)]
@@ -922,7 +925,7 @@ fn process_event(
             let _ = app.emit(
                 "cost:update",
                 CostUpdate {
-                    session_id: nergal_session_id.unwrap_or(session_id).to_string(),
+                    session_id: csid.to_string(),
                     input_tokens: cost.input_tokens,
                     output_tokens: cost.output_tokens,
                     cache_read: cost.cache_read_tokens,

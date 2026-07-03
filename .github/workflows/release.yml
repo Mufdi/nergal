@@ -6,7 +6,70 @@ on:
       - 'v*'
 
 jobs:
+  # Tag pushes from the release script bypass PR gates (the release script
+  # pushes main directly, not guaranteed to have gone through a PR) — this is
+  # the only sound pre-build gate (design.md D3). No bundle is built or
+  # published from a tree that fails verification.
+  verify:
+    name: Verify (Full check + tsc + release scripts test)
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: verify-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            verify-
+
+      - name: Install Linux system dependencies
+        uses: ./.github/actions/linux-deps
+
+      - name: Install JS deps
+        run: pnpm install --frozen-lockfile
+
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy -- -D warnings
+
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: cargo fmt --check
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      - name: tsc --noEmit
+        run: npx tsc --noEmit
+
+      - name: pnpm release:test
+        run: pnpm release:test
+
   build-linux:
+    needs: [verify]
     runs-on: ubuntu-22.04
     permissions:
       contents: read
@@ -45,18 +108,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libsoup-3.0-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            gstreamer1.0-plugins-base \
-            gstreamer1.0-plugins-good
+      - name: Install Linux system dependencies
+        uses: ./.github/actions/linux-deps
 
       - name: Install JS deps
         run: pnpm install --frozen-lockfile
@@ -96,6 +149,7 @@ jobs:
           path: linux-platform.json
 
   build-macos:
+    needs: [verify]
     runs-on: macos-latest
     permissions:
       contents: read
@@ -169,6 +223,7 @@ jobs:
           path: macos-platform.json
 
   build-windows:
+    needs: [verify]
     runs-on: windows-latest
     permissions:
       contents: read

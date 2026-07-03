@@ -3,19 +3,82 @@ name: CI
 on:
   pull_request:
     paths:
-      # The crate manifest AND Cargo.lock both live under src-tauri/, so this
-      # one filter also covers dependency bumps. If a future workspace
-      # restructure moves Cargo.lock to the repo root, ADD that path here —
-      # otherwise a dep bump could break macOS while this gate silently skips.
+      # Union of every job's inputs below: the `changes` job narrows this
+      # down per-job via dorny/paths-filter, so widening the trigger here
+      # does not widen which jobs actually run for a given PR. The crate
+      # manifest AND Cargo.lock both live under src-tauri/, so this filter
+      # also covers dependency bumps. If a future workspace restructure moves
+      # Cargo.lock to the repo root, ADD that path here — otherwise a dep
+      # bump could break macOS while this gate silently skips.
       - 'src-tauri/**'
+      - 'src/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'tsconfig.json'
+      - 'index.html'
+      - 'vite.config.ts'
+      - 'scripts/**'
       - '.github/workflows/ci.yml'
+      - '.github/actions/**'
   push:
     branches: [main]
     paths:
       - 'src-tauri/**'
+      - 'src/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'tsconfig.json'
+      - 'index.html'
+      - 'vite.config.ts'
+      - 'scripts/**'
       - '.github/workflows/ci.yml'
+      - '.github/actions/**'
+  workflow_dispatch:
 
 jobs:
+  # Narrows the union trigger above down to per-job conditions, so a
+  # frontend-only PR doesn't burn macOS/Windows/Rust CI minutes and vice
+  # versa (design.md D1). `base: main` is required for push events since
+  # paths-filter has no PR diff to compare against on push.
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-22.04
+    # Job-level permissions REPLACE the default set: contents: read must be
+    # explicit or the checkout step (needed by paths-filter on push events)
+    # loses repo read access.
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      scripts: ${{ steps.filter.outputs.scripts }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Filter changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          base: main
+          filters: |
+            rust:
+              - 'src-tauri/**'
+              - '.github/workflows/ci.yml'
+              - '.github/actions/**'
+            frontend:
+              - 'src/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'tsconfig.json'
+              - 'index.html'
+              - 'vite.config.ts'
+            scripts:
+              - 'scripts/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+
   # Catches macOS-BREAKING (Linux-only) regressions before they land: a new
   # `cfg(target_os = "linux")`-only construct, an unconditional Linux-only
   # dependency, etc. It does NOT catch a newly-added *ungated* `std::os::unix`
@@ -29,6 +92,8 @@ jobs:
   # objc stack before ever reaching our crate (empirically verified, D5).
   macos-cross-check:
     name: macOS compile gate (cargo check aarch64-apple-darwin)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -67,6 +132,8 @@ jobs:
   # Windows uses bundled WebView2.
   windows-check:
     name: Windows compile gate (cargo check x86_64-pc-windows-msvc)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -91,3 +158,99 @@ jobs:
       - name: cargo check (x86_64-pc-windows-msvc)
         working-directory: src-tauri
         run: cargo check --target x86_64-pc-windows-msvc
+
+  # The documented "Full check" (CLAUDE.md) run on ubuntu, the same OS the
+  # release build compiles on. Deny warnings on clippy: the gate must land
+  # green, not just non-fatal (design.md D4).
+  lint-and-test:
+    name: Rust lint + test (clippy, cargo test, fmt --check)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: lint-test-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            lint-test-
+
+      - name: Install Linux system dependencies
+        uses: ./.github/actions/linux-deps
+
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy -- -D warnings
+
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: cargo fmt --check
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+  # Frontend-only PRs previously ran zero CI (the old path filter was
+  # src-tauri/** only) — this closes that gap.
+  frontend-check:
+    name: Frontend type check (tsc --noEmit)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install JS deps
+        run: pnpm install --frozen-lockfile
+
+      - name: tsc --noEmit
+        run: npx tsc --noEmit
+
+  # pnpm release:test (package.json) never ran in CI before this change.
+  release-scripts-test:
+    name: Release scripts test (pnpm release:test)
+    needs: changes
+    if: needs.changes.outputs.scripts == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install JS deps
+        run: pnpm install --frozen-lockfile
+
+      - name: pnpm release:test
+        run: pnpm release:test

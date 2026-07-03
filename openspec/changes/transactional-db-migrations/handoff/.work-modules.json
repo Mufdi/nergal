@@ -1,0 +1,31 @@
+{
+  "tier": "M",
+  "tier_source": "audit-finding CORRECTNESS-04 (Mode C bridge)",
+  "ceremony": "standard",
+  "risk_tier": "medium",
+  "files_estimate": 3,
+  "tags": ["correctness", "migration"],
+  "visibility": "public",
+  "spec_target": "db-migration-runner",
+  "rigor_applied": {
+    "discovery_invoked": true,
+    "iprev_rounds": 2,
+    "iprev_status": "APPROVED (round 1 already APPROVED; round 2 confirmed after adding a testable apply_migration seam + preserving the drop-if-exists recovery)",
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": "spec-reviewer (tags include migration; DB-change mechanism)",
+    "gates_phases_run": ["compile", "test", "lint"],
+    "per_phase_models": {
+      "design": "fable-5",
+      "implementation": "sonnet",
+      "validation": "fable-5",
+      "exploration": "haiku"
+    }
+  },
+  "interview_answers": {
+    "note": "Mode C default-selected (Band A). tags include 'migration' → iprev-eligible per A3 rule; kept at 0 rounds for now (small, well-understood change) but flagged for spec-reviewer since it touches the DB migration mechanism. The 022 nested-transaction edge is the one real subtlety. Model note: Fable 5 per user."
+  },
+  "events": [
+    { "type": "mode-c-bridge", "reason": "seeded from audit finding CORRECTNESS-04 (non-transactional migration runner)" },
+    { "type": "iprev", "reason": "A3 (tag migration); 2 rounds, claude/Fable evaluator, APPROVED" }
+  ]
+}

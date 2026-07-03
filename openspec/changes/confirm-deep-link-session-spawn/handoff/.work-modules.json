@@ -1,0 +1,31 @@
+{
+  "tier": "S",
+  "tier_source": "audit-finding SECURITY-01+02 (Mode C bridge)",
+  "ceremony": "standard",
+  "risk_tier": "critical",
+  "files_estimate": 3,
+  "tags": ["security"],
+  "visibility": "public",
+  "spec_target": "session-launch-options",
+  "rigor_applied": {
+    "discovery_invoked": true,
+    "iprev_rounds": 2,
+    "iprev_status": "APPROVED (round 2, claude/Fable evaluator; round 1 found open-file also spawns an agent + needs pre-creation probe + unsafe Enter-default confirm)",
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": "security-reviewer (risk_tier critical)",
+    "gates_phases_run": ["compile", "test", "lint", "security"],
+    "per_phase_models": {
+      "design": "fable-5",
+      "implementation": "sonnet",
+      "validation": "fable-5",
+      "exploration": "haiku"
+    }
+  },
+  "interview_answers": {
+    "note": "Mode C default-selected (Band A). Depends on escapeHtml shared helper from Band-B change (soft dep, inline-escape fallback documented). Model note: Fable 5 substituted wherever the skill specifies Opus, per user."
+  },
+  "events": [
+    { "type": "mode-c-bridge", "reason": "seeded from audit findings SECURITY-01 (deep-link auto-submit) + SECURITY-02 (unvalidated create_workspace)" },
+    { "type": "iprev", "reason": "A3 (risk critical); 2 rounds, claude/Fable evaluator, APPROVED — round 1 caught open-file spawn vector" }
+  ]
+}

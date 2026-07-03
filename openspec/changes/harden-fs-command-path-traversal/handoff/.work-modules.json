@@ -1,0 +1,31 @@
+{
+  "tier": "S",
+  "tier_source": "audit-finding CORRECTNESS-01 (Mode C bridge)",
+  "ceremony": "standard",
+  "risk_tier": "critical",
+  "files_estimate": 3,
+  "tags": ["security", "correctness"],
+  "visibility": "public",
+  "spec_target": "session-fs-access",
+  "rigor_applied": {
+    "discovery_invoked": true,
+    "iprev_rounds": 2,
+    "iprev_status": "APPROVED (round 2, claude/Fable evaluator; round 1 found absolute-path regression + missing 7th command + openspec create-parent + change_name param)",
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": "security-reviewer (risk_tier critical)",
+    "gates_phases_run": ["compile", "test", "lint", "security"],
+    "per_phase_models": {
+      "design": "fable-5",
+      "implementation": "sonnet",
+      "validation": "fable-5",
+      "exploration": "haiku"
+    }
+  },
+  "interview_answers": {
+    "note": "Mode C default-selected (Band A). Security-critical: risk_tier=critical forces security-reviewer + iprev-eligible even at tier S. Model note: user directed Fable 5 wherever the skill specifies Opus."
+  },
+  "events": [
+    { "type": "mode-c-bridge", "reason": "seeded from audit finding CORRECTNESS-01 (path traversal in 6 fs commands; iprev found a 7th)" },
+    { "type": "iprev", "reason": "A3 (risk critical); 2 rounds, claude/Fable evaluator, APPROVED" }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "tier": "XS",
+  "tier_source": "audit-findings CORRECTNESS-06 + CORRECTNESS-07 (Mode C bridge)",
+  "ceremony": "quick-fix",
+  "risk_tier": "medium",
+  "files_estimate": 2,
+  "tags": ["correctness", "bug"],
+  "visibility": "public",
+  "spec_target": "session-summary, plan-panel-multi-agent",
+  "rigor_applied": {
+    "discovery_invoked": true,
+    "iprev_rounds": 0,
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": ["compile", "test", "lint"],
+    "per_phase_models": {
+      "design": "fable-5",
+      "implementation": "haiku",
+      "validation": "fable-5",
+      "exploration": "haiku"
+    }
+  },
+  "interview_answers": {
+    "note": "Mode C default-selected (Band A). Two XS one-to-two-line fixes grouped on the same hook/plan surface. Implementation tier haiku (mechanical, each fix mirrors an existing correct sibling). risk_tier medium (silent data integrity) but change is trivial. Model note: Fable 5 substituted wherever the skill specifies Opus (design/validation)."
+  },
+  "events": [
+    { "type": "mode-c-bridge", "reason": "seeded from audit findings CORRECTNESS-06 (wrong cost session key) + CORRECTNESS-07 (discarded plan save error)" }
+  ]
+}

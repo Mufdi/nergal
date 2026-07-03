@@ -1,0 +1,29 @@
+{
+  "tier": "S",
+  "tier_source": "audit-finding CORRECTNESS-02 (Mode C bridge)",
+  "ceremony": "quick-fix",
+  "risk_tier": "medium",
+  "files_estimate": 1,
+  "tags": ["correctness", "bug"],
+  "visibility": "public",
+  "spec_target": "plan-panel-multi-agent",
+  "rigor_applied": {
+    "discovery_invoked": true,
+    "iprev_rounds": 0,
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": ["compile", "test", "lint"],
+    "per_phase_models": {
+      "design": "fable-5",
+      "implementation": "sonnet",
+      "validation": "fable-5",
+      "exploration": "haiku"
+    }
+  },
+  "interview_answers": {
+    "note": "Mode C default-selected (Band A). Quick-fix ceremony: 1 file, unambiguous bug on the safety-net path. Touches hook IPC → single-sequential reviewer sufficient (not auth/crypto). Model note: Fable 5 per user."
+  },
+  "events": [
+    { "type": "mode-c-bridge", "reason": "seeded from audit finding CORRECTNESS-02 (double JSON on plan-review fallback)" }
+  ]
+}

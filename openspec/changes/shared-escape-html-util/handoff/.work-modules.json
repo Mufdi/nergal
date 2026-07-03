@@ -1,0 +1,30 @@
+{
+  "tier": "XS",
+  "tier_source": "audit-finding SECURITY-04 (Mode C bridge)",
+  "ceremony": "quick-fix",
+  "risk_tier": "medium",
+  "files_estimate": 6,
+  "tags": ["security"],
+  "visibility": "public",
+  "spec_target": "html-escaping-contract",
+  "rigor_applied": {
+    "discovery_invoked": true,
+    "iprev_rounds": 2,
+    "iprev_status": "APPROVED (round 2, claude/Fable evaluator; round 1 found 2 more unescaped SettingsPanel sites + dead confirm.ts pointer + need for an enforceable lint)",
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": "security-reviewer (tag security)",
+    "gates_phases_run": ["compile", "test", "lint", "security"],
+    "per_phase_models": {
+      "design": "fable-5",
+      "implementation": "haiku",
+      "validation": "fable-5",
+      "exploration": "haiku"
+    }
+  },
+  "interview_answers": {
+    "note": "Security batch (runs on Opus 4.8 due to Fable 5 cybersecurity safeguard auto-switch — see openspec/_audit-handoff-nonsecurity.md rationale). tag security → A3 iprev eligible; reviewed in the security-batch iprev pass. Shared dependency of confirm-deep-link-session-spawn. per_phase_models kept fable-5 to honor the opus→Fable redirect for design/validation."
+  },
+  "events": [
+    { "type": "mode-c-bridge", "reason": "seeded from audit finding SECURITY-04 (inconsistent escaping into ConfirmHost sink)" }
+  ]
+}

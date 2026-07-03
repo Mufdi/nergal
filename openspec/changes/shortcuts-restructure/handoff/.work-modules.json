@@ -1,0 +1,43 @@
+{
+  "tier": "L",
+  "tier_source": "heuristic",
+  "ceremony": "deep",
+  "risk_tier": "medium",
+  "files_estimate": 12,
+  "tags": ["feature", "ux", "keymap", "breaking-muscle-memory"],
+  "visibility": "private",
+  "spec_target": "keyboard-shortcuts, command-palette",
+  "rigor_applied": {
+    "discovery_invoked": true,
+    "discovery_mode": "in-conversation (user-led bullets, refinement_resolved=true; design pre-iterated across 2 sessions in vault doc)",
+    "iprev_rounds": 2,
+    "iprev_note": "run 2026-07-03 post-landing at user request (evaluator: fable subagent). R1: NEEDS-REVISION (1 CRIT + 5 MAJ + 6 MIN, all fixed). R2: APPROVED (2 MINOR leftovers fixed post-approval). Full log: handoff/REVIEW.md",
+    "reviewer_mode": "deferred-to-mode-b",
+    "reviewer_escalation": null,
+    "gates_phases_run": [],
+    "per_phase_models": {
+      "design": "main-session",
+      "implementation": "sonnet (Mode B, not executed)",
+      "implementation_mechanical": "haiku",
+      "validation": "opus",
+      "exploration": "main-session"
+    }
+  },
+  "interview_answers": {
+    "ctrl_b_sidebar": "keep ctrl+b sidebar (scope app) + keep ctrl+shift+b right panel (user high-frequency)",
+    "ship": "ctrl+shift+enter approved",
+    "docs_file": "yes, bounded: docs/shortcuts.md = derived rules + provenance; full inventories stay in vault; re-verify via CC release sweep",
+    "zen": "leader 0 (misclick safety over z)",
+    "sec_1_5": "clarified: v1 flat = leader p directly; leader g p is deferred prefix-tree evolution",
+    "digits": "ctrl+shift+1..9 = projects; ctrl+alt tier dies entirely",
+    "ports": "leader o (2nd round swap 2026-07-03); ctrl+shift+o goes to the Obsidian panel (true mnemonic, was ctrl+shift+q)",
+    "provider_status": "demote to palette-only entry (new)",
+    "leader_timeout": "2s; which-key delay 150ms",
+    "onboarding": "ownership step added to setup-wizard change",
+    "hints": "full sweep of visible hints + palette + keymap settings in scope"
+  },
+  "events": [
+    { "ts": "2026-07-03", "type": "mode-a-landing", "reason": "user requested Mode A: document the change, no implementation" }
+  ],
+  "interview_ts": "2026-07-03"
+}

@@ -27,8 +27,9 @@
 - [ ] 4.2 Step: hooks — show state; when missing, prominent "Configure" button → `invoke("setup_hooks")` → `refreshSetupStatus()`; show the `~/.claude/settings.json` path being touched.
 - [ ] 4.3 Step: agent presence — reuse `list_available_agents`/`availableAgentsAtom`; if none `installed`, show install guidance (no auto-install).
 - [ ] 4.4 Step: suggestions — default-agent pick (when >1 installed), resolved shell, transcripts dir; non-critical, never gate completion.
-- [ ] 4.5 Step: platform note — render per-OS card from `installSource` (reuse the `AboutSection` fetch pattern, `SettingsPanel.tsx:2042-2058`).
-- [ ] 4.6 Skippable: closing the wizard sets `onboarding_completed=true` via `save_config` (frontend-writable path) and re-reads config.
+- [ ] 4.5 Step: keyboard ownership — present the `keyboard_ownership` choice (`nergal` default vs `agent`) with a one-line explanation per mode; write via `save_config` (frontend-owned key, defined by the `shortcuts-restructure` change). If that change hasn't landed the config key yet, omit the step at runtime.
+- [ ] 4.6 Step: platform note — render per-OS card from `installSource` (reuse the `AboutSection` fetch pattern, `SettingsPanel.tsx:2042-2058`).
+- [ ] 4.7 Skippable: closing the wizard sets `onboarding_completed=true` via `save_config` (frontend-writable path) and re-reads config.
 
 ## 5. Frontend — first-run trigger + mount + re-entry
 

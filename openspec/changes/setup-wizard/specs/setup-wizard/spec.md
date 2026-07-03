@@ -100,3 +100,14 @@ The wizard SHALL render a platform-specific note derived from the install source
 #### Scenario: Note matches the install source
 - **WHEN** the install source resolves to a given OS
 - **THEN** only that OS's note is shown
+
+### Requirement: Keyboard ownership preference step
+The wizard SHALL present the `keyboard_ownership` choice (`nergal` default vs `agent`) with a one-line explanation per mode and persist the selection to config. The step is informational and MUST NOT gate the "all set" state. The switch semantics are owned by the `keyboard-shortcuts` capability (see the `shortcuts-restructure` change); if the config key does not exist at runtime, the wizard SHALL omit the step.
+
+#### Scenario: Default preselected
+- **WHEN** the ownership step renders
+- **THEN** `nergal` is preselected and completing the step without changes persists `keyboard_ownership: "nergal"`
+
+#### Scenario: Step omitted when the key is not available
+- **WHEN** the running build predates the shortcuts restructure (no `keyboard_ownership` in config)
+- **THEN** the wizard skips the ownership step entirely

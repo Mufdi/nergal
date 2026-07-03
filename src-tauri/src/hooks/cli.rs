@@ -247,45 +247,50 @@ pub fn plan_review(socket_path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         let decision_str = blocking_fifo_read_liveness_aware(&fifo_path, gui_token)?;
-        let decision: serde_json::Value =
-            serde_json::from_str(decision_str.trim()).context("parsing decision JSON")?;
-
-        let approved = decision
-            .get("approved")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
-
-        if approved {
-            output_allow()?;
-        } else {
-            let message = decision
-                .get("message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Plan changes requested");
-            output_deny(message)?;
+        match parse_plan_review_decision(&decision_str)? {
+            PlanReviewDecision::Allow => output_allow()?,
+            PlanReviewDecision::Deny(message) => output_deny(&message)?,
         }
     }
     #[cfg(windows)]
     {
         let decision_str = blocking_pipe_read_liveness_aware(&mut pipe_server, gui_token)?;
-        let decision: serde_json::Value =
-            serde_json::from_str(decision_str.trim()).context("parsing decision JSON")?;
-        let approved = decision
-            .get("approved")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
-        if approved {
-            output_allow()?;
-        } else {
-            let message = decision
-                .get("message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Plan changes requested");
-            output_deny(message)?;
+        match parse_plan_review_decision(&decision_str)? {
+            PlanReviewDecision::Allow => output_allow()?,
+            PlanReviewDecision::Deny(message) => output_deny(&message)?,
         }
     }
 
     Ok(())
+}
+
+/// Maps a decision JSON string — a real FIFO/pipe decision or one of the
+/// liveness-aware readers' safe-deny sentinels — to a single stdout action.
+/// `plan_review()` is the only caller and the only stdout writer; extracted as
+/// a pure function so the single-decision invariant (never two concatenated
+/// `hookSpecificOutput` objects) is unit-testable without a real FIFO/timer.
+#[derive(Debug, PartialEq)]
+enum PlanReviewDecision {
+    Allow,
+    Deny(String),
+}
+
+fn parse_plan_review_decision(decision_str: &str) -> Result<PlanReviewDecision> {
+    let decision: serde_json::Value =
+        serde_json::from_str(decision_str.trim()).context("parsing decision JSON")?;
+    let approved = decision
+        .get("approved")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    if approved {
+        return Ok(PlanReviewDecision::Allow);
+    }
+    let message = decision
+        .get("message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Plan changes requested")
+        .to_string();
+    Ok(PlanReviewDecision::Deny(message))
 }
 
 /// Blocking FIFO read with GUI liveness awareness.
@@ -345,10 +350,12 @@ fn blocking_fifo_read_liveness_aware(
                 ipc_event = "dead_peer_deny",
                 "plan-review wall-clock backstop reached; resolving to safe deny"
             );
-            output_deny("Plan review timed out — please resubmit")
-                .context("writing wall-clock deny")?;
-            // Return a safe-deny sentinel; plan_review() already wrote to stdout
-            return Ok(r#"{"approved":false,"message":"wall_clock_backstop"}"#.to_string());
+            // Return-only: plan_review() is the sole stdout writer (single-decision invariant).
+            let sentinel = serde_json::json!({
+                "approved": false,
+                "message": "Plan review timed out — please resubmit"
+            });
+            return Ok(sentinel.to_string());
         }
 
         let mut pfd = libc::pollfd {
@@ -375,9 +382,12 @@ fn blocking_fifo_read_liveness_aware(
                 && !crate::platform::check_gui_liveness(pid, start_time)
             {
                 // GUI dead — safe deny so the agent loop is not hung.
-                output_deny("Nergal GUI is no longer running — plan review cancelled")
-                    .context("writing dead-GUI deny")?;
-                return Ok(r#"{"approved":false,"message":"gui_dead"}"#.to_string());
+                // Return-only: plan_review() is the sole stdout writer.
+                let sentinel = serde_json::json!({
+                    "approved": false,
+                    "message": "Nergal GUI is no longer running — plan review cancelled"
+                });
+                return Ok(sentinel.to_string());
             }
             // GUI alive (or unknown) — keep waiting
             continue;
@@ -428,9 +438,12 @@ fn blocking_pipe_read_liveness_aware(
                 ipc_event = "dead_peer_deny",
                 "plan-review wall-clock backstop reached; resolving to safe deny"
             );
-            output_deny("Plan review timed out — please resubmit")
-                .context("writing wall-clock deny")?;
-            return Ok(r#"{"approved":false,"message":"wall_clock_backstop"}"#.to_string());
+            // Return-only: plan_review() is the sole stdout writer (single-decision invariant).
+            let sentinel = serde_json::json!({
+                "approved": false,
+                "message": "Plan review timed out — please resubmit"
+            });
+            return Ok(sentinel.to_string());
         }
 
         match server.accept_with_timeout(TICK_MS)? {
@@ -439,9 +452,12 @@ fn blocking_pipe_read_liveness_aware(
                 if let Some((pid, start_time)) = gui_token
                     && !crate::platform::check_gui_liveness(pid, start_time)
                 {
-                    output_deny("Nergal GUI is no longer running — plan review cancelled")
-                        .context("writing dead-GUI deny")?;
-                    return Ok(r#"{"approved":false,"message":"gui_dead"}"#.to_string());
+                    // Return-only: plan_review() is the sole stdout writer.
+                    let sentinel = serde_json::json!({
+                        "approved": false,
+                        "message": "Nergal GUI is no longer running — plan review cancelled"
+                    });
+                    return Ok(sentinel.to_string());
                 }
                 // GUI alive (or unknown) — keep waiting.
             }
@@ -453,9 +469,13 @@ fn blocking_pipe_read_liveness_aware(
                         principal = %peer.display(),
                         "plan-review connection from a foreign principal — denying"
                     );
-                    output_deny("Plan review rejected — connection from another user")
-                        .context("writing foreign-principal deny")?;
-                    return Ok(r#"{"approved":false,"message":"foreign_principal"}"#.to_string());
+                    // Return-only: same double-write bug as the backstop/dead-GUI
+                    // branches above — plan_review() is the sole stdout writer.
+                    let sentinel = serde_json::json!({
+                        "approved": false,
+                        "message": "Plan review rejected — connection from another user"
+                    });
+                    return Ok(sentinel.to_string());
                 }
                 let mut decision = String::new();
                 stream
@@ -804,5 +824,53 @@ mod tests {
     #[test]
     fn tui_text_empty_for_empty_snapshot() {
         assert_eq!(statusline_tui_text(&serde_json::json!({})), "");
+    }
+
+    #[test]
+    fn wall_clock_sentinel_maps_to_single_deny_with_timeout_message() {
+        let sentinel = r#"{"approved":false,"message":"Plan review timed out — please resubmit"}"#;
+        assert_eq!(
+            parse_plan_review_decision(sentinel).unwrap(),
+            PlanReviewDecision::Deny("Plan review timed out — please resubmit".to_string())
+        );
+    }
+
+    #[test]
+    fn dead_gui_sentinel_maps_to_single_deny_with_gui_gone_message() {
+        let sentinel = r#"{"approved":false,"message":"Nergal GUI is no longer running — plan review cancelled"}"#;
+        assert_eq!(
+            parse_plan_review_decision(sentinel).unwrap(),
+            PlanReviewDecision::Deny(
+                "Nergal GUI is no longer running — plan review cancelled".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn foreign_principal_sentinel_maps_to_single_deny_with_rejection_message() {
+        let sentinel =
+            r#"{"approved":false,"message":"Plan review rejected — connection from another user"}"#;
+        assert_eq!(
+            parse_plan_review_decision(sentinel).unwrap(),
+            PlanReviewDecision::Deny(
+                "Plan review rejected — connection from another user".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn approved_decision_maps_to_allow() {
+        assert_eq!(
+            parse_plan_review_decision(r#"{"approved":true}"#).unwrap(),
+            PlanReviewDecision::Allow
+        );
+    }
+
+    #[test]
+    fn missing_message_falls_back_to_default_deny_text() {
+        assert_eq!(
+            parse_plan_review_decision(r#"{"approved":false}"#).unwrap(),
+            PlanReviewDecision::Deny("Plan changes requested".to_string())
+        );
     }
 }

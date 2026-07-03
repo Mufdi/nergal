@@ -21,6 +21,7 @@ import { toggleSidebarAtom, toggleRightPanelAtom, focusZoneAtom } from "@/stores
 import { layoutPresetAtom, PRESET_SIZES, sessionLayoutPresetAtom, terminalFullscreenAtom, type LayoutPreset } from "@/stores/layout";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { CommandPalette } from "@/components/command/CommandPalette";
+import { WhichKeyPopover } from "@/components/command/WhichKeyPopover";
 import { ShipDialog } from "@/components/git/ShipDialog";
 import { BranchRenameDialog } from "@/components/git/BranchRenameDialog";
 import { ConfirmHost } from "@/components/ui/ConfirmHost";
@@ -423,6 +424,7 @@ export function Workspace() {
       </div>
 
       <StatusBar />
+      <WhichKeyPopover />
 
       <ZenMode />
       <Toaster position="bottom-right" />

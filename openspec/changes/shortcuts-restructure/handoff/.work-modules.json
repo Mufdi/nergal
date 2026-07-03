@@ -4,7 +4,12 @@
   "ceremony": "deep",
   "risk_tier": "medium",
   "files_estimate": 12,
-  "tags": ["feature", "ux", "keymap", "breaking-muscle-memory"],
+  "tags": [
+    "feature",
+    "ux",
+    "keymap",
+    "breaking-muscle-memory"
+  ],
   "visibility": "private",
   "spec_target": "keyboard-shortcuts, command-palette",
   "rigor_applied": {
@@ -12,9 +17,16 @@
     "discovery_mode": "in-conversation (user-led bullets, refinement_resolved=true; design pre-iterated across 2 sessions in vault doc)",
     "iprev_rounds": 2,
     "iprev_note": "run 2026-07-03 post-landing at user request (evaluator: fable subagent). R1: NEEDS-REVISION (1 CRIT + 5 MAJ + 6 MIN, all fixed). R2: APPROVED (2 MINOR leftovers fixed post-approval). Full log: handoff/REVIEW.md",
-    "reviewer_mode": "deferred-to-mode-b",
-    "reviewer_escalation": null,
-    "gates_phases_run": [],
+    "reviewer_mode": "4-parallel (escalated)",
+    "reviewer_escalation": "scope-threshold",
+    "gates_phases_run": [
+      "compile",
+      "test",
+      "lint",
+      "security",
+      "deps",
+      "scope"
+    ],
     "per_phase_models": {
       "design": "main-session",
       "implementation": "sonnet (Mode B, not executed)",
@@ -37,7 +49,21 @@
     "hints": "full sweep of visible hints + palette + keymap settings in scope"
   },
   "events": [
-    { "ts": "2026-07-03", "type": "mode-a-landing", "reason": "user requested Mode A: document the change, no implementation" }
+    {
+      "ts": "2026-07-03",
+      "type": "mode-a-landing",
+      "reason": "user requested Mode A: document the change, no implementation"
+    },
+    {
+      "ts": "2026-07-03",
+      "type": "reviewer-escalation",
+      "reason": "files_touched (~22 incl. tests/new modules) > 1.5 x files_estimate (12) -> 4-parallel reviewers per B5"
+    },
+    {
+      "ts": "2026-07-03",
+      "type": "mode-b-implementation",
+      "reason": "6 phases executed (parallel builders where file-disjoint); 4-parallel review PASS; 2 quality fixes applied post-review; manual walks 7.3-7.7 pending user"
+    }
   ],
   "interview_ts": "2026-07-03"
 }

@@ -28,7 +28,7 @@ Nergal corre **alrededor** del agente CLI, no en su lugar. Esto define el filtro
 
 - **Read before Write/Edit.** Always read files before modifying.
 - **Comments: WHY only, never WHAT.** Document non-obvious constraints, workarounds, invariants. Restating the next line is not a comment.
-- **Keyboard shortcuts use `event.code`** (not `event.key`) — WebKitGTK Linux bug. Verify `src/stores/shortcuts.ts` before adding a binding (collisions silently break flows).
+- **Keyboard shortcuts use `event.code`** (not `event.key`) — WebKitGTK Linux bug. Verify `src/stores/shortcuts.ts` before adding a binding (collisions silently break flows); read [`docs/shortcuts.md`](./docs/shortcuts.md) first for the layer it belongs in and the never-bind list.
 - **No `unwrap()` / `expect()` in Rust outside tests.** Propagate with `anyhow` and `?`.
 - **No TODO/FIXME** — track in issues or OpenSpec changes.
 - **Absolute paths in tool calls.**
@@ -122,4 +122,5 @@ Read on demand when working in the relevant area:
 - [`docs/hooks.md`](./docs/hooks.md) — hook system, plan-review flow, ask-user interception, settings.json snippet.
 - [`docs/design.md`](./docs/design.md) — design system (visual): R0162 YAML tokens + components + decision rules. Read before touching UI.
 - [`docs/patterns.md`](./docs/patterns.md) — interaction patterns: keyboard nav tiers, chip-strips, file picker, focus zones. Read before adding shortcuts or panel navigation.
+- [`docs/shortcuts.md`](./docs/shortcuts.md) — layer conventions, never-bind list, deliberate shadows. Read before adding or changing any keybinding.
 - [`openspec/specs/`](./openspec/specs/) — feature contracts. Read the relevant spec before implementing or proposing a change.

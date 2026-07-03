@@ -421,7 +421,7 @@ function WorkspacesView() {
   }, [triggerAddWorkspace]);
 
   // Merge entry point moved to GitPanel — it owns both the visible button
-  // and the Ctrl+Shift+M shortcut handler.
+  // and the leader m shortcut handler.
   void triggerMergeSignal;
 
   const activeSession = useAtomValue(activeSessionAtom);
@@ -915,7 +915,7 @@ function WorkspacesView() {
       )}
 
       {/* MergeModal is now hosted in GitPanel (single entry point). The
-          Ctrl+Shift+M shortcut still triggers it via triggerMergeAtom which
+          leader m shortcut still triggers it via triggerMergeAtom which
           GitPanel listens to. */}
       <ProjectPickerModal
         open={projectPickerOpen}

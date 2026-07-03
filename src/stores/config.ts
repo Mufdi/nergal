@@ -26,4 +26,5 @@ export const configAtom = atom<Config>({
   custom_themes: [],
   keymap_overrides: {},
   mcp_server_enabled: false,
+  keyboard_ownership: "nergal",
 });

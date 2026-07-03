@@ -50,6 +50,12 @@ export interface ShortcutAction {
   category: "navigation" | "session" | "panel" | "action";
   keywords: string[];
   handler: () => void;
+  /// Absent = global (fires in every focus zone/ownership mode). "app" =
+  /// yielded to the agent CLI when `keyboard_ownership` is "agent" and the
+  /// terminal zone holds focus (Phase 3 dispatcher gate).
+  scope?: "global" | "app";
+  /// Which-key family for the leader popover grouping (surfaces/git/vault/session).
+  group?: string;
 }
 
 export { type Tab };
@@ -69,7 +75,7 @@ export const triggerJumpToProjectAtom = atom<{ tick: number; index: number }>({ 
 export const sidebarSelectedIdxAtom = atom<number>(-1);
 export const triggerResumeSessionAtom = atom<string | null>(null);
 /// Workspace that owns the session-numbers (1..9) currently displayed in the
-/// sidebar. Set by Ctrl+Alt+N to the jumped-to workspace; cleared when focus
+/// sidebar. Set by Ctrl+Shift+N to the jumped-to workspace; cleared when focus
 /// leaves the sidebar, at which point the numbers fall back to the workspace
 /// that owns the active session.
 export const focusedWorkspaceIdAtom = atom<string | null>(null);
@@ -79,7 +85,7 @@ function store() {
 }
 
 /// Zen routing for the Git panel depends on the active chip — exported so
-/// the GitPanel header button and the Ctrl+Shift+0 shortcut share one path
+/// the GitPanel header button and the `leader 0` shortcut share one path
 /// (the button used to always fire expand-zen-git, dead-ending on the
 /// Conflicts chip — BUG-04 v0.2.0).
 export function expandGitZen(sessionId: string) {
@@ -104,7 +110,7 @@ export function expandGitZen(sessionId: string) {
 }
 
 /// Workspace whose sessions currently show shortcut numbers. Prefers the
-/// Ctrl+Alt+N-focused workspace while the sidebar still owns focus, otherwise
+/// Ctrl+Shift+N-focused workspace while the sidebar still owns focus, otherwise
 /// falls back to the workspace containing the active session.
 function numericTargetWorkspace() {
   const s = store();
@@ -134,26 +140,6 @@ function switchToSession(index: number) {
   }
   s.set(activeSessionIdAtom, session.id);
   // Selecting clears the "I'm browsing another workspace" state.
-  s.set(focusedWorkspaceIdAtom, null);
-}
-
-function switchToSessionInFocused(index: number) {
-  const s = store();
-  const focusedId = s.get(focusedWorkspaceIdAtom);
-  const workspaces = s.get(workspacesAtom);
-  const workspace = focusedId
-    ? workspaces.find((w) => w.id === focusedId) ?? null
-    : s.get(activeWorkspaceAtom);
-  if (!workspace) return;
-  const sessions = workspace.sessions.filter((ses) => ses.status !== "completed");
-  if (index >= sessions.length) return;
-  const session = sessions[index];
-  const fresh = s.get(freshSessionsAtom);
-  if (!fresh.has(session.id) && !terminalService.hasTerminal(session.id)) {
-    s.set(triggerResumeSessionAtom, session.id);
-    return;
-  }
-  s.set(activeSessionIdAtom, session.id);
   s.set(focusedWorkspaceIdAtom, null);
 }
 
@@ -423,7 +409,15 @@ function reopenLastTab() {
 
 export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   // -- Navigation --
-  { id: "toggle-sidebar", label: "Toggle Sidebar", keys: "ctrl+b", category: "navigation", keywords: ["sidebar", "left", "panel"], handler: () => store().set(toggleSidebarAtom, (p: number) => p + 1) },
+  // No-op: the dispatcher's leader state machine (Phase 3) owns activation
+  // and continuation resolution. The entry exists so the leader key is
+  // visible/rebindable in the palette and Settings → Keymap.
+  { id: "leader", label: "Leader key", keys: "ctrl+space", category: "navigation", keywords: ["leader", "chord", "which-key", "prefix"], handler: () => {} },
+  { id: "toggle-sidebar", label: "Toggle Sidebar", keys: "ctrl+b", category: "navigation", keywords: ["sidebar", "left", "panel"], scope: "app", handler: () => store().set(toggleSidebarAtom, (p: number) => p + 1) },
+  // Leader alias for the sidebar: in agent mode with terminal focus Ctrl+B
+  // yields to the PTY (scope app), so this chord keeps the sidebar reachable
+  // from any zone in both ownership modes (user request post-walk 2026-07-03).
+  { id: "toggle-sidebar-leader", label: "Toggle Sidebar", keys: "leader shift+b", category: "navigation", keywords: ["sidebar", "left", "panel"], group: "surfaces", handler: () => store().set(toggleSidebarAtom, (p: number) => p + 1) },
   { id: "toggle-right-panel", label: "Toggle Right Panel", keys: "ctrl+shift+b", category: "navigation", keywords: ["right", "panel"], handler: () => store().set(toggleRightPanelAtom, (p: number) => p + 1) },
   { id: "focus-left", label: "Focus Left", keys: "alt+arrowleft", category: "navigation", keywords: ["move", "focus", "left"], handler: () => {
     const zones = getVisibleZones();
@@ -444,7 +438,7 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   // layout-dependent, so it needs key+code dual matching that parseKeys
   // can't express). Listed here for the command palette.
   { id: "toggle-quake", label: "Toggle Quake Terminal", keys: "ctrl+}", category: "navigation", keywords: ["quake", "shell", "shells", "environment", "terminal"], handler: toggleQuake },
-  { id: "toggle-ports", label: "Toggle Ports", keys: "ctrl+shift+o", category: "navigation", keywords: ["ports", "localhost", "dev", "server", "kill"], handler: () => {
+  { id: "toggle-ports", label: "Toggle Ports", keys: "leader o", category: "navigation", group: "surfaces", keywords: ["ports", "localhost", "dev", "server", "kill"], handler: () => {
     const s = store();
     if (s.get(localhostPortsAtom).length === 0) {
       s.set(toastsAtom, { message: "No dev servers detected", type: "info" });
@@ -452,9 +446,9 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     }
     s.set(portsPopoverOpenAtom, (p) => !p);
   } },
-  { id: "toggle-notifications", label: "Toggle Notification History", keys: "ctrl+alt+n", category: "navigation", keywords: ["notifications", "history", "toasts", "alerts", "log", "bell"], handler: () => store().set(notificationHistoryOpenAtom, (p) => !p) },
-  { id: "nav-up", label: "Navigate Up", keys: "alt+arrowup", category: "navigation", keywords: ["navigate", "up", "item"], handler: () => navigateItems("up") },
-  { id: "nav-down", label: "Navigate Down", keys: "alt+arrowdown", category: "navigation", keywords: ["navigate", "down", "item"], handler: () => navigateItems("down") },
+  { id: "toggle-notifications", label: "Toggle Notification History", keys: "leader h", category: "navigation", group: "surfaces", keywords: ["notifications", "history", "toasts", "alerts", "log", "bell"], handler: () => store().set(notificationHistoryOpenAtom, (p) => !p) },
+  { id: "nav-up", label: "Navigate Up", keys: "alt+arrowup", category: "navigation", keywords: ["navigate", "up", "item"], scope: "app", handler: () => navigateItems("up") },
+  { id: "nav-down", label: "Navigate Down", keys: "alt+arrowdown", category: "navigation", keywords: ["navigate", "down", "item"], scope: "app", handler: () => navigateItems("down") },
 
   // -- Session --
   { id: "session-1", label: "Switch to Session 1", keys: "ctrl+1", category: "session", keywords: ["session", "switch"], handler: () => switchToSession(0) },
@@ -466,42 +460,38 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   { id: "session-7", label: "Switch to Session 7", keys: "ctrl+7", category: "session", keywords: ["session", "switch"], handler: () => switchToSession(6) },
   { id: "session-8", label: "Switch to Session 8", keys: "ctrl+8", category: "session", keywords: ["session", "switch"], handler: () => switchToSession(7) },
   { id: "session-9", label: "Switch to Session 9", keys: "ctrl+9", category: "session", keywords: ["session", "switch"], handler: () => switchToSession(8) },
-  { id: "focused-session-1", label: "Select Session 1 in Focused Workspace", keys: "ctrl+shift+1", category: "session", keywords: ["session", "switch", "focused"], handler: () => switchToSessionInFocused(0) },
-  { id: "focused-session-2", label: "Select Session 2 in Focused Workspace", keys: "ctrl+shift+2", category: "session", keywords: ["session", "switch", "focused"], handler: () => switchToSessionInFocused(1) },
-  { id: "focused-session-3", label: "Select Session 3 in Focused Workspace", keys: "ctrl+shift+3", category: "session", keywords: ["session", "switch", "focused"], handler: () => switchToSessionInFocused(2) },
-  { id: "focused-session-4", label: "Select Session 4 in Focused Workspace", keys: "ctrl+shift+4", category: "session", keywords: ["session", "switch", "focused"], handler: () => switchToSessionInFocused(3) },
-  { id: "focused-session-5", label: "Select Session 5 in Focused Workspace", keys: "ctrl+shift+5", category: "session", keywords: ["session", "switch", "focused"], handler: () => switchToSessionInFocused(4) },
-  { id: "focused-session-6", label: "Select Session 6 in Focused Workspace", keys: "ctrl+shift+6", category: "session", keywords: ["session", "switch", "focused"], handler: () => switchToSessionInFocused(5) },
-  { id: "focused-session-7", label: "Select Session 7 in Focused Workspace", keys: "ctrl+shift+7", category: "session", keywords: ["session", "switch", "focused"], handler: () => switchToSessionInFocused(6) },
-  { id: "focused-session-8", label: "Select Session 8 in Focused Workspace", keys: "ctrl+shift+8", category: "session", keywords: ["session", "switch", "focused"], handler: () => switchToSessionInFocused(7) },
-  { id: "focused-session-9", label: "Select Session 9 in Focused Workspace", keys: "ctrl+shift+9", category: "session", keywords: ["session", "switch", "focused"], handler: () => switchToSessionInFocused(8) },
-  { id: "new-session", label: "New Session", keys: "ctrl+n", category: "session", keywords: ["create", "session", "new"], handler: () => store().set(triggerNewSessionAtom, (p: number) => p + 1) },
-  { id: "project-1", label: "Jump to Project 1", keys: "ctrl+alt+1", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 0 }) },
-  { id: "project-2", label: "Jump to Project 2", keys: "ctrl+alt+2", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 1 }) },
-  { id: "project-3", label: "Jump to Project 3", keys: "ctrl+alt+3", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 2 }) },
-  { id: "project-4", label: "Jump to Project 4", keys: "ctrl+alt+4", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 3 }) },
-  { id: "project-5", label: "Jump to Project 5", keys: "ctrl+alt+5", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 4 }) },
-  { id: "project-6", label: "Jump to Project 6", keys: "ctrl+alt+6", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 5 }) },
-  { id: "project-7", label: "Jump to Project 7", keys: "ctrl+alt+7", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 6 }) },
-  { id: "project-8", label: "Jump to Project 8", keys: "ctrl+alt+8", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 7 }) },
-  { id: "project-9", label: "Jump to Project 9", keys: "ctrl+alt+9", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 8 }) },
-  { id: "add-workspace", label: "Add Workspace", keys: "ctrl+shift+n", category: "session", keywords: ["workspace", "add", "folder"], handler: () => store().set(triggerAddWorkspaceAtom, (p: number) => p + 1) },
+  { id: "new-session", label: "New Session", keys: "leader n", category: "session", group: "session", keywords: ["create", "session", "new"], handler: () => store().set(triggerNewSessionAtom, (p: number) => p + 1) },
+  { id: "close-session", label: "Close Active Session", keys: "leader w", category: "session", group: "session", keywords: ["session", "close", "soft-close"], handler: () => {
+    const s = store();
+    const sid = s.get(activeSessionIdAtom);
+    if (sid) s.set(softCloseSessionAction, sid);
+  } },
+  { id: "project-1", label: "Jump to Project 1", keys: "ctrl+shift+1", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 0 }) },
+  { id: "project-2", label: "Jump to Project 2", keys: "ctrl+shift+2", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 1 }) },
+  { id: "project-3", label: "Jump to Project 3", keys: "ctrl+shift+3", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 2 }) },
+  { id: "project-4", label: "Jump to Project 4", keys: "ctrl+shift+4", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 3 }) },
+  { id: "project-5", label: "Jump to Project 5", keys: "ctrl+shift+5", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 4 }) },
+  { id: "project-6", label: "Jump to Project 6", keys: "ctrl+shift+6", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 5 }) },
+  { id: "project-7", label: "Jump to Project 7", keys: "ctrl+shift+7", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 6 }) },
+  { id: "project-8", label: "Jump to Project 8", keys: "ctrl+shift+8", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 7 }) },
+  { id: "project-9", label: "Jump to Project 9", keys: "ctrl+shift+9", category: "navigation", keywords: ["project", "workspace", "jump"], handler: () => store().set(triggerJumpToProjectAtom, { tick: Date.now(), index: 8 }) },
+  { id: "add-workspace", label: "Add Workspace", keys: "leader shift+w", category: "session", group: "session", keywords: ["workspace", "add", "folder"], handler: () => store().set(triggerAddWorkspaceAtom, (p: number) => p + 1) },
 
   // -- Panel (tabs) --
   { id: "next-tab", label: "Next Tab", keys: "ctrl+tab", category: "panel", keywords: ["tab", "next", "session"], handler: nextTab },
   { id: "prev-tab", label: "Previous Tab", keys: "ctrl+shift+tab", category: "panel", keywords: ["tab", "previous", "prev", "session"], handler: prevTab },
-  { id: "save-file", label: "Save File", keys: "ctrl+s", category: "action", keywords: ["save", "file", "write"], handler: () => {
+  { id: "save-file", label: "Save File", keys: "ctrl+s", category: "action", keywords: ["save", "file", "write"], scope: "app", handler: () => {
     document.dispatchEvent(new CustomEvent("nergal:save-file"));
   }},
-  { id: "close-tab", label: "Close Active Tab (panel tab or session, by focused zone)", keys: "ctrl+w", category: "panel", keywords: ["tab", "close", "session"], handler: closeCurrentTab },
+  { id: "close-tab", label: "Close Active Tab (panel tab or session, by focused zone)", keys: "ctrl+w", category: "panel", keywords: ["tab", "close", "session"], scope: "app", handler: closeCurrentTab },
   { id: "reopen-tab", label: "Reopen Last Closed (session if pending, else panel tab)", keys: "ctrl+shift+t", category: "panel", keywords: ["tab", "reopen", "undo", "session"], handler: reopenLastTab },
   { id: "open-plan", label: "Open Plan Panel", keys: "ctrl+shift+p", category: "panel", keywords: ["plan", "panel"], handler: () => togglePanel("plan", "Plan") },
   { id: "open-files", label: "Open Files Panel", keys: "ctrl+shift+f", category: "panel", keywords: ["files", "modified", "panel"], handler: () => togglePanel("file", "Files") },
   { id: "open-diff", label: "Open Diff Panel", keys: "ctrl+shift+d", category: "panel", keywords: ["diff", "changes", "panel"], handler: () => togglePanel("diff", "Diff") },
   { id: "open-spec", label: "Open Spec Panel", keys: "ctrl+shift+s", category: "panel", keywords: ["spec", "openspec", "panel"], handler: () => togglePanel("spec", "Spec") },
   { id: "open-git", label: "Open Git Panel", keys: "ctrl+shift+g", category: "panel", keywords: ["git", "branch", "panel"], handler: () => togglePanel("git", "Git") },
-  { id: "open-browser", label: "Open Browser Panel", keys: "ctrl+alt+b", category: "panel", keywords: ["browser", "preview", "web", "iframe", "localhost", "panel"], handler: () => togglePanel("browser", "Browser") },
-  { id: "open-obsidian-finder", label: "Open Obsidian Panel", keys: "ctrl+shift+q", category: "panel", keywords: ["obsidian", "vault", "notes", "finder", "search", "panel"], handler: () => {
+  { id: "open-browser", label: "Open Browser Panel", keys: "leader b", category: "panel", group: "surfaces", keywords: ["browser", "preview", "web", "iframe", "localhost", "panel"], handler: () => togglePanel("browser", "Browser") },
+  { id: "open-obsidian-finder", label: "Open Obsidian Panel", keys: "ctrl+shift+o", category: "panel", keywords: ["obsidian", "vault", "notes", "finder", "search", "panel"], handler: () => {
     const s = store();
     const ws = s.get(activeWorkspaceAtom);
     if (!ws) {
@@ -523,7 +513,7 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     togglePanel("obsidiannote", "Obsidian");
   }},
   // ctrl+shift+u is reserved by IBus (Linux unicode input) — never bind it.
-  { id: "open-clickup", label: "Open ClickUp Panel", keys: "ctrl+shift+m", category: "panel", keywords: ["clickup", "tasks", "issues", "tracker", "panel"], handler: () => {
+  { id: "open-clickup", label: "Open ClickUp Panel", keys: "leader c", category: "panel", group: "surfaces", keywords: ["clickup", "tasks", "issues", "tracker", "panel"], handler: () => {
     const s = store();
     // Only block on a CONFIRMED tokenless state. `null` (status not resolved
     // yet) and `idle`/`syncing` are the startup window — open the panel and let
@@ -538,14 +528,14 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     }
     togglePanel("clickup", "ClickUp");
   }},
-  { id: "browser-focus-url", label: "Focus Browser URL Bar", keys: "ctrl+l", category: "panel", keywords: ["browser", "url", "focus", "address"], handler: () => {
+  { id: "browser-focus-url", label: "Focus Browser URL Bar", keys: "ctrl+l", category: "panel", keywords: ["browser", "url", "focus", "address"], scope: "app", handler: () => {
     document.dispatchEvent(new CustomEvent("nergal:browser-focus-url"));
   }},
   { id: "toggle-file-picker", label: "Toggle File Picker", keys: "ctrl+shift+k", category: "panel", keywords: ["file", "picker", "browse", "explorer"], handler: () => {
     document.dispatchEvent(new CustomEvent("nergal:toggle-file-picker"));
   }},
-  { id: "toggle-activity", label: "Toggle Activity Drawer", keys: "ctrl+shift+l", category: "panel", keywords: ["activity", "log", "timeline", "drawer"], handler: () => store().set(activityDrawerOpenAtom, (prev: boolean) => !prev) },
-  { id: "open-linear", label: "Open Linear Panel", keys: "ctrl+shift+i", category: "panel", keywords: ["linear", "issues", "tracker", "panel"], handler: () => {
+  { id: "toggle-activity", label: "Toggle Activity Drawer", keys: "leader a", category: "panel", group: "surfaces", keywords: ["activity", "log", "timeline", "drawer"], handler: () => store().set(activityDrawerOpenAtom, (prev: boolean) => !prev) },
+  { id: "open-linear", label: "Open Linear Panel", keys: "leader l", category: "panel", group: "surfaces", keywords: ["linear", "issues", "tracker", "panel"], handler: () => {
     const s = store();
     if (s.get(linearSyncStatusAtom)?.state === "no_key") {
       s.set(toastsAtom, {
@@ -557,7 +547,7 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     }
     togglePanel("linear", "Linear");
   }},
-  { id: "open-crosssession", label: "Open Cross-session Panel", keys: "ctrl+shift+x", category: "panel", keywords: ["cross", "session", "messages", "agent", "panel", "threads"], handler: () => {
+  { id: "open-crosssession", label: "Open Cross-session Panel", keys: "leader x", category: "panel", group: "surfaces", keywords: ["cross", "session", "messages", "agent", "panel", "threads"], handler: () => {
     const s = store();
     if (!s.get(configAtom).cross_session?.enabled) {
       s.set(toastsAtom, {
@@ -569,8 +559,8 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     }
     togglePanel("crosssession", "Cross-session");
   }},
-  { id: "toggle-scratchpad", label: "Toggle Scratchpad", keys: "ctrl+alt+l", category: "panel", keywords: ["scratchpad", "notes", "scratch", "buffer"], handler: () => store().set(scratchpadOpenAtom, (prev: boolean) => !prev) },
-  { id: "obsidian-quick-capture", label: "Quick Capture to Obsidian", keys: "ctrl+alt+q", category: "action", keywords: ["obsidian", "vault", "capture", "inbox", "note"], handler: () => {
+  { id: "toggle-scratchpad", label: "Toggle Scratchpad", keys: "leader s", category: "panel", group: "surfaces", keywords: ["scratchpad", "notes", "scratch", "buffer"], handler: () => store().set(scratchpadOpenAtom, (prev: boolean) => !prev) },
+  { id: "obsidian-quick-capture", label: "Quick Capture to Obsidian", keys: "leader q", category: "action", group: "vault", keywords: ["obsidian", "vault", "capture", "inbox", "note"], handler: () => {
     const s = store();
     const ws = s.get(activeWorkspaceAtom);
     if (!ws) {
@@ -594,7 +584,7 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   // "Open in Obsidian" is a surface-scoped bare-letter verb (`o`), handled
   // component-locally in ObsidianNoteView — NOT a global combo. Freeing
   // ctrl+shift+v here lets it reach the terminal's paste handler.
-  { id: "obsidian-vault-search", label: "Search the Vault", keys: "ctrl+alt+o", category: "action", keywords: ["obsidian", "vault", "search", "find", "ask", "note"], handler: () => {
+  { id: "obsidian-vault-search", label: "Search the Vault", keys: "leader v", category: "action", group: "vault", keywords: ["obsidian", "vault", "search", "find", "ask", "note"], handler: () => {
     const s = store();
     const ws = s.get(activeWorkspaceAtom);
     if (!ws) {
@@ -616,7 +606,7 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     s.set(searchScopeAtom, { kind: "vault" });
     s.set(searchModalOpenAtom, true);
   }},
-  { id: "toggle-annotations", label: "Toggle Annotations Drawer", keys: "ctrl+shift+j", category: "panel", keywords: ["annotations", "drawer", "comments", "plan"], handler: () => {
+  { id: "toggle-annotations", label: "Toggle Annotations Drawer", keys: "leader d", category: "panel", group: "surfaces", keywords: ["annotations", "drawer", "comments", "plan"], handler: () => {
     document.dispatchEvent(new CustomEvent("nergal:toggle-annotations-drawer"));
   }},
 
@@ -672,7 +662,7 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     document.dispatchEvent(new CustomEvent("nergal:toggle-annotation-mode"));
   }},
 
-  { id: "expand-zen", label: "Expand active panel to Zen", keys: "ctrl+shift+0", category: "navigation", keywords: ["zen", "expand", "maximize", "fullscreen", "browser", "floating"], handler: () => {
+  { id: "expand-zen", label: "Expand active panel to Zen", keys: "leader 0", category: "navigation", group: "surfaces", keywords: ["zen", "expand", "maximize", "fullscreen", "browser", "floating"], handler: () => {
     const s = store();
     const sessionId = s.get(activeSessionIdAtom);
     if (!sessionId) return;
@@ -706,7 +696,7 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   }},
 
   // -- Action --
-  { id: "open-ide", label: "Open in IDE", keys: "ctrl+shift+e", category: "action", keywords: ["ide", "editor", "vscode", "zed"], handler: () => {
+  { id: "open-ide", label: "Open in IDE", keys: "leader e", category: "action", group: "surfaces", keywords: ["ide", "editor", "vscode", "zed"], handler: () => {
     const sid = store().get(activeSessionIdAtom);
     if (!sid) return;
     const config = store().get(configAtom);
@@ -733,7 +723,7 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   // stays in case other surfaces want to invoke programmatically.
   // Commit shortcut intentionally removed — committing requires a message,
   // and the GitPanel textarea already binds Ctrl+Enter locally for that flow.
-  { id: "ship-session", label: "Ship (commit + push + PR)", keys: "ctrl+shift+y", category: "action", keywords: ["ship", "pr", "push", "commit", "deploy", "yeet"], handler: () => {
+  { id: "ship-session", label: "Ship (commit + push + PR)", keys: "ctrl+shift+enter", category: "action", keywords: ["ship", "pr", "push", "commit", "deploy", "yeet"], handler: () => {
     const s = store();
     const sid = s.get(activeSessionIdAtom);
     if (!sid) {
@@ -766,10 +756,10 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
       s.set(triggerShipAtom, { tick: Date.now(), sessionId: sid, inlineMessage: null });
     });
   }},
-  { id: "rename-branch", label: "Rename Branch", keys: "ctrl+alt+r", category: "action", keywords: ["branch", "rename", "git"], handler: () => {
+  { id: "rename-branch", label: "Rename Branch", keys: "leader r", category: "action", group: "git", keywords: ["branch", "rename", "git"], handler: () => {
     store().set(renameBranchSignalAtom, (p: number) => p + 1);
   }},
-  { id: "clear-completed-tasks", label: "Clear Completed Tasks", keys: "ctrl+alt+x", category: "action", keywords: ["tasks", "clear", "done", "completed", "delete"], handler: () => {
+  { id: "clear-completed-tasks", label: "Clear Completed Tasks", keys: "leader t", category: "action", group: "session", keywords: ["tasks", "clear", "done", "completed", "delete"], handler: () => {
     const s = store();
     const done = s.get(activeSessionTasksAtom).filter((t) => t.status === "completed").length;
     if (done === 0) {
@@ -779,7 +769,7 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     s.set(clearCompletedTasksAtom);
     s.set(toastsAtom, { message: "Tasks", description: `Cleared ${done} completed task${done === 1 ? "" : "s"}`, type: "success" });
   }},
-  { id: "complete-merge", label: "Complete Merge", keys: "ctrl+alt+enter", category: "action", keywords: ["merge", "complete", "finish"], handler: () => {
+  { id: "complete-merge", label: "Complete Merge", keys: "leader m", category: "action", group: "git", keywords: ["merge", "complete", "finish"], handler: () => {
     const s = store();
     const sid = s.get(activeSessionIdAtom);
     if (!sid) return;
@@ -803,7 +793,7 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
           });
       });
   }},
-  { id: "push-session", label: "Push Session", keys: "ctrl+alt+p", category: "action", keywords: ["push", "upload", "remote"], handler: () => {
+  { id: "push-session", label: "Push Session", keys: "leader p", category: "action", group: "git", keywords: ["push", "upload", "remote"], handler: () => {
     const s = store();
     const sid = s.get(activeSessionIdAtom);
     if (!sid) {
@@ -823,6 +813,17 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   }},
   { id: "command-palette", label: "Command Palette", keys: "ctrl+k", category: "navigation", keywords: ["command", "palette", "search", "find"], handler: () => {} },
   { id: "open-settings", label: "Open Settings", keys: "ctrl+,", category: "navigation", keywords: ["settings", "preferences", "config", "options"], handler: () => store().set(settingsOpenAtom, (prev: boolean) => !prev) },
+  // Palette-only (keys: "") — StatusBar owns the popover as local state, so
+  // these dispatch the same nergal:* CustomEvent pattern as the other
+  // registry entries that forward to component-local handlers. One entry per
+  // status page (Anthropic / OpenAI) so both are reachable regardless of
+  // which agent the active session runs.
+  { id: "provider-status-claude", label: "Provider status: Claude", keys: "", category: "navigation", keywords: ["status", "provider", "claude", "anthropic"], handler: () => {
+    document.dispatchEvent(new CustomEvent("nergal:open-provider-status", { detail: { provider: "claude" } }));
+  }},
+  { id: "provider-status-openai", label: "Provider status: OpenAI", keys: "", category: "navigation", keywords: ["status", "provider", "openai", "codex"], handler: () => {
+    document.dispatchEvent(new CustomEvent("nergal:open-provider-status", { detail: { provider: "openai" } }));
+  }},
 ]);
 
 /// True while the Settings → Keymap editor is recording a new combo. Global
@@ -834,8 +835,11 @@ export const keymapCaptureActiveAtom = atom(false);
 export const keymapOverridesAtom = atom((get) => get(configAtom).keymap_overrides ?? {});
 
 /// The registry with user overrides applied. Locked shortcuts always keep their
-/// default keys (override ignored even if present in config). Both the dispatcher
-/// and the command palette consume this so the effective keymap is uniform.
+/// default keys (override ignored even if present in config). `leader` and
+/// `focus-terminal` are NOT locked (post-walk revision 2026-07-03): they carry
+/// declared OS-reservation bans in validateCombo instead of a UI lock.
+/// Overrides for ids no longer in the registry are inert here too: this maps
+/// over the current registry, so a stale override key is simply never looked up.
 export const resolvedShortcutsAtom = atom<ShortcutAction[]>((get) => {
   const overrides = get(keymapOverridesAtom);
   return get(shortcutRegistryAtom).map((action) => {

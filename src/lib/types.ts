@@ -56,6 +56,11 @@ export interface Config {
   /// Default panel view applied on first open (frontend-owned).
   linear_default_view?: string | null;
   clickup_default_view?: string | null;
+  /// Gates `scope: "app"` registry entries when focus is in the terminal or
+  /// quake zone (frontend-owned; Settings → Keymap, Phase 5). Optional so
+  /// the dispatcher's read defaults to "nergal" before Phase 5 lands the
+  /// Rust-side default.
+  keyboard_ownership?: "nergal" | "agent";
 }
 
 export interface CrossSessionConfig {

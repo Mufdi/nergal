@@ -19,17 +19,17 @@ silently.
 
 **The modifier a shortcut needs is decided by where focus lives.** The terminal
 (the agent PTY) consumes bare keystrokes, so any shortcut that must fire *while
-the terminal is focused* — i.e. a **global** — needs a modifier. A focus zone
-that is NOT the terminal (panel, sidebar, quake, a modal, a floating module)
-does not forward bare letters to the agent, so **bare letters are free there**
-for contextual verbs. This is what lets us recycle the same letter (or even the
-same combo) across surfaces.
+the terminal is focused* — i.e. a **global** — needs a modifier (or the leader
+prefix, §1.3). A focus zone that is NOT the terminal (panel, sidebar, quake, a
+modal, a floating module) does not forward bare letters to the agent, so **bare
+letters are free there** for contextual verbs. This is what lets us recycle the
+same letter (or even the same combo) across surfaces.
 
 That splits every binding into two families and three scoping levels:
 
 | Level | Where it fires | Mechanism | Examples |
 |-------|----------------|-----------|----------|
-| **Global / transversal** | anywhere, incl. terminal focused | `shortcuts.ts` registry (always modified) | session switch, open panels, ship, push |
+| **Global / transversal** | anywhere, incl. terminal focused | `shortcuts.ts` registry (Core/Surfaces/Leader — always modified or leader-prefixed) | session switch, open panels, ship, push |
 | **Modal capture** | while a `Dialog` is mounted | global dispatcher bails (`dialogOpen` guard in `useKeyboardShortcuts.ts`); the modal owns ALL keys | Ship, Merge, AgentPicker, AskUser, confirms |
 | **Surface override** | while a panel / floating module owns focus | component-local handlers (§8) + selective combo recycling; true globals still pass through | ClickUp verbs, plan-review verbs, scratchpad tabs |
 
@@ -38,22 +38,57 @@ The difference between *modal capture* and *surface override*: a `Dialog` is a
 `FloatingPanel` is a **non-modal companion**, so it overrides only the keys it
 claims and lets the few global/transversal shortcuts keep working.
 
-### 1.2 Family A — global shortcuts (always modified)
+### 1.2 Family A — global shortcuts, the 4-layer model
 
-Registered in `shortcuts.ts`. Pick the tier by intent:
+Registered in `shortcuts.ts`. Every entry carries a `scope` (`"global"` default,
+or `"app"`) and, for leader entries, a `group` (which-key family). Pick the
+layer by intent — full allocation rules, the never-bind list, and deliberate
+shadows live in [`docs/shortcuts.md`](./shortcuts.md); this table is the quick
+reference.
 
-| Tier | Keys | Meaning | Rule |
-|------|------|---------|------|
-| 0 | `Ctrl+{key}` | Global + OS-mirroring | if the OS / a browser / an editor already binds it, match them (`Ctrl+1..9` sessions, `Ctrl+B` sidebar, `Ctrl+K` palette, `Ctrl+,` settings, `Ctrl+S` save, `Ctrl+W` close, `Ctrl+N` new, `Ctrl+Enter` fullscreen, `Ctrl+Tab` cycle) |
-| 1 | `Ctrl+Shift+{letter}` | **Open / toggle a PANEL** (nouns / surfaces) | default for any panel: plan, files, diff, spec, git, clickup, obsidian, activity, annotations drawer, file-picker |
-| 2 | `Ctrl+Alt+{letter}` | **ACTION verb that mutates state** | push, ship, rename-branch, clear-tasks, complete-merge, quick-capture, vault-search |
-| — | `Ctrl+Shift+{1-9}` · `Ctrl+Alt+{1-9}` | numeric variants | session-in-focused-workspace / jump-to-project |
+| Layer | Keys | Meaning | Rule |
+|-------|------|---------|------|
+| **Core** | `Ctrl+{key}` | Global + OS-mirroring | if the OS / a browser / an editor already binds it, match them (`Ctrl+1..9` sessions, `Ctrl+B` sidebar, `Ctrl+K` palette, `Ctrl+,` settings, `Ctrl+S` save, `Ctrl+W` close, `Ctrl+Enter` fullscreen, `Ctrl+Tab` cycle, `Ctrl+Space` leader) |
+| **Surfaces** | `Ctrl+Shift+{letter}` | **Open / toggle a PANEL** (nouns) | plan, files, diff, spec, git, right panel, file-picker, annotation mode, obsidian (`O`), revise/resolve/apply; digit row `Ctrl+Shift+1..9` jumps to indexed projects |
+| **Leader** | `Ctrl+Space` then `{key}` | **ACTION verb** / secondary surface (the long tail) | two discrete presses, 2 s timeout, which-key popover after a 150 ms hesitation; flat namespace in v1 (`leader p`, `leader m`, …) — see §1.3 |
+| **App-scope** | a subset of Core/Surfaces keys | yields to the agent CLI when disputed | `Ctrl+B/W/S/L`, `Alt+↑/↓` — gated by `keyboard_ownership`, §1.4 |
 
-`Ctrl+Shift+{letter}` is nearly saturated (`u` is reserved by IBus). When a
-panel's natural letter collides, it falls to `Ctrl+Alt+` (browser `Ctrl+Alt+B`,
-scratchpad `Ctrl+Alt+L`) — a documented exception, not a tier violation.
+**Palette-only** entries (`keys: ""`, e.g. provider-status) have no keyboard
+binding at all — reachable only from the command palette. The keymap editor
+shows them as a fifth group alongside the four layers above.
 
-### 1.3 Family B — bare-letter verbs (surface-scoped)
+The old `Ctrl+Alt+{letter}` tier is retired entirely (2026-07 restructure):
+every action that lived there moved to the leader layer, freeing the whole
+tier and dissolving the Windows `AltGr ≡ Ctrl+Alt` collision class.
+
+### 1.3 The leader layer
+
+`Ctrl+Space` (rebindable; OS-reserved combos rejected by validation)
+opens a tmux/vim-style second-key namespace for anything that doesn't earn a
+Surfaces slot: integrations (ClickUp `leader c`, Linear `leader l`, browser
+`leader b`, cross-session `leader x`), git actions (`leader p/m/r`), session
+lifecycle (`leader n/w`, `leader shift+w`), vault (`leader q/v`), and misc
+(`leader s` scratchpad, `leader o` ports, `leader h` notifications, `leader d`
+annotations, `leader t` clear tasks, `leader 0` zen, `leader e` open in IDE).
+New features are **born in the leader**; promotion to `Ctrl+Shift` requires
+daily-use evidence (see `docs/shortcuts.md`).
+
+`leader .` is explicit passthrough: the *next* keystroke forwards verbatim to
+the active PTY (session or quake shell, by focus zone), so every agent
+shortcut nergal shadows stays reachable — worst case costs one extra prefix.
+Full state-machine semantics (sloppy-chording tolerance, safe no-ops, timeout,
+cancel) are documented in `docs/shortcuts.md`, not duplicated here.
+
+### 1.4 App-scope + keyboard ownership
+
+Config `keyboard_ownership: "nergal" | "agent"` (default `"nergal"`) decides
+who wins the small set of `scope: "app"` entries (`Ctrl+B/W/S/L`, `Alt+↑/↓`).
+The binding map is identical in both modes — in `"nergal"` mode nergal claims
+them globally (still reachable in the agent CLI via `leader .`); in `"agent"`
+mode they pass through to the PTY whenever `focusZoneAtom` is terminal/quake.
+Toggle it in Settings → Keymap.
+
+### 1.5 Family B — bare-letter verbs (surface-scoped)
 
 Single letters, no modifier, that act on the focused surface's current item.
 This is §8 — see there for the full guard contract. Used by ClickUp
@@ -65,27 +100,29 @@ the letter (§6). **Entering** an engaged state keeps a modifier (annotation mod
 is `Ctrl+Shift+H`) because it's triggered from *outside* the engaged surface;
 once inside, the verbs go bare.
 
-### 1.4 Navigation tiers
+### 1.6 Navigation tiers
 
 Three movement granularities, consistently bound:
 
 | Tier | Keys | Mechanism |
 |------|------|-----------|
 | Between modules (sidebar ↔ terminal ↔ panel) | `Alt+←/→` | `shortcuts.ts`: `focus-left` / `focus-right` |
-| Within a list (rows of the focused module) | `Alt+↑/↓` | `shortcuts.ts`: `nav-up` / `nav-down` |
+| Within a list (rows of the focused module) | `Alt+↑/↓` | `shortcuts.ts`: `nav-up` / `nav-down` (`scope: "app"`) |
 | Between sibling views inside a panel (chips, tabs) | `Shift+←/→` | Component-local handlers (§2) |
 
-`Ctrl+1..9` jumps to indexed sessions; number keys `1–9` jump to indexed
-items inside decision modals and pickers.
+`Ctrl+1..9` jumps to indexed sessions (in the jumped-to project while the
+sidebar holds focus, else the active session's project — `numericTargetWorkspace`);
+`Ctrl+Shift+1..9` jumps to indexed projects. Number keys `1–9` also jump to
+indexed items inside decision modals and pickers.
 
-### 1.5 Candidates for bare-letter migration
+### 1.7 Candidates for bare-letter migration
 
 When you next enter these surfaces for another reason, evaluate moving their
-modified actions to bare letters per §1.3: the **Git panel** (`S` stage, `P`
+modified actions to bare letters per §1.5: the **Git panel** (`S` stage, `P`
 push, `X` discard — commit stays modified, it needs a message). Don't do it as
 an isolated change.
 
-### 1.6 User keymap overrides (Settings → Keymap)
+### 1.8 User keymap overrides (Settings → Keymap)
 
 Family A shortcuts are **remappable per user**. Defaults live in
 `shortcutRegistryAtom`; user overrides live in `config.keymap_overrides`
@@ -94,15 +131,24 @@ in `resolvedShortcutsAtom` — **every consumer reads the resolved atom, never t
 raw registry**: the dispatcher (`useKeyboardShortcuts`) matches on it and the
 command palette renders it. Add a new shortcut consumer the same way.
 
-- **Locked ids** (`LOCKED_SHORTCUT_IDS` in `lib/keymap.ts`): `command-palette`,
-  `focus-terminal`, `session-1..9`. Structural bindings; overrides are ignored
-  even if hand-edited into `config.json`, and the editor shows a lock.
+- **Locked ids** (`LOCKED_SHORTCUT_IDS` in `lib/keymap.ts`): `command-palette`
+  and `session-1..9`. Structural bindings; overrides are ignored even if
+  hand-edited into `config.json`, and the editor shows a lock. `leader` and
+  `focus-terminal` are deliberately NOT locked (post-walk revision 2026-07-03):
+  they rebind like any row, protected by the declared `RESERVED_COMBOS` bans
+  (IBus, GNOME terminal/lock/workspace combos) that `validateCombo` rejects
+  with the reservation as the reason.
+- **Chord syntax**: `keys: "leader <combo>"` (e.g. `"leader n"`,
+  `"leader shift+w"`); `comboSignature` is namespaced (leader vs global) so
+  collision checks don't cross-contaminate. Leader continuations don't require
+  a Ctrl/Alt modifier — the prefix already isolates the namespace.
 - **Capture + validation** (`lib/keymap.ts`): `eventToKeys` turns a live event
   into a registry keys string (`event.code`, not `key`); `validateCombo`
-  enforces a Ctrl/Alt modifier (bare/Shift-only would swallow terminal typing),
-  rejects OS-reserved combos (IBus `Ctrl+Shift+U`), and blocks collisions
-  against the full effective keymap (locked included). Collision = warn + block,
-  never silent reassign.
+  enforces a Ctrl/Alt modifier for global-namespace combos (bare/Shift-only
+  would swallow terminal typing), rejects the declared OS/DE reservations
+  (`RESERVED_COMBOS`: IBus `Ctrl+Shift+U`, GNOME `Ctrl+Alt+T/L/arrows`), and
+  blocks collisions against the full effective keymap (locked included).
+  Collision = warn + block, never silent reassign.
 - **Capture guard**: while recording, `keymapCaptureActiveAtom` is set and all
   global keyboard consumers (the dispatcher + the Settings dialog nav handlers)
   bail so the keystroke reaches only the recorder. Set it the same way for any

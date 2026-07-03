@@ -692,7 +692,7 @@ export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen, i
               >
                 <Maximize2 size={11} />
               </TooltipTrigger>
-              <TooltipContent side="bottom" className="text-[10px]">Expand (Ctrl+Shift+0)</TooltipContent>
+              <TooltipContent side="bottom" className="text-[10px]">Expand (Ctrl+Space 0)</TooltipContent>
             </Tooltip>
           )}
         </div>

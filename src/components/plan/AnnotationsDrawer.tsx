@@ -131,7 +131,7 @@ export function AnnotationsDrawer({ open, onToggle }: AnnotationsDrawerProps) {
           <MessageSquareDashed size={11} className="text-primary" />
           <span>{annotations.length} annotation{annotations.length !== 1 ? "s" : ""}</span>
         </TooltipTrigger>
-        <TooltipContent side="top" className="text-[10px]">Show annotations (Ctrl+Shift+J)</TooltipContent>
+        <TooltipContent side="top" className="text-[10px]">Show annotations (Ctrl+Space D)</TooltipContent>
       </Tooltip>
     );
   }
@@ -164,7 +164,7 @@ export function AnnotationsDrawer({ open, onToggle }: AnnotationsDrawerProps) {
             >
               <MessageSquare size={12} />
             </TooltipTrigger>
-            <TooltipContent side="bottom" className="text-[10px]">Add global comment (Ctrl+Shift+O)</TooltipContent>
+            <TooltipContent side="bottom" className="text-[10px]">Add global comment (C)</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
@@ -177,7 +177,7 @@ export function AnnotationsDrawer({ open, onToggle }: AnnotationsDrawerProps) {
             >
               <Trash2 size={12} />
             </TooltipTrigger>
-            <TooltipContent side="bottom" className="text-[10px]">Clear all annotations (Ctrl+Shift+X)</TooltipContent>
+            <TooltipContent side="bottom" className="text-[10px]">Clear all annotations (X)</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
@@ -190,7 +190,7 @@ export function AnnotationsDrawer({ open, onToggle }: AnnotationsDrawerProps) {
             >
               <X size={14} />
             </TooltipTrigger>
-            <TooltipContent side="bottom" className="text-[10px]">Collapse (Ctrl+Shift+J)</TooltipContent>
+            <TooltipContent side="bottom" className="text-[10px]">Collapse (Ctrl+Space D)</TooltipContent>
           </Tooltip>
         </div>
       </div>

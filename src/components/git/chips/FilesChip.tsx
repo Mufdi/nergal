@@ -336,6 +336,7 @@ export function FilesChip({ sessionId, ahead, inZen = false }: FilesChipProps) {
 
       <div className="shrink-0 border-t border-border/50 p-2">
         <Textarea
+          data-git-commit-textarea
           value={commitMsg}
           onChange={(e) => setCommitMsg(e.target.value)}
           onKeyDown={handleKeyDown}
@@ -361,7 +362,7 @@ export function FilesChip({ sessionId, ahead, inZen = false }: FilesChipProps) {
               onClick={handlePush}
               className="flex h-6 items-center gap-1.5 rounded border border-border/50 px-2 text-[10px] text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
             >
-              <Upload size={10} /> Push <Kbd keys="ctrl+alt+p" />
+              <Upload size={10} /> Push <Kbd keys="ctrl+space" /><Kbd keys="p" className="ml-0.5" />
             </button>
           )}
           {canPushOrShip && (
@@ -370,7 +371,7 @@ export function FilesChip({ sessionId, ahead, inZen = false }: FilesChipProps) {
               disabled={creatingPr}
               className="flex h-6 items-center gap-1.5 rounded bg-green-500/15 px-2 text-[10px] font-medium text-green-400 hover:bg-green-500/25 transition-colors"
             >
-              <Rocket size={10} /> Ship <Kbd keys="ctrl+shift+y" />
+              <Rocket size={10} /> Ship <Kbd keys="ctrl+shift+enter" />
             </button>
           )}
         </div>

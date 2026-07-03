@@ -11,6 +11,10 @@ import { setupLinearListeners } from "./stores/linear";
 import { setupCrossSessionListeners } from "./stores/crossSession";
 import { configAtom, settingsOpenAtom, settingsRequestedSectionAtom } from "./stores/config";
 import { toastsAtom } from "./stores/toast";
+import { droppedKeymapOverridesAtom } from "./stores/keymapMigration";
+import { shortcutRegistryAtom } from "./stores/shortcuts";
+import { migrateKeymapOverrides } from "./lib/keymapMigration";
+import { initKeyboardLayoutLabels } from "./lib/keymap";
 import { invoke, listen } from "./lib/tauri";
 import { dispatchDeepLink } from "./lib/deepLinkRouter";
 import { applyTheme, extractPaletteFromComputedStyle } from "./lib/themes";
@@ -76,13 +80,42 @@ export function App() {
 
   useEffect(() => {
     getCurrentWindow().show().catch(() => {});
+    // Cosmetic layout probe for key labels (Ñ vs ;) — no-op on WebKitGTK.
+    void initKeyboardLayoutLabels();
   }, []);
 
   useEffect(() => {
     invoke<Config>("get_config", {})
-      .then((cfg) => setConfig(cfg))
+      .then((cfg) => {
+        setConfig(cfg);
+        // One-pass keymap_overrides cleanup after the restructure: drop
+        // overrides for removed ids and overrides that now collide with a
+        // NEW default binding on a different id. Idempotent — an
+        // already-clean config produces zero drops and this is a no-op.
+        const { cleaned, dropped } = migrateKeymapOverrides(
+          cfg.keymap_overrides ?? {},
+          store.get(shortcutRegistryAtom),
+        );
+        if (dropped.length === 0) return;
+        const migrated: Config = { ...cfg, keymap_overrides: cleaned };
+        setConfig(migrated);
+        invoke("save_config", { config: migrated }).catch(() => {});
+        store.set(droppedKeymapOverridesAtom, dropped);
+        setToasts({
+          message: "Keyboard overrides reset",
+          description: `${dropped.length} keymap override${dropped.length === 1 ? "" : "s"} reset by the shortcuts restructure — details in Settings → Keymap.`,
+          type: "info",
+          action: {
+            label: "Open Keymap",
+            onClick: () => {
+              store.set(settingsRequestedSectionAtom, "keymap");
+              store.set(settingsOpenAtom, true);
+            },
+          },
+        });
+      })
       .catch(() => {});
-  }, [setConfig]);
+  }, [setConfig, setToasts, store]);
 
   // Surface a published release as a toast on launch so users on an older
   // build discover it without opening Settings. Reuses the updater check;

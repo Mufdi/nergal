@@ -61,7 +61,7 @@ export function BrowserPanel() {
                     style={{ colorScheme }}
                     title={`Live preview: ${tab.label}`}
                     /// Cross-origin iframes capture keyboard focus on click, so
-                    /// parent-window shortcuts (Ctrl+L focus URL bar, Ctrl+Shift+0
+                    /// parent-window shortcuts (Ctrl+L focus URL bar, leader 0
                     /// toggle floating, Ctrl+K palette) stop firing while the user
                     /// is interacting inside the page. Blurring on mouseleave
                     /// returns focus to the parent the moment the user moves

@@ -88,7 +88,7 @@ export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
   // doesn't slide the (hidden) picker cursor while the user navigates Zen.
   const listenerActive = !(zenState.open || conflictsZen || prZen !== null);
 
-  // Ctrl+Shift+0 routes here when chipMode === "prs" (see shortcuts.ts).
+  // leader 0 routes here when chipMode === "prs" (see shortcuts.ts).
   // Open PR Zen with the currently-selected PR; the cursor PR is the
   // fallback when the user pressed the shortcut from the picker without
   // picking a row first.

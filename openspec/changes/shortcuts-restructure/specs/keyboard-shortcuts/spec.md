@@ -8,11 +8,15 @@ While the leader is pending:
 - The state SHALL cancel without side effects on `Esc`, on a second leader press (re-tap), or after a 2000 ms timeout.
 - A valid continuation SHALL fire its registered action and clear the state.
 
-The leader binding SHALL be locked in the keymap editor UI (listed in `LOCKED_SHORTCUT_IDS`: no Rebind button, protecting against accidental remaps of the structural prefix), **but** the override resolver SHALL honor a `keymap_overrides["leader"]` entry — this is the escape hatch for systems where the OS reserves `Ctrl+Space` (macOS input-source switch, CJK IME); documented fallbacks are `Ctrl+{` and `Ctrl+.`. This makes `leader` the one locked id whose override is not ignored.
+The leader binding SHALL be rebindable from the keymap editor like any other row (post-walk revision 2026-07-03: originally UI-locked; the user opted for rebind + validation). Combo validation SHALL reject declared OS/DE-reserved combos with the reservation named in the message (the `RESERVED_COMBOS` ban list — IBus unicode input, GNOME open-terminal / lock-screen / workspace-switch). The leader row SHALL carry a platform-conditional hint — shown ONLY on the OSes where `Ctrl+Space` is actually contested (macOS: input-source switch; Windows: CJK IME toggles), naming `Ctrl+.` as the suggested alternative; on Linux no hint is shown (nothing about other systems).
 
-#### Scenario: Leader override honored despite UI lock
-- **WHEN** config contains `keymap_overrides: { "leader": "ctrl+." }`
-- **THEN** the keymap editor shows the leader row locked, but `Ctrl+.` activates the leader and `Ctrl+Space` does not
+#### Scenario: Leader rebind honored
+- **WHEN** the user rebinds the leader row to `Ctrl+.` (or config contains `keymap_overrides: { "leader": "ctrl+." }`)
+- **THEN** `Ctrl+.` activates the leader and `Ctrl+Space` does not
+
+#### Scenario: OS-reserved combo rejected with reason
+- **WHEN** the user tries to record `Ctrl+Alt+T` for any shortcut
+- **THEN** validation rejects it and the message names the reservation (GNOME open-terminal)
 
 #### Scenario: Leader then continuation fires the action
 - **WHEN** the user presses and releases `Ctrl+Space`, then presses `p`
@@ -106,18 +110,18 @@ Two deliberate exceptions sit outside this gate and remain nergal-owned in BOTH 
 - **THEN** the active quake shell tab closes (deliberate exception; the shell's delete-word remains reachable via `leader .`)
 
 ### Requirement: Palette-only registry entries
-The registry SHALL support entries with `keys: ""` — actions with no key binding that still appear in the command palette (and can later be bound via the keymap editor). The provider-status popover (agent status: Claude/OpenAI) SHALL be exposed as a palette-only entry.
+The registry SHALL support entries with `keys: ""` — actions with no key binding that still appear in the command palette (and can later be bound via the keymap editor). The provider-status popover SHALL be exposed as TWO palette-only entries, one per status page ("Provider status: Claude", "Provider status: OpenAI"), so both are reachable regardless of which agent the active session runs (post-walk revision 2026-07-03: a single agent-inferred entry only ever surfaced one provider).
 
 #### Scenario: Provider status reachable from the palette
 - **WHEN** the user opens the command palette and types "status"
-- **THEN** a "Provider status" entry appears without a key badge, and selecting it opens the provider-status popover
+- **THEN** both "Provider status: Claude" and "Provider status: OpenAI" entries appear without key badges, and selecting one opens the provider-status popover for that provider
 
 #### Scenario: Unbound entries never match keydown
 - **WHEN** an entry has `keys: ""`
 - **THEN** the dispatcher skips it for every keydown
 
 ### Requirement: Keymap editor supports the layer model
-Settings → Keymap SHALL group shortcuts by layer (Core / Surfaces / Leader / App-scope), record two-step chords for leader continuations (first the prefix, then the continuation), and display chords as `Ctrl+Space` + key in `Kbd` chips. `LOCKED_SHORTCUT_IDS` SHALL contain `command-palette`, `focus-terminal`, `leader`, and `session-1..9`. Combo validation SHALL allow leader continuations without a Ctrl/Alt modifier (the prefix already isolates them from terminal typing) and SHALL check collisions within the leader namespace separately from the global namespace.
+Settings → Keymap SHALL group shortcuts by layer (Core / Surfaces / Leader / App-scope), record two-step chords for leader continuations (first the prefix, then the continuation), and display chords as `Ctrl+Space` + key in `Kbd` chips. `LOCKED_SHORTCUT_IDS` SHALL contain `command-palette` and `session-1..9`; `leader` and `focus-terminal` SHALL be rebindable (protected by the declared reservation bans, with helper hints under both rows — the focus-terminal hint explains the physical-key identity: Ñ on Spanish layouts, `;` elsewhere, adapted via the Keyboard API where available). Combo validation SHALL allow leader continuations without a Ctrl/Alt modifier (the prefix already isolates them from terminal typing) and SHALL check collisions within the leader namespace separately from the global namespace.
 
 #### Scenario: Recording a leader continuation
 - **WHEN** the user records a new binding for "ClickUp panel" and presses `Ctrl+Space` then `u`
@@ -147,7 +151,7 @@ The user SHALL see a one-time notice in Settings → Keymap listing every droppe
 ## MODIFIED Requirements
 
 ### Requirement: Terminal focus bypass
-Keyboard ownership between nergal and the agent CLI SHALL be governed by the `keyboard_ownership` switch (see *Keyboard ownership switch*), not by a blanket terminal bypass. In both modes, keys not bound by nergal reach the PTY untouched, and `Ctrl+Ñ` (physical `Semicolon`) always focuses the terminal from any zone. The which-key/leader pending state is the only situation where unbound keys are withheld from the PTY.
+Keyboard ownership between nergal and the agent CLI SHALL be governed by the `keyboard_ownership` switch (see *Keyboard ownership switch*), not by a blanket terminal bypass. In both modes, keys not bound by nergal reach the PTY untouched, and the focus-terminal binding (default `Ctrl+Ñ`, physical `Semicolon`; rebindable) focuses the terminal from any zone. The which-key/leader pending state is the only situation where unbound keys are withheld from the PTY.
 
 #### Scenario: Unbound key reaches the PTY
 - **WHEN** focus is in the terminal and the user presses `Ctrl+G` (unbound in nergal)
@@ -158,7 +162,11 @@ Keyboard ownership between nergal and the agent CLI SHALL be governed by the `ke
 - **THEN** focus moves to the terminal
 
 ### Requirement: Navigation shortcuts
-The system SHALL provide: `Ctrl+B` toggle sidebar (`scope: "app"`), `Ctrl+Shift+B` toggle right panel (global), `Alt+←/→` cycle focus zones (global), `Ctrl+Ñ` focus terminal (locked), `Ctrl+}` quake terminal (dual key/code match), `Ctrl+Enter` fullscreen terminal, `Ctrl+,` settings, `leader o` toggle ports popover, and `leader h` notification history.
+The system SHALL provide: `Ctrl+B` toggle sidebar (`scope: "app"`), `leader Shift+B` toggle sidebar (leader alias — keeps the sidebar reachable from any zone in both ownership modes, since agent mode yields `Ctrl+B` to the PTY in terminal focus), `Ctrl+Shift+B` toggle right panel (global), `Alt+←/→` cycle focus zones (global), `Ctrl+Ñ` focus terminal (default binding; rebindable), `Ctrl+}` quake terminal (dual key/code match), `Ctrl+Enter` fullscreen terminal, `Ctrl+,` settings, `leader o` toggle ports popover, and `leader h` notification history.
+
+#### Scenario: Sidebar via leader in agent mode
+- **WHEN** `keyboard_ownership` is `"agent"`, focus is in the terminal, and the user presses `Ctrl+Space` then `Shift+B`
+- **THEN** the sidebar toggles (while plain `Ctrl+B` reaches the PTY)
 
 #### Scenario: Toggle sidebar in default mode
 - **WHEN** `keyboard_ownership` is `"nergal"` and the user presses `Ctrl+B` from any zone

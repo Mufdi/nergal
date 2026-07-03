@@ -307,7 +307,10 @@ export function ConflictsPanel({ sessionId, inZen = false, onToggleZen, onResolv
               </span>
               <Button onClick={completeMerge} disabled={completing} className="gap-1.5" size="sm">
                 <Check size={12} /> {completing ? "Completing…" : "Finish in-progress merge"}
-                <Kbd keys="ctrl+alt+enter" tone="onPrimary" className="ml-1" />
+                <span className="ml-1 flex items-center gap-0.5">
+                  <Kbd keys="ctrl+space" tone="onPrimary" />
+                  <Kbd keys="m" tone="onPrimary" />
+                </span>
               </Button>
               <span className="text-[10px] text-muted-foreground/60">
                 Creates a local merge commit. No push happens — your remote branch is unaffected.
@@ -1022,7 +1025,7 @@ function ConflictView({
               >
                 {inZen ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
               </TooltipTrigger>
-              <TooltipContent side="bottom" className="text-[10px]">{inZen ? "Collapse (Ctrl+Shift+0)" : "Expand (Ctrl+Shift+0)"}</TooltipContent>
+              <TooltipContent side="bottom" className="text-[10px]">{inZen ? "Collapse (Ctrl+Space 0)" : "Expand (Ctrl+Space 0)"}</TooltipContent>
             </Tooltip>
           )}
         </span>

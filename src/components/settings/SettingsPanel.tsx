@@ -713,7 +713,7 @@ function ObsidianSection() {
           placeholder="/path/to/vault/Inbox.md"
         />
         <p className="text-xs text-muted-foreground">
-          Target file for <kbd className="px-1 py-0.5 text-[10px] rounded bg-secondary">Ctrl+Alt+Q</kbd> captures. If you omit the <code>.md</code> extension it's added on save. Empty = shortcut shows a hint instead.
+          Target file for <kbd className="px-1 py-0.5 text-[10px] rounded bg-secondary">Ctrl+Space Q</kbd> captures. If you omit the <code>.md</code> extension it's added on save. Empty = shortcut shows a hint instead.
         </p>
       </div>
 

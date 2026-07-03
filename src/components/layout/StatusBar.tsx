@@ -17,9 +17,11 @@ import { toastsAtom } from "@/stores/toast";
 import { invoke } from "@/lib/tauri";
 import { open as openShell } from "@tauri-apps/plugin-shell";
 import { confirm as swalConfirm } from "@/lib/confirm";
-import { focusZoneAtom } from "@/stores/shortcuts";
+import { focusZoneAtom, resolvedShortcutsAtom } from "@/stores/shortcuts";
+import { leaderPendingAtom } from "@/stores/leader";
 import * as terminalService from "@/components/terminal/terminalService";
 import { Badge } from "@/components/ui/badge";
+import { Kbd } from "@/components/ui/kbd";
 import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock, Globe, CalendarRange, Pencil, TriangleAlert, Timer, History, X, Copy, ExternalLink } from "lucide-react";
 import { activeIncidentsAtom, type ProviderStatusDetail } from "@/stores/statusFeed";
 import { notificationHistoryAtom, clearNotificationsAtom, notificationHistoryOpenAtom, type NotificationEntry } from "@/stores/notifications";
@@ -86,6 +88,24 @@ export function StatusBar() {
   const sl = useAtomValue(activeAgentStatusAtom);
   const agentMeta = useAtomValue(activeAgentMetadataAtom);
   const [now, setNow] = useState(() => Date.now());
+  const leaderPending = useAtomValue(leaderPendingAtom);
+  const shortcuts = useAtomValue(resolvedShortcutsAtom);
+
+  // Owns the provider-status popover state so it's reachable both from an
+  // incident chip click AND the palette-only "Provider status" entry (which
+  // has no chip to anchor to when nothing is currently incident-flagged).
+  const [openProvider, setOpenProvider] = useState<string | null>(null);
+  useEffect(() => {
+    function onOpenProviderStatus(e: Event) {
+      const requested = (e as CustomEvent<{ provider?: string }>).detail?.provider;
+      // Payload-less dispatch falls back to the active agent's provider:
+      // codex is the only OpenAI-backed adapter; every other one (claude-code,
+      // pi, opencode) reports under the "claude" status page.
+      setOpenProvider(requested ?? (agentMeta?.id === "codex" ? "openai" : "claude"));
+    }
+    document.addEventListener("nergal:open-provider-status", onOpenProviderStatus);
+    return () => document.removeEventListener("nergal:open-provider-status", onOpenProviderStatus);
+  }, [agentMeta]);
 
   // Status popovers (ports / notifications) are transient: opening the
   // activities drawer or expanding the right panel dismisses whichever is open.
@@ -162,7 +182,7 @@ export function StatusBar() {
               >
                 <Pencil className="size-2.5" />
               </TooltipTrigger>
-              <TooltipContent side="top" className="text-[10px]">Rename branch (Ctrl+Alt+R)</TooltipContent>
+              <TooltipContent side="top" className="text-[10px]">Rename branch (Ctrl+Space R)</TooltipContent>
             </Tooltip>
             {gitInfo.dirty && (
               <span className="inline-block size-1.5 shrink-0 rounded-full bg-orange-500" aria-label="Uncommitted changes" />
@@ -200,6 +220,13 @@ export function StatusBar() {
           </TooltipTrigger>
           <TooltipContent>Session mode: {mode}</TooltipContent>
         </Tooltip>
+        {leaderPending && (
+          <div className="flex shrink-0 items-center gap-1">
+            <Kbd keys={shortcuts.find((a) => a.id === "leader")?.keys ?? "ctrl+space"} />
+            {leaderPending.mode === "raw" && <Kbd keys="." />}
+            <span className="text-[10px]">…</span>
+          </div>
+        )}
       </div>
 
       {/* Center: activity summary + localhost ports */}
@@ -232,7 +259,7 @@ export function StatusBar() {
         </Tooltip>
 
         <LocalhostPortChips />
-        <IncidentChips />
+        <IncidentChips openProvider={openProvider} setOpenProvider={setOpenProvider} />
         <NotificationHistory />
       </div>
 
@@ -467,7 +494,7 @@ function NotificationHistory() {
         >
           <History className="size-3 shrink-0" />
         </TooltipTrigger>
-        <TooltipContent>Notification history (Ctrl+Alt+N)</TooltipContent>
+        <TooltipContent>Notification history (Ctrl+Space H)</TooltipContent>
       </Tooltip>
       {open && (
         <>
@@ -556,9 +583,14 @@ function NotificationHistory() {
 /// operational. Clicking a chip opens a native popover with the affected
 /// components + unresolved incidents (fetched from the Statuspage summary),
 /// instead of the external browser — OpenAI's CSP blocks the in-app iframe.
-function IncidentChips() {
+function IncidentChips({
+  openProvider,
+  setOpenProvider,
+}: {
+  openProvider: string | null;
+  setOpenProvider: (p: string | null | ((prev: string | null) => string | null)) => void;
+}) {
   const incidents = useAtomValue(activeIncidentsAtom);
-  const [openProvider, setOpenProvider] = useState<string | null>(null);
   const [detail, setDetail] = useState<ProviderStatusDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -591,7 +623,10 @@ function IncidentChips() {
     };
   }, [openProvider]);
 
-  if (incidents.length === 0) return null;
+  // Palette-triggered opens (no active incident to anchor a chip to) still
+  // need the container mounted so the popover + its outside-click/Escape
+  // handling can render.
+  if (incidents.length === 0 && !openProvider) return null;
 
   return (
     <div ref={containerRef} className="relative flex shrink-0 items-center gap-1">

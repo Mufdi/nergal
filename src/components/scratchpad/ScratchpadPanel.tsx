@@ -49,7 +49,7 @@ export function ScratchpadPanel() {
   useEffect(() => {
     if (!open) {
       // Close path is shared across the FloatingPanel close button, Esc, and
-      // the Ctrl+Alt+L toggle — handing focus back here covers all of them.
+      // the leader s toggle — handing focus back here covers all of them.
       if (lastOpenRef.current) {
         requestAnimationFrame(() => {
           setFocusZone("terminal");

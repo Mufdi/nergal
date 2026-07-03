@@ -397,7 +397,10 @@ export function GitPanel({ sessionId }: GitPanelProps) {
             }
           >
             <Maximize2 size={10} />
-            <Kbd keys="ctrl+shift+0" />
+            <span className="flex items-center gap-0.5">
+              <Kbd keys="ctrl+space" />
+              <Kbd keys="0" />
+            </span>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="text-[10px]">Expand to Zen mode</TooltipContent>
         </Tooltip>
@@ -418,7 +421,7 @@ export function GitPanel({ sessionId }: GitPanelProps) {
               }
             >
               {completing ? <PulseDots count={1} className="mr-0.5" dotClassName="size-1" /> : null}
-              Finish merge <Kbd keys="ctrl+alt+enter" />
+              Finish merge <Kbd keys="ctrl+space" /><Kbd keys="m" className="ml-0.5" />
             </TooltipTrigger>
             <TooltipContent side="bottom" className="text-[10px]">Creates a merge commit locally. No push.</TooltipContent>
           </Tooltip>

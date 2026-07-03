@@ -208,11 +208,11 @@ const PANEL_BUTTONS: {
   { type: "diff", label: "Diff", shortcut: "Ctrl+Shift+D", icon: GitCompareArrows },
   { type: "spec", label: "Spec", shortcut: "Ctrl+Shift+S", icon: ClipboardList },
   { type: "git", label: "Git", shortcut: "Ctrl+Shift+G", icon: GitBranch },
-  { type: "browser", label: "Browser", shortcut: "Ctrl+Alt+B", icon: Globe },
-  { type: "obsidiannote", label: "Obsidian", shortcut: "Ctrl+Shift+Q", icon: ObsidianIcon },
-  { type: "clickup", label: "ClickUp", shortcut: "Ctrl+Shift+M", icon: ClickUpIcon },
-  { type: "linear", label: "Linear", shortcut: "Ctrl+Shift+I", icon: LinearIcon },
-  { type: "crosssession", label: "Cross-session", shortcut: "Ctrl+Shift+X", icon: MessagesSquare },
+  { type: "browser", label: "Browser", shortcut: "Ctrl+Space B", icon: Globe },
+  { type: "obsidiannote", label: "Obsidian", shortcut: "Ctrl+Shift+O", icon: ObsidianIcon },
+  { type: "clickup", label: "ClickUp", shortcut: "Ctrl+Space C", icon: ClickUpIcon },
+  { type: "linear", label: "Linear", shortcut: "Ctrl+Space L", icon: LinearIcon },
+  { type: "crosssession", label: "Cross-session", shortcut: "Ctrl+Space X", icon: MessagesSquare },
 ];
 
 
@@ -768,7 +768,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
               >
                 {pushBusy ? <PulseDots count={1} dotClassName="size-1.5" /> : <Upload size={14} />}
               </TooltipTrigger>
-              <TooltipContent side="bottom">Push (Ctrl+Alt+P){activeGitInfo && activeGitInfo.ahead > 0 ? ` — +${activeGitInfo.ahead}` : ""}</TooltipContent>
+              <TooltipContent side="bottom">Push (Ctrl+Space P){activeGitInfo && activeGitInfo.ahead > 0 ? ` — +${activeGitInfo.ahead}` : ""}</TooltipContent>
             </Tooltip>
 
             {isWorktreeSession && (
@@ -785,7 +785,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
                 >
                   <Rocket size={14} />
                 </TooltipTrigger>
-                <TooltipContent side="bottom">Ship: commit + push + PR (Ctrl+Shift+Y)</TooltipContent>
+                <TooltipContent side="bottom">Ship: commit + push + PR (Ctrl+Shift+Enter)</TooltipContent>
               </Tooltip>
             )}
           </div>

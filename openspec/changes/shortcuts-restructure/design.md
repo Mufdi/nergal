@@ -84,3 +84,10 @@ User asked whether recording banned combos + agent versions creates permanent de
 - **Iframe blind spot (iprev R1-F5)**: while the browser panel's cross-origin iframe holds focus, no registry shortcut — leader included — can fire; only the Tauri-level `RESERVED_SHORTCUTS` (`browser.rs:31-43`) work there. `ctrl+shift+0 → browser:toggle-mode` stays in that set as an iframe-scoped escape hatch even though global zen moves to `leader 0` — deliberate exception, documented in `docs/shortcuts.md`, no Rust change.
 - **Quake tab-management exception (iprev R1-F12)**: the hardcoded quake `Ctrl+W`/`Ctrl+Shift+T` overrides stay nergal-owned in both ownership modes (quake shells are nergal UI hosting a plain shell, not the agent); the shell's readline `Ctrl+W` is reachable via `leader .`.
 - **WebKitGTK**: all matching stays on `event.code` (`Space`); no `key`-based matching anywhere new.
+
+## Post-walk revisions (2026-07-03, user walk feedback)
+
+- **D9 lock semantics superseded**: `leader` AND `focus-terminal` removed from `LOCKED_SHORTCUT_IDS` — both rebindable from the UI. Protection moved from lock to validation: a declared `RESERVED_COMBOS` ban list (IBus `ctrl+shift+u`, GNOME `ctrl+alt+t/l/arrows`) rejected with the reservation named in the message. Helper hints under both rows (leader: per-OS reservation note + `ctrl+.` fallback; focus-terminal: physical-key identity).
+- **Ñ label is layout-aware where possible**: `formatKeyParts` renders the `ñ` token via `initKeyboardLayoutLabels()` (Keyboard API probe at startup — Chromium webviews only; WebKitGTK keeps the Ñ default). Binding still matches by `code: Semicolon` on every layout.
+- **D5 extended**: `leader Shift+B` = second Toggle Sidebar entry (`toggle-sidebar-leader`) so the sidebar stays keyboard-reachable in agent mode with terminal focus (where `Ctrl+B` yields to the PTY).
+- **Provider status split**: two palette-only entries (`provider-status-claude`, `provider-status-openai`) with a `detail.provider` payload — the single agent-inferred entry only ever surfaced the active agent's provider.

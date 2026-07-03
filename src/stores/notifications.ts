@@ -16,7 +16,7 @@ const MAX_HISTORY = 100;
 export const notificationHistoryAtom = atom<NotificationEntry[]>([]);
 
 /// Open state of the StatusBar notification-history popover. Lifted out of the
-/// component so the `ctrl+alt+n` shortcut can toggle it (mirrors
+/// component so the `leader h` shortcut can toggle it (mirrors
 /// `portsPopoverOpenAtom`).
 export const notificationHistoryOpenAtom = atom(false);
 

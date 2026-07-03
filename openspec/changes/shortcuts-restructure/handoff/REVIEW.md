@@ -26,3 +26,34 @@ CHECKS-PASSED (round 1): all ~30 implementation.md line refs exact; binding map 
 **Verdict: APPROVED.** All 12 round-1 fixes verified resolved against the artifacts and re-checked against source (split dispatcher ordering coherent across design/impl/tasks and satisfies the consume-all + raw-mode spec scenarios; both scratchpad MODIFIED headers byte-exact vs baseline; browser.rs chord list exact; leader-lock semantics now stated identically in all five artifacts; exactly one "No swallowed no-ops" scenario; binding map unchanged and collision-free).
 
 Two MINOR leftovers reported and fixed post-approval by the architect: implementation.md edge-case bullet still deferred the (already resolved) leader-lock decision → now references D9; proposal What-Changes migration bullet understated the F11 collision cleanup → amended, hash re-locked. `openspec validate` green.
+
+---
+
+# Mode B implementation review — 2026-07-03 (4-parallel, escalated by scope threshold)
+
+## Reviewer: spec (sonnet)
+**PASS.** All requirement scenarios traced to code, D9 ordering verified line-by-line, verification re-run independently (tsc/vitest/cargo/clippy green). Findings, all MINOR:
+1. Some UI hint chips hardcode chord literals (FilesChip/GitPanel/ConflictsPanel/TopBar) instead of deriving from `resolvedShortcutsAtom` — stale-on-remap for those chips only; mirrors pre-existing repo convention, task 6.1 wording was soft ("prefer"). Follow-up candidate.
+2. Task 4.2 hint-variant: which-key popover implements it; the StatusBar breadcrumb itself does not restyle on `hintNonContinuation`. Spec text only requires the breadcrumb — tasks.md-only gap.
+3. Note: in raw mode, Esc/leader-re-tap are FORWARDED (not cancel) — literal reading of the passthrough requirement ("any combination, including bare keys"); cancel scenarios apply to awaiting mode. Deliberate, desirable (Esc must be sendable to the agent).
+Full tasks.md coverage table: 1.1–6.4 implemented (4.2 partial per finding 2), 7.3–7.7 manual walks N/A.
+
+## Reviewer: code-quality (sonnet)
+**PASS (0 must-fix).** Hot-path allocation profile unchanged (leader block only runs while pending). Findings:
+- 🟡 `validateCombo` accepted a bare `.` continuation that `resolveContinuation`'s raw-mode sentinel makes unreachable (silent dead binding) → **FIXED** by orchestrator: chord branch now rejects `Period` without shift + test (47/47 green).
+- 🟡 `AnnotationsDrawer.tsx:134,193` stale "(Ctrl+Shift+J)" tooltips missed by the sweep → **FIXED**: now "(Ctrl+Space D)".
+- 🟢 `registry.find(a => a.id === "leader")?.keys ?? "ctrl+space"` duplicated in 4 components → follow-up: hoist to a `leaderKeysAtom`.
+
+## Reviewer: security (sonnet — proportionate to surface; no auth/crypto/SQL in diff)
+**PASS.** No exploitable findings. INFO-level notes: (1) raw-mode PTY forwarding adds no new privilege boundary (`terminal_input` invoke already reachable by any same-origin script; optional `e.isTrusted` gate suggested as defense-in-depth — deferred: needs a WebKitGTK/IM manual walk to rule out false-negatives on real input); (2) cross-origin iframe cannot reach the handler (frame-scoped keydown, no postMessage bridge); (3) `nergal:open-provider-status` blast radius = read-only public-status popover; (4) `keyboard_ownership` round-trip clean, correctly absent from `BACKEND_OWNED_CONFIG_KEYS`; (5) startup `save_config` writes just-loaded config, no partial-state clobber.
+
+## Reviewer: deps (haiku)
+**PASS.** vitest ^4.1.9 current/maintained, devDependencies-only, lockfile diff isolated to vitest + 18 transitives, zero unrelated bumps, Cargo.toml/lock untouched, no script collisions, zero new vulns (pre-existing prod vulns hono/qs/brace-expansion are unrelated to this change).
+
+## Gating combine
+spec PASS · security PASS · quality warnings fixed · deps PASS → **PROCEED**.
+
+## Follow-ups (non-blocking, for the backlog)
+- Hoist leader-binding lookup into a shared `leaderKeysAtom`; migrate the hardcoded chord chips (FilesChip/GitPanel/ConflictsPanel/TopBar) to derive from it.
+- Consider `if (!e.isTrusted) return;` at the top of the dispatcher after a manual WebKitGTK/IBus walk confirms real keydowns always carry isTrusted.
+- Optional: StatusBar breadcrumb variant on `hintNonContinuation` (which-key already covers the hint).

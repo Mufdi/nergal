@@ -565,7 +565,7 @@ export function ShipDialog() {
   // (no more staged/unstaged work), the canonical next step is shipping
   // to a PR — Commit and Commit+Push only make sense while there's still
   // local work to commit. Push-only-existing-commits is available via
-  // the global Ctrl+Alt+P shortcut, not via this modal.
+  // the global leader p shortcut, not via this modal.
   const hasUncommitted = (preview?.staged_count ?? 0) > 0 || toStage.size > 0;
   const hasCommitsAhead = (preview?.commits.length ?? 0) > 0;
   const nothingToShip = !hasUncommitted && !hasCommitsAhead;

@@ -6,8 +6,18 @@ import {
   keymapCaptureActiveAtom,
   commandPaletteOpenAtom,
   toggleQuake,
+  focusZoneAtom,
 } from "@/stores/shortcuts";
-import { parseKeys } from "@/lib/keymap";
+import { parseKeys, isChord } from "@/lib/keymap";
+import {
+  leaderPendingAtom,
+  startLeaderPending,
+  enterRawMode,
+  flagNonContinuationHint,
+  cancelLeaderPending,
+  resolveContinuation,
+  BARE_MODIFIER_CODES,
+} from "@/stores/leader";
 import { zenModeAtom, prZenAtom } from "@/stores/zenMode";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
 import {
@@ -19,6 +29,7 @@ import {
   restoreLastClosedScratchTab,
 } from "@/stores/scratchpad";
 import { appStore } from "@/stores/jotaiStore";
+import { configAtom } from "@/stores/config";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { addAdHocShell, closeActiveQuakeShell } from "@/stores/quake";
 import * as terminalService from "@/components/terminal/terminalService";
@@ -38,6 +49,77 @@ export function useKeyboardShortcuts() {
       // While the keymap editor is recording, every global shortcut steps
       // aside so the keystroke reaches only the recorder.
       if (appStore.get(keymapCaptureActiveAtom)) return;
+
+      // Leader pending state machine (design D9 "resolution first"): while
+      // pending, the machine owns every keydown — this MUST run before Tab
+      // forwarding, the quake overrides, the hardcoded Ctrl+K, and the
+      // scratchpad hijack, or those blocks would race the machine (a bare
+      // Tab would forward through the Tab block instead of resolving here;
+      // raw-mode Ctrl+K would open the palette instead of reaching the PTY;
+      // a quake-focused Ctrl+W would close a shell instead of resolving).
+      const pending = appStore.get(leaderPendingAtom);
+      if (pending) {
+        // A dialog opening mid-pending owns its own keyboard space — cancel
+        // without preventDefault so the dialog's own handler still sees it.
+        if (document.querySelector('[data-slot="dialog-content"]')) {
+          cancelLeaderPending();
+          return;
+        }
+        if (pending.mode === "raw") {
+          if (BARE_MODIFIER_CODES.has(e.code)) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
+          e.preventDefault();
+          e.stopPropagation();
+          const rawTarget = e.target as HTMLElement | null;
+          const inQuakeZone = !!rawTarget?.closest("[data-focus-zone='quake']") || appStore.get(focusZoneAtom) === "quake";
+          const region = inQuakeZone ? "quake" : "center";
+          terminalService.sendSpecialKeyToActive(e.code, e.key, { ctrl: e.ctrlKey, shift: e.shiftKey, alt: e.altKey }, region);
+          terminalService.focusActive(region);
+          cancelLeaderPending();
+          return;
+        }
+        // mode === "awaiting": resolve against the effective (override-
+        // honored) leader binding and the resolved registry's chord entries.
+        const leaderEntry = registry.find((a) => a.id === "leader");
+        const leaderParsed = leaderEntry ? parseKeys(leaderEntry.keys) : null;
+        if (!leaderParsed) {
+          cancelLeaderPending();
+          return;
+        }
+        const chordEntries = registry.filter((a) => isChord(a.keys));
+        const resolution = resolveContinuation(e, leaderParsed, chordEntries);
+        switch (resolution.kind) {
+          case "ignore":
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          case "cancel":
+            e.preventDefault();
+            e.stopPropagation();
+            cancelLeaderPending();
+            return;
+          case "raw":
+            e.preventDefault();
+            e.stopPropagation();
+            enterRawMode();
+            return;
+          case "hint":
+            e.preventDefault();
+            e.stopPropagation();
+            flagNonContinuationHint();
+            return;
+          case "continuation":
+            e.preventDefault();
+            e.stopPropagation();
+            cancelLeaderPending();
+            resolution.action.handler();
+            return;
+        }
+      }
+
       // Tab / Shift+Tab routing (single source of truth in capture phase).
       // - Target inside the terminal zone → forward to Claude via the active
       //   PTY directly. We do NOT defer to the textarea's bubble handler
@@ -115,7 +197,7 @@ export function useKeyboardShortcuts() {
       // Scratchpad-focused override: when the panel is open AND focus is
       // inside it, hijack Ctrl+Tab/Ctrl+Shift+Tab/Ctrl+W/Ctrl+Shift+T
       // so they operate on scratchpad tabs instead of session/right-panel
-      // tabs. Other shortcuts (Ctrl+B, Ctrl+1..9, Ctrl+S, Ctrl+Alt+L) keep
+      // tabs. Other shortcuts (Ctrl+B, Ctrl+1..9, Ctrl+S, leader s) keep
       // working as global controls.
       const scratchpadOpen = appStore.get(scratchpadOpenAtom);
       if (scratchpadOpen) {
@@ -225,8 +307,32 @@ export function useKeyboardShortcuts() {
           e.altKey === parsed.alt &&
           e.code === parsed.code
         ) {
+          // Activation (design D9): the leader entry's handler is a no-op —
+          // the dispatcher owns starting the pending state. This match sits
+          // here deliberately, after the palette/dialog/zen guards above, so
+          // the leader can't activate under a dialog or the zen alt+arrow
+          // guard.
+          if (action.id === "leader") {
+            e.preventDefault();
+            e.stopPropagation();
+            startLeaderPending();
+            return;
+          }
           if (inEditor && action.id === "save-file") return;
           if (inNonTerminalField && action.id === "fullscreen-terminal") return;
+          // Ship-Enter contextual shortcut: the git panel commit textarea
+          // binds the same combo locally (Ship using the textarea message);
+          // let its bubble handler win instead of double-firing.
+          if (action.id === "ship-session" && target?.closest("[data-git-commit-textarea]")) return;
+          // App-scope gate (keyboard ownership switch): in "agent" mode with
+          // focus in the terminal/quake zone, an app-scope entry yields the
+          // key to the PTY — `continue` without preventDefault so the event
+          // genuinely reaches it instead of being silently swallowed.
+          if (action.scope === "app") {
+            const ownership = appStore.get(configAtom).keyboard_ownership ?? "nergal";
+            const zone = appStore.get(focusZoneAtom);
+            if (ownership === "agent" && (zone === "terminal" || zone === "quake")) continue;
+          }
           e.preventDefault();
           e.stopPropagation();
           action.handler();

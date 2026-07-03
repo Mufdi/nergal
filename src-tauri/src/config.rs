@@ -7,6 +7,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_keyboard_ownership() -> String {
+    "nergal".to_string()
+}
+
 /// Platform-appropriate default interactive shell for a fresh config. POSIX
 /// reads `$SHELL`; Windows has no `$SHELL`, so an older build's hardcoded
 /// `/bin/bash` left the PTY unable to spawn (os error 3) — default to
@@ -218,6 +222,13 @@ pub struct Config {
     /// goes through `agent_worktrees_set_enabled`; tuning fields are file-only).
     #[serde(default)]
     pub agent_spawned_worktrees: AgentWorktreesConfig,
+    /// Which side wins `scope: "app"` shortcuts when focus is in the
+    /// terminal/quake zone: "nergal" (claims them globally, default) or
+    /// "agent" (yields to the agent CLI). Frontend-owned — must NOT be added
+    /// to `commands::BACKEND_OWNED_CONFIG_KEYS`, or `save_config` would strip
+    /// it on every write from Settings → Keymap.
+    #[serde(default = "default_keyboard_ownership")]
+    pub keyboard_ownership: String,
 }
 
 /// Tuning + kill-switch for agent-spawned worktree sessions. All fields have
@@ -413,6 +424,7 @@ impl Default for Config {
             summary: SummaryConfig::default(),
             cross_session: CrossSessionConfig::default(),
             agent_spawned_worktrees: AgentWorktreesConfig::default(),
+            keyboard_ownership: default_keyboard_ownership(),
         }
     }
 }

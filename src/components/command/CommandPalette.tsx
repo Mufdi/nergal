@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { commandPaletteOpenAtom, resolvedShortcutsAtom, focusZoneAtom, type ShortcutAction } from "@/stores/shortcuts";
-import { formatKeyParts } from "@/lib/keymap";
+import { formatKeyParts, chordContinuation } from "@/lib/keymap";
 import * as terminalService from "@/components/terminal/terminalService";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { obsidianTemplatesAtom, type ObsidianTemplate } from "@/stores/obsidianTemplates";
@@ -133,6 +133,8 @@ export function CommandPalette() {
     }
   }
 
+  const leaderKeys = registry.find((a) => a.id === "leader")?.keys ?? "ctrl+space";
+
   const categories = ["navigation", "session", "panel", "action"] as const;
   const grouped = new Map<string, ShortcutAction[]>();
   for (const action of filtered) {
@@ -203,7 +205,7 @@ export function CommandPalette() {
                       }`}
                     >
                       <span className="text-xs">{action.label}</span>
-                      <KeyBadges keys={action.keys} />
+                      <KeyBadges keys={action.keys} leaderKeys={leaderKeys} />
                     </button>
                   );
                 })}
@@ -275,8 +277,18 @@ export function CommandPalette() {
   );
 }
 
-function KeyBadges({ keys }: { keys: string }) {
-  const parts = formatKeyParts(keys);
+function KeyBadges({ keys, leaderKeys }: { keys: string; leaderKeys?: string }) {
+  // Palette-only entries (keys: "") render no badge at all — the row stays
+  // selectable/executable (spec: Palette-only registry entries).
+  if (keys === "") return null;
+
+  const continuation = chordContinuation(keys);
+  // Chord bindings render as the leader combo chips followed by the
+  // continuation chip, resolving the leader part from the resolved registry
+  // so an override shows correctly (design D9).
+  const parts = continuation !== null
+    ? [...formatKeyParts(leaderKeys ?? "ctrl+space"), ...formatKeyParts(continuation)]
+    : formatKeyParts(keys);
 
   return (
     <div className="flex items-center gap-0.5">

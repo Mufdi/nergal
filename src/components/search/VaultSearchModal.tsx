@@ -153,7 +153,7 @@ export function VaultSearchModal() {
     if (!tabId) {
       setToasts({
         message: "Cite in scratchpad",
-        description: "Open the scratchpad (Ctrl+Alt+L) and create a tab first.",
+        description: "Open the scratchpad (Ctrl+Space S) and create a tab first.",
         type: "info",
       });
       return;

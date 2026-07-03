@@ -44,7 +44,7 @@ function relativeToVault(sub: string | null | undefined, root: string | null | u
 
 /// Vault-note finder card, rendered inside the right panel: picker overlay
 /// over a note tab (Ctrl+Shift+K) or panel-view content when no note tab
-/// exists (Ctrl+Shift+Q). Pinned notes live as pinned tabs, so the finder
+/// exists (Ctrl+Shift+O). Pinned notes live as pinned tabs, so the finder
 /// carries no pinned section.
 export function VaultNoteFinder({ onClose, className }: { onClose: () => void; className?: string }) {
   const workspace = useAtomValue(activeWorkspaceAtom);

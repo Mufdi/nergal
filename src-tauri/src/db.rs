@@ -222,6 +222,24 @@ impl Database {
         Ok(db)
     }
 
+    /// Apply one migration's DDL and its `schema_version` bump as a single atomic
+    /// unit: the runner owns the transaction so a crash or error mid-migration
+    /// leaves neither applied, and the migration re-runs cleanly on next launch.
+    /// Migration SQL files must NOT contain their own `BEGIN`/`COMMIT` (a nested
+    /// transaction is a SQLite error). Statements that cannot run inside a
+    /// transaction (`VACUUM`, some `PRAGMA`) are unsupported by this runner —
+    /// none exist in the current migration set.
+    fn apply_migration(conn: &Connection, version: i64, sql: &str) -> Result<()> {
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch(sql)?;
+        tx.execute(
+            "INSERT INTO schema_version (version) VALUES (?1)",
+            [version],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Run all pending migrations.
     fn migrate(&self) -> Result<()> {
         self.conn.execute_batch(
@@ -273,11 +291,7 @@ impl Database {
         for (i, sql) in migrations.iter().enumerate() {
             let version = (i + 1) as i64;
             if version > current {
-                self.conn.execute_batch(sql)?;
-                self.conn.execute(
-                    "INSERT INTO schema_version (version) VALUES (?1)",
-                    [version],
-                )?;
+                Self::apply_migration(&self.conn, version, sql)?;
                 tracing::info!("applied migration v{version}");
             }
         }
@@ -1939,6 +1953,99 @@ mod tests {
         seed_session(&db, "s1");
         db.set_session_summary("s1", "ok", None, None, 5).unwrap();
         assert_eq!(db.get_session_summary("s1").unwrap().unwrap().summary, "ok");
+    }
+
+    #[test]
+    fn fresh_db_migrates_to_latest_version_with_022_schema() {
+        let db = in_memory();
+        // Highest migration file as of writing is 030 (see `migrate()`'s array,
+        // a local not reachable from here to derive this count automatically).
+        let version: i64 = db
+            .conn
+            .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 30);
+
+        let has_transcripts: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='session_transcripts'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_transcripts, 1);
+
+        let fk_count: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_foreign_key_list('session_summaries') WHERE `table` = 'sessions'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            fk_count, 1,
+            "session_summaries must carry the FK to sessions (022 rebuild)"
+        );
+    }
+
+    #[test]
+    fn apply_migration_rolls_back_on_error_and_is_retryable() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)")
+            .unwrap();
+
+        // Second statement errors (duplicate table) — the transaction must
+        // discard the first statement's effect along with the version bump.
+        let bad_sql = "CREATE TABLE marker (x INTEGER); CREATE TABLE marker (x INTEGER);";
+        assert!(Database::apply_migration(&conn, 1, bad_sql).is_err());
+
+        let table_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='marker'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            table_exists, 0,
+            "first statement must not persist on rollback"
+        );
+
+        let version_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM schema_version WHERE version = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            version_count, 0,
+            "schema_version must not be bumped on rollback"
+        );
+
+        // The corrected migration re-applies cleanly.
+        let good_sql = "CREATE TABLE marker (x INTEGER);";
+        Database::apply_migration(&conn, 1, good_sql).unwrap();
+
+        let table_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='marker'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(table_exists, 1);
+
+        let version_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM schema_version WHERE version = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(version_count, 1);
     }
 
     #[test]

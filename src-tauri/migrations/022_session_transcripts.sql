@@ -8,12 +8,6 @@
 --   2. Rebuild session_summaries to add the FK that 021 shipped without, so a
 --      deleted session leaves no orphan row.
 --
--- 022 manages its own transaction. The migration runner (db.rs::migrate) calls
--- execute_batch with NO enclosing transaction, and SQLite does not auto-rollback
--- a mid-batch statement error — so the rebuild is wrapped in BEGIN…COMMIT here.
--- Do NOT change the runner to wrap migrations in its own transaction without
--- removing this BEGIN (nested transactions are an error in SQLite).
---
 -- foreign_keys=ON is already set on every connection (db.rs:135/152/1212). No
 -- PRAGMA foreign_keys=OFF dance is needed: nothing references session_summaries,
 -- so renaming it under enforcement is safe.
@@ -29,7 +23,6 @@ CREATE TABLE IF NOT EXISTS session_transcripts (
 -- prevents a FOREIGN KEY constraint failure on rows the 021 leak already
 -- orphaned (those rows are regenerable, so dropping them is harmless).
 DROP TABLE IF EXISTS session_summaries_new;
-BEGIN;
 CREATE TABLE session_summaries_new (
     session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
     summary    TEXT NOT NULL,
@@ -43,4 +36,3 @@ INSERT INTO session_summaries_new (session_id, summary, model, token_cost, updat
     WHERE session_id IN (SELECT id FROM sessions);
 DROP TABLE session_summaries;
 ALTER TABLE session_summaries_new RENAME TO session_summaries;
-COMMIT;

@@ -22,3 +22,4 @@
 - [ ] 5.1 `cd src-tauri && cargo clippy -- -D warnings && cargo test && cargo fmt --check`
 - [ ] 5.2 `npx tsc --noEmit`
 - [ ] 5.3 Manual smoke: one command per new domain file (session open, git stage, PR view, conflict view, plan open, annotation save, task list, obsidian note, openspec read, file browse, config save).
+- [ ] 5.4 **Cross-platform gates green (D6):** confirm the `windows-check` and `macos-cross-check` CI jobs pass on the split PR — the Linux `cargo check` alone cannot prove the moved `#[cfg]`-gated commands/handlers kept their gates + `cfg(not(...))` stubs. A red cross-check here means a gate was dropped in the move.

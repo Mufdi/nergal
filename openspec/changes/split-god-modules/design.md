@@ -50,11 +50,16 @@ Each split commit is 100% move (verifiable with `git diff --color-moved=dimmed-z
 
 Pending changes editing these files surgically (`release-db-lock-during-io` — 3 commands; `remove-dead-askuser-slice` — 1 command + handler entry; `session-child-fk-cascade` — db migration list) land **before** the split or rebase trivially (the split moves whole fns; git rerere/move-detection handles it). Do NOT run the split concurrently with those branches in flight.
 
+### D6: preserve `#[cfg]` gates across the split (CLAUDE.md cross-platform invariant)
+
+`commands.rs` (7 `#[cfg(` sites), `lib.rs` (9), and `db.rs` (2) contain platform-gated code — `cfg(unix)` / `cfg(target_os = "…")` commands, invoke_handler entries, and their `cfg(not(...))` stubs. A domain split MUST move each gated item **with its gate and its counterpart stub intact** into the destination module (or, when a gate spans an invoke_handler block in `lib.rs`, keep the block's `#[cfg]` structure). The split is 100% move (D4), so no gate is added or removed — but a careless move that drops a `cfg(not(unix))` stub or re-homes a Unix-only fn without its Windows stub silently breaks a target platform. Because the split touches only the Linux dev host's compiler, the two cross-platform CI gates (`windows-check`, `macos-cross-check`) are the authoritative check that the gates survived — they MUST be green post-split (see Verification), not just the local Linux `cargo check`.
+
 ## Risks / Trade-offs
 
 - [Hidden coupling: a command references a private item defined elsewhere in the old file] → compiler-guided; promote to `pub(crate)` in `shared.rs` (Impact notes visibility widening is allowed only for this).
 - [Review of a ±6000-line diff] → per-domain commits + `--color-moved` review protocol stated in the PR description.
 - [In-flight branch conflicts] → D5 sequencing; announce the split window.
+- [A moved `#[cfg]`-gated command loses its gate/stub → silent macOS/Windows breakage the Linux build won't catch] → D6; the `windows-check` + `macos-cross-check` CI gates are the backstop and must stay green.
 
 ## Open Questions
 

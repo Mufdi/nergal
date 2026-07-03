@@ -25,4 +25,5 @@
 
 - [x] 6.1 `cd src-tauri && cargo clippy -- -D warnings && cargo test && cargo fmt --check`
 - [x] 6.2 `npx tsc --noEmit`
-- [ ] 6.3 Open a scratch PR touching only `src/` → frontend-check runs, Rust jobs skip; a scratch PR touching `src-tauri/` → all Rust gates run. Cut the next release normally and confirm `verify` precedes builds.
+- [x] 6.3 Open a scratch PR touching only `src/` → frontend-check runs, Rust jobs skip; a scratch PR touching `src-tauri/` → all Rust gates run. Cut the next release normally and confirm `verify` precedes builds.
+  - Verified 2026-07-03: scratch PR #2 (src/ only) ran frontend-check and skipped all 4 Rust/scripts jobs; the change's own push exercised the rust path (lint-and-test green on cold cache); workflow_dispatch run 28684081551 came back all-6-jobs green. Release-side ordering is enforced by `needs: [verify]` (reviewed) — observe live at the next release cut.

@@ -286,6 +286,7 @@ impl Database {
             include_str!("../migrations/028_cross_session.sql"),
             include_str!("../migrations/029_workspace_sort_order.sql"),
             include_str!("../migrations/030_workspace_plans_dir.sql"),
+            include_str!("../migrations/031_session_child_fk_cascade.sql"),
         ];
 
         for (i, sql) in migrations.iter().enumerate() {
@@ -1898,6 +1899,105 @@ mod tests {
     }
 
     #[test]
+    fn deleting_session_cascades_tasks_and_cost_summary() {
+        let db = in_memory();
+        seed_session(&db, "s1");
+        db.conn
+            .execute(
+                "INSERT INTO tasks (id, session_id, subject, created_at, updated_at) VALUES ('t1', 's1', 'do it', 0, 0)",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO cost_summaries (session_id, updated_at) VALUES ('s1', 0)",
+                [],
+            )
+            .unwrap();
+
+        db.delete_session("s1").unwrap();
+
+        let tasks: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM tasks WHERE session_id = 's1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(tasks, 0, "FK cascade must remove tasks on session delete");
+        let costs: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM cost_summaries WHERE session_id = 's1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            costs, 0,
+            "FK cascade must remove cost_summaries on session delete"
+        );
+    }
+
+    #[test]
+    fn deleting_workspace_cascades_to_session_tasks_and_cost_summary() {
+        let db = in_memory();
+        seed_session(&db, "s1");
+        db.conn
+            .execute(
+                "INSERT INTO tasks (id, session_id, subject, created_at, updated_at) VALUES ('t1', 's1', 'do it', 0, 0)",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO cost_summaries (session_id, updated_at) VALUES ('s1', 0)",
+                [],
+            )
+            .unwrap();
+
+        // No Rust helper touches sessions/tasks/cost_summaries here — only the
+        // workspace delete, which must cascade through sessions (001 FK) to
+        // tasks/cost_summaries (031 FK) at the SQL layer alone.
+        db.conn
+            .execute("DELETE FROM workspaces WHERE id = 'ws1'", [])
+            .unwrap();
+
+        let sessions: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM sessions WHERE id = 's1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(sessions, 0, "workspace delete must cascade to session");
+        let tasks: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM tasks WHERE session_id = 's1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            tasks, 0,
+            "workspace delete must cascade to grandchild tasks"
+        );
+        let costs: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM cost_summaries WHERE session_id = 's1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            costs, 0,
+            "workspace delete must cascade to grandchild cost_summaries"
+        );
+    }
+
+    #[test]
     fn migration_022_drops_orphan_summaries_on_rebuild() {
         // Simulate the 021 leak on a pre-022 DB: a summary row whose session was
         // deleted while 021 had no FK. 022's orphan-filtered copy must complete
@@ -1956,15 +2056,148 @@ mod tests {
     }
 
     #[test]
+    fn migration_031_drops_orphan_tasks_and_costs_and_enforces_fk() {
+        // Simulate the pre-031 leak on a 001-only DB: a task/cost row whose
+        // session doesn't exist, alongside a valid row. 031's orphan-filtered
+        // copy must drop the former and preserve the latter's columns verbatim.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        let db = Database { conn };
+        db.conn
+            .execute_batch(include_str!("../migrations/001_initial.sql"))
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO workspaces (id, name, repo_path, created_at) VALUES ('ws1', 'ws', '/tmp/repo', 0)",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO sessions (id, workspace_id, name, status, created_at, updated_at) VALUES ('s1', 'ws1', 's', 'idle', 0, 0)",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO tasks (id, session_id, subject, description, status, active_form, blocked_by, created_at, updated_at)
+                 VALUES ('t1', 's1', 'valid task', 'desc', 'pending', 'doing', '[]', 1, 2)",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO tasks (id, session_id, subject, created_at, updated_at) VALUES ('ghost', 'nope', 'orphan task', 0, 0)",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO cost_summaries (session_id, input_tokens, updated_at) VALUES ('s1', 42, 3)",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO cost_summaries (session_id, updated_at) VALUES ('nope', 0)",
+                [],
+            )
+            .unwrap();
+
+        db.conn
+            .execute_batch(include_str!(
+                "../migrations/031_session_child_fk_cascade.sql"
+            ))
+            .unwrap();
+
+        let ghost_tasks: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM tasks WHERE id = 'ghost'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(ghost_tasks, 0, "orphan task dropped by 031 copy filter");
+        let ghost_costs: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM cost_summaries WHERE session_id = 'nope'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            ghost_costs, 0,
+            "orphan cost_summaries dropped by 031 copy filter"
+        );
+
+        let (subject, description, status, active_form, blocked_by, created_at, updated_at): (
+            String,
+            String,
+            String,
+            Option<String>,
+            String,
+            i64,
+            i64,
+        ) = db
+            .conn
+            .query_row(
+                "SELECT subject, description, status, active_form, blocked_by, created_at, updated_at FROM tasks WHERE id = 't1'",
+                [],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(subject, "valid task");
+        assert_eq!(description, "desc");
+        assert_eq!(status, "pending");
+        assert_eq!(active_form.as_deref(), Some("doing"));
+        assert_eq!(blocked_by, "[]");
+        assert_eq!(created_at, 1);
+        assert_eq!(updated_at, 2);
+
+        let input_tokens: i64 = db
+            .conn
+            .query_row(
+                "SELECT input_tokens FROM cost_summaries WHERE session_id = 's1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            input_tokens, 42,
+            "valid cost_summaries row survives with columns intact"
+        );
+
+        // FK now enforced: inserting a task with a bogus session_id errors.
+        let err = db.conn.execute(
+            "INSERT INTO tasks (id, session_id, subject, created_at, updated_at) VALUES ('t2', 'bogus', 'x', 0, 0)",
+            [],
+        );
+        assert!(
+            err.is_err(),
+            "FK must reject a task pointing at a nonexistent session"
+        );
+    }
+
+    #[test]
     fn fresh_db_migrates_to_latest_version_with_022_schema() {
         let db = in_memory();
-        // Highest migration file as of writing is 030 (see `migrate()`'s array,
+        // Highest migration file as of writing is 031 (see `migrate()`'s array,
         // a local not reachable from here to derive this count automatically).
         let version: i64 = db
             .conn
             .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 30);
+        assert_eq!(version, 31);
 
         let has_transcripts: i64 = db
             .conn

@@ -1,0 +1,29 @@
+{
+  "tier": "M",
+  "tier_source": "audit-finding 2026-07-02 #9 (Mode C bridge, non-security handoff)",
+  "ceremony": "standard",
+  "risk_tier": "medium",
+  "files_estimate": 1,
+  "tags": ["perf", "robustness"],
+  "visibility": "public",
+  "spec_target": "db-lock-discipline",
+  "rigor_applied": {
+    "discovery_invoked": true,
+    "iprev_rounds": 0,
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": ["compile", "test", "lint"],
+    "per_phase_models": {
+      "design": "fable-5",
+      "implementation": "sonnet",
+      "validation": "fable-5",
+      "exploration": "haiku"
+    }
+  },
+  "interview_answers": {
+    "note": "Mode A seeded from the non-security audit handoff; refinement_resolved=true. Correction vs handoff: create_pr and git_ship are SYNC commands (not async) — Tauri runs them on the blocking pool, so spawn_blocking is unnecessary; the fix is guard scoping only (design D3). delete_session guard verified at 1007 with MOC git diff + remove_worktree inside."
+  },
+  "events": [
+    { "type": "mode-c-bridge", "reason": "seeded from 2026-07-02 audit non-security handoff, finding #9 (release-db-lock-during-io)" }
+  ]
+}

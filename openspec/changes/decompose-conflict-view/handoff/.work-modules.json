@@ -1,0 +1,29 @@
+{
+  "tier": "M",
+  "tier_source": "audit-finding 2026-07-02 #17 (Mode C bridge, non-security handoff)",
+  "ceremony": "standard",
+  "risk_tier": "medium",
+  "files_estimate": 3,
+  "tags": ["refactor", "frontend"],
+  "visibility": "public",
+  "spec_target": "conflict-resolution",
+  "rigor_applied": {
+    "discovery_invoked": true,
+    "iprev_rounds": 0,
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": ["compile", "lint"],
+    "per_phase_models": {
+      "design": "fable-5",
+      "implementation": "sonnet",
+      "validation": "fable-5",
+      "exploration": "haiku"
+    }
+  },
+  "interview_answers": {
+    "note": "Mode A seeded from the non-security audit handoff; refinement_resolved=true. Correction vs handoff: oursView/mergedView/theirsView are useState (ConflictsPanel.tsx:404-406, comment at 401 explains ConnectorStrip needs state re-renders) — NOT refs; design D2 preserves that. File is 1614 lines; ConflictView 358→~1314 (~956) confirmed; CodePane at ~1422, ConnectorStrip at ~1315."
+  },
+  "events": [
+    { "type": "mode-c-bridge", "reason": "seeded from 2026-07-02 audit non-security handoff, finding #17 (decompose-conflict-view)" }
+  ]
+}

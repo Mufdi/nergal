@@ -1,0 +1,29 @@
+{
+  "tier": "S",
+  "tier_source": "audit-finding 2026-07-02 #7 (Mode C bridge, non-security handoff)",
+  "ceremony": "quick-fix",
+  "risk_tier": "medium",
+  "files_estimate": 1,
+  "tags": ["robustness"],
+  "visibility": "public",
+  "spec_target": "config-persistence",
+  "rigor_applied": {
+    "discovery_invoked": true,
+    "iprev_rounds": 0,
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": ["compile", "test", "lint"],
+    "per_phase_models": {
+      "design": "fable-5",
+      "implementation": "sonnet",
+      "validation": "fable-5",
+      "exploration": "haiku"
+    }
+  },
+  "interview_answers": {
+    "note": "Mode A seeded from the non-security audit handoff; refinement_resolved=true. Refs verified: load at config.rs:433-440 (handoff said 432-437 — minor drift), save uses write_atomic at 449 so the destroy step is the NEXT save, not load itself. Backup-at-load chosen so the original bytes survive regardless of later saves."
+  },
+  "events": [
+    { "type": "mode-c-bridge", "reason": "seeded from 2026-07-02 audit non-security handoff, finding #7 (resilient-config-load)" }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "tier": "M",
+  "tier_source": "audit-finding 2026-07-02 #6 (Mode C bridge, non-security handoff)",
+  "ceremony": "standard",
+  "risk_tier": "low",
+  "files_estimate": 10,
+  "tags": [
+    "robustness",
+    "frontend",
+    "memory"
+  ],
+  "visibility": "public",
+  "spec_target": "tab-system",
+  "rigor_applied": {
+    "discovery_invoked": true,
+    "iprev_rounds": 1,
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": [
+      "compile",
+      "lint"
+    ],
+    "per_phase_models": {
+      "design": "fable-5",
+      "implementation": "sonnet",
+      "validation": "fable-5",
+      "exploration": "haiku"
+    },
+    "iprev_status": "APPROVED (round 1, fresh-context Claude/Fable-5 evaluator, zero findings)"
+  },
+  "interview_answers": {
+    "note": "Mode A seeded from the non-security audit handoff; refinement_resolved=true. spec_target choice: tab-system over session-directory (the close lifecycle lives in the tab system; session-directory is the MCP tool spec). files_estimate 10 ≥ 5 → iprev-eligible per handoff — iprev pending, will update iprev_rounds when run. Second permanent-delete path found during verification: pendingDeletes.ts:98 grace-delete (plus its workspace counterpart) — both wired."
+  },
+  "events": [
+    {
+      "type": "mode-c-bridge",
+      "reason": "seeded from 2026-07-02 audit non-security handoff, finding #6 (prune-session-scoped-state)"
+    },
+    {
+      "type": "iprev",
+      "reason": "A3 gate; round 1 APPROVED — both permanent-delete paths (sessionTabs.ts:176-184, pendingDeletes.ts:94-100) and the workspace grace-delete feasibility (sessionIds at :109) re-verified; D1 registry design endorsed over the rejected alternatives"
+    }
+  ]
+}

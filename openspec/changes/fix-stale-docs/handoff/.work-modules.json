@@ -1,0 +1,29 @@
+{
+  "tier": "XS",
+  "tier_source": "audit-finding 2026-07-02 #19 (Mode C bridge, non-security handoff)",
+  "ceremony": "quick-fix",
+  "risk_tier": "low",
+  "files_estimate": 3,
+  "tags": ["docs"],
+  "visibility": "public",
+  "spec_target": "contributor-docs-accuracy",
+  "rigor_applied": {
+    "discovery_invoked": true,
+    "iprev_rounds": 0,
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": [],
+    "per_phase_models": {
+      "design": "fable-5",
+      "implementation": "haiku",
+      "validation": "fable-5",
+      "exploration": "haiku"
+    }
+  },
+  "interview_answers": {
+    "note": "Mode A seeded from the non-security audit handoff; refinement_resolved=true. Verified: hooks.md:53 has the forbidden cargo install command; hooks.md:9,11 document /tmp paths; platform/mod.rs:59-61 resolves /run/user/<uid>/nergal/ with ~/.local/share/nergal/ipc/ fallback and explicitly NEVER /tmp (stronger than the handoff's 'unreachable fallback' phrasing — /tmp is not even a fallback); README quick start (~119-133) has no system-deps block."
+  },
+  "events": [
+    { "type": "mode-c-bridge", "reason": "seeded from 2026-07-02 audit non-security handoff, finding #19 (fix-stale-docs)" }
+  ]
+}

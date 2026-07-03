@@ -1,0 +1,29 @@
+{
+  "tier": "M",
+  "tier_source": "audit-finding 2026-07-02 #15 (Mode C bridge, non-security handoff)",
+  "ceremony": "standard",
+  "risk_tier": "low",
+  "files_estimate": 5,
+  "tags": ["dx", "ci"],
+  "visibility": "public",
+  "spec_target": "ci-verification-gates",
+  "rigor_applied": {
+    "discovery_invoked": true,
+    "iprev_rounds": 0,
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": ["compile", "test", "lint"],
+    "per_phase_models": {
+      "design": "fable-5",
+      "implementation": "sonnet",
+      "validation": "fable-5",
+      "exploration": "haiku"
+    }
+  },
+  "interview_answers": {
+    "note": "Mode A seeded from the non-security audit handoff; refinement_resolved=true. files_estimate 5 but handoff excludes this change from its iprev list ('All others skip') — honored. Verified: ci.yml has only the two cross-compile check jobs; release.yml publish needs only builds (line 250); no rustfmt/editorconfig/eslint anywhere; release:test only in package.json:16. Handoff's build-deps caveat resolved: PR jobs run check/test only (no bundling), but clippy still needs the webkit/gtk headers → shared linux-deps composite action (design D2). eslint adoption explicitly split out as follow-up per the handoff's own note."
+  },
+  "events": [
+    { "type": "mode-c-bridge", "reason": "seeded from 2026-07-02 audit non-security handoff, finding #15 (ci-quality-gates)" }
+  ]
+}

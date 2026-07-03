@@ -1,0 +1,44 @@
+{
+  "tier": "L",
+  "tier_source": "audit-finding 2026-07-02 #16 (Mode C bridge, non-security handoff)",
+  "ceremony": "deep",
+  "risk_tier": "medium",
+  "files_estimate": 24,
+  "tags": [
+    "refactor",
+    "tech-debt"
+  ],
+  "visibility": "public",
+  "spec_target": "backend-module-structure",
+  "rigor_applied": {
+    "discovery_invoked": true,
+    "iprev_rounds": 1,
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": [
+      "compile",
+      "test",
+      "lint"
+    ],
+    "per_phase_models": {
+      "design": "fable-5",
+      "implementation": "sonnet",
+      "validation": "fable-5",
+      "exploration": "haiku"
+    },
+    "iprev_status": "APPROVED (round 1, fresh-context Claude/Fable-5 evaluator, zero findings)"
+  },
+  "interview_answers": {
+    "note": "Mode A seeded from the non-security audit handoff; refinement_resolved=true. Deep ceremony → implementation.md included. Handoff marks this iprev-eligible (files_estimate ≫ 5) — iprev pending, will update iprev_rounds when run. Counts verified on disk: 3979/120 commands, 2298 lines db.rs single impl at 186, generate_handler at lib.rs:367. Domain table derived from the full live command inventory, not assumed. Sequencing dependency recorded: land the surgical pending changes (db-lock, askuser, fk-cascade) before the split."
+  },
+  "events": [
+    {
+      "type": "mode-c-bridge",
+      "reason": "seeded from 2026-07-02 audit non-security handoff, finding #16 (split-god-modules)"
+    },
+    {
+      "type": "iprev",
+      "reason": "A3 gate; round 1 APPROVED — every numeric fact re-verified exact (3979/120, 2298/impl@186/open@206, lib.rs:367, 98 db.lock()); premise (multi-impl split + transparent directory module + re-exports) confirmed technically correct; sequencing gate endorsed"
+    }
+  ]
+}

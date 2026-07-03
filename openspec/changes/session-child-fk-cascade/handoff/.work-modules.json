@@ -1,0 +1,44 @@
+{
+  "tier": "S",
+  "tier_source": "audit-finding 2026-07-02 #4 (Mode C bridge, non-security handoff)",
+  "ceremony": "standard",
+  "risk_tier": "medium",
+  "files_estimate": 2,
+  "tags": [
+    "correctness",
+    "migration"
+  ],
+  "visibility": "public",
+  "spec_target": "session-data-lifecycle",
+  "rigor_applied": {
+    "discovery_invoked": true,
+    "iprev_rounds": 1,
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": "spec-reviewer (tags include migration; DB-change mechanism)",
+    "gates_phases_run": [
+      "compile",
+      "test",
+      "lint"
+    ],
+    "per_phase_models": {
+      "design": "fable-5",
+      "implementation": "sonnet",
+      "validation": "fable-5",
+      "exploration": "haiku"
+    },
+    "iprev_status": "APPROVED (round 1, fresh-context Claude/Fable-5 evaluator, zero findings)"
+  },
+  "interview_answers": {
+    "note": "Mode A seeded from the non-security audit handoff; refinement_resolved=true. Handoff marks this iprev-eligible (tag migration) — iprev pending, will update iprev_rounds when run. DEVIATION from handoff: spec_target changed from MODIFIED session-directory to NEW session-data-lifecycle — session-directory is the MCP tool-surface spec (list_sessions/get_session), not DB row lifecycle; no existing capability fits. Decisive design argument found during verification: workspaces→sessions already cascades (001:10), so workspace deletion orphans grandchildren without ever calling delete_session — only the schema-level FK covers that path."
+  },
+  "events": [
+    {
+      "type": "mode-c-bridge",
+      "reason": "seeded from 2026-07-02 audit non-security handoff, finding #4 (session-child-fk-cascade)"
+    },
+    {
+      "type": "iprev",
+      "reason": "A3 gate; round 1 APPROVED — evaluator independently confirmed the decisive workspace-cascade argument (001:10), the 022 rebuild template, the 028 no-FK by-design exception, and the annotations FK (004:6)"
+    }
+  ]
+}

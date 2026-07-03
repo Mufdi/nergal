@@ -1,0 +1,29 @@
+{
+  "tier": "M",
+  "tier_source": "audit-finding 2026-07-02 #12 (Mode C bridge, non-security handoff)",
+  "ceremony": "standard",
+  "risk_tier": "medium",
+  "files_estimate": 3,
+  "tags": ["correctness", "reliability"],
+  "visibility": "public",
+  "spec_target": "cross-session-messaging",
+  "rigor_applied": {
+    "discovery_invoked": true,
+    "iprev_rounds": 0,
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": ["compile", "test", "lint"],
+    "per_phase_models": {
+      "design": "fable-5",
+      "implementation": "sonnet",
+      "validation": "fable-5",
+      "exploration": "haiku"
+    }
+  },
+  "interview_answers": {
+    "note": "Mode A seeded from the non-security audit handoff; refinement_resolved=true. Refs verified: wake_idle 46-67 (detached submit, error discarded at 63), drain consume at 149-160 (handoff said ~141-155). Design choice: completion callback over async trait — drain_idle is called from the hook server's sync Stop path (hooks/server.rs:767); the handoff's 'have wake_idle await the submit' would block hook processing. Added in-flight guard (new, not in handoff) because unconsumed-during-window messages would double-paste on a concurrent drain."
+  },
+  "events": [
+    { "type": "mode-c-bridge", "reason": "seeded from 2026-07-02 audit non-security handoff, finding #12 (cross-session-delivery-confirmation)" }
+  ]
+}

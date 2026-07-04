@@ -218,7 +218,12 @@ pub fn initialize_result() -> Value {
     - Field notes: `summary` is an AI recap of what the session did; \
     `last_assistant_message` is the verbatim final message (not a recap); for a \
     non-live session the live activity fields (mode, recently_touched_files, \
-    background_tasks) are empty — only `summary` and `git_branch` are meaningful.",
+    background_tasks) are empty — only `summary` and `git_branch` are meaningful.\n\
+    - Working context: `active_clickup_task_id` / `active_linear_issue_id` are the \
+    tracker item the session is bound to (what it is working on); \
+    `pinned_clickup_task_ids` / `pinned_linear_issue_ids` are extra items kept in \
+    context; `pinned_note_paths` are the Obsidian notes in the session's context. \
+    Ids are opaque — resolve titles/status via `get_tracker_task`.",
     })
 }
 
@@ -242,7 +247,7 @@ pub fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "get_session",
-            "description": "Drill-in: full descriptor for one nergal session by id — live OR recently-ended (is_live=false). The ONLY call that refreshes a summary: when the session is dirty (no summary, or summary_stale=true) it regenerates in the background and returns the current value immediately; re-call to read the refreshed summary. Works for a session worked earlier this week (regenerated from its transcript on demand).",
+            "description": "Drill-in: full descriptor for one nergal session by id — live OR recently-ended (is_live=false). Includes the tracker item the session is bound to (active_clickup_task_id / active_linear_issue_id) and its pinned Obsidian notes (pinned_note_paths), so you can see what a session is working on. The ONLY call that refreshes a summary: when the session is dirty (no summary, or summary_stale=true) it regenerates in the background and returns the current value immediately; re-call to read the refreshed summary. Works for a session worked earlier this week (regenerated from its transcript on demand).",
             "inputSchema": {
                 "type": "object",
                 "properties": { "session_id": { "type": "string", "description": "The nergal session id (from list_sessions or whoami)." } },

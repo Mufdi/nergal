@@ -79,6 +79,17 @@ pub struct SessionDescriptor {
     /// True when newer activity (`last_stop_at`) postdates the served summary's
     /// timestamp — the recap is stale and a fresh one is being generated lazily.
     pub summary_stale: bool,
+    /// The tracker item this session is actively working on, if bound. Opaque
+    /// ids — a caller that wants the title/status resolves them via
+    /// `get_tracker_task`. Tells another agent "this session is on issue X".
+    pub active_clickup_task_id: Option<String>,
+    pub active_linear_issue_id: Option<String>,
+    /// Additional tracker items pinned to (kept in context for) this session.
+    pub pinned_clickup_task_ids: Vec<String>,
+    pub pinned_linear_issue_ids: Vec<String>,
+    /// Absolute vault paths of the Obsidian notes pinned to this session —
+    /// signals which notes are in this session's working context.
+    pub pinned_note_paths: Vec<String>,
 }
 
 /// `whoami`: the caller's own resolved identity (or unidentified).
@@ -260,6 +271,11 @@ fn descriptor_from(
         summary: summary.map(|sm| sm.summary.clone()),
         is_live,
         summary_stale,
+        active_clickup_task_id: s.active_clickup_task_id.clone(),
+        active_linear_issue_id: s.active_linear_issue_id.clone(),
+        pinned_clickup_task_ids: s.pinned_clickup_task_ids.clone(),
+        pinned_linear_issue_ids: s.pinned_linear_issue_ids.clone(),
+        pinned_note_paths: s.pinned_note_paths.clone(),
     }
 }
 

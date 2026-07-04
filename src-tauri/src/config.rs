@@ -442,9 +442,33 @@ impl Config {
     /// ignored on load via serde's default behavior for unknown fields and
     /// dropped on next save.
     pub fn load() -> Self {
-        let path = Self::config_path();
-        let mut cfg: Self = match std::fs::read_to_string(&path) {
-            Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+        Self::load_from(&Self::config_path())
+    }
+
+    /// Load config from a specific path. A missing file yields defaults
+    /// silently; an UNPARSEABLE file (crash-truncated write, hand-edit typo)
+    /// is backed up to `<path>.corrupt` before falling back to defaults, so
+    /// the next `save()` can't permanently overwrite recoverable settings.
+    fn load_from(path: &Path) -> Self {
+        let mut cfg: Self = match std::fs::read_to_string(path) {
+            Ok(contents) => match serde_json::from_str(&contents) {
+                Ok(cfg) => cfg,
+                Err(e) => {
+                    tracing::error!(
+                        path = %path.display(),
+                        "config parse failed ({e}); backing up to .corrupt and using defaults",
+                    );
+                    let backup = path.with_extension("json.corrupt");
+                    if let Err(be) = std::fs::copy(path, &backup) {
+                        tracing::error!(
+                            path = %path.display(),
+                            backup = %backup.display(),
+                            "failed to back up corrupt config: {be}",
+                        );
+                    }
+                    Self::default()
+                }
+            },
             Err(_) => Self::default(),
         };
         cfg.theme_mode = normalize_theme_mode(&cfg.theme_mode);
@@ -510,6 +534,49 @@ mod tests {
         let c = Config::default();
         assert!(c.default_agent.is_none());
         assert!(c.agent_overrides.is_empty());
+    }
+
+    #[test]
+    fn load_from_valid_file_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        // A full serialized config — several fields are required (no serde
+        // default), so a partial hand-written JSON would itself count as
+        // corrupt; round-trip a complete one.
+        let mut base = Config::default();
+        base.default_agent = Some("codex".to_string());
+        std::fs::write(&path, serde_json::to_string(&base).unwrap()).unwrap();
+
+        let cfg = Config::load_from(&path);
+        assert_eq!(cfg.default_agent.as_deref(), Some("codex"));
+        assert!(!path.with_extension("json.corrupt").exists());
+    }
+
+    #[test]
+    fn load_from_missing_file_defaults_without_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+
+        let cfg = Config::load_from(&path);
+        assert!(cfg.default_agent.is_none());
+        assert!(!path.with_extension("json.corrupt").exists());
+    }
+
+    #[test]
+    fn load_from_corrupt_file_backs_up_and_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let corrupt = r#"{"default_agent":"codex",,,"#;
+        std::fs::write(&path, corrupt).unwrap();
+
+        let cfg = Config::load_from(&path);
+        // Fell back to defaults rather than adopting the broken content.
+        assert!(cfg.default_agent.is_none());
+        // The original bytes are preserved for recovery, and the source file
+        // is left untouched (only the next save() would overwrite it).
+        let backup = path.with_extension("json.corrupt");
+        assert_eq!(std::fs::read_to_string(&backup).unwrap(), corrupt);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), corrupt);
     }
 
     #[cfg(unix)]

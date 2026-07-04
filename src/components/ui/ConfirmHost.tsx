@@ -90,6 +90,13 @@ export function ConfirmHost() {
             <Button
               size="sm"
               variant="secondary"
+              // The `Kbd` chips (esc/enter) ARE the affordance; keyboard uses
+              // dialog-level Enter/Esc, never a Tab-to-button. Suppress BOTH
+              // focus-visible ring AND border so no button ever shows a
+              // highlight, even when Base UI reclaims focus onto one at open.
+              // `border-transparent` is load-bearing: killing only the ring
+              // left the base `focus-visible:border-ring` visible (BUG-25).
+              className="focus-visible:ring-0 focus-visible:border-transparent"
               onClick={() => resolveConfirm(false)}
             >
               {opts.cancelLabel ?? "Cancel"}
@@ -99,6 +106,7 @@ export function ConfirmHost() {
             <Button
               size="sm"
               variant={destructive ? "destructive" : "default"}
+              className="focus-visible:ring-0 focus-visible:border-transparent"
               onClick={() => resolveConfirm(true)}
             >
               {opts.confirmLabel ?? "Confirm"}

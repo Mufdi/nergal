@@ -4,7 +4,7 @@
 
 ### Requirement: Injected context marks external content as untrusted data
 
-The context assembled at session spawn/resume SHALL enclose each externally-sourced block (pinned vault notes, ClickUp tasks, Linear issues) within an explicit boundary that frames the enclosed text as reference material to be treated as data, not as instructions. No externally-sourced block SHALL be concatenated into the launch context without this boundary. The user's own prompt SHALL remain outside these boundaries. The closing boundary marker SHALL NOT be spoofable by block content: occurrences of the marker within content SHALL be neutralized (escaped/rewritten), or a per-block unpredictable fence tag SHALL be used, so content cannot terminate the fence early. Length budgeting and truncation markers are unchanged.
+The context assembled at session spawn/resume SHALL enclose each externally-sourced block (pinned vault notes, ClickUp tasks, Linear issues) within an explicit boundary that frames the enclosed text as reference material to be treated as data, not as instructions. No externally-sourced block SHALL be concatenated into the launch context without this boundary. **The same boundary SHALL wrap externally-sourced content injected into a *live* session** (the pinned-note hot-reload re-inject path), so no external content reaches a running agent's turn without the framing. The user's own prompt SHALL remain outside these boundaries. The closing boundary marker SHALL NOT be spoofable by block content: occurrences of the marker within content SHALL be neutralized (escaped/rewritten), or a per-block unpredictable fence tag SHALL be used, so content cannot terminate the fence early. Length budgeting and truncation markers are unchanged.
 
 #### Scenario: each source block is delimited
 
@@ -27,3 +27,9 @@ The context assembled at session spawn/resume SHALL enclose each externally-sour
 
 - **WHEN** a source has no content to inject
 - **THEN** it contributes no bare text and no empty boundary block
+
+#### Scenario: live re-inject is also fenced
+
+- **GIVEN** a pinned vault note whose body (or filename) contains instruction-like text or the literal closing marker
+- **WHEN** the note is re-injected into a live session via the hot-reload action
+- **THEN** the injected block is wrapped in the same neutralized external-reference boundary as the spawn-time path, so nothing reaches the running agent's turn unframed

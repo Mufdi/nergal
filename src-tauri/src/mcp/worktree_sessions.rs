@@ -515,7 +515,10 @@ pub fn notify_outcome(
         // Idle → wake now; on a wake failure, queue for the next idle drain
         // rather than dropping it. Working/awaiting → queue (never paste now).
         if idle {
-            if let Err(e) = delivery.wake_idle(requesting_session, &note) {
+            // Worktree outcomes have no consumption bookkeeping tied to submit
+            // confirmation (unlike cross-session-messaging) — paste success is
+            // sufficient here, so the settle callback is a no-op.
+            if let Err(e) = delivery.wake_idle(requesting_session, &note, Box::new(|_| {})) {
                 tracing::debug!(requesting_session, "worktree outcome wake failed: {e:#}");
                 gate.enqueue_outcome(requesting_session, note);
             }
@@ -543,7 +546,7 @@ pub fn drain_worktree_outcomes(
         return;
     }
     let combined = notes.join("\n");
-    if let Err(e) = delivery.wake_idle(session_id, &combined) {
+    if let Err(e) = delivery.wake_idle(session_id, &combined, Box::new(|_| {})) {
         tracing::debug!(session_id, "worktree outcome drain wake failed: {e:#}");
         // Re-queue verbatim so a later idle flip retries.
         for note in notes {

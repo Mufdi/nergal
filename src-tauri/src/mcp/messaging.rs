@@ -612,11 +612,14 @@ mod tests {
     }
 
     #[test]
-    fn unknown_mode_target_is_woken_and_consumed() {
+    fn unknown_mode_target_is_woken_immediately() {
         // The walk bug: a quiet idle target with NO recorded activity (mode-map
         // empty after restart) must still be woken at send (it won't Stop on its
-        // own), and the wake consumes (delivery == consume; read_messages is the
-        // fallback) so nothing stays pending.
+        // own) rather than queued. Consumption itself now requires a confirmed
+        // submit (cross-session-delivery-confirmation): `NoopDelivery` has no
+        // live PTY to confirm against, so the message correctly stays pending
+        // for a real drain to consume — it is NOT stranded (the next working→
+        // idle Stop, or another send, retries it).
         let c = cfg(4, 30);
         let ctx = ctx();
         add_live_session(&ctx, "A");
@@ -629,6 +632,10 @@ mod tests {
         let pending = ctx
             .with_db(|db| db.cross_session_undelivered_for("B"))
             .unwrap();
-        assert!(pending.is_empty(), "wake consumes; nothing left pending");
+        assert_eq!(
+            pending.len(),
+            1,
+            "no live PTY to confirm the submit → left unconsumed for retry"
+        );
     }
 }

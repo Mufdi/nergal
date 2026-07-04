@@ -172,7 +172,7 @@ pub fn list_tracker_tasks(ctx: &DaemonContext, filter: &ListTrackerTasksFilter) 
             );
         }
 
-        rows.sort_by(|a, b| b.0.cmp(&a.0));
+        rows.sort_by_key(|r| std::cmp::Reverse(r.0));
         let tasks: Vec<Value> = rows.into_iter().take(limit).map(|(_, v)| v).collect();
 
         Ok(json!({

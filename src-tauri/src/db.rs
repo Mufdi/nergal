@@ -1902,8 +1902,10 @@ mod tests {
             total_usd: 1.23,
         };
 
-        // Mirrors `nergal_session_id.unwrap_or(session_id)` in the Stop handler.
-        let resolved_id = Some(nergal_id).unwrap_or(cc_internal_id);
+        // In the Stop handler the id is `nergal_session_id.unwrap_or(session_id)`;
+        // here nergal_id stands in for a present nergal_session_id, so the cost
+        // must land under it, never under the CC-internal id.
+        let resolved_id = nergal_id;
         db.upsert_cost(resolved_id, &cost).unwrap();
 
         let got = db.get_cost(nergal_id).unwrap().unwrap();

@@ -190,7 +190,9 @@ jobs:
 
       - name: cargo clippy
         working-directory: src-tauri
-        run: cargo clippy -- -D warnings
+        # --all-targets so test/bench/example code is linted too — a bare
+        # `cargo clippy` skips them, letting test-only lints slip past the gate.
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: cargo test
         working-directory: src-tauri

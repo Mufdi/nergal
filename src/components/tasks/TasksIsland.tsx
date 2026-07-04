@@ -92,16 +92,25 @@ export function TasksIsland() {
             <Trash2 className="size-3" />
           </div>
         )}
-        <div
-          role="button"
-          tabIndex={0}
-          onClick={(e) => { e.stopPropagation(); void handleDeleteAll(); }}
-          onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); void handleDeleteAll(); } }}
-          className={`rounded p-0.5 text-muted-foreground hover:text-destructive ${hasCompleted ? "" : "ml-1"}`}
-          aria-label="Delete all tasks"
-        >
-          <ListX className="size-3" />
-        </div>
+        <TooltipProvider delay={0}>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => { e.stopPropagation(); void handleDeleteAll(); }}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); void handleDeleteAll(); } }}
+                  className={`rounded p-0.5 text-muted-foreground hover:text-destructive ${hasCompleted ? "" : "ml-1"}`}
+                  aria-label="Delete all tasks"
+                />
+              }
+            >
+              <ListX className="size-3" />
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Delete all tasks</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </button>
 
       {/* Task list */}

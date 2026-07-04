@@ -308,20 +308,24 @@ pub async fn clickup_execute_closure(
 
             match validate_result {
                 Err(e) => StatusOutcome::Failed { error: e },
-                Ok(pre) => match client.set_task_status(&tok.task_id, status_name).await {
-                    Ok(_task) => {
-                        registry.record(
-                            &tok.task_id,
-                            WriteField::Status,
-                            status_name.as_str(),
-                            pre.as_deref(),
-                        );
-                        StatusOutcome::Ok
+                Ok(pre) => {
+                    // Provisional record BEFORE the API call.
+                    registry.record(
+                        &tok.task_id,
+                        WriteField::Status,
+                        status_name.as_str(),
+                        pre.as_deref(),
+                    );
+                    match client.set_task_status(&tok.task_id, status_name).await {
+                        Ok(_task) => StatusOutcome::Ok,
+                        Err(e) => {
+                            registry.clear_entry(&tok.task_id, &WriteField::Status);
+                            StatusOutcome::Failed {
+                                error: format!("{e:#}"),
+                            }
+                        }
                     }
-                    Err(e) => StatusOutcome::Failed {
-                        error: format!("{e:#}"),
-                    },
-                },
+                }
             }
         }
     };

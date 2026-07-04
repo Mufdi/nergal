@@ -429,6 +429,32 @@ mod tests {
         assert!(reg.entries_for_task("t2").is_empty());
     }
 
+    // 2.1 API failure clears the provisional record (echo-ordering)
+    #[test]
+    fn api_failure_clears_provisional_record() {
+        let reg = WritebackRegistry::default();
+        // Record before the (simulated) API call.
+        reg.record("t3", WriteField::Status, "done", Some("open"));
+        assert!(
+            !reg.entries_for_task("t3").is_empty(),
+            "provisional record must exist"
+        );
+        // Simulate API failure: clear the entry.
+        reg.clear_entry("t3", &WriteField::Status);
+        assert!(reg.entries_for_task("t3").is_empty(), "cleared on failure");
+    }
+
+    // 2.1 record without a failure (success path) leaves the entry present
+    #[test]
+    fn record_without_clear_leaves_entry_present() {
+        let reg = WritebackRegistry::default();
+        reg.record("t4", WriteField::Status, "done", Some("open"));
+        assert!(
+            !reg.entries_for_task("t4").is_empty(),
+            "entry must remain when no clear_entry is called"
+        );
+    }
+
     // 3.3 Own write value-match → OwnEcho
     #[test]
     fn own_echo_when_server_matches_written() {

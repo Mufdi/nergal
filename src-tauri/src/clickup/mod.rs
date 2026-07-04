@@ -532,16 +532,21 @@ pub async fn clickup_set_task_status(
             .flatten()
     };
     let cl = load_client().await?;
-    cl.set_task_status(&task_id, &status_name)
-        .await
-        .map_err(|e| format!("{e:#}"))?;
+    // Provisional record BEFORE the API call — closes the poll race window
+    // (mirrors Linear's shape, see writeback.rs docs).
     registry.record(
         &task_id,
         writeback::WriteField::Status,
         &status_name,
         pre.as_deref(),
     );
-    Ok(())
+    match cl.set_task_status(&task_id, &status_name).await {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            registry.clear_entry(&task_id, &writeback::WriteField::Status);
+            Err(format!("{e:#}"))
+        }
+    }
 }
 
 /// Toggle a checklist item's resolved state.
@@ -553,19 +558,26 @@ pub async fn clickup_set_checklist_item(
     registry: tauri::State<'_, writeback::WritebackRegistry>,
 ) -> Result<(), String> {
     let cl = load_client().await?;
-    cl.set_checklist_item(&checklist_id, &item_id, resolved)
-        .await
-        .map_err(|e| format!("{e:#}"))?;
     let key = format!("{checklist_id}:{item_id}");
+    // Provisional record BEFORE the API call.
     registry.record(
         // checklist items carry no task_id at the command surface; the key
         // encodes checklist+item so echo matching can still find it.
         &checklist_id,
-        writeback::WriteField::ChecklistItem(key),
+        writeback::WriteField::ChecklistItem(key.clone()),
         if resolved { "true" } else { "false" },
         None::<&str>,
     );
-    Ok(())
+    match cl
+        .set_checklist_item(&checklist_id, &item_id, resolved)
+        .await
+    {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            registry.clear_entry(&checklist_id, &writeback::WriteField::ChecklistItem(key));
+            Err(format!("{e:#}"))
+        }
+    }
 }
 
 /// Partial task update: description, assignee deltas, due date. Fields absent
@@ -595,36 +607,44 @@ pub async fn clickup_update_task(
         due_date_time: due.map(|_| false),
     };
     let cl = load_client().await?;
-    cl.update_task(&task_id, &update)
-        .await
-        .map_err(|e| format!("{e:#}"))?;
-    if let Some(desc) = description {
+
+    // Provisional records BEFORE the API call, conditional on which fields
+    // are part of this update — mirrors Linear's shape. Each condition is
+    // captured in a variable so the failure arm below can clear exactly what
+    // was recorded here, no more, no less.
+    if let Some(desc) = description.as_deref() {
         registry.record(
             &task_id,
             writeback::WriteField::Description,
-            &desc,
+            desc,
             None::<&str>,
         );
     }
-    if let Some(adds) = assignees_add.as_ref().filter(|v| !v.is_empty()) {
-        // Use the same canonical form as task_field_value: sorted
-        // comma-separated integer ids (not a JSON array) so echo matching
-        // works across the value comparison.
-        let mut sorted = adds.clone();
-        sorted.sort_unstable();
-        let canonical = sorted
-            .iter()
-            .map(|id| id.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
+    // Use the same canonical form as task_field_value: sorted comma-separated
+    // integer ids (not a JSON array) so echo matching works across the value
+    // comparison.
+    let assignees_written = assignees_add
+        .as_ref()
+        .filter(|v| !v.is_empty())
+        .map(|adds| {
+            let mut sorted = adds.clone();
+            sorted.sort_unstable();
+            sorted
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        });
+    if let Some(canonical) = assignees_written.as_deref() {
         registry.record(
             &task_id,
             writeback::WriteField::Assignees,
-            &canonical,
+            canonical,
             None::<&str>,
         );
     }
-    if let Some(ms) = due.flatten() {
+    let due_ms = due.flatten();
+    if let Some(ms) = due_ms {
         registry.record(
             &task_id,
             writeback::WriteField::DueDate,
@@ -632,7 +652,22 @@ pub async fn clickup_update_task(
             None::<&str>,
         );
     }
-    Ok(())
+
+    match cl.update_task(&task_id, &update).await {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            if description.is_some() {
+                registry.clear_entry(&task_id, &writeback::WriteField::Description);
+            }
+            if assignees_written.is_some() {
+                registry.clear_entry(&task_id, &writeback::WriteField::Assignees);
+            }
+            if due_ms.is_some() {
+                registry.clear_entry(&task_id, &writeback::WriteField::DueDate);
+            }
+            Err(format!("{e:#}"))
+        }
+    }
 }
 
 /// Set a custom field value. Rejects computed types and unsupported types at
@@ -673,16 +708,20 @@ pub async fn clickup_set_custom_field(
     let api_value = value.to_api_value();
     let written_str = api_value.to_string();
     let cl = load_client().await?;
-    cl.set_custom_field(&task_id, &field_id, api_value)
-        .await
-        .map_err(|e| format!("{e:#}"))?;
+    // Provisional record BEFORE the API call.
     registry.record(
         &task_id,
-        writeback::WriteField::CustomField(field_id),
+        writeback::WriteField::CustomField(field_id.clone()),
         &written_str,
         None::<&str>,
     );
-    Ok(())
+    match cl.set_custom_field(&task_id, &field_id, api_value).await {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            registry.clear_entry(&task_id, &writeback::WriteField::CustomField(field_id));
+            Err(format!("{e:#}"))
+        }
+    }
 }
 
 // ── Session binding + task-to-agent verbs (clickup-task-integration) ──

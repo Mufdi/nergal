@@ -301,7 +301,6 @@ A Tauri command `apply_theme_to_agents(palette: ThemePalette)` SHALL forward to 
 - **AND** SHALL continue invoking `apply_theme` on the remaining capable adapters
 - **AND** the top-level Tauri command SHALL return `Ok(())` regardless
 
-
 ### Requirement: SpawnContext carries launch options and adapters declare permission presets
 
 `SpawnContext` SHALL include `launch_options: Option<&LaunchOptions>` where `LaunchOptions { permission_preset, allow_skip_in_cycle, startup_command }` (defined in `models.rs`, persisted on the session row as a JSON column). Adapters SHALL map `permission_preset` to their native flags inside `spawn()` and SHALL declare what they support via:
@@ -328,3 +327,24 @@ A Tauri command `apply_theme_to_agents(palette: ThemePalette)` SHALL forward to 
 - **WHEN** a session with persisted launch options is resumed (same `start_claude_session` path as a fresh spawn)
 - **THEN** the preset flags SHALL be re-applied to the launch command
 - **AND** the startup command prelude SHALL run again in the fresh shell
+
+### Requirement: Ask-user is notifier-only at the adapter boundary
+
+The `AgentAdapter` trait SHALL NOT expose a blocking ask-user answer method; ask-user hook events SHALL only drive non-blocking attention signaling (pending-ask state, tab blink/tint), with the agent's own TUI owning the prompt. The `ASK_USER_BLOCKING` capability flag SHALL remain as a declaration gating attention UX, independent of any answer round-trip.
+
+#### Scenario: ask-user event flows notify-only
+
+- **WHEN** a `PreToolUse[AskUserQuestion]` hook event arrives for a session
+- **THEN** the backend emits the pending-ask attention event and does not create or await any FIFO/answer channel
+
+#### Scenario: no answer entry points remain
+
+- **WHEN** searching the codebase after this change
+- **THEN** there is no `submit_ask_answer` Tauri command, no `AgentAdapter::submit_ask_answer` method, and no ask-FIFO registration path
+
+#### Scenario: attention UX unaffected
+
+- **GIVEN** a session whose adapter declares `ASK_USER_BLOCKING`
+- **WHEN** ask-user fires and later resolves (`PostToolUse`)
+- **THEN** the tab blink/tint behavior driven by `pendingAsksAtom`/`pendingAttentionAtom` works exactly as before
+

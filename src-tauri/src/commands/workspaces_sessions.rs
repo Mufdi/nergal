@@ -187,6 +187,7 @@ pub fn delete_workspace(db: State<'_, SharedDb>, workspace_id: String) -> Result
     struct SessionCleanup {
         moc_inputs: Option<crate::obsidian::moc::MocInputs>,
         worktree_path: Option<PathBuf>,
+        worktree_branch: Option<String>,
     }
 
     // Gather everything under one guard (moc inputs per-session + worktree
@@ -228,6 +229,7 @@ pub fn delete_workspace(db: State<'_, SharedDb>, workspace_id: String) -> Result
                 SessionCleanup {
                     moc_inputs,
                     worktree_path: session.worktree_path.clone(),
+                    worktree_branch: session.worktree_branch.clone(),
                 }
             })
             .collect();
@@ -247,6 +249,12 @@ pub fn delete_workspace(db: State<'_, SharedDb>, workspace_id: String) -> Result
     for s in &sessions {
         if let Some(wt) = &s.worktree_path {
             let _ = crate::worktree::remove_worktree(&repo_path, wt);
+        }
+        // Delete the per-session branch too (after its worktree is gone, else
+        // git refuses) so a workspace nuke leaves no orphan `nergal/*` branches
+        // in the parent repo — parity with cleanup_merged_session.
+        if let Some(branch) = &s.worktree_branch {
+            let _ = crate::worktree::delete_branch(&repo_path, branch);
         }
     }
 

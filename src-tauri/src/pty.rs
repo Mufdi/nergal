@@ -555,6 +555,74 @@ fn resize_pty(state: &PtyManager, pty_id: &str, cols: u16, rows: u16) -> Result<
     Ok(())
 }
 
+/// Check-and-reserve the `session_ptys[session_id]` slot under one lock hold:
+/// concurrent invokes for the same session_id (rapid tab switching /
+/// deep-link race) must not spawn two PTYs, where the second insert would
+/// orphan the first as an unkillable zombie. Returns the existing id when
+/// the slot is already taken (caller should early-return without spawning);
+/// `None` once `pty_id` is reserved (caller must spawn and roll back via
+/// `release_session_pty` on failure).
+fn reserve_session_pty(
+    state: &PtyManager,
+    session_id: &str,
+    pty_id: &str,
+) -> Result<Option<String>, String> {
+    let mut session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
+    if let Some(existing_id) = session_ptys.get(session_id) {
+        return Ok(Some(existing_id.clone()));
+    }
+    session_ptys.insert(session_id.to_string(), pty_id.to_string());
+    Ok(None)
+}
+
+/// Roll back a reservation made by `reserve_session_pty` after a failed spawn.
+fn release_session_pty(state: &PtyManager, session_id: &str) {
+    if let Ok(mut session_ptys) = state.session_ptys.lock() {
+        session_ptys.remove(session_id);
+    }
+}
+
+/// Outcome of the post-spawn reservation check (`confirm_reservation_or_extract`).
+enum ReservationOutcome {
+    /// `session_ptys` still maps to this call's pty_id — normal path.
+    Intact,
+    /// The reservation vanished mid-spawn: the session was killed during
+    /// startup. Carries the just-inserted instance when this check's extract
+    /// beat the kill path to `instances` (the caller must drop it OUTSIDE any
+    /// lock); `None` when the kill path already removed and reaped it. Either
+    /// way the session is gone — the caller must return an error, never a
+    /// false-success pty_id for a session with no live PTY.
+    Gone(Option<PtyInstance>),
+}
+
+/// Confirm this call's reservation still holds `session_ptys[session_id]`
+/// after `spawn_pty` has returned Ok (and therefore already inserted its
+/// instance into `instances`). A `kill_session_pty` landing in the window
+/// between reserve and spawn completion finds nothing yet in `instances`,
+/// removes the `session_ptys` entry, and returns as if there were nothing to
+/// kill — so the PTY `spawn_pty` then inserts would be unreachable by any
+/// session-keyed path (kill/resize/write/grid) for the rest of the app's
+/// life. Detecting the mismatch here and extracting the instance closes that
+/// window; see `ReservationOutcome` for the drop-outside-lock contract.
+fn confirm_reservation_or_extract(
+    state: &PtyManager,
+    session_id: &str,
+    pty_id: &str,
+) -> Result<ReservationOutcome, String> {
+    let intact = {
+        let session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
+        session_ptys.get(session_id).map(String::as_str) == Some(pty_id)
+    };
+    if intact {
+        return Ok(ReservationOutcome::Intact);
+    }
+    state
+        .instances
+        .lock()
+        .map_err(|e| e.to_string())
+        .map(|mut instances| ReservationOutcome::Gone(instances.remove(pty_id)))
+}
+
 /// Creates a PTY, waits for shell ready, writes the agent's spawn command,
 /// returns pty_id. Idempotent: if session already has a PTY, returns the
 /// existing one. The exact command (`claude`, `opencode`, `codex`, …) is
@@ -573,16 +641,6 @@ pub async fn start_claude_session(
     rows: u16,
     resume: Option<String>,
 ) -> Result<StartClaudeResult, String> {
-    // Idempotency: check if session already has a PTY
-    {
-        let session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
-        if let Some(existing_id) = session_ptys.get(&session_id) {
-            return Ok(StartClaudeResult {
-                pty_id: existing_id.clone(),
-            });
-        }
-    }
-
     let pty_id = format!(
         "pty-{}-{}",
         session_id,
@@ -592,9 +650,15 @@ pub async fn start_claude_session(
             .as_millis()
     );
 
+    if let Some(existing_id) = reserve_session_pty(&state, &session_id, &pty_id)? {
+        return Ok(StartClaudeResult {
+            pty_id: existing_id,
+        });
+    }
+
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
 
-    spawn_pty(
+    if let Err(e) = spawn_pty(
         &app,
         &state,
         pty_id.clone(),
@@ -604,13 +668,22 @@ pub async fn start_claude_session(
         session_id.as_str(),
         true,
         Some(ready_tx),
-    )?;
+    ) {
+        release_session_pty(&state, &session_id);
+        return Err(e);
+    }
 
-    state
-        .session_ptys
-        .lock()
-        .map_err(|e| e.to_string())?
-        .insert(session_id.clone(), pty_id.clone());
+    match confirm_reservation_or_extract(&state, &session_id, &pty_id)? {
+        ReservationOutcome::Intact => {}
+        ReservationOutcome::Gone(orphan) => {
+            // Extracted outside the lock above; drop here, outside any lock,
+            // to run kill_tree + reap. A `None` orphan means the kill path
+            // already reaped it — the session is gone either way, so never
+            // return a success pty_id here.
+            drop(orphan);
+            return Err("session closed during PTY startup".to_string());
+        }
+    }
 
     // Wait for shell to produce first output (ready), with timeout
     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), ready_rx).await;
@@ -1828,6 +1901,155 @@ mod tests {
         let mgr = PtyManager::new(false);
         let err = paste_to_session(&mgr, "sess::shell", "x", false).unwrap_err();
         assert!(err.contains("agent sessions only"));
+    }
+
+    // ── session_ptys reserve/release (fix-pty-double-spawn) ──
+
+    #[test]
+    fn reserve_session_pty_second_caller_gets_first_callers_id_without_spawning() {
+        let mgr = PtyManager::new(false);
+        let first = reserve_session_pty(&mgr, "sess-1", "pty-a").unwrap();
+        assert_eq!(first, None, "first caller reserves the slot");
+
+        let second = reserve_session_pty(&mgr, "sess-1", "pty-b").unwrap();
+        assert_eq!(
+            second,
+            Some("pty-a".to_string()),
+            "second concurrent caller must see the first caller's id, not spawn its own"
+        );
+
+        // Exactly one entry survives — no clobbering.
+        let map = mgr.session_ptys.lock().unwrap();
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.get("sess-1"), Some(&"pty-a".to_string()));
+    }
+
+    #[test]
+    fn release_session_pty_clears_reservation_so_next_call_succeeds_cleanly() {
+        let mgr = PtyManager::new(false);
+        reserve_session_pty(&mgr, "sess-2", "pty-a").unwrap();
+
+        release_session_pty(&mgr, "sess-2");
+        assert!(
+            mgr.session_ptys.lock().unwrap().get("sess-2").is_none(),
+            "rollback must remove the reservation on spawn failure"
+        );
+
+        // A subsequent reservation for the same session must succeed as if
+        // it were the first — not treated as an existing session.
+        let retry = reserve_session_pty(&mgr, "sess-2", "pty-c").unwrap();
+        assert_eq!(retry, None);
+        assert_eq!(
+            mgr.session_ptys.lock().unwrap().get("sess-2"),
+            Some(&"pty-c".to_string())
+        );
+    }
+
+    // ── confirm_reservation_or_extract (kill-during-spawn race) ──
+
+    /// Build a real `PtyInstance` the same way `spawn_pty` does (minus the
+    /// reader thread and `spawn_emitter`, neither of which this test needs —
+    /// `spawn_emitter` requires a live `AppHandle`, unavailable in a unit
+    /// test, but `TerminalHandle::new` alone yields a fully valid instance).
+    /// Mirrors the harness `reap_child_leaves_no_zombie` uses below.
+    fn build_test_pty_instance(shell_command: &str) -> (PtyInstance, u32) {
+        let pty_system = NativePtySystem::default();
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+        let mut cmd = CommandBuilder::new("sh");
+        cmd.arg("-c");
+        cmd.arg(shell_command);
+        let child = pair.slave.spawn_command(cmd).unwrap();
+        let child_pid = child.process_id();
+        drop(pair.slave);
+
+        let raw_writer = pair.master.take_writer().unwrap();
+        let writer: SharedWriter = Arc::new(Mutex::new(raw_writer));
+        let config = NergalTerminalConfig::new().with_kitty_keyboard(false);
+        let session = TerminalSession::with_config(
+            80,
+            24,
+            Box::new(SharedWriterAdapter(Arc::clone(&writer))),
+            config,
+        );
+        let terminal = TerminalHandle::new(session);
+
+        let instance = PtyInstance {
+            writer,
+            master: pair.master,
+            child_pid,
+            child: Some(child),
+            terminal,
+        };
+        (instance, child_pid.unwrap())
+    }
+
+    #[test]
+    fn confirm_reservation_returns_intact_when_reservation_holds() {
+        let mgr = PtyManager::new(false);
+        reserve_session_pty(&mgr, "sess-4", "pty-y").unwrap();
+
+        let result = confirm_reservation_or_extract(&mgr, "sess-4", "pty-y").unwrap();
+        assert!(
+            matches!(result, ReservationOutcome::Intact),
+            "reservation still points at pty-y — normal path, nothing to tear down"
+        );
+    }
+
+    #[test]
+    fn confirm_reservation_reports_gone_even_when_kill_already_extracted() {
+        let mgr = PtyManager::new(false);
+        reserve_session_pty(&mgr, "sess-6", "pty-w").unwrap();
+
+        // Kill arrived AFTER spawn_pty's insert: the normal kill path removed
+        // BOTH maps' entries and reaped the instance itself. confirm must
+        // still report Gone (not Intact) so the caller errors instead of
+        // returning a success pty_id for a session with no live PTY.
+        mgr.session_ptys.lock().unwrap().remove("sess-6");
+
+        let result = confirm_reservation_or_extract(&mgr, "sess-6", "pty-w").unwrap();
+        assert!(
+            matches!(result, ReservationOutcome::Gone(None)),
+            "missing reservation with nothing left to extract is still a killed session"
+        );
+    }
+
+    #[test]
+    fn confirm_reservation_extracts_and_reaps_orphan_when_killed_mid_spawn() {
+        let mgr = PtyManager::new(false);
+        reserve_session_pty(&mgr, "sess-5", "pty-z").unwrap();
+
+        // Simulate spawn_pty's own insert landing after a concurrent
+        // kill_session_pty already removed the reservation — having found
+        // nothing yet in `instances` to tear down, it returned Ok — the
+        // exact window this fix closes.
+        let (instance, pid) = build_test_pty_instance("sleep 5");
+        mgr.instances
+            .lock()
+            .unwrap()
+            .insert("pty-z".to_string(), instance);
+        mgr.session_ptys.lock().unwrap().remove("sess-5");
+
+        let orphan = match confirm_reservation_or_extract(&mgr, "sess-5", "pty-z").unwrap() {
+            ReservationOutcome::Gone(Some(inst)) => inst,
+            _ => panic!("mismatched reservation must extract the just-inserted instance"),
+        };
+        assert!(
+            mgr.instances.lock().unwrap().get("pty-z").is_none(),
+            "extracted instance must be removed from the map"
+        );
+
+        // Drop outside any lock, per the file's extract-then-drop
+        // discipline — runs `Drop for PtyInstance` (kill_tree + reap), the
+        // same teardown a normal kill_session_pty call would have done.
+        drop(orphan);
+        assert_reaped(pid);
     }
 
     // ── Injected-context assembly (vault + ClickUp + Linear concatenation) ──

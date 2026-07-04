@@ -11,6 +11,10 @@
   },
   "app": {
     "withGlobalTauri": false,
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data: https:; font-src 'self'; style-src 'self' 'unsafe-inline'; frame-src http: https:; base-uri 'self'; form-action 'self'",
+      "devCsp": "default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data: https:; font-src 'self'; style-src 'self' 'unsafe-inline'; frame-src http: https:; base-uri 'self'; form-action 'self'"
+    },
     "windows": [
       {
         "title": "Nergal",

@@ -287,6 +287,7 @@ impl Database {
             include_str!("../migrations/029_workspace_sort_order.sql"),
             include_str!("../migrations/030_workspace_plans_dir.sql"),
             include_str!("../migrations/031_session_child_fk_cascade.sql"),
+            include_str!("../migrations/032_clickup_subdata_indexes.sql"),
         ];
 
         for (i, sql) in migrations.iter().enumerate() {
@@ -2223,13 +2224,13 @@ mod tests {
     #[test]
     fn fresh_db_migrates_to_latest_version_with_022_schema() {
         let db = in_memory();
-        // Highest migration file as of writing is 031 (see `migrate()`'s array,
+        // Highest migration file as of writing is 032 (see `migrate()`'s array,
         // a local not reachable from here to derive this count automatically).
         let version: i64 = db
             .conn
             .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 31);
+        assert_eq!(version, 32);
 
         let has_transcripts: i64 = db
             .conn

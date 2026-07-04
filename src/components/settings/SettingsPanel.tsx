@@ -2133,6 +2133,24 @@ const CATEGORIES: { id: string; label: string; sections: SectionMeta[] }[] = [
   },
 ];
 
+// Extra search terms per section so Ctrl+F finds a setting by the field it
+// holds, not only by the section's own label. Section-granular: a hit jumps
+// to the section that owns the setting.
+const SECTION_KEYWORDS: Record<SectionId, string> = {
+  paths: "binary shell transcripts directory claude path openspec plans",
+  agents: "agent codex gemini opencode default cli detect binary",
+  editor: "editor ide vscode open external",
+  appearance: "theme color colour appearance dark light palette custom accent",
+  terminal: "terminal font size scrollback cursor shell prelude quake",
+  keymap: "keyboard shortcut keybinding keymap leader ownership override reset",
+  mcp: "mcp server cross-session summary worktree messaging",
+  scratchpad: "scratchpad notes temp draft",
+  obsidian: "obsidian vault note pin bridge context",
+  clickup: "clickup task workspace list",
+  linear: "linear issue cycle team",
+  about: "about version update license changelog updater",
+};
+
 type InstallSource = "deb" | "appimage" | "mac_app" | "windows" | "dev" | "unknown";
 
 interface UpdateCheckResult {
@@ -2840,6 +2858,13 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
     activeSectionRef.current = activeSection;
   }, [activeSection]);
 
+  const [sectionSearch, setSectionSearch] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  // Fresh search each time the dialog opens.
+  useEffect(() => {
+    if (!open) setSectionSearch("");
+  }, [open]);
+
   useEffect(() => {
     getVersion().then(setAppVersion).catch(() => setAppVersion(""));
   }, []);
@@ -2935,6 +2960,35 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [open]);
+
+  // Ctrl+F focuses the section search — scoped to the open dialog so it never
+  // shadows anything else while Settings is closed.
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (appStore.get(keymapCaptureActiveAtom)) return;
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.code === "KeyF") {
+        e.preventDefault();
+        e.stopPropagation();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      }
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open]);
+
+  // Keep the active section scrolled into view in the rail — with categories
+  // collapsed the active button can sit past the fold after a category jump.
+  useEffect(() => {
+    if (!open) return;
+    const raf = requestAnimationFrame(() => {
+      navRef.current
+        ?.querySelector<HTMLElement>('button[data-active="true"]')
+        ?.scrollIntoView({ block: "nearest" });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [open, activeSection]);
 
   // Keyboard-first focus: on open or section change, land focus directly in
   // the content (first form field, or the selected/first theme card on the
@@ -3184,51 +3238,103 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
-            Configure paths and preferences. Press <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+Shift+N</kbd> for a category, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Alt+N</kbd> for a section within it, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Tab</kbd> to enter the form, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+Enter</kbd> to save, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+,</kbd> to toggle.
+            Configure paths and preferences. Press <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+Shift+N</kbd> for a category, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Alt+N</kbd> for a section within it, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Tab</kbd> to enter the form, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+F</kbd> to search, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+Enter</kbd> to save, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+,</kbd> or <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Esc</kbd> to close.
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid grid-cols-[180px_1fr] gap-5 h-[460px]">
           <nav
             ref={navRef}
-            className="flex flex-col gap-2 overflow-y-auto border-r border-border/40 pr-2"
+            className="flex flex-col gap-1.5 overflow-y-auto border-r border-border/40 pr-2"
           >
-            {CATEGORIES.map((cat, catIdx) => (
-              <div key={cat.id} className="flex flex-col gap-0.5">
-                <div className="flex items-center justify-between px-2 pb-0.5">
-                  <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground/60">
-                    {cat.label}
-                  </span>
-                  <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border border-border/40 text-muted-foreground">
-                    ⌃⇧{catIdx + 1}
-                  </kbd>
-                </div>
-                {cat.sections.map((section, secIdx) => {
-                  const Icon = section.icon;
-                  const isActive = section.id === activeSection;
-                  return (
+            <input
+              ref={searchInputRef}
+              value={sectionSearch}
+              onChange={(e) => setSectionSearch(e.target.value)}
+              placeholder="Search settings…"
+              aria-label="Search settings"
+              className="mb-0.5 w-full rounded-md border border-border/40 bg-muted/40 px-2 py-1 text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus-visible:border-ring"
+            />
+            {(() => {
+              const q = sectionSearch.trim().toLowerCase();
+              const searching = q.length > 0;
+              const activeCatId = CATEGORIES.find((c) =>
+                c.sections.some((s) => s.id === activeSection),
+              )?.id;
+              return CATEGORIES.map((cat, catIdx) => {
+                const matched = searching
+                  ? cat.sections.filter(
+                      (s) =>
+                        s.label.toLowerCase().includes(q) ||
+                        SECTION_KEYWORDS[s.id].includes(q),
+                    )
+                  : cat.sections;
+                const catLabelMatches =
+                  searching && cat.label.toLowerCase().includes(q);
+                if (searching && matched.length === 0 && !catLabelMatches)
+                  return null;
+                // Category label matched but no field did → show the whole group.
+                const sections =
+                  searching && catLabelMatches && matched.length === 0
+                    ? cat.sections
+                    : matched;
+                // Only the active category is expanded (sidebar parity); search
+                // expands every surviving group so hits are visible.
+                const expanded = searching || cat.id === activeCatId;
+                const isActiveCat = cat.id === activeCatId;
+                return (
+                  <div key={cat.id} className="flex flex-col gap-0.5">
                     <button
-                      key={section.id}
                       type="button"
-                      tabIndex={isActive ? 0 : -1}
-                      data-active={isActive}
-                      onClick={() => setActiveSection(section.id)}
-                      className={`flex items-center justify-between rounded-md px-2 py-1.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring ${
-                        isActive
-                          ? "bg-secondary text-foreground"
-                          : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
-                      }`}
+                      tabIndex={-1}
+                      onClick={() => setActiveSection(cat.sections[0].id)}
+                      className="flex items-center justify-between px-2 py-0.5 outline-none hover:text-foreground"
                     >
-                      <span className="flex items-center gap-2">
-                        <Icon size={14} className="shrink-0" />
-                        <span>{section.label}</span>
+                      <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                        {cat.label}
                       </span>
-                      <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border border-border/40 text-muted-foreground">⌥{secIdx + 1}</kbd>
+                      {/* Category hint always visible — mirrors the sidebar's
+                          per-workspace number that shows even when collapsed. */}
+                      <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border border-border/40 text-muted-foreground">
+                        ⌃⇧{catIdx + 1}
+                      </kbd>
                     </button>
-                  );
-                })}
-              </div>
-            ))}
+                    {expanded &&
+                      sections.map((section) => {
+                        const Icon = section.icon;
+                        const isActive = section.id === activeSection;
+                        const secIdx = cat.sections.indexOf(section);
+                        return (
+                          <button
+                            key={section.id}
+                            type="button"
+                            tabIndex={isActive ? 0 : -1}
+                            data-active={isActive}
+                            onClick={() => setActiveSection(section.id)}
+                            className={`flex items-center justify-between rounded-md px-2 py-1 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring ${
+                              isActive
+                                ? "bg-secondary text-foreground"
+                                : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+                            }`}
+                          >
+                            <span className="flex items-center gap-2">
+                              <Icon size={13} className="shrink-0" />
+                              <span>{section.label}</span>
+                            </span>
+                            {/* Alt+N applies to the active category only, so its
+                                hint shows only there (sidebar session parity). */}
+                            {isActiveCat && (
+                              <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border border-border/40 text-muted-foreground">
+                                ⌥{secIdx + 1}
+                              </kbd>
+                            )}
+                          </button>
+                        );
+                      })}
+                  </div>
+                );
+              });
+            })()}
           </nav>
 
           <div ref={contentRef} className="overflow-y-auto px-1 max-h-[60vh] scroll-py-3">

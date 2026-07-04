@@ -1,20 +1,12 @@
-//! In-memory registry of recent writes for echo-dedup and conflict detection.
+//! ClickUp write-field surface: the real Scalar/Additive split, and the
+//! comment post-once model.
 //!
-//! After a successful write, the command records `(task_id, field,
-//! written_value, pre_write_value, at)` here.  On the next poll the reconcile
-//! reads a registry snapshot and, for tasks that changed, compares the
-//! server-current field value to the written value:
-//!   - match → own echo → reconcile silently, clear the entry
-//!   - neither written_value nor pre_write_value → conflict → emit event
-//!
-//! TTL is `2 × DEFAULT_POLL_INTERVAL_SECS` (seconds) so the echo poll always
-//! arrives before expiry.  A silently-failed write whose entry expires never
-//! suppresses a real remote change for an unbounded window (Risk §8, design).
-//!
-//! The registry is purely in-memory daemon state.  A crash loses pending
-//! entries; the next poll will treat the user's own edit as a remote change
-//! and produce a one-shot spurious toast — benign and documented as such
-//! (Risk §8, design.md).
+//! The registry mechanics (`WritebackRegistry`, `WriteEntry`, `check_echo`,
+//! `EchoCheckResult`) live in `tracker_shared::writeback_registry`, shared
+//! with Linear.  `WriteConflict` stays here: it is the `Serialize`d event
+//! payload emitted as `clickup:write-conflict` with ClickUp's `task_id` key
+//! (Linear's wire payload keys on `issue_id` instead, so it stays per-tracker
+//! too — see `tracker_shared::writeback_registry` module doc).
 //!
 //! ## Comment post-once model (Decision 4)
 //!
@@ -23,9 +15,7 @@
 //! because comments are structurally different from field writes: append-only,
 //! no optimistic insert, and ambiguous failures must never auto-retry.
 
-use std::collections::HashMap;
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::Result;
 use rusqlite::Connection;
@@ -34,6 +24,10 @@ use super::client::ClickUpClient;
 use super::{mirror, model};
 
 use super::poller::DEFAULT_POLL_INTERVAL_SECS;
+pub(crate) use crate::tracker_shared::writeback_registry::{EchoCheckResult, check_echo};
+use crate::tracker_shared::writeback_registry::{
+    FieldClass, WriteFieldClass, WritebackRegistry as GenericWritebackRegistry,
+};
 
 /// TTL ≥ 2 × the poll interval so the echo cycle always lands before expiry.
 pub const WRITE_TTL: Duration = Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS * 2);
@@ -52,19 +46,8 @@ pub enum WriteField {
     CustomField(String),
 }
 
-/// Per-field class for conflict resolution (Decision 3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FieldClass {
-    /// status / due_date / description / single-select custom field.
-    /// LWW + warn when remote supersedes.
-    Scalar,
-    /// Assignees / checklist / labels / multi-select.
-    /// Merge to server state, no false superseded-warning.
-    Additive,
-}
-
-impl WriteField {
-    pub fn field_class(&self) -> FieldClass {
+impl WriteFieldClass for WriteField {
+    fn field_class(&self) -> FieldClass {
         match self {
             WriteField::Assignees | WriteField::ChecklistItem(_) => FieldClass::Additive,
             _ => FieldClass::Scalar,
@@ -72,88 +55,12 @@ impl WriteField {
     }
 }
 
-/// A single recorded write.
-#[derive(Debug, Clone)]
-pub struct WriteEntry {
-    pub task_id: String,
-    pub field: WriteField,
-    /// The value we sent to the API.
-    pub written_value: String,
-    /// The value in the mirror immediately before we sent the write.
-    pub pre_write_value: Option<String>,
-    pub at: Instant,
-}
-
-/// Composite key for the registry map.
-type Key = (String, WriteField);
-
-pub struct WritebackRegistry {
-    entries: Mutex<HashMap<Key, WriteEntry>>,
-}
+/// ClickUp's writeback registry, keyed by task id.
+pub type WritebackRegistry = GenericWritebackRegistry<WriteField>;
 
 impl Default for WritebackRegistry {
     fn default() -> Self {
-        Self {
-            entries: Mutex::new(HashMap::new()),
-        }
-    }
-}
-
-impl WritebackRegistry {
-    /// Record a successful write.  Overwrites any prior entry for the same
-    /// `(task_id, field)` pair — the latest write is the one we want to echo.
-    pub fn record(
-        &self,
-        task_id: impl Into<String>,
-        field: WriteField,
-        written_value: impl Into<String>,
-        pre_write_value: Option<impl Into<String>>,
-    ) {
-        let task_id = task_id.into();
-        let written_value = written_value.into();
-        let pre_write_value = pre_write_value.map(Into::into);
-        let entry = WriteEntry {
-            task_id: task_id.clone(),
-            field: field.clone(),
-            written_value,
-            pre_write_value,
-            at: Instant::now(),
-        };
-        if let Ok(mut guard) = self.entries.lock() {
-            guard.insert((task_id, field), entry);
-        }
-    }
-
-    /// Return a snapshot of all non-expired entries for a given task.
-    ///
-    /// Expired entries for OTHER tasks accumulate until the next reconcile
-    /// purge; they are never returned.
-    pub fn entries_for_task(&self, task_id: &str) -> Vec<WriteEntry> {
-        let now = Instant::now();
-        let Ok(guard) = self.entries.lock() else {
-            return Vec::new();
-        };
-        guard
-            .values()
-            .filter(|e| e.task_id == task_id && now.duration_since(e.at) < WRITE_TTL)
-            .cloned()
-            .collect()
-    }
-
-    /// Clear a single `(task_id, field)` entry — called after a confirmed echo.
-    pub fn clear_entry(&self, task_id: &str, field: &WriteField) {
-        if let Ok(mut guard) = self.entries.lock() {
-            guard.remove(&(task_id.to_string(), field.clone()));
-        }
-    }
-
-    /// Remove all expired entries.  Called once per reconcile cycle to bound
-    /// memory use on active workspaces.
-    pub fn purge_expired(&self) {
-        let now = Instant::now();
-        if let Ok(mut guard) = self.entries.lock() {
-            guard.retain(|_, e| now.duration_since(e.at) < WRITE_TTL);
-        }
+        Self::new(WRITE_TTL)
     }
 }
 
@@ -167,51 +74,6 @@ pub struct WriteConflict {
     pub field: String,
     pub your_value: String,
     pub remote_value: String,
-}
-
-// ── Echo + conflict check (pure-ish, callable from tests without network/DB) ──
-
-/// Result of examining one `WriteEntry` against a fetched server value.
-#[derive(Debug, PartialEq, Eq)]
-pub enum EchoCheckResult {
-    /// Server value matches what we wrote → own echo, suppress notification.
-    OwnEcho,
-    /// Scalar field: server value matches neither written nor pre-write value.
-    ScalarConflict(WriteConflict),
-    /// Additive field with diverged value → merge silently, no warning.
-    AdditiveDivergence,
-    /// No recent write for this field, or the server value equals pre-write
-    /// (unchanged from our perspective).
-    Unrelated,
-}
-
-/// Compare one `WriteEntry` against the server's current value for the field.
-///
-/// `server_value` is the server-current field value extracted from the fetched
-/// task payload (as a canonical string, same encoding as `written_value`).
-pub fn check_echo(entry: &WriteEntry, server_value: &str) -> EchoCheckResult {
-    if server_value == entry.written_value {
-        return EchoCheckResult::OwnEcho;
-    }
-
-    match entry.field.field_class() {
-        FieldClass::Additive => EchoCheckResult::AdditiveDivergence,
-        FieldClass::Scalar => {
-            let pre = entry.pre_write_value.as_deref();
-            if pre == Some(server_value) {
-                // Server matches the pre-write value: our write hasn't landed
-                // or was already overwritten by itself; treat as unrelated.
-                EchoCheckResult::Unrelated
-            } else {
-                EchoCheckResult::ScalarConflict(WriteConflict {
-                    task_id: entry.task_id.clone(),
-                    field: format!("{:?}", entry.field),
-                    your_value: entry.written_value.clone(),
-                    remote_value: server_value.to_string(),
-                })
-            }
-        }
-    }
 }
 
 // ── Comment post-once model (Decision 4, tasks 4.1-4.3) ──
@@ -362,17 +224,29 @@ pub fn classify_comment_error(err: anyhow::Error) -> CommentOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use crate::tracker_shared::writeback_registry::WriteEntry;
+    use std::time::{Duration, Instant};
 
-    fn make_entry(task: &str, field: WriteField, written: &str, pre: Option<&str>) -> WriteEntry {
+    fn make_entry(
+        task: &str,
+        field: WriteField,
+        written: &str,
+        pre: Option<&str>,
+    ) -> WriteEntry<WriteField> {
         WriteEntry {
-            task_id: task.into(),
+            id: task.into(),
             field,
             written_value: written.into(),
             pre_write_value: pre.map(Into::into),
             at: Instant::now(),
         }
     }
+
+    // Registry mechanics (record/entries_for/clear_entry/purge_expired/
+    // tracked_ids) and the generic OwnEcho/ScalarConflict/Unrelated shape of
+    // check_echo are consolidated in `tracker_shared::writeback_registry`'s
+    // own test module — these tests cover only what's ClickUp-specific: the
+    // real Scalar/Additive split and the WRITE_TTL derivation.
 
     // 2.3 TTL ≥ 2 × poll interval
     #[test]
@@ -382,106 +256,6 @@ mod tests {
             WRITE_TTL >= two_polls,
             "WRITE_TTL ({WRITE_TTL:?}) must be ≥ 2 × poll interval ({two_polls:?})"
         );
-    }
-
-    // 2.3 Expired entries are purged / not returned
-    #[test]
-    fn expired_entries_not_returned() {
-        let reg = WritebackRegistry::default();
-        // Manually inject an entry with an old timestamp by bypassing record().
-        {
-            let entry = WriteEntry {
-                task_id: "t1".into(),
-                field: WriteField::Status,
-                written_value: "done".into(),
-                pre_write_value: Some("open".into()),
-                at: Instant::now()
-                    .checked_sub(WRITE_TTL + Duration::from_secs(1))
-                    .unwrap_or_else(Instant::now),
-            };
-            let mut guard = reg.entries.lock().unwrap();
-            guard.insert(("t1".into(), WriteField::Status), entry);
-        }
-        // expired → not returned by entries_for_task
-        assert!(
-            reg.entries_for_task("t1").is_empty(),
-            "expired entry must not be returned"
-        );
-
-        // purge_expired also removes it
-        reg.purge_expired();
-        {
-            let guard = reg.entries.lock().unwrap();
-            assert!(guard.is_empty(), "expired entry must be removed by purge");
-        }
-    }
-
-    // 2.3 Fresh entries ARE returned and cleared
-    #[test]
-    fn fresh_entry_returned_and_clearable() {
-        let reg = WritebackRegistry::default();
-        reg.record("t2", WriteField::Status, "in progress", Some("open"));
-        let entries = reg.entries_for_task("t2");
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].written_value, "in progress");
-
-        reg.clear_entry("t2", &WriteField::Status);
-        assert!(reg.entries_for_task("t2").is_empty());
-    }
-
-    // 2.1 API failure clears the provisional record (echo-ordering)
-    #[test]
-    fn api_failure_clears_provisional_record() {
-        let reg = WritebackRegistry::default();
-        // Record before the (simulated) API call.
-        reg.record("t3", WriteField::Status, "done", Some("open"));
-        assert!(
-            !reg.entries_for_task("t3").is_empty(),
-            "provisional record must exist"
-        );
-        // Simulate API failure: clear the entry.
-        reg.clear_entry("t3", &WriteField::Status);
-        assert!(reg.entries_for_task("t3").is_empty(), "cleared on failure");
-    }
-
-    // 2.1 record without a failure (success path) leaves the entry present
-    #[test]
-    fn record_without_clear_leaves_entry_present() {
-        let reg = WritebackRegistry::default();
-        reg.record("t4", WriteField::Status, "done", Some("open"));
-        assert!(
-            !reg.entries_for_task("t4").is_empty(),
-            "entry must remain when no clear_entry is called"
-        );
-    }
-
-    // 3.3 Own write value-match → OwnEcho
-    #[test]
-    fn own_echo_when_server_matches_written() {
-        let entry = make_entry("t1", WriteField::Status, "done", Some("open"));
-        assert_eq!(check_echo(&entry, "done"), EchoCheckResult::OwnEcho);
-    }
-
-    // 3.3 Scalar conflict: server value ≠ written AND ≠ pre-write
-    #[test]
-    fn scalar_conflict_when_remote_supersedes() {
-        let entry = make_entry("t1", WriteField::Status, "done", Some("open"));
-        let result = check_echo(&entry, "in review");
-        match result {
-            EchoCheckResult::ScalarConflict(c) => {
-                assert_eq!(c.task_id, "t1");
-                assert_eq!(c.your_value, "done");
-                assert_eq!(c.remote_value, "in review");
-            }
-            other => panic!("expected ScalarConflict, got {other:?}"),
-        }
-    }
-
-    // 3.3 Unrelated when server still equals pre-write (our write not landed yet)
-    #[test]
-    fn unrelated_when_server_matches_pre_write() {
-        let entry = make_entry("t1", WriteField::Status, "done", Some("open"));
-        assert_eq!(check_echo(&entry, "open"), EchoCheckResult::Unrelated);
     }
 
     // 3.3 Additive divergence → no conflict warning

@@ -287,7 +287,7 @@ fn run_echo_check(
     let mut conflicts: Vec<WriteConflict> = Vec::new();
 
     for task in &fetched.tasks {
-        let entries = registry.entries_for_task(&task.id);
+        let entries = registry.entries_for(&task.id);
         if entries.is_empty() {
             continue;
         }
@@ -314,7 +314,15 @@ fn run_echo_check(
                         remote_value = %server_value,
                         "clickup write conflict: remote value supersedes local write"
                     );
-                    conflicts.push(conflict);
+                    // check_echo returns a neutral (id, field, your, remote)
+                    // payload — WriteConflict stays per-tracker (serde wire
+                    // key `task_id` vs Linear's `issue_id`), mapped here.
+                    conflicts.push(WriteConflict {
+                        task_id: conflict.id,
+                        field: conflict.field,
+                        your_value: conflict.your_value,
+                        remote_value: conflict.remote_value,
+                    });
                     // Clear entry: conflict is surfaced once, then the server
                     // value is the new truth via normal reconcile.
                     registry.clear_entry(&task.id, &entry.field);
@@ -2021,7 +2029,7 @@ mod tests {
         );
         // Entry cleared after echo.
         assert!(
-            reg.entries_for_task(TASK_PARENT).is_empty(),
+            reg.entries_for(TASK_PARENT).is_empty(),
             "registry entry must be cleared after echo"
         );
     }
@@ -2052,7 +2060,7 @@ mod tests {
 
         // Entry cleared after conflict surfaced.
         assert!(
-            reg.entries_for_task(TASK_PARENT).is_empty(),
+            reg.entries_for(TASK_PARENT).is_empty(),
             "registry entry must be cleared after conflict"
         );
     }

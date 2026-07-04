@@ -1,0 +1,29 @@
+{
+  "tier": "L",
+  "tier_source": "spike issue-tracker-adapter GO-BUT-NARROWER (~600-700 LOC new shared, ~1300-1500 LOC rewired across 8 files)",
+  "ceremony": "deep",
+  "risk_tier": "critical",
+  "files_estimate": 12,
+  "tags": ["refactor", "architecture", "security"],
+  "visibility": "public",
+  "spec_target": "issue-tracker-adapter",
+  "rigor_applied": {
+    "discovery_invoked": true,
+    "iprev_rounds": 3,
+    "reviewer_mode": "4-parallel",
+    "reviewer_escalation": "CredentialStore phase carries security-reviewer (keyring + 0600 fallback + Debug redaction must survive extraction unchanged)",
+    "gates_phases_run": ["compile", "test", "lint", "security", "scope"],
+    "per_phase_models": {
+      "design": "fable-5",
+      "implementation": "sonnet",
+      "validation": "fable-5",
+      "exploration": "haiku"
+    }
+  },
+  "interview_answers": {
+    "note": "Seeded from the issue-tracker-adapter spike's GO-BUT-NARROWER decision (orchestrator, user-delegated). L + security-touching (CredentialStore consolidates keyring/0600 code) -> iprev 3 rounds + 4-parallel review with security-reviewer, per user directive 'si el change lo requiere, lanza iprev'. Behavior-preserving refactor: gate on scope (no behavior/schema/command-surface change). Migration order WritebackRegistry -> closed-out trio -> CredentialStore -> ComposableItem; ClickUp writeback migrated only after clickup-writeback-echo-ordering settles."
+  },
+  "events": [
+    { "type": "spike-seeded", "reason": "issue-tracker-adapter GO-BUT-NARROWER; extract the 4 mechanically-shared slices" }
+  ]
+}

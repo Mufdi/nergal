@@ -1,22 +1,11 @@
-//! In-memory registry of recent writes for echo-dedup and conflict detection.
+//! Linear write-field surface (all-scalar), and the comment post-once model.
 //!
-//! After a successful write the command records `(issue_id, field,
-//! written_value, pre_write_value, at)` here.  On the next poll the run loop
-//! reads a registry snapshot and, for each entry, compares the
-//! server-current field value (read from the post-reconcile mirror) to the
-//! written value:
-//!   - match → own echo → suppress notification, clear the entry
-//!   - neither written_value nor pre_write_value → scalar conflict → emit
-//!     `linear:write-conflict`
-//!
-//! TTL is `2 × DEFAULT_POLL_INTERVAL_SECS` (seconds) so the echo poll always
-//! arrives before expiry.  A silently-failed write whose entry expires never
-//! suppresses a real remote change for an unbounded window (see design Risks).
-//!
-//! The registry is purely in-memory daemon state.  A crash loses pending
-//! entries; the next poll will treat the user's own edit as a remote change
-//! and produce a one-shot spurious toast — benign and documented (design
-//! Risk: "recent_writes crash-loss").
+//! The registry mechanics (`WritebackRegistry`, `WriteEntry`, `check_echo`,
+//! `EchoCheckResult`) live in `tracker_shared::writeback_registry`, shared
+//! with ClickUp.  `WriteConflict` stays here: it is the `Serialize`d event
+//! payload emitted as `linear:write-conflict` with Linear's `issue_id` key
+//! (ClickUp's wire payload keys on `task_id` instead, so it stays per-tracker
+//! too — see `tracker_shared::writeback_registry` module doc).
 //!
 //! ## Comment post-once model (Decision 4)
 //!
@@ -25,9 +14,7 @@
 //! Comments are fundamentally different from field writes: append-only, no
 //! optimistic insert, and ambiguous failures must never auto-retry.
 
-use std::collections::HashMap;
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::Result;
 use rusqlite::Connection;
@@ -36,6 +23,10 @@ use super::client::LinearClient;
 use super::mirror;
 
 use super::DEFAULT_POLL_INTERVAL_SECS;
+pub(crate) use crate::tracker_shared::writeback_registry::{EchoCheckResult, check_echo};
+use crate::tracker_shared::writeback_registry::{
+    FieldClass, WriteFieldClass, WritebackRegistry as GenericWritebackRegistry,
+};
 
 /// TTL ≥ 2 × the poll interval so the echo cycle always lands before expiry.
 pub const WRITE_TTL: Duration = Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS * 2);
@@ -53,105 +44,19 @@ pub enum WriteField {
     Cycle,
 }
 
-/// A single recorded write.
-#[derive(Debug, Clone)]
-pub struct WriteEntry {
-    pub issue_id: String,
-    pub field: WriteField,
-    /// The value we sent to the API.
-    pub written_value: String,
-    /// The value in the mirror immediately before we sent the write.
-    pub pre_write_value: Option<String>,
-    pub at: Instant,
+impl WriteFieldClass for WriteField {
+    fn field_class(&self) -> FieldClass {
+        // All-scalar write surface (see enum doc) — never Additive.
+        FieldClass::Scalar
+    }
 }
 
-/// Composite key for the registry map.
-type Key = (String, WriteField);
-
-pub struct WritebackRegistry {
-    entries: Mutex<HashMap<Key, WriteEntry>>,
-}
+/// Linear's writeback registry, keyed by issue id.
+pub type WritebackRegistry = GenericWritebackRegistry<WriteField>;
 
 impl Default for WritebackRegistry {
     fn default() -> Self {
-        Self {
-            entries: Mutex::new(HashMap::new()),
-        }
-    }
-}
-
-impl WritebackRegistry {
-    /// Record a write.  Overwrites any prior entry for the same
-    /// `(issue_id, field)` pair — the latest write is the one to echo-check.
-    ///
-    /// Call this BEFORE the API call (provisional record) to close the TOCTOU
-    /// window where a concurrent poll lands between the write hitting Linear and
-    /// the command resuming.  Clear on API failure via `clear_entry`.
-    pub fn record(
-        &self,
-        issue_id: impl Into<String>,
-        field: WriteField,
-        written_value: impl Into<String>,
-        pre_write_value: Option<impl Into<String>>,
-    ) {
-        let issue_id = issue_id.into();
-        let written_value = written_value.into();
-        let pre_write_value = pre_write_value.map(Into::into);
-        let entry = WriteEntry {
-            issue_id: issue_id.clone(),
-            field: field.clone(),
-            written_value,
-            pre_write_value,
-            at: Instant::now(),
-        };
-        if let Ok(mut guard) = self.entries.lock() {
-            guard.insert((issue_id, field), entry);
-        }
-    }
-
-    /// Return a snapshot of all non-expired entries for a given issue.
-    pub fn entries_for_issue(&self, issue_id: &str) -> Vec<WriteEntry> {
-        let now = Instant::now();
-        let Ok(guard) = self.entries.lock() else {
-            return Vec::new();
-        };
-        guard
-            .values()
-            .filter(|e| e.issue_id == issue_id && now.duration_since(e.at) < WRITE_TTL)
-            .cloned()
-            .collect()
-    }
-
-    /// Return all non-expired issue ids that have entries.
-    pub fn tracked_issue_ids(&self) -> Vec<String> {
-        let now = Instant::now();
-        let Ok(guard) = self.entries.lock() else {
-            return Vec::new();
-        };
-        let mut ids: Vec<String> = guard
-            .values()
-            .filter(|e| now.duration_since(e.at) < WRITE_TTL)
-            .map(|e| e.issue_id.clone())
-            .collect();
-        ids.dedup();
-        ids
-    }
-
-    /// Clear a single `(issue_id, field)` entry — called after a confirmed
-    /// echo or on API failure.
-    pub fn clear_entry(&self, issue_id: &str, field: &WriteField) {
-        if let Ok(mut guard) = self.entries.lock() {
-            guard.remove(&(issue_id.to_string(), field.clone()));
-        }
-    }
-
-    /// Remove all expired entries.  Called once per reconcile cycle to bound
-    /// memory use on active workspaces.
-    pub fn purge_expired(&self) {
-        let now = Instant::now();
-        if let Ok(mut guard) = self.entries.lock() {
-            guard.retain(|_, e| now.duration_since(e.at) < WRITE_TTL);
-        }
+        Self::new(WRITE_TTL)
     }
 }
 
@@ -165,42 +70,6 @@ pub struct WriteConflict {
     pub field: String,
     pub your_value: String,
     pub remote_value: String,
-}
-
-// ── Echo + conflict check (pure, callable from tests without network/DB) ──
-
-/// Result of examining one `WriteEntry` against a fetched server value.
-#[derive(Debug, PartialEq, Eq)]
-pub enum EchoCheckResult {
-    /// Server value matches what we wrote → own echo, suppress.
-    OwnEcho,
-    /// Server value matches neither written nor pre-write value.
-    ScalarConflict(WriteConflict),
-    /// Server value equals the pre-write value: our write hasn't landed yet.
-    Unrelated,
-}
-
-/// Compare one `WriteEntry` against the server's current value for the field.
-///
-/// `server_value` is the server-current field value from the post-reconcile
-/// mirror (canonical string, same encoding as `written_value`).
-pub fn check_echo(entry: &WriteEntry, server_value: &str) -> EchoCheckResult {
-    if server_value == entry.written_value {
-        return EchoCheckResult::OwnEcho;
-    }
-    let pre = entry.pre_write_value.as_deref();
-    if pre == Some(server_value) {
-        // Server still matches what was there before our write: our write
-        // hasn't propagated yet (or was a no-op from the server's view).
-        EchoCheckResult::Unrelated
-    } else {
-        EchoCheckResult::ScalarConflict(WriteConflict {
-            issue_id: entry.issue_id.clone(),
-            field: format!("{:?}", entry.field),
-            your_value: entry.written_value.clone(),
-            remote_value: server_value.to_string(),
-        })
-    }
 }
 
 // ── Comment post-once model (Decision 4, tasks 4.1-4.3) ──
@@ -340,17 +209,29 @@ pub fn classify_comment_error(err: anyhow::Error) -> CommentOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use crate::tracker_shared::writeback_registry::WriteEntry;
+    use std::time::{Duration, Instant};
 
-    fn make_entry(issue: &str, field: WriteField, written: &str, pre: Option<&str>) -> WriteEntry {
+    fn make_entry(
+        issue: &str,
+        field: WriteField,
+        written: &str,
+        pre: Option<&str>,
+    ) -> WriteEntry<WriteField> {
         WriteEntry {
-            issue_id: issue.into(),
+            id: issue.into(),
             field,
             written_value: written.into(),
             pre_write_value: pre.map(Into::into),
             at: Instant::now(),
         }
     }
+
+    // Registry mechanics (record/entries_for/clear_entry/purge_expired/
+    // tracked_ids) and the generic OwnEcho/ScalarConflict/Unrelated shape of
+    // check_echo are consolidated in `tracker_shared::writeback_registry`'s
+    // own test module — these tests cover only what's Linear-specific: the
+    // WRITE_TTL derivation and the real Assignee-field regression.
 
     // 2.3 TTL ≥ 2 × poll interval
     #[test]
@@ -360,83 +241,6 @@ mod tests {
             WRITE_TTL >= two_polls,
             "WRITE_TTL ({WRITE_TTL:?}) must be >= 2 * poll interval ({two_polls:?})"
         );
-    }
-
-    // 2.3 Expired entries are not returned
-    #[test]
-    fn expired_entries_not_returned() {
-        let reg = WritebackRegistry::default();
-        {
-            let entry = WriteEntry {
-                issue_id: "i1".into(),
-                field: WriteField::State,
-                written_value: "done".into(),
-                pre_write_value: Some("open".into()),
-                at: Instant::now()
-                    .checked_sub(WRITE_TTL + Duration::from_secs(1))
-                    .unwrap_or_else(Instant::now),
-            };
-            let mut guard = reg.entries.lock().unwrap();
-            guard.insert(("i1".into(), WriteField::State), entry);
-        }
-        assert!(
-            reg.entries_for_issue("i1").is_empty(),
-            "expired entry must not be returned"
-        );
-        reg.purge_expired();
-        {
-            let guard = reg.entries.lock().unwrap();
-            assert!(guard.is_empty(), "expired entry must be removed by purge");
-        }
-    }
-
-    // 2.3 Fresh entries ARE returned and clearable
-    #[test]
-    fn fresh_entry_returned_and_clearable() {
-        let reg = WritebackRegistry::default();
-        reg.record("i2", WriteField::State, "in_progress", Some("backlog"));
-        let entries = reg.entries_for_issue("i2");
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].written_value, "in_progress");
-
-        reg.clear_entry("i2", &WriteField::State);
-        assert!(reg.entries_for_issue("i2").is_empty());
-    }
-
-    // 3.3 Own write value-match → OwnEcho
-    #[test]
-    fn own_echo_when_server_matches_written() {
-        let entry = make_entry("i1", WriteField::State, "done", Some("open"));
-        assert_eq!(check_echo(&entry, "done"), EchoCheckResult::OwnEcho);
-    }
-
-    // 3.3 Scalar conflict: server value != written AND != pre-write
-    #[test]
-    fn scalar_conflict_when_remote_supersedes() {
-        let entry = make_entry("i1", WriteField::State, "done", Some("open"));
-        let result = check_echo(&entry, "in_review");
-        match result {
-            EchoCheckResult::ScalarConflict(c) => {
-                assert_eq!(c.issue_id, "i1");
-                assert_eq!(c.your_value, "done");
-                assert_eq!(c.remote_value, "in_review");
-            }
-            other => panic!("expected ScalarConflict, got {other:?}"),
-        }
-    }
-
-    // 3.3 Unrelated when server still equals pre-write (our write not yet landed)
-    #[test]
-    fn unrelated_when_server_matches_pre_write() {
-        let entry = make_entry("i1", WriteField::State, "done", Some("open"));
-        assert_eq!(check_echo(&entry, "open"), EchoCheckResult::Unrelated);
-    }
-
-    // 3.3 Assignee write: OwnEcho when server matches what we wrote
-    #[test]
-    fn own_assignee_echo_when_server_matches() {
-        let entry = make_entry("i1", WriteField::Assignee, "user-abc", Some("user-xyz"));
-        assert_eq!(check_echo(&entry, "user-abc"), EchoCheckResult::OwnEcho);
     }
 
     // 3.3 REGRESSION: own assignment-write is filtered from newly_assigned.
@@ -460,6 +264,7 @@ mod tests {
         let result = check_echo(&entry, "user-new");
         match result {
             EchoCheckResult::ScalarConflict(c) => {
+                assert_eq!(c.id, "i1");
                 assert_eq!(c.field, "Assignee");
                 assert_eq!(c.your_value, "user-abc");
                 assert_eq!(c.remote_value, "user-new");
@@ -495,33 +300,5 @@ mod tests {
             classify_comment_error(err),
             CommentOutcome::Failed { .. }
         ));
-    }
-
-    // 2.3 API failure clears the provisional record
-    #[test]
-    fn api_failure_clears_provisional_record() {
-        let reg = WritebackRegistry::default();
-        // Record before the (simulated) API call.
-        reg.record("i3", WriteField::State, "done", Some("open"));
-        assert!(
-            !reg.entries_for_issue("i3").is_empty(),
-            "provisional record must exist"
-        );
-        // Simulate API failure: clear the entry.
-        reg.clear_entry("i3", &WriteField::State);
-        assert!(reg.entries_for_issue("i3").is_empty(), "cleared on failure");
-    }
-
-    // tracked_issue_ids returns ids with live entries
-    #[test]
-    fn tracked_issue_ids_returns_live_entries() {
-        let reg = WritebackRegistry::default();
-        reg.record("i4", WriteField::State, "done", None::<String>);
-        reg.record("i4", WriteField::Assignee, "u1", None::<String>);
-        reg.record("i5", WriteField::State, "backlog", None::<String>);
-        let mut ids = reg.tracked_issue_ids();
-        ids.sort();
-        assert!(ids.contains(&"i4".to_string()));
-        assert!(ids.contains(&"i5".to_string()));
     }
 }

@@ -1364,7 +1364,7 @@ async fn run_loop(app: AppHandle) {
                     // tauri::State injection (command-only), review N3.
                     if let Some(reg) = app.try_state::<writeback::WritebackRegistry>() {
                         reg.purge_expired();
-                        let issue_ids = reg.tracked_issue_ids();
+                        let issue_ids = reg.tracked_ids();
                         for issue_id in &issue_ids {
                             let fields = db
                                 .lock()
@@ -1379,7 +1379,7 @@ async fn run_loop(app: AppHandle) {
                                 // Decision 2 edge case).
                                 continue;
                             };
-                            let entries = reg.entries_for_issue(issue_id);
+                            let entries = reg.entries_for(issue_id);
                             for entry in entries {
                                 let server_val = match entry.field {
                                     writeback::WriteField::State => {
@@ -1405,7 +1405,23 @@ async fn run_loop(app: AppHandle) {
                                     }
                                     writeback::EchoCheckResult::ScalarConflict(c) => {
                                         reg.clear_entry(issue_id, &entry.field);
-                                        let _ = app.emit("linear:write-conflict", &c);
+                                        // check_echo returns a neutral (id,
+                                        // field, your, remote) payload —
+                                        // WriteConflict stays per-tracker
+                                        // (serde wire key `issue_id` vs
+                                        // ClickUp's `task_id`), mapped here.
+                                        let conflict = writeback::WriteConflict {
+                                            issue_id: c.id,
+                                            field: c.field,
+                                            your_value: c.your_value,
+                                            remote_value: c.remote_value,
+                                        };
+                                        let _ = app.emit("linear:write-conflict", &conflict);
+                                    }
+                                    writeback::EchoCheckResult::AdditiveDivergence => {
+                                        unreachable!(
+                                            "linear WriteFieldClass is all-Scalar; additive divergence cannot occur"
+                                        );
                                     }
                                     writeback::EchoCheckResult::Unrelated => {
                                         // Write not yet landed; keep entry for

@@ -25,6 +25,7 @@ mod search;
 pub mod setup;
 mod tasks;
 mod terminal;
+mod tracker_shared;
 mod updater;
 mod worktree;
 

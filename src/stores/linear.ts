@@ -2,6 +2,7 @@ import { atom, type getDefaultStore } from "jotai";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { invoke, listen } from "@/lib/tauri";
 import { confirm as swalConfirm } from "@/lib/confirm";
+import { escapeHtml } from "@/lib/escapeHtml";
 import { focusZoneAtom } from "./shortcuts";
 import { toastsAtom } from "./toast";
 import {
@@ -353,16 +354,6 @@ export const LINEAR_ACTION_LABELS = {
   reinject: "Re-inject into the live session (R)",
   closeOut: "Close out issue (C) — mark done & unbind",
 } as const;
-
-/// Linear issue titles are multi-writer input and confirm bodies render as HTML.
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 /// Human label for an issue: identifier (ENG-123) when present, else the title.
 function issueDisplay(get: Store["get"], issueId: string): string {

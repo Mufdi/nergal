@@ -6,8 +6,8 @@
 export interface ConfirmOptions {
   title: string;
   /// Rendered as HTML. Callers MUST escape any user-controlled substring
-  /// (task/workspace/session names) before interpolating — see `escapeHtml`
-  /// in stores/clickup.ts and stores/linear.ts.
+  /// (task/workspace/session names) before interpolating — use `escapeHtml`
+  /// from `@/lib/escapeHtml` (the single shared implementation).
   body?: string;
   confirmLabel?: string;
   cancelLabel?: string;

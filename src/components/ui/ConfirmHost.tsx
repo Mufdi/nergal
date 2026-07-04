@@ -75,7 +75,8 @@ export function ConfirmHost() {
           {opts.body && (
             <div
               className="text-[12px] leading-relaxed text-muted-foreground"
-              // Body is HTML by contract; callers escape user-controlled input.
+              // Body is HTML by contract; callers escape user-controlled input
+              // via @/lib/escapeHtml (see ConfirmOptions.body in @/lib/confirm).
               dangerouslySetInnerHTML={{ __html: opts.body }}
             />
           )}

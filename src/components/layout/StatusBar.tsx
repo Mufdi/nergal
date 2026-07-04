@@ -17,6 +17,7 @@ import { toastsAtom } from "@/stores/toast";
 import { invoke } from "@/lib/tauri";
 import { open as openShell } from "@tauri-apps/plugin-shell";
 import { confirm as swalConfirm } from "@/lib/confirm";
+import { escapeHtml } from "@/lib/escapeHtml";
 import { focusZoneAtom, resolvedShortcutsAtom } from "@/stores/shortcuts";
 import { leaderPendingAtom } from "@/stores/leader";
 import * as terminalService from "@/components/terminal/terminalService";
@@ -866,8 +867,8 @@ function LocalhostPortChips() {
     const ok = await swalConfirm({
       title: `Free port :${port}?`,
       body: isDocker
-        ? `Stops the Docker container ${info.label}.`
-        : `Sends SIGTERM to ${info.label} (pid ${info.pid}).`,
+        ? `Stops the Docker container ${escapeHtml(info.label)}.`
+        : `Sends SIGTERM to ${escapeHtml(info.label)} (pid ${info.pid}).`,
       confirmLabel: isDocker ? "Stop container" : "Kill",
       destructive: true,
     });

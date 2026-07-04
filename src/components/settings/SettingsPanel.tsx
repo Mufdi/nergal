@@ -4,6 +4,7 @@ import { configAtom, settingsRequestedSectionAtom } from "@/stores/config";
 import { getVersion } from "@tauri-apps/api/app";
 import { availableAgentsAtom, type AgentDetection } from "@/stores/agent";
 import { invoke } from "@/lib/tauri";
+import { escapeHtml } from "@/lib/escapeHtml";
 import type { AvailableAgent, Config, PathValidation } from "@/lib/types";
 import {
   Dialog,
@@ -1125,7 +1126,7 @@ function LinearSection() {
     if (busy) return;
     const ok = await swalConfirm({
       title: "Remove workspace?",
-      body: `<strong>${name}</strong>'s API key will be deleted. If it's the active workspace its mirror is wiped.`,
+      body: `<strong>${escapeHtml(name)}</strong>'s API key will be deleted. If it's the active workspace its mirror is wiped.`,
       confirmLabel: "Remove",
       kind: "warning",
       destructive: true,
@@ -1900,7 +1901,7 @@ function AppearanceSection({
       const target = customs.find((c) => c.id === customId);
       const ok = await swalConfirm({
         title: "Delete custom theme?",
-        body: `<strong>${target?.label ?? "Untitled"}</strong> will be removed permanently. This cannot be undone.`,
+        body: `<strong>${escapeHtml(target?.label ?? "Untitled")}</strong> will be removed permanently. This cannot be undone.`,
         confirmLabel: "Delete",
         cancelLabel: "Cancel",
         kind: "warning",

@@ -2,6 +2,7 @@ import { atom, type getDefaultStore } from "jotai";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { invoke, listen } from "@/lib/tauri";
 import { confirm as swalConfirm } from "@/lib/confirm";
+import { escapeHtml } from "@/lib/escapeHtml";
 import { toastsAtom } from "./toast";
 import { openTabAction } from "./rightPanel";
 import { focusZoneAtom } from "./shortcuts";
@@ -553,15 +554,6 @@ export const requestBindTaskAction = atom(null, async (get, set, taskId: string)
   await set(performBindTaskAction, { sessionId, taskId });
 });
 
-/// ClickUp task names are multi-writer input and confirm bodies render as HTML.
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 export const spawnWorktreeWithTaskAction = atom(null, async (get, set, taskId: string) => {
   const workspace = get(activeWorkspaceAtom);

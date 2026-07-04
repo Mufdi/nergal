@@ -3,6 +3,7 @@ import { useAtomValue, useSetAtom } from "jotai";
 import { configAtom } from "@/stores/config";
 import { useFocusPulse } from "@/hooks/useFocusPulse";
 import { confirm as swalConfirm } from "@/lib/confirm";
+import { escapeHtml } from "@/lib/escapeHtml";
 import { Pencil, Trash2 } from "lucide-react";
 import { TextInputDialog } from "@/components/ui/TextInputDialog";
 import { deleteSessionWithGraceAction, deleteWorkspaceWithGraceAction } from "@/stores/pendingDeletes";
@@ -233,7 +234,7 @@ function useSessionActions() {
   async function deleteSession(session: Session) {
     const ok = await swalConfirm({
       title: "Delete session?",
-      body: `<strong>${session.name}</strong> will be removed and its terminal closed.`,
+      body: `<strong>${escapeHtml(session.name)}</strong> will be removed and its terminal closed.`,
       confirmLabel: "Delete",
       cancelLabel: "Cancel",
       kind: "warning",
@@ -575,7 +576,7 @@ function WorkspacesView() {
       : "";
     const ok = await swalConfirm({
       title: "Remove workspace?",
-      body: `<strong>${ws.name}</strong> will be removed from the sidebar.${sessionsLine}`,
+      body: `<strong>${escapeHtml(ws.name)}</strong> will be removed from the sidebar.${sessionsLine}`,
       confirmLabel: "Remove",
       cancelLabel: "Cancel",
       kind: "warning",

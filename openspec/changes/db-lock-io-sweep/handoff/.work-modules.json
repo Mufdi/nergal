@@ -1,0 +1,23 @@
+{
+  "tier": "L",
+  "tier_source": "heuristic",
+  "ceremony": "deep",
+  "risk_tier": "medium",
+  "files_estimate": 11,
+  "tags": ["refactor", "concurrency", "correctness"],
+  "visibility": "private",
+  "spec_target": "db-lock-discipline",
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "iprev_rounds": 3,
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": ["compile", "test", "lint", "scope"],
+    "per_phase_models": {
+      "design": "opus",
+      "plan_validation": "opus",
+      "implementation": "sonnet",
+      "validation": "sonnet"
+    }
+  }
+}

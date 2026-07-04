@@ -20,11 +20,12 @@ pub struct PrSummary {
 /// first (by `updatedAt` desc), then MERGED/CLOSED. Capped at 20.
 #[tauri::command]
 pub fn list_prs(db: State<'_, SharedDb>, workspace_id: String) -> Result<Vec<PrSummary>, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
-    let repo_path = db
-        .workspace_repo_path(&workspace_id)
-        .map_err(|e| e.to_string())?
-        .ok_or("workspace not found")?;
+    let repo_path = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        db.workspace_repo_path(&workspace_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("workspace not found")?
+    };
 
     let output = std::process::Command::new("gh")
         .no_window()
@@ -87,11 +88,12 @@ pub fn get_pr_diff(
     workspace_id: String,
     pr_number: u32,
 ) -> Result<String, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
-    let repo_path = db
-        .workspace_repo_path(&workspace_id)
-        .map_err(|e| e.to_string())?
-        .ok_or("workspace not found")?;
+    let repo_path = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        db.workspace_repo_path(&workspace_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("workspace not found")?
+    };
 
     let output = std::process::Command::new("gh")
         .no_window()
@@ -119,11 +121,12 @@ pub fn get_pr_checks(
     workspace_id: String,
     pr_number: u32,
 ) -> Result<Option<crate::worktree::PrChecks>, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
-    let repo_path = db
-        .workspace_repo_path(&workspace_id)
-        .map_err(|e| e.to_string())?
-        .ok_or("workspace not found")?;
+    let repo_path = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        db.workspace_repo_path(&workspace_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("workspace not found")?
+    };
     Ok(crate::worktree::pr_checks(&repo_path, pr_number).ok())
 }
 
@@ -146,11 +149,12 @@ pub fn gh_pr_merge(
         return Err(format!("unknown merge strategy: {strategy}"));
     }
 
-    let db = db.lock().map_err(|e| e.to_string())?;
-    let cwd = db
-        .workspace_repo_path(&workspace_id)
-        .map_err(|e| e.to_string())?
-        .ok_or("workspace not found")?;
+    let cwd = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        db.workspace_repo_path(&workspace_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("workspace not found")?
+    };
     let strategy_flag = format!("--{strategy}");
     let pr_arg = pr_number.to_string();
 
@@ -179,21 +183,25 @@ pub fn get_pr_status(
     db: State<'_, SharedDb>,
     session_id: String,
 ) -> Result<Option<crate::worktree::PrInfo>, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
+    let (cwd, worktree_branch) = {
+        let db = db.lock().map_err(|e| e.to_string())?;
 
-    let Some(session) = db
-        .find_session(&session_id)
-        .map_err(|e: anyhow::Error| e.to_string())?
-    else {
-        return Err("session not found".into());
-    };
+        let Some(session) = db
+            .find_session(&session_id)
+            .map_err(|e: anyhow::Error| e.to_string())?
+        else {
+            return Err("session not found".into());
+        };
 
-    let cwd = resolve_session_cwd(&db, &session_id)?;
+        let cwd = resolve_session_cwd(&db, &session_id)?;
+        (cwd, session.worktree_branch)
+    }; // guard dropped here
+
     // Sessions without a worktree (e.g., working directly on main or a
     // user-created feature branch) still benefit from PR detection — fall
     // back to whatever branch the cwd is currently on.
     let branch_owned;
-    let branch: &str = match session.worktree_branch.as_deref() {
+    let branch: &str = match worktree_branch.as_deref() {
         Some(b) => b,
         None => {
             branch_owned = crate::worktree::current_branch(&cwd).map_err(|e| e.to_string())?;
@@ -251,15 +259,19 @@ pub fn complete_pending_merge(
     db: State<'_, SharedDb>,
     session_id: String,
 ) -> Result<String, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
-    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let cwd = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        resolve_session_cwd(&db, &session_id)?
+    };
     crate::worktree::complete_pending_merge(&cwd).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn has_pending_merge(db: State<'_, SharedDb>, session_id: String) -> Result<bool, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
-    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let cwd = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        resolve_session_cwd(&db, &session_id)?
+    };
     Ok(crate::worktree::has_pending_merge(&cwd))
 }
 
@@ -269,8 +281,10 @@ pub fn enable_pr_auto_merge(
     session_id: String,
     pr_number: u32,
 ) -> Result<(), String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
-    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let cwd = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        resolve_session_cwd(&db, &session_id)?
+    };
     crate::worktree::enable_pr_auto_merge(&cwd, pr_number).map_err(|e| e.to_string())
 }
 
@@ -284,9 +298,13 @@ pub fn get_pr_preview_data(
     db: State<'_, SharedDb>,
     session_id: String,
 ) -> Result<crate::worktree::PrPreviewData, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
-    let cwd = resolve_session_cwd(&db, &session_id)?;
-    let base = resolve_session_base(&db, &session_id)?;
+    let (cwd, base) = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        (
+            resolve_session_cwd(&db, &session_id)?,
+            resolve_session_base(&db, &session_id)?,
+        )
+    };
     crate::worktree::pr_preview_data(&cwd, &base, "HEAD").map_err(|e| e.to_string())
 }
 
@@ -295,9 +313,13 @@ pub fn poll_pr_checks(
     db: State<'_, SharedDb>,
     session_id: String,
 ) -> Result<Option<crate::worktree::PrChecks>, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
-    let cwd = resolve_session_cwd(&db, &session_id)?;
-    let branch = resolve_session_branch(&db, &session_id)?;
+    let (cwd, branch) = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        (
+            resolve_session_cwd(&db, &session_id)?,
+            resolve_session_branch(&db, &session_id)?,
+        )
+    };
     let Some(pr) = crate::worktree::pr_status(&cwd, &branch).map_err(|e| e.to_string())? else {
         return Ok(None);
     };

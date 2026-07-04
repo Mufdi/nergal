@@ -289,11 +289,11 @@ pub fn run() {
 
     // Probe bg-spawn capability + drain markers a previous crash/exit left
     // behind. The report drives the recovery/failure toasts emitted from setup
-    // once the frontend has mounted its listeners.
-    let startup_report = match db.lock() {
-        Ok(g) => crate::obsidian::post_session::startup_recover(&g, 10 * 60 * 1000),
-        Err(_) => crate::obsidian::post_session::StartupReport::default(),
-    };
+    // once the frontend has mounted its listeners. Passes the Arc, not a
+    // locked guard — startup_recover locks per-marker internally, and holding
+    // a guard here would deadlock on the first re-lock (std Mutex is
+    // non-reentrant).
+    let startup_report = crate::obsidian::post_session::startup_recover(&db, 10 * 60 * 1000);
     if startup_report.recovered > 0 {
         tracing::info!(
             "post-session: recovered {} stale marker(s)",
@@ -1020,65 +1020,117 @@ pub fn run() {
 /// On app close, drop a marker for every still-open session whose workspace has
 /// a moc channel, then spawn the detached runner. Non-blocking: the window
 /// closes immediately and the snapshots finish out-of-process.
+/// Per-session close-marker inputs, gathered under the DB guard so the
+/// footer/marker/MOC work below runs guard-free.
+struct CloseMarkerJob {
+    session_id: String,
+    workspace_id: String,
+    agent_id: String,
+    cfg: crate::obsidian::config::ResolvedObsidianConfig,
+    footer_tasks_done: Option<usize>,
+    /// `true` → write a marker for the detached runner; `false` with
+    /// `moc_inputs: Some` → flush inline (no bg runner on this host).
+    use_marker: bool,
+    moc_inputs: Option<crate::obsidian::moc::MocInputs>,
+}
+
 fn queue_close_markers(app: &tauri::AppHandle) {
     use tauri::Manager;
     let db = app.state::<crate::db::SharedDb>();
-    let guard = match db.lock() {
-        Ok(g) => g,
-        Err(_) => return,
-    };
-    let workspaces = match guard.get_workspaces() {
-        Ok(w) => w,
-        Err(_) => return,
-    };
-    let bg = crate::obsidian::post_session::runner_available();
-    let mut any = false;
-    for ws in &workspaces {
-        let Ok(cfg) = crate::obsidian::config::resolve(&ws.id, |w| guard.get_obsidian_config(w))
-        else {
-            continue;
+
+    let jobs: Vec<CloseMarkerJob> = {
+        let guard = match db.lock() {
+            Ok(g) => g,
+            Err(_) => return,
         };
-        let has_log = cfg
-            .session_log_path
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .is_some();
-        let has_moc = cfg.moc_path.as_deref().filter(|s| !s.is_empty()).is_some();
-        if !has_log && !has_moc {
-            continue;
+        let workspaces = match guard.get_workspaces() {
+            Ok(w) => w,
+            Err(_) => return,
+        };
+        let bg = crate::obsidian::post_session::runner_available();
+        let mut jobs = Vec::new();
+        for ws in &workspaces {
+            let Ok(cfg) =
+                crate::obsidian::config::resolve(&ws.id, |w| guard.get_obsidian_config(w))
+            else {
+                continue;
+            };
+            let has_log = cfg
+                .session_log_path
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .is_some();
+            let has_moc = cfg.moc_path.as_deref().filter(|s| !s.is_empty()).is_some();
+            if !has_log && !has_moc {
+                continue;
+            }
+            for session in &ws.sessions {
+                if matches!(session.status, crate::models::SessionStatus::Completed) {
+                    continue;
+                }
+                // Dedup against the PTY-EOF trigger that fires as the app tears down.
+                if !crate::obsidian::post_session::claim_finalization(&session.id) {
+                    continue;
+                }
+                let footer_tasks_done = if has_log {
+                    crate::hooks::server::gather_footer_tasks_done(&guard, &cfg, &session.id)
+                } else {
+                    None
+                };
+                if !has_moc {
+                    jobs.push(CloseMarkerJob {
+                        session_id: session.id.clone(),
+                        workspace_id: ws.id.clone(),
+                        agent_id: session.agent_id.clone(),
+                        cfg: cfg.clone(),
+                        footer_tasks_done,
+                        use_marker: false,
+                        moc_inputs: None,
+                    });
+                    continue;
+                }
+                let moc_inputs = if bg {
+                    None
+                } else {
+                    crate::obsidian::moc::MocBuilder::gather(&session.id, &cfg, &guard)
+                        .ok()
+                        .flatten()
+                };
+                jobs.push(CloseMarkerJob {
+                    session_id: session.id.clone(),
+                    workspace_id: ws.id.clone(),
+                    agent_id: session.agent_id.clone(),
+                    cfg: cfg.clone(),
+                    footer_tasks_done,
+                    use_marker: bg,
+                    moc_inputs,
+                });
+            }
         }
-        for session in &ws.sessions {
-            if matches!(session.status, crate::models::SessionStatus::Completed) {
-                continue;
-            }
-            // Dedup against the PTY-EOF trigger that fires as the app tears down.
-            if !crate::obsidian::post_session::claim_finalization(&session.id) {
-                continue;
-            }
-            // #2 log footer is in-process and independent of the moc channel.
-            if has_log {
-                crate::hooks::server::write_session_log_footer(&guard, &cfg, &session.id);
-            }
-            if !has_moc {
-                continue;
-            }
-            if bg {
-                let _ = crate::obsidian::post_session::write_marker(
-                    &session.id,
-                    &ws.id,
-                    &session.agent_id,
-                    "app-close",
-                );
-                any = true;
-            } else if let Ok(Some(moc)) =
-                crate::obsidian::moc::MocBuilder::build(&session.id, &cfg, &guard)
-            {
-                // No bg runner on this host: flush inline before the window closes.
-                let _ = crate::obsidian::moc::BacklinkUpdater::propagate(&moc, &cfg);
-            }
+        jobs
+    }; // guard dropped here
+
+    let mut any = false;
+    for job in &jobs {
+        // #2 log footer is in-process and independent of the moc channel.
+        if let Some(tasks_done) = job.footer_tasks_done {
+            crate::hooks::server::write_footer(&job.cfg, &job.session_id, tasks_done);
+        }
+        if job.use_marker {
+            let _ = crate::obsidian::post_session::write_marker(
+                &job.session_id,
+                &job.workspace_id,
+                &job.agent_id,
+                "app-close",
+            );
+            any = true;
+        } else if let Some(inputs) = &job.moc_inputs
+            && let Ok(Some(moc)) = inputs.render_and_write(&job.cfg)
+        {
+            // No bg runner on this host: flush inline before the window closes.
+            let _ = crate::obsidian::moc::BacklinkUpdater::propagate(&moc, &job.cfg);
         }
     }
-    drop(guard);
     if any {
         let _ = crate::obsidian::post_session::spawn_runner_detached();
     }

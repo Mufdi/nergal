@@ -10,8 +10,10 @@ pub fn get_conflicted_files(
     db: State<'_, SharedDb>,
     session_id: String,
 ) -> Result<Vec<String>, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
-    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let cwd = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        resolve_session_cwd(&db, &session_id)?
+    };
     crate::worktree::conflicted_files(&cwd).map_err(|e| e.to_string())
 }
 
@@ -21,8 +23,10 @@ pub fn get_file_conflict_versions(
     session_id: String,
     path: String,
 ) -> Result<crate::worktree::ConflictVersions, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
-    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let cwd = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        resolve_session_cwd(&db, &session_id)?
+    };
     crate::worktree::file_conflict_versions(&cwd, &path).map_err(|e| e.to_string())
 }
 
@@ -33,8 +37,10 @@ pub fn save_conflict_resolution(
     path: String,
     merged: String,
 ) -> Result<Vec<String>, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
-    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let cwd = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        resolve_session_cwd(&db, &session_id)?
+    };
     let abs = crate::fs_guard::resolve_within_base(&cwd, &path)?;
     std::fs::write(&abs, merged).map_err(|e| format!("failed to write: {e}"))?;
     crate::worktree::stage_file(&cwd, &path).map_err(|e| e.to_string())?;
@@ -51,8 +57,10 @@ pub fn build_conflict_prompt(
     original_merged: String,
     intent: Option<String>,
 ) -> Result<String, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
-    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let cwd = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        resolve_session_cwd(&db, &session_id)?
+    };
     let branch = crate::worktree::current_branch(&cwd).unwrap_or_else(|_| "HEAD".into());
 
     let status_out = std::process::Command::new("git")
@@ -100,8 +108,10 @@ pub fn enqueue_conflict_context(
     merged: String,
     instruction: String,
 ) -> Result<String, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
-    let cwd = resolve_session_cwd(&db, &session_id)?;
+    let cwd = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        resolve_session_cwd(&db, &session_id)?
+    };
     let branch = crate::worktree::current_branch(&cwd).unwrap_or_else(|_| "HEAD".into());
 
     let status_out = std::process::Command::new("git")

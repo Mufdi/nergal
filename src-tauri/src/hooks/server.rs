@@ -454,31 +454,35 @@ fn cached_model(csid: &str) -> Option<String> {
     model_cache().lock().ok().and_then(|c| c.get(csid).cloned())
 }
 
-/// In-process (no worktree needed), so the tab-close / app-close paths can call
-/// it before tearing the session down. Shared with the SessionEnd/PTY-EOF
-/// finalizer so the footer lands no matter how the session ends. Callers own the
-/// dedup (claim_finalization); no-op when the session_log channel is unset.
-pub(crate) fn write_session_log_footer(
+/// Read phase of the log footer: whether the session_log channel is active,
+/// and (if so) the completed-task count. `None` short-circuits the write
+/// phase (channel unset) without touching the DB.
+pub(crate) fn gather_footer_tasks_done(
     db: &crate::db::Database,
     cfg: &crate::obsidian::config::ResolvedObsidianConfig,
     csid: &str,
+) -> Option<usize> {
+    cfg.session_log_path.as_deref().filter(|s| !s.is_empty())?;
+    Some(
+        db.get_visible_tasks(csid)
+            .map(|ts| {
+                ts.iter()
+                    .filter(|t| matches!(t.status, crate::tasks::TaskStatus::Completed))
+                    .count()
+            })
+            .unwrap_or(0),
+    )
+}
+
+/// Write phase: no `&Database` — the model comes from the in-process cache.
+/// Dedup contract: callers MUST have already won `claim_finalization(csid)`
+/// before invoking this — it appends the footer unconditionally, so a second
+/// unclaimed call would write a duplicate.
+pub(crate) fn write_footer(
+    cfg: &crate::obsidian::config::ResolvedObsidianConfig,
+    csid: &str,
+    tasks_done: usize,
 ) {
-    if cfg
-        .session_log_path
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .is_none()
-    {
-        return;
-    }
-    let tasks_done = db
-        .get_visible_tasks(csid)
-        .map(|ts| {
-            ts.iter()
-                .filter(|t| matches!(t.status, crate::tasks::TaskStatus::Completed))
-                .count()
-        })
-        .unwrap_or(0);
     let _ = crate::obsidian::channels::SessionLogWriter::end_session(
         cfg,
         cached_model(csid).as_deref(),
@@ -496,24 +500,42 @@ pub(crate) fn finalize_session_obsidian(db: &SharedDb, csid: Option<&str>) {
     if !crate::obsidian::post_session::claim_finalization(csid) {
         return;
     }
-    let guard = match db.lock() {
-        Ok(g) => g,
-        Err(_) => return,
-    };
-    let session = match guard.find_session(csid) {
-        Ok(Some(s)) => s,
-        _ => return,
-    };
-    let cfg = match crate::obsidian::config::resolve(&session.workspace_id, |w| {
-        guard.get_obsidian_config(w)
-    }) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-    write_session_log_footer(&guard, &cfg, csid);
-    if cfg.moc_path.as_deref().filter(|s| !s.is_empty()).is_some() {
-        if crate::obsidian::post_session::runner_available() {
-            drop(guard); // release the DB lock before spawning the detached runner
+    // Gather every DB-derived input under one guard, then drop it before the
+    // footer/MOC file I/O and (in the bg branch) the detached spawn — both
+    // branches used to hold the guard asymmetrically; now neither does.
+    let (session, cfg, footer_tasks_done, has_moc, bg, moc_inputs) = {
+        let guard = match db.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        let session = match guard.find_session(csid) {
+            Ok(Some(s)) => s,
+            _ => return,
+        };
+        let cfg = match crate::obsidian::config::resolve(&session.workspace_id, |w| {
+            guard.get_obsidian_config(w)
+        }) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let footer_tasks_done = gather_footer_tasks_done(&guard, &cfg, csid);
+        let has_moc = cfg.moc_path.as_deref().filter(|s| !s.is_empty()).is_some();
+        let bg = has_moc && crate::obsidian::post_session::runner_available();
+        let moc_inputs = if has_moc && !bg {
+            crate::obsidian::moc::MocBuilder::gather(&session.id, &cfg, &guard)
+                .ok()
+                .flatten()
+        } else {
+            None
+        };
+        (session, cfg, footer_tasks_done, has_moc, bg, moc_inputs)
+    }; // guard dropped here
+
+    if let Some(tasks_done) = footer_tasks_done {
+        write_footer(&cfg, csid, tasks_done);
+    }
+    if has_moc {
+        if bg {
             let _ = crate::obsidian::post_session::write_marker(
                 &session.id,
                 &session.workspace_id,
@@ -521,8 +543,8 @@ pub(crate) fn finalize_session_obsidian(db: &SharedDb, csid: Option<&str>) {
                 "SessionEnd",
             );
             let _ = crate::obsidian::post_session::spawn_runner_detached();
-        } else if let Ok(Some(moc)) =
-            crate::obsidian::moc::MocBuilder::build(&session.id, &cfg, &guard)
+        } else if let Some(inputs) = moc_inputs
+            && let Ok(Some(moc)) = inputs.render_and_write(&cfg)
         {
             let _ = crate::obsidian::moc::BacklinkUpdater::propagate(&moc, &cfg);
         }

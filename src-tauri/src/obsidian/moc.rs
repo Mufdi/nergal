@@ -18,17 +18,45 @@ const BACKLINK_CAP: usize = 50;
 
 pub struct MocBuilder;
 
+/// DB-read output of [`MocBuilder::gather`]: everything [`MocInputs::render_and_write`]
+/// needs, owned so the write phase borrows no `&Database`.
+pub struct MocInputs {
+    session_id: String,
+    agent_id: String,
+    session_name: String,
+    created_at: u64,
+    tasks_done: usize,
+    decisions: Vec<String>,
+}
+
 impl MocBuilder {
     /// Write `<moc_path>/<slug>-<YYYY-MM-DD>.md`. The date is the session's start
     /// day so re-runs overwrite (idempotent). None when moc_path is unset.
+    ///
+    /// Thin `gather` + `render_and_write` wrapper — non-loop callers keep this
+    /// single call; Pattern-C loops call the two phases separately so the DB
+    /// guard drops before the file I/O.
     pub fn build(
         session_id: &str,
         cfg: &ResolvedObsidianConfig,
         db: &Database,
     ) -> Result<Option<PathBuf>> {
-        let Some(moc_dir) = cfg.moc_path.as_deref().filter(|s| !s.is_empty()) else {
+        match Self::gather(session_id, cfg, db)? {
+            Some(inputs) => inputs.render_and_write(cfg),
+            None => Ok(None),
+        }
+    }
+
+    /// DB-read phase: borrows `&Database`, returns owned inputs. `None` when
+    /// moc_path is unset (no reason to touch the DB) or the session is gone.
+    pub fn gather(
+        session_id: &str,
+        cfg: &ResolvedObsidianConfig,
+        db: &Database,
+    ) -> Result<Option<MocInputs>> {
+        if cfg.moc_path.as_deref().filter(|s| !s.is_empty()).is_none() {
             return Ok(None);
-        };
+        }
         let session = db
             .find_session(session_id)?
             .ok_or_else(|| anyhow!("session {session_id} not found"))?;
@@ -40,45 +68,67 @@ impl MocBuilder {
             .filter(|t| matches!(t.status, TaskStatus::Completed))
             .count();
         let annotations = db.get_annotations(session_id).unwrap_or_default();
-
-        let log_path = cfg.session_log_path.as_deref().filter(|s| !s.is_empty());
-        let activity = log_path
-            .and_then(|p| extract_session_activity(Path::new(p), &session.name))
-            .unwrap_or_default();
-        let model = log_path.and_then(|p| extract_session_model(Path::new(p), &session.name));
-        let files = log_path
-            .map(|p| extract_session_files(Path::new(p), &session.name))
-            .unwrap_or_default();
-
-        let started = iso_from_unix(session.created_at as i64);
         let decisions: Vec<String> = annotations
             .iter()
             .map(|a| a.content.trim().replace('\n', " "))
             .filter(|s| !s.is_empty())
             .collect();
 
+        Ok(Some(MocInputs {
+            session_id: session.id,
+            agent_id: session.agent_id,
+            session_name: session.name,
+            created_at: session.created_at,
+            tasks_done,
+            decisions,
+        }))
+    }
+}
+
+impl MocInputs {
+    /// Write phase: no `&Database` — the session-log reads + `atomic_write` are
+    /// pure filesystem. Includes the earned-MOC gate (moved from `build`).
+    pub fn render_and_write(&self, cfg: &ResolvedObsidianConfig) -> Result<Option<PathBuf>> {
+        let Some(moc_dir) = cfg.moc_path.as_deref().filter(|s| !s.is_empty()) else {
+            return Ok(None);
+        };
+
+        let log_path = cfg.session_log_path.as_deref().filter(|s| !s.is_empty());
+        let activity = log_path
+            .and_then(|p| extract_session_activity(Path::new(p), &self.session_name))
+            .unwrap_or_default();
+        let model = log_path.and_then(|p| extract_session_model(Path::new(p), &self.session_name));
+        let files = log_path
+            .map(|p| extract_session_files(Path::new(p), &self.session_name))
+            .unwrap_or_default();
+
+        let started = iso_from_unix(self.created_at as i64);
+
         // A session with nothing to show (e.g. one that was only open in the
         // sidebar at app-close) doesn't earn a MOC.
-        if activity.trim().is_empty() && files.is_empty() && tasks_done == 0 && decisions.is_empty()
+        if activity.trim().is_empty()
+            && files.is_empty()
+            && self.tasks_done == 0
+            && self.decisions.is_empty()
         {
             return Ok(None);
         }
 
         let md = render_moc(
-            &session.id,
-            &session.agent_id,
+            &self.session_id,
+            &self.agent_id,
             model.as_deref(),
-            &session.name,
+            &self.session_name,
             &started,
             &iso_timestamp(),
             &files,
-            tasks_done,
+            self.tasks_done,
             &activity,
-            &decisions,
+            &self.decisions,
         );
 
         let slug = {
-            let s = crate::obsidian::bootstrap::slugify_for_vault(&session.name);
+            let s = crate::obsidian::bootstrap::slugify_for_vault(&self.session_name);
             if s.is_empty() {
                 "session".to_string()
             } else {

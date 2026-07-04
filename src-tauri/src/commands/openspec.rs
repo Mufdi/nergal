@@ -115,8 +115,10 @@ pub fn list_openspec_changes(
     db: State<'_, SharedDb>,
     session_id: String,
 ) -> Result<Vec<OpenSpecChange>, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
-    let openspec_dir = resolve_openspec_dir(&db, &session_id)?;
+    let openspec_dir = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        resolve_openspec_dir(&db, &session_id)?
+    };
     let changes_dir = openspec_dir.join("changes");
 
     if !changes_dir.exists() {
@@ -198,8 +200,10 @@ pub fn read_openspec_artifact(
     change_name: String,
     artifact_path: String,
 ) -> Result<String, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
-    let openspec_dir = resolve_openspec_dir(&db, &session_id)?;
+    let openspec_dir = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        resolve_openspec_dir(&db, &session_id)?
+    };
 
     // Master specs live at openspec/specs/
     let file_path = if change_name == "_master" {
@@ -235,8 +239,10 @@ pub fn write_openspec_artifact(
         return Err("master specs are read-only".into());
     }
 
-    let db = db.lock().map_err(|e| e.to_string())?;
-    let openspec_dir = resolve_openspec_dir(&db, &session_id)?;
+    let openspec_dir = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        resolve_openspec_dir(&db, &session_id)?
+    };
     let changes_dir = openspec_dir.join("changes");
     let change_dir = crate::fs_guard::resolve_within_base(&changes_dir, &change_name)?;
 
@@ -310,14 +316,17 @@ pub fn get_workspace_plans_dir(
     db: State<'_, SharedDb>,
     workspace_id: String,
 ) -> Result<PlansDirInfo, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
-    let repo_path = db
-        .workspace_repo_path(&workspace_id)
-        .map_err(|e| e.to_string())?
-        .ok_or("workspace not found")?;
-    let configured = db
-        .get_workspace_plans_dir(&workspace_id)
-        .map_err(|e| e.to_string())?;
+    let (repo_path, configured) = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        let repo_path = db
+            .workspace_repo_path(&workspace_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("workspace not found")?;
+        let configured = db
+            .get_workspace_plans_dir(&workspace_id)
+            .map_err(|e| e.to_string())?;
+        (repo_path, configured)
+    }; // guard dropped here — resolve_cc_plans_directory reads settings.json files
     Ok(PlansDirInfo {
         configured,
         default_dir: crate::agents::claude_code::resolve_cc_plans_directory(&repo_path)

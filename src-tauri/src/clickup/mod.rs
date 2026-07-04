@@ -876,7 +876,9 @@ pub fn clickup_spawn_worktree_with_task(
         .unwrap_or_default()
         .as_secs();
 
-    let (session, text) = {
+    // Gather everything create_worktree needs (the slow step), then drop the
+    // guard before it runs.
+    let (repo_path, text, task_name, slug) = {
         let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
         let repo_path = guard
             .workspace_repo_path(&workspace_id)
@@ -909,53 +911,80 @@ pub fn clickup_spawn_worktree_with_task(
         if worktree_dir.exists() {
             return Err(format!("a worktree already exists for slug '{slug}'"));
         }
-        let wt_path =
-            crate::worktree::create_worktree(&repo_path, &slug).map_err(|e| e.to_string())?;
+        (repo_path, text, task_name, slug)
+    }; // guard dropped here
 
-        // Mirror the agent resolution from create_session: config override >
-        // default_agent > CC fallback. Worktrees are always in this workspace's
-        // repo, so repo_path is the right key for agent_overrides.
-        let agent_id = {
-            let cfg = crate::config::Config::load();
-            cfg.resolve_agent_for_project(&repo_path)
-                .as_deref()
-                .and_then(|s| crate::agents::AgentId::new(s).ok())
-                .unwrap_or_else(crate::agents::AgentId::claude_code)
-        };
-        let session = crate::models::Session {
-            // char-safe truncation: a byte slice panics mid-codepoint.
-            id: format!("{}-{ts}", workspace_id.chars().take(6).collect::<String>()),
-            name: task_name,
-            workspace_id: workspace_id.clone(),
-            worktree_path: Some(wt_path),
-            worktree_branch: Some(format!("nergal/{slug}")),
-            merge_target: None,
-            status: crate::models::SessionStatus::Idle,
-            created_at: ts,
-            updated_at: ts,
-            agent_id: agent_id.as_str().to_string(),
-            agent_internal_session_id: None,
-            agent_capabilities: Vec::new(),
-            pinned_note_paths: Vec::new(),
-            launch_options: None,
-            env_shells: Vec::new(),
-            active_clickup_task_id: Some(task_id.clone()),
-            pinned_clickup_task_ids: Vec::new(),
-            active_linear_issue_id: None,
-            pinned_linear_issue_ids: Vec::new(),
-        };
-        guard
-            .create_session(&session)
-            .map_err(|e| format!("{e:#}"))?;
-        agents.register_session(&session.id, agent_id);
-        crate::commands::extend_plan_watcher_for_session(
-            &agents,
-            &plan_watcher,
-            &session,
-            &repo_path,
-        );
-        (session, text)
+    let wt_path = crate::worktree::create_worktree(&repo_path, &slug).map_err(|e| e.to_string())?;
+
+    // Mirror the agent resolution from create_session: config override >
+    // default_agent > CC fallback. Worktrees are always in this workspace's
+    // repo, so repo_path is the right key for agent_overrides.
+    let agent_id = {
+        let cfg = crate::config::Config::load();
+        cfg.resolve_agent_for_project(&repo_path)
+            .as_deref()
+            .and_then(|s| crate::agents::AgentId::new(s).ok())
+            .unwrap_or_else(crate::agents::AgentId::claude_code)
     };
+    let session = crate::models::Session {
+        // char-safe truncation: a byte slice panics mid-codepoint.
+        id: format!("{}-{ts}", workspace_id.chars().take(6).collect::<String>()),
+        name: task_name,
+        workspace_id: workspace_id.clone(),
+        worktree_path: Some(wt_path.clone()),
+        worktree_branch: Some(format!("nergal/{slug}")),
+        merge_target: None,
+        status: crate::models::SessionStatus::Idle,
+        created_at: ts,
+        updated_at: ts,
+        agent_id: agent_id.as_str().to_string(),
+        agent_internal_session_id: None,
+        agent_capabilities: Vec::new(),
+        pinned_note_paths: Vec::new(),
+        launch_options: None,
+        env_shells: Vec::new(),
+        active_clickup_task_id: Some(task_id.clone()),
+        pinned_clickup_task_ids: Vec::new(),
+        active_linear_issue_id: None,
+        pinned_linear_issue_ids: Vec::new(),
+    };
+
+    // Re-acquire for the write. create_worktree reuses an existing dir on a
+    // path collision instead of erroring, so a same-second double-invoke
+    // could already have another session bound to wt_path — check first and
+    // don't remove a worktree this call doesn't own.
+    let create_result = {
+        let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+        let dup = guard
+            .sessions_with_worktrees()
+            .map_err(|e| format!("{e:#}"))?
+            .iter()
+            .any(|(_, p)| p == &wt_path);
+        if dup {
+            return Err(format!(
+                "a session already exists for worktree '{}'",
+                wt_path.display()
+            ));
+        }
+        guard.create_session(&session).map_err(|e| format!("{e:#}"))
+    }; // guard dropped here regardless of outcome
+
+    // Spawn-failure rollback: the worktree exists now; if the DB insert
+    // failed, remove the just-created worktree before bailing (no orphan) —
+    // guard-free, since the guard above already dropped.
+    if let Err(reason) = create_result {
+        return match crate::worktree::remove_worktree(&repo_path, &wt_path) {
+            Ok(()) => Err(format!(
+                "session create failed ({reason}); worktree rolled back"
+            )),
+            Err(rb) => Err(format!(
+                "session create failed ({reason}); ROLLBACK ALSO FAILED — orphan worktree at {}: {rb:#}",
+                wt_path.display()
+            )),
+        };
+    }
+    agents.register_session(&session.id, agent_id);
+    crate::commands::extend_plan_watcher_for_session(&agents, &plan_watcher, &session, &repo_path);
 
     crate::pty::queue_session_prompt(pty, session.id.clone(), text)?;
     Ok(session)

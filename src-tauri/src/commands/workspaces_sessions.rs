@@ -184,34 +184,73 @@ fn capabilities_for_agent_id(agents: &AgentRuntimeState, agent_id: &str) -> Vec<
 
 #[tauri::command]
 pub fn delete_workspace(db: State<'_, SharedDb>, workspace_id: String) -> Result<(), String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
+    struct SessionCleanup {
+        moc_inputs: Option<crate::obsidian::moc::MocInputs>,
+        worktree_path: Option<PathBuf>,
+    }
 
-    // Get workspace data for worktree cleanup before deletion
-    let workspaces = db.get_workspaces().map_err(|e| e.to_string())?;
-    let ws = workspaces.iter().find(|w| w.id == workspace_id);
+    // Gather everything under one guard (moc inputs per-session + worktree
+    // paths), then drop before the file I/O / worktree removal below.
+    let (repo_path, cfg, sessions) = {
+        let db = db.lock().map_err(|e| e.to_string())?;
 
-    if let Some(ws) = ws {
+        // Get workspace data for worktree cleanup before deletion
+        let workspaces = db.get_workspaces().map_err(|e| e.to_string())?;
+        let Some(ws) = workspaces.iter().find(|w| w.id == workspace_id) else {
+            // Nothing to snapshot/clean up — still under this guard, so no
+            // need to re-acquire for the delete.
+            return db
+                .delete_workspace(&workspace_id)
+                .map_err(|e| e.to_string());
+        };
+
         // Snapshot each session synchronously before its worktree + the
         // workspace row disappear (the detached runner runs too late).
-        if let Ok(cfg) =
-            crate::obsidian::config::resolve(&workspace_id, |w| db.get_obsidian_config(w))
-            && cfg.moc_path.as_deref().filter(|p| !p.is_empty()).is_some()
-        {
-            for session in &ws.sessions {
-                if let Ok(Some(moc_path)) =
-                    crate::obsidian::moc::MocBuilder::build(&session.id, &cfg, &db)
-                {
-                    let _ = crate::obsidian::moc::BacklinkUpdater::propagate(&moc_path, &cfg);
+        let cfg =
+            crate::obsidian::config::resolve(&workspace_id, |w| db.get_obsidian_config(w)).ok();
+        let want_moc = cfg
+            .as_ref()
+            .is_some_and(|c| c.moc_path.as_deref().filter(|p| !p.is_empty()).is_some());
+
+        let sessions: Vec<SessionCleanup> = ws
+            .sessions
+            .iter()
+            .map(|session| {
+                let moc_inputs = if want_moc {
+                    cfg.as_ref().and_then(|cfg| {
+                        crate::obsidian::moc::MocBuilder::gather(&session.id, cfg, &db)
+                            .ok()
+                            .flatten()
+                    })
+                } else {
+                    None
+                };
+                SessionCleanup {
+                    moc_inputs,
+                    worktree_path: session.worktree_path.clone(),
                 }
-            }
-        }
-        for session in &ws.sessions {
-            if let Some(wt) = &session.worktree_path {
-                let _ = crate::worktree::remove_worktree(&ws.repo_path, wt);
+            })
+            .collect();
+
+        (ws.repo_path.clone(), cfg, sessions)
+    };
+
+    if let Some(cfg) = &cfg {
+        for s in &sessions {
+            if let Some(inputs) = &s.moc_inputs
+                && let Ok(Some(moc_path)) = inputs.render_and_write(cfg)
+            {
+                let _ = crate::obsidian::moc::BacklinkUpdater::propagate(&moc_path, cfg);
             }
         }
     }
+    for s in &sessions {
+        if let Some(wt) = &s.worktree_path {
+            let _ = crate::worktree::remove_worktree(&repo_path, wt);
+        }
+    }
 
+    let db = db.lock().map_err(|e| e.to_string())?;
     db.delete_workspace(&workspace_id)
         .map_err(|e| e.to_string())
 }
@@ -225,60 +264,20 @@ pub fn reorder_workspaces(ordered_ids: Vec<String>, db: State<'_, SharedDb>) -> 
 
 // -- Session commands --
 
-#[tauri::command]
-#[allow(clippy::too_many_arguments)] // Tauri command surface — collapsing to a struct breaks the JS call shape.
-pub fn create_session(
-    db: State<'_, SharedDb>,
-    agents: State<'_, AgentRuntimeState>,
-    plan_watcher: State<'_, crate::agents::claude_code::plan::SharedPlanWatcher>,
-    workspace_id: String,
+#[allow(clippy::too_many_arguments)]
+fn build_new_session(
+    session_id: String,
     name: String,
-    agent_id: Option<String>,
+    workspace_id: String,
+    worktree_path: Option<PathBuf>,
+    worktree_branch: Option<String>,
+    ts: u64,
+    agent_id: &AgentId,
+    agent_capabilities: Vec<String>,
     launch_options: Option<crate::models::LaunchOptions>,
     env_shells: Option<Vec<crate::models::EnvShellDef>>,
-) -> Result<Session, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
-
-    let repo_path = db
-        .workspace_repo_path(&workspace_id)
-        .map_err(|e| e.to_string())?
-        .ok_or("workspace not found")?;
-
-    let is_first = db
-        .session_count_for_workspace(&workspace_id)
-        .map_err(|e| e.to_string())?
-        == 0;
-
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-
-    // Non-git workspaces can't have worktrees — every session shares the
-    // workspace cwd (parallel sessions step on each other; the sidebar
-    // badge communicates the trade-off).
-    let (worktree_path, worktree_branch) = if is_first || !crate::worktree::is_git_repo(&repo_path)
-    {
-        (None, None)
-    } else {
-        let slug = derive_worktree_slug(&name, ts);
-        let wt_path =
-            crate::worktree::create_worktree(&repo_path, &slug).map_err(|e| e.to_string())?;
-        let branch = format!("nergal/{slug}");
-        (Some(wt_path), Some(branch))
-    };
-    let session_id = format!("{}-{ts}", &workspace_id[..6.min(workspace_id.len())]);
-
-    // Picker priority: explicit caller arg > config-resolved > CC fallback.
-    // Today the frontend passes no agent_id, so this resolves to CC unless the
-    // user has set config.default_agent. Picker UI lands once another adapter
-    // is registered (opencode-adapter, pi-adapter, codex-adapter).
-    let agent_id = agent_id
-        .as_deref()
-        .and_then(|s| AgentId::new(s).ok())
-        .unwrap_or_else(AgentId::claude_code);
-    let agent_capabilities = capabilities_for_agent_id(&agents, agent_id.as_str());
-    let session = Session {
+) -> Session {
+    Session {
         id: session_id,
         name,
         workspace_id,
@@ -304,9 +303,96 @@ pub fn create_session(
         pinned_clickup_task_ids: Vec::new(),
         active_linear_issue_id: None,
         pinned_linear_issue_ids: Vec::new(),
+    }
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command surface — collapsing to a struct breaks the JS call shape.
+pub fn create_session(
+    db: State<'_, SharedDb>,
+    agents: State<'_, AgentRuntimeState>,
+    plan_watcher: State<'_, crate::agents::claude_code::plan::SharedPlanWatcher>,
+    workspace_id: String,
+    name: String,
+    agent_id: Option<String>,
+    launch_options: Option<crate::models::LaunchOptions>,
+    env_shells: Option<Vec<crate::models::EnvShellDef>>,
+) -> Result<Session, String> {
+    let guard = db.lock().map_err(|e| e.to_string())?;
+
+    let repo_path = guard
+        .workspace_repo_path(&workspace_id)
+        .map_err(|e| e.to_string())?
+        .ok_or("workspace not found")?;
+
+    let is_first = guard
+        .session_count_for_workspace(&workspace_id)
+        .map_err(|e| e.to_string())?
+        == 0;
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let session_id = format!("{}-{ts}", &workspace_id[..6.min(workspace_id.len())]);
+
+    // Picker priority: explicit caller arg > config-resolved > CC fallback.
+    // Today the frontend passes no agent_id, so this resolves to CC unless the
+    // user has set config.default_agent. Picker UI lands once another adapter
+    // is registered (opencode-adapter, pi-adapter, codex-adapter).
+    let agent_id = agent_id
+        .as_deref()
+        .and_then(|s| AgentId::new(s).ok())
+        .unwrap_or_else(AgentId::claude_code);
+    let agent_capabilities = capabilities_for_agent_id(&agents, agent_id.as_str());
+
+    // Non-git workspaces can't have worktrees — every session shares the
+    // workspace cwd (parallel sessions step on each other; the sidebar
+    // badge communicates the trade-off).
+    let session = if is_first || !crate::worktree::is_git_repo(&repo_path) {
+        // No slow work on this path — keep the read (is_first) and the write
+        // under one continuous guard; there's no worktree race to guard
+        // against here, so dropping would only add overhead.
+        let session = build_new_session(
+            session_id,
+            name,
+            workspace_id,
+            None,
+            None,
+            ts,
+            &agent_id,
+            agent_capabilities,
+            launch_options,
+            env_shells,
+        );
+        guard.create_session(&session).map_err(|e| e.to_string())?;
+        session
+    } else {
+        // is_first is already false here, and re-deriving it after the drop
+        // cannot flip it back — dropping the guard for create_worktree (the
+        // only slow step) needs no re-validation dance.
+        drop(guard);
+        let slug = derive_worktree_slug(&name, ts);
+        let wt_path =
+            crate::worktree::create_worktree(&repo_path, &slug).map_err(|e| e.to_string())?;
+        let branch = format!("nergal/{slug}");
+        let session = build_new_session(
+            session_id,
+            name,
+            workspace_id,
+            Some(wt_path),
+            Some(branch),
+            ts,
+            &agent_id,
+            agent_capabilities,
+            launch_options,
+            env_shells,
+        );
+        let guard = db.lock().map_err(|e| e.to_string())?;
+        guard.create_session(&session).map_err(|e| e.to_string())?;
+        session
     };
 
-    db.create_session(&session).map_err(|e| e.to_string())?;
     // Populate the agent_id cache BEFORE the PTY spawn so the SessionStart
     // hook never races the cache. Until the session-creation flow exposes a
     // picker (commit 11), every new session is a CC session by default.
@@ -338,10 +424,10 @@ pub async fn delete_session(
         );
     }
 
-    // Scoped guard: extract everything the (potentially slow) worktree
-    // removal needs, then let the guard drop at block end so removal runs
-    // with the DB unlocked for every other caller.
-    let worktree_cleanup = {
+    // Scoped guard: extract everything the (potentially slow) worktree removal
+    // and the footer/MOC file I/O need, then let the guard drop at block end
+    // so all of it runs with the DB unlocked for every other caller.
+    let (worktree_cleanup, footer_job, moc_job) = {
         let db = db.lock().map_err(|e| e.to_string())?;
 
         // Get session + workspace for worktree cleanup
@@ -351,18 +437,24 @@ pub async fn delete_session(
         // the delete, and its MOC git diff needs the worktree still present.
         // claim_finalization dedups against the PTY-EOF trigger firing as the PTY
         // tears down, so the footer isn't appended twice.
+        let mut footer_job = None;
+        let mut moc_job = None;
         if let Some(s) = &session
             && let Ok(cfg) =
                 crate::obsidian::config::resolve(&s.workspace_id, |w| db.get_obsidian_config(w))
             && crate::obsidian::post_session::claim_finalization(&session_id)
         {
-            crate::hooks::server::write_session_log_footer(&db, &cfg, &session_id);
-            if cfg.moc_path.as_deref().filter(|p| !p.is_empty()).is_some()
-                && let Ok(Some(moc_path)) =
-                    crate::obsidian::moc::MocBuilder::build(&session_id, &cfg, &db)
-            {
-                let _ = crate::obsidian::moc::BacklinkUpdater::propagate(&moc_path, &cfg);
-            }
+            let footer_tasks_done =
+                crate::hooks::server::gather_footer_tasks_done(&db, &cfg, &session_id);
+            let moc_inputs = if cfg.moc_path.as_deref().filter(|p| !p.is_empty()).is_some() {
+                crate::obsidian::moc::MocBuilder::gather(&session_id, &cfg, &db)
+                    .ok()
+                    .flatten()
+            } else {
+                None
+            };
+            footer_job = footer_tasks_done.map(|tasks_done| (cfg.clone(), tasks_done));
+            moc_job = moc_inputs.map(|inputs| (inputs, cfg));
         }
 
         let mut cleanup = None;
@@ -374,8 +466,17 @@ pub async fn delete_session(
         {
             cleanup = Some((repo_path, wt_path.clone()));
         }
-        cleanup
+        (cleanup, footer_job, moc_job)
     };
+
+    if let Some((cfg, tasks_done)) = footer_job {
+        crate::hooks::server::write_footer(&cfg, &session_id, tasks_done);
+    }
+    if let Some((inputs, cfg)) = moc_job
+        && let Ok(Some(moc_path)) = inputs.render_and_write(&cfg)
+    {
+        let _ = crate::obsidian::moc::BacklinkUpdater::propagate(&moc_path, &cfg);
+    }
 
     if let Some((repo_path, wt_path)) = worktree_cleanup
         && let Err(e) = crate::worktree::remove_worktree(&repo_path, &wt_path)
@@ -426,25 +527,28 @@ pub fn merge_session(
     session_id: String,
     target_branch: String,
 ) -> Result<MergeResult, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
+    let (branch, repo_path) = {
+        let db = db.lock().map_err(|e| e.to_string())?;
 
-    let Some(session) = db.find_session(&session_id).map_err(|e| e.to_string())? else {
-        return Err("session not found".into());
-    };
+        let Some(session) = db.find_session(&session_id).map_err(|e| e.to_string())? else {
+            return Err("session not found".into());
+        };
 
-    let Some(ref branch) = session.worktree_branch else {
-        return Err("session has no worktree branch".into());
-    };
+        let Some(branch) = session.worktree_branch else {
+            return Err("session has no worktree branch".into());
+        };
 
-    let repo_path = db
-        .workspace_repo_path(&session.workspace_id)
-        .map_err(|e| e.to_string())?
-        .ok_or("workspace not found")?;
+        let repo_path = db
+            .workspace_repo_path(&session.workspace_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("workspace not found")?;
+        (branch, repo_path)
+    }; // guard dropped here
 
     // Squash merge (stays on target after success)
     let commit_message = format!("squash merge {} into {}", branch, target_branch);
     if let Err(e) =
-        crate::worktree::squash_merge(&repo_path, branch, &target_branch, &commit_message)
+        crate::worktree::squash_merge(&repo_path, &branch, &target_branch, &commit_message)
     {
         let msg = e.to_string();
         let is_conflict = msg.starts_with("conflict:");
@@ -499,14 +603,19 @@ pub fn cleanup_merged_session(
     db: State<'_, SharedDb>,
     session_id: String,
 ) -> Result<CleanupResult, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
-    let Some(session) = db.find_session(&session_id).map_err(|e| e.to_string())? else {
-        return Err("session not found".into());
+    // Scoped guard: extract session + repo_path, then drop before the
+    // archive/remove_worktree/delete_branch I/O below.
+    let (session, repo_path) = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        let Some(session) = db.find_session(&session_id).map_err(|e| e.to_string())? else {
+            return Err("session not found".into());
+        };
+        let repo_path = db
+            .workspace_repo_path(&session.workspace_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("workspace not found")?;
+        (session, repo_path)
     };
-    let repo_path = db
-        .workspace_repo_path(&session.workspace_id)
-        .map_err(|e| e.to_string())?
-        .ok_or("workspace not found")?;
 
     let mut warnings: Vec<String> = Vec::new();
     let mut archived_plans_path: Option<String> = None;
@@ -545,8 +654,15 @@ pub fn cleanup_merged_session(
         warnings.push(msg);
     }
 
-    // Step 4: delete the DB row.
-    if let Err(e) = db.delete_session(&session_id) {
+    // Step 4: delete the DB row. Re-acquire and re-validate — the row may
+    // have been removed by a concurrent delete while this one was unlocked.
+    let db = db.lock().map_err(|e| e.to_string())?;
+    if db
+        .find_session(&session_id)
+        .map_err(|e| e.to_string())?
+        .is_some()
+        && let Err(e) = db.delete_session(&session_id)
+    {
         let msg = format!("db delete: {e}");
         tracing::warn!("{msg}");
         warnings.push(msg);

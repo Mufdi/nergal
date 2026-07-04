@@ -217,8 +217,14 @@ pub fn probe_spawn_health() -> bool {
 /// Drain every pending marker under one global lock. Concurrent invocations see
 /// the held lock and exit without work — their markers are covered by the
 /// running drain (they were written before the spawn).
+///
+/// Wraps its own connection in a `SharedDb` (single-threaded here, so the
+/// extra `Mutex` is inert) so `process_marker` can lock/drop per-marker
+/// instead of holding one guard across the whole drain loop's file I/O.
 pub fn run() -> Result<()> {
-    let db = crate::db::Database::open().context("opening database for post-session runner")?;
+    let db: crate::db::SharedDb = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::db::Database::open().context("opening database for post-session runner")?,
+    ));
     let n = drain(&pending_dir(), &lock_path(), &|path| {
         process_marker(path, &db)
     })?;
@@ -231,7 +237,7 @@ pub fn run() -> Result<()> {
 /// Synchronous drain used when the startup probe found bg spawning unavailable.
 /// Builds MOCs inline against the GUI's own database connection so snapshots are
 /// not lost on hardened distros.
-pub fn drain_inline(db: &crate::db::Database) -> Result<()> {
+pub fn drain_inline(db: &crate::db::SharedDb) -> Result<()> {
     let n = drain(&pending_dir(), &lock_path(), &|path| {
         process_marker(path, db)
     })?;
@@ -286,18 +292,32 @@ fn drain(dir: &Path, lock_path: &Path, process: &dyn Fn(&Path) -> Result<()>) ->
     Ok(drained)
 }
 
-fn process_marker(path: &Path, db: &crate::db::Database) -> Result<()> {
+fn process_marker(path: &Path, db: &crate::db::SharedDb) -> Result<()> {
+    // Marker read is guard-free; only the DB reads below need the lock, held
+    // just long enough to gather MOC inputs before the file-write phase.
     let raw = fs::read_to_string(path)?;
     let marker: Marker =
         serde_json::from_str(&raw).with_context(|| format!("parsing marker {}", path.display()))?;
-    // Session gone (deleted before the runner reached it) → nothing to snapshot;
-    // drop the stale marker rather than retrying it forever.
-    if db.find_session(&marker.session_id)?.is_none() {
-        return Ok(());
-    }
-    let cfg =
-        crate::obsidian::config::resolve(&marker.workspace_id, |w| db.get_obsidian_config(w))?;
-    if let Some(moc_path) = crate::obsidian::moc::MocBuilder::build(&marker.session_id, &cfg, db)? {
+
+    let inputs = {
+        let guard = db
+            .lock()
+            .map_err(|e| anyhow::anyhow!("post-session db lock poisoned: {e}"))?;
+        // Session gone (deleted before the runner reached it) → nothing to
+        // snapshot; drop the stale marker rather than retrying it forever.
+        if guard.find_session(&marker.session_id)?.is_none() {
+            return Ok(());
+        }
+        let cfg = crate::obsidian::config::resolve(&marker.workspace_id, |w| {
+            guard.get_obsidian_config(w)
+        })?;
+        let inputs = crate::obsidian::moc::MocBuilder::gather(&marker.session_id, &cfg, &guard)?;
+        inputs.map(|i| (i, cfg))
+    }; // guard dropped here
+
+    if let Some((inputs, cfg)) = inputs
+        && let Some(moc_path) = inputs.render_and_write(&cfg)?
+    {
         let _ = crate::obsidian::moc::BacklinkUpdater::propagate(&moc_path, &cfg);
     }
     Ok(())
@@ -320,7 +340,7 @@ pub struct StartupReport {
 /// On launch: probe spawn capability (which doubles as the first drain), and if
 /// bg processing is unavailable drain pending markers inline so nothing is lost.
 /// Returns a report driving the recovery/failure toasts.
-pub fn startup_recover(db: &crate::db::Database, stale_after_ms: u64) -> StartupReport {
+pub fn startup_recover(db: &crate::db::SharedDb, stale_after_ms: u64) -> StartupReport {
     let recovered = count_stale_in(&pending_dir(), stale_after_ms, now_ms());
     let last_run_failed = last_run_failed();
     let healthy = probe_spawn_health();

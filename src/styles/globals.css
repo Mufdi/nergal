@@ -10,6 +10,10 @@
 @import "@fontsource/space-mono/400.css";
 @import "@fontsource/space-mono/700.css";
 @import "@fontsource/unifrakturcook/700.css";
+/* Bundle Sileo's stylesheet into the external `'self'` CSS instead of relying
+   on its runtime __insertCSS injection, which the webview CSP blocks (no
+   nonce). Keeps toasts styled independently of the `'unsafe-inline'` grant. */
+@import "sileo/styles.css";
 
 /* Ioskeley Mono Term — self-hosted (OFL-1.1, see assets/fonts/IoskeleyMono-OFL.txt).
    Free Berkeley Mono lookalike built from Iosevka; the Term cut fixes box-drawing
@@ -1080,4 +1084,34 @@ mark[data-ws-hidden] {
 }
 .nergal-dot {
   animation: nergal-dot-pulse 1.1s ease-in-out infinite;
+}
+
+/* Pre-mount splash (markup in index.html #splash). Moved out of an inline
+   <style> so the webview CSP keeps effective `'unsafe-inline'` for runtime
+   library styles — see index.html. The fallback hex matches --background in
+   v1-dark so the splash-to-mount transition stays invisible. */
+body {
+  background: var(--background, #141415);
+  margin: 0;
+}
+#splash {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  color: #6c6c8a;
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+}
+#splash .dot {
+  width: 6px;
+  height: 6px;
+  background: #e67e22;
+  border-radius: 50%;
+  margin-right: 8px;
+  animation: splash-pulse 1s ease-in-out infinite;
+}
+@keyframes splash-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
 }

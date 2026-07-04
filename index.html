@@ -4,33 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nergal</title>
-    <style>
-      /* Pre-mount body bg falls back to dark splash; once Tailwind loads the
-         body rule from globals.css applies var(--background) via the active
-         theme. The fallback hex matches `--background` in v1-dark so the
-         brief splash-to-mount transition is invisible. */
-      body { background: var(--background, #141415); margin: 0; }
-      #splash {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        height: 100vh;
-        color: #6c6c8a;
-        font-family: system-ui, sans-serif;
-        font-size: 13px;
-      }
-      #splash .dot {
-        width: 6px; height: 6px;
-        background: #e67e22;
-        border-radius: 50%;
-        margin-right: 8px;
-        animation: pulse 1s ease-in-out infinite;
-      }
-      @keyframes pulse {
-        0%, 100% { opacity: 0.3; }
-        50% { opacity: 1; }
-      }
-    </style>
+    <!-- Splash CSS lives in styles/globals.css (bundled, served as an
+         external self-hosted stylesheet), NOT inline here. An inline style
+         element makes Tauri stamp a nonce into the served CSP style-src,
+         which per spec voids the unsafe-inline the CSP intentionally grants,
+         silently blocking every runtime-injected stylesheet (Sileo toasts,
+         CodeMirror StyleModule). Keeping this file free of inline style
+         elements preserves effective unsafe-inline for library styles. -->
   </head>
   <body>
     <div id="root">

@@ -2089,19 +2089,48 @@ function AppearanceSection({
 
 type SectionId = "paths" | "agents" | "editor" | "appearance" | "terminal" | "keymap" | "mcp" | "scratchpad" | "obsidian" | "clickup" | "linear" | "about";
 
-const SECTIONS: { id: SectionId; label: string; icon: typeof FolderTree }[] = [
-  { id: "paths", label: "Paths", icon: FolderTree },
-  { id: "agents", label: "Agents", icon: Bot },
-  { id: "editor", label: "Editor", icon: Pencil },
-  { id: "appearance", label: "Appearance", icon: Palette },
-  { id: "terminal", label: "Terminal", icon: Terminal },
-  { id: "keymap", label: "Keymap", icon: Keyboard },
-  { id: "mcp", label: "MCP", icon: Network },
-  { id: "scratchpad", label: "Scratchpad", icon: NotebookText },
-  { id: "obsidian", label: "Obsidian", icon: ObsidianIcon },
-  { id: "clickup", label: "ClickUp", icon: ClickUpIcon },
-  { id: "linear", label: "Linear", icon: LinearIcon },
-  { id: "about", label: "About", icon: Info },
+type SectionMeta = { id: SectionId; label: string; icon: typeof FolderTree };
+
+// Sections grouped into categories. Two-tier keyboard nav mirrors the sidebar
+// (Ctrl+Shift+N picks a workspace, Ctrl+N a session within it): here
+// Ctrl+Shift+N picks a category and Alt+N picks the Nth section WITHIN the
+// active category (dynamic — the same digit means a different section per
+// category). See BUG-27.
+const CATEGORIES: { id: string; label: string; sections: SectionMeta[] }[] = [
+  {
+    id: "environment",
+    label: "Environment",
+    sections: [
+      { id: "paths", label: "Paths", icon: FolderTree },
+      { id: "agents", label: "Agents", icon: Bot },
+      { id: "terminal", label: "Terminal", icon: Terminal },
+      { id: "scratchpad", label: "Scratchpad", icon: NotebookText },
+    ],
+  },
+  {
+    id: "interface",
+    label: "Interface",
+    sections: [
+      { id: "editor", label: "Editor", icon: Pencil },
+      { id: "appearance", label: "Appearance", icon: Palette },
+      { id: "keymap", label: "Keymap", icon: Keyboard },
+    ],
+  },
+  {
+    id: "integrations",
+    label: "Integrations",
+    sections: [
+      { id: "mcp", label: "MCP", icon: Network },
+      { id: "obsidian", label: "Obsidian", icon: ObsidianIcon },
+      { id: "clickup", label: "ClickUp", icon: ClickUpIcon },
+      { id: "linear", label: "Linear", icon: LinearIcon },
+    ],
+  },
+  {
+    id: "about",
+    label: "About",
+    sections: [{ id: "about", label: "About", icon: Info }],
+  },
 ];
 
 type InstallSource = "deb" | "appimage" | "mac_app" | "windows" | "dev" | "unknown";
@@ -2805,10 +2834,11 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
   const navRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const footerRef = useRef<HTMLDivElement>(null);
-  // Set when the active section changes via rail arrow-nav, so the
-  // content-auto-focus effect keeps focus on the rail instead of yanking it
-  // into the form (BUG-27).
-  const railNavRef = useRef(false);
+  // Mirrors activeSection for the keydown listeners (kept stable at [open]).
+  const activeSectionRef = useRef(activeSection);
+  useEffect(() => {
+    activeSectionRef.current = activeSection;
+  }, [activeSection]);
 
   useEffect(() => {
     getVersion().then(setAppVersion).catch(() => setAppVersion(""));
@@ -2865,14 +2895,41 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
 
   useEffect(() => {
     if (!open) return;
+    // Two-tier section nav (BUG-27), mirroring the sidebar workspace/session
+    // pickers. Ctrl+Shift+N → category N (lands on its first section). Alt+N →
+    // the Nth section of the ACTIVE category (dynamic). The central shortcut
+    // dispatcher already bails while a dialog is open, so there is no collision
+    // with the sidebar's own Ctrl+Shift+N / Ctrl+N — we only need to swallow
+    // the key so it never reaches the terminal. event.code keeps it
+    // layout-independent (WebKitGTK convention).
     function handleKeyDown(e: KeyboardEvent) {
       if (appStore.get(keymapCaptureActiveAtom)) return;
-      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
-      const idx = parseInt(e.key, 10);
-      if (!Number.isNaN(idx) && idx >= 1 && idx <= SECTIONS.length) {
+      if (e.metaKey) return;
+      const m = /^Digit([1-9])$/.exec(e.code);
+      if (!m) return;
+      const n = parseInt(m[1], 10);
+
+      // Ctrl+Shift+N → category.
+      if (e.ctrlKey && e.shiftKey && !e.altKey) {
+        const cat = CATEGORIES[n - 1];
+        if (!cat) return;
         e.preventDefault();
         e.stopPropagation();
-        setActiveSection(SECTIONS[idx - 1].id);
+        setActiveSection(cat.sections[0].id);
+        return;
+      }
+
+      // Alt+N → section within the active category.
+      if (e.altKey && !e.ctrlKey && !e.shiftKey) {
+        const cat =
+          CATEGORIES.find((c) =>
+            c.sections.some((s) => s.id === activeSectionRef.current),
+          ) ?? CATEGORIES[0];
+        const target = cat.sections[n - 1];
+        if (!target) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setActiveSection(target.id);
       }
     }
     window.addEventListener("keydown", handleKeyDown, true);
@@ -2882,23 +2939,12 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
   // Keyboard-first focus: on open or section change, land focus directly in
   // the content (first form field, or the selected/first theme card on the
   // appearance section). The active nav button still receives focus on the
-  // tab-trap loop (see below) and Alt+1-6 still switches sections globally,
-  // so the user can navigate everything from the keyboard without an extra
-  // Tab to leave the rail. Double-rAF defers past BaseUI Dialog's
-  // capture-phase focus trap that would otherwise reclaim focus on reopen.
+  // tab-trap loop (see below) and Ctrl+Shift+N / Alt+N still switch category
+  // and section globally, so the user can navigate everything from the
+  // keyboard without an extra Tab to leave the rail. Double-rAF defers past
+  // BaseUI Dialog's capture-phase focus trap that would reclaim focus on reopen.
   useEffect(() => {
     if (!open) return;
-    // Section changed via rail arrow-nav → keep focus on the rail, moving it
-    // to the newly-active nav button instead of diving into the content.
-    if (railNavRef.current) {
-      railNavRef.current = false;
-      const raf = requestAnimationFrame(() => {
-        navRef.current
-          ?.querySelector<HTMLElement>('button[data-active="true"]')
-          ?.focus({ preventScroll: true });
-      });
-      return () => cancelAnimationFrame(raf);
-    }
     let raf2: number | null = null;
     const raf1 = requestAnimationFrame(() => {
       raf2 = requestAnimationFrame(() => {
@@ -3138,54 +3184,51 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
-            Configure paths and preferences. Press <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Alt+1</kbd>–<kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Alt+9</kbd> or <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">↑</kbd><kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">↓</kbd> to move between sections, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Tab</kbd> to enter the form, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+Enter</kbd> to save, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+,</kbd> to toggle.
+            Configure paths and preferences. Press <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+Shift+N</kbd> for a category, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Alt+N</kbd> for a section within it, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Tab</kbd> to enter the form, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+Enter</kbd> to save, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+,</kbd> to toggle.
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid grid-cols-[180px_1fr] gap-5 h-[460px]">
           <nav
             ref={navRef}
-            // Arrow-nav across the rail so every section is keyboard-reachable
-            // (Alt+1-9 only covers the first 9 of 12 — BUG-27). Up/Down wrap;
-            // focus stays on the rail via railNavRef.
-            onKeyDown={(e) => {
-              if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-              e.preventDefault();
-              e.stopPropagation();
-              const dir = e.key === "ArrowDown" ? 1 : -1;
-              const curIdx = SECTIONS.findIndex((s) => s.id === activeSection);
-              const nextIdx = (curIdx + dir + SECTIONS.length) % SECTIONS.length;
-              railNavRef.current = true;
-              setActiveSection(SECTIONS[nextIdx].id);
-            }}
-            className="flex flex-col gap-0.5 border-r border-border/40 pr-2"
+            className="flex flex-col gap-2 overflow-y-auto border-r border-border/40 pr-2"
           >
-            {SECTIONS.map((section, idx) => {
-              const Icon = section.icon;
-              const isActive = section.id === activeSection;
-              return (
-                <button
-                  key={section.id}
-                  type="button"
-                  tabIndex={isActive ? 0 : -1}
-                  data-active={isActive}
-                  onClick={() => setActiveSection(section.id)}
-                  className={`flex items-center justify-between rounded-md px-2 py-1.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring ${
-                    isActive
-                      ? "bg-secondary text-foreground"
-                      : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
-                  }`}
-                >
-                  <span className="flex items-center gap-2">
-                    <Icon size={14} className="shrink-0" />
-                    <span>{section.label}</span>
+            {CATEGORIES.map((cat, catIdx) => (
+              <div key={cat.id} className="flex flex-col gap-0.5">
+                <div className="flex items-center justify-between px-2 pb-0.5">
+                  <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                    {cat.label}
                   </span>
-                  {idx < 9 && (
-                    <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border border-border/40 text-muted-foreground">⌥{idx + 1}</kbd>
-                  )}
-                </button>
-              );
-            })}
+                  <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border border-border/40 text-muted-foreground">
+                    ⌃⇧{catIdx + 1}
+                  </kbd>
+                </div>
+                {cat.sections.map((section, secIdx) => {
+                  const Icon = section.icon;
+                  const isActive = section.id === activeSection;
+                  return (
+                    <button
+                      key={section.id}
+                      type="button"
+                      tabIndex={isActive ? 0 : -1}
+                      data-active={isActive}
+                      onClick={() => setActiveSection(section.id)}
+                      className={`flex items-center justify-between rounded-md px-2 py-1.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring ${
+                        isActive
+                          ? "bg-secondary text-foreground"
+                          : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+                      }`}
+                    >
+                      <span className="flex items-center gap-2">
+                        <Icon size={14} className="shrink-0" />
+                        <span>{section.label}</span>
+                      </span>
+                      <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border border-border/40 text-muted-foreground">⌥{secIdx + 1}</kbd>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
           </nav>
 
           <div ref={contentRef} className="overflow-y-auto px-1 max-h-[60vh] scroll-py-3">

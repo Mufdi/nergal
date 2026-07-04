@@ -1,0 +1,17 @@
+{
+  "tier": "XS",
+  "tier_source": "heuristic",
+  "ceremony": "quick-fix",
+  "risk_tier": "low",
+  "files_estimate": 0,
+  "tags": ["docs", "spec", "security"],
+  "visibility": "private",
+  "spec_target": "webview-content-security-policy",
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "iprev_rounds": 0,
+    "reviewer_mode": "none",
+    "gates_phases_run": [],
+    "per_phase_models": { "design": "opus" }
+  }
+}

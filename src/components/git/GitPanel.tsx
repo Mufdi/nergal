@@ -1,5 +1,6 @@
 import { useEffect, useCallback, useRef, useState } from "react";
 import { invoke, listen } from "@/lib/tauri";
+import { focusIfPanelZone } from "@/lib/panelFocus";
 import {
   refreshGitInfoAtom,
   refreshConflictedFilesAtom,
@@ -68,6 +69,7 @@ export function GitPanel({ sessionId }: GitPanelProps) {
   const [completing, setCompleting] = useState(false);
   const sessionToWorkspace = useAtomValue(sessionToWorkspaceMapAtom);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const chipModeMap = useAtomValue(gitChipModeAtom);
   const setChipModeMap = useSetAtom(gitChipModeAtom);
   const prsCacheMap = useAtomValue(prsCacheMapAtom);
@@ -82,6 +84,15 @@ export function GitPanel({ sessionId }: GitPanelProps) {
   const setPendingMergeMap = useSetAtom(pendingMergeMapAtom);
   const [renamingBranch, setRenamingBranch] = useState(false);
   const [branchInput, setBranchInput] = useState("");
+
+  // Mount-time focus (canonical right-panel pattern — the sibling ClickUp/
+  // Linear/CrossSession panels do the same). focusIfPanelZone only grabs focus
+  // when the panel zone is the intended target, so a session-switch restore
+  // does not steal the terminal prompt (BUG-09).
+  useEffect(() => {
+    const timer = setTimeout(() => focusIfPanelZone(rootRef.current), 50);
+    return () => clearTimeout(timer);
+  }, []);
 
   const workspaceId: string | null = sessionToWorkspace[sessionId] ?? null;
   const chipMode: ChipMode = chipModeMap[sessionId] ?? "files";
@@ -333,7 +344,7 @@ export function GitPanel({ sessionId }: GitPanelProps) {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div ref={rootRef} tabIndex={-1} className="flex h-full flex-col outline-none">
       <div className="group flex shrink-0 items-center gap-2 border-b border-border/50 px-3 py-1.5">
         <GitBranch size={12} className="text-muted-foreground" />
         {renamingBranch ? (

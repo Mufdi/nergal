@@ -1,0 +1,7 @@
+# Bulk mechanical refactors — ignore these revs in `git blame` so line
+# authorship points at the real change, not the move. Enable locally with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# (GitHub applies it automatically.)
+
+# split-god-modules: commands.rs -> commands/, db.rs -> db/ (verbatim move)
+7cb878cc5620a53b2f9b0c0afd629547777eb19e

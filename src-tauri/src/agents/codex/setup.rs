@@ -46,11 +46,19 @@ fn merge_nergal_entries(existing: Value) -> Value {
     };
     let hooks_obj = root.as_object_mut().expect("normalised to object above");
 
-    let hooks_inner = hooks_obj
-        .entry("hooks")
-        .or_insert_with(|| json!({}))
-        .as_object_mut()
-        .unwrap();
+    // A present-but-non-object "hooks" (legacy or hand-edited file) is
+    // treated like a missing one — the same normalization the per-event
+    // arrays get below. Panicking here crashed Codex setup on malformed
+    // files, so this path must stay panic-free end to end.
+    if !matches!(hooks_obj.get("hooks"), Some(Value::Object(_))) {
+        hooks_obj.insert("hooks".to_string(), json!({}));
+    }
+    let Some(Value::Object(hooks_inner)) = hooks_obj.get_mut("hooks") else {
+        // Provably unreachable (just normalized above); degrade to a no-op
+        // merge rather than reintroduce a panic on the path this fix exists
+        // to de-panic.
+        return root;
+    };
 
     for (event_name, nergal_command) in nergal_event_commands() {
         let event_array = hooks_inner
@@ -195,6 +203,40 @@ mod tests {
             .and_then(|v| v.as_array())
             .unwrap();
         // Only the canonical "pre-tool" entry remains.
+        assert_eq!(entries.len(), 1);
+        assert!(matches_canonical_shape(
+            &entries[0],
+            "nergal hook send pre-tool"
+        ));
+    }
+
+    #[test]
+    fn merge_normalizes_hooks_array() {
+        // Malformed: top-level "hooks" is an array instead of object.
+        // Should normalize to an object without panicking.
+        let existing = json!({ "hooks": [] });
+        let merged = merge_nergal_entries(existing);
+        let entries = merged
+            .pointer("/hooks/PreToolUse")
+            .and_then(|v| v.as_array())
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(matches_canonical_shape(
+            &entries[0],
+            "nergal hook send pre-tool"
+        ));
+    }
+
+    #[test]
+    fn merge_normalizes_hooks_string() {
+        // Malformed: top-level "hooks" is a string instead of object.
+        // Should normalize to an object without panicking.
+        let existing = json!({ "hooks": "x" });
+        let merged = merge_nergal_entries(existing);
+        let entries = merged
+            .pointer("/hooks/PreToolUse")
+            .and_then(|v| v.as_array())
+            .unwrap();
         assert_eq!(entries.len(), 1);
         assert!(matches_canonical_shape(
             &entries[0],

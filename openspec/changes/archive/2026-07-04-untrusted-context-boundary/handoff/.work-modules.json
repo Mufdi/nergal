@@ -1,0 +1,30 @@
+{
+  "tier": "S",
+  "tier_source": "audit-finding SECURITY-03 (Mode C bridge)",
+  "ceremony": "standard",
+  "risk_tier": "medium",
+  "files_estimate": 4,
+  "tags": ["security"],
+  "visibility": "public",
+  "spec_target": "obsidian-context-injection",
+  "rigor_applied": {
+    "discovery_invoked": true,
+    "iprev_rounds": 2,
+    "iprev_status": "APPROVED (round 2, claude/Fable evaluator; round 1 found delimiter-collision bypass + unresolved capability ownership)",
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": "security-reviewer (tag security)",
+    "gates_phases_run": ["compile", "test", "lint", "security"],
+    "per_phase_models": {
+      "design": "fable-5",
+      "implementation": "sonnet",
+      "validation": "fable-5",
+      "exploration": "haiku"
+    }
+  },
+  "interview_answers": {
+    "note": "Security batch (runs on Opus 4.8 due to Fable 5 cybersecurity safeguard auto-switch). tag security → A3 iprev eligible. Defense-in-depth (honestly scoped: reduces, not eliminates, indirect-injection). ClickUp/Linear injection may also warrant MODIFIED deltas on their *-agent-integration specs. per_phase_models fable-5 for design/validation per the opus->Fable redirect."
+  },
+  "events": [
+    { "type": "mode-c-bridge", "reason": "seeded from audit finding SECURITY-03 (no untrusted-content boundary on injected context)" }
+  ]
+}

@@ -1472,3 +1472,420 @@ fn process_task_event(
         },
     );
 }
+
+// `process_event`'s full dispatch (the match arms above) takes `&AppHandle`,
+// `&SharedDb`, `&SharedPlanState`, `&AgentRuntimeState` together and emits
+// through the live Tauri event bus; the crate has no `tauri::test` mocking
+// feature enabled anywhere (`Cargo.toml`'s `tauri` dependency declares
+// `features = []`, and no test in the codebase constructs an `AppHandle`),
+// so driving the full side-effecting router is out of reach without adding
+// that seam. What IS reachable — and is exactly the event→action *decision*
+// surface the router computes before any side effect fires — are the pure
+// helpers below: `FrontendHookEvent::from_hook` (the shape emitted for every
+// hook event variant on `hook:event`), `resolve_active_plan` (the plan-review
+// resolution priority, the highest-blast-radius branch per design D1),
+// `session_log_line` (the #2 log line per event), and `file_path_from_tool_input`
+// (the file-touch extraction shared by the panel emitter and MCP capture).
+// Untested: DB writes, agent_state mutations, and the actual `app.emit` calls
+// inside `process_event`'s match arms — those require either a live app or a
+// `route_event(event, ctx) -> Vec<Action>` extraction (design D2), which is a
+// substantially larger, non-behavior-preserving restructuring of a ~400-line
+// effect-per-branch function and was judged out of scope for this pass.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // -- resolve_active_plan: task 1.2 (active plan found / absent / ambiguous) --
+
+    #[test]
+    fn resolve_active_plan_uses_explicit_plan_path_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let plan_path = dir.path().join("explicit.md");
+        std::fs::write(&plan_path, "explicit content").unwrap();
+        let tool_input = json!({ "plan_path": plan_path.display().to_string() });
+
+        let result = resolve_active_plan(&tool_input, &[]);
+
+        assert_eq!(result, Some((plan_path, "explicit content".to_string())));
+    }
+
+    #[test]
+    fn resolve_active_plan_none_when_explicit_path_unreadable() {
+        let tool_input = json!({ "plan_path": "/nonexistent/dir/plan.md" });
+
+        assert!(resolve_active_plan(&tool_input, &[]).is_none());
+    }
+
+    #[test]
+    fn resolve_active_plan_finds_correct_dir_by_content_match() {
+        // Ambiguous case: two candidate dirs, only the second holds the file whose
+        // content matches — proves content-identity search, not "first dir wins".
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+        std::fs::write(dir_a.path().join("other.md"), "unrelated plan").unwrap();
+        let target = dir_b.path().join("target.md");
+        std::fs::write(&target, "the real plan text").unwrap();
+
+        let tool_input = json!({ "plan": "the real plan text" });
+        let dirs = vec![dir_a.path().to_path_buf(), dir_b.path().to_path_buf()];
+        let result = resolve_active_plan(&tool_input, &dirs);
+
+        assert_eq!(result, Some((target, "the real plan text".to_string())));
+    }
+
+    #[test]
+    fn resolve_active_plan_falls_back_to_inline_content_when_no_file_matches() {
+        // CC delivered the plan text inline but hasn't flushed it to disk yet —
+        // still returns the content with a best-effort (possibly default) path.
+        let dir = tempfile::tempdir().unwrap();
+        let tool_input = json!({ "plan": "not yet flushed to disk" });
+        let dirs = vec![dir.path().to_path_buf()];
+
+        let result = resolve_active_plan(&tool_input, &dirs);
+
+        assert_eq!(
+            result,
+            Some((PathBuf::default(), "not yet flushed to disk".to_string()))
+        );
+    }
+
+    #[test]
+    fn resolve_active_plan_treats_empty_plan_string_as_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let plan_path = dir.path().join("only.md");
+        std::fs::write(&plan_path, "only content").unwrap();
+        let tool_input = json!({ "plan": "" });
+        let dirs = vec![dir.path().to_path_buf()];
+
+        let result = resolve_active_plan(&tool_input, &dirs);
+
+        assert_eq!(result, Some((plan_path, "only content".to_string())));
+    }
+
+    #[test]
+    fn resolve_active_plan_legacy_fallback_uses_newest_md_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let plan_path = dir.path().join("legacy.md");
+        std::fs::write(&plan_path, "legacy content").unwrap();
+        let tool_input = json!({});
+        let dirs = vec![dir.path().to_path_buf()];
+
+        let result = resolve_active_plan(&tool_input, &dirs);
+
+        assert_eq!(result, Some((plan_path, "legacy content".to_string())));
+    }
+
+    #[test]
+    fn resolve_active_plan_none_when_nothing_to_resolve() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool_input = json!({});
+
+        assert!(resolve_active_plan(&tool_input, &[dir.path().to_path_buf()]).is_none());
+        assert!(resolve_active_plan(&tool_input, &[]).is_none());
+    }
+
+    // -- FrontendHookEvent::from_hook: event→emitted-shape mapping for every variant --
+
+    #[test]
+    fn from_hook_maps_every_event_variant_to_its_event_type() {
+        let cases: Vec<(HookEvent, &str)> = vec![
+            (
+                HookEvent::SessionStart {
+                    session_id: "s".into(),
+                },
+                "session_start",
+            ),
+            (
+                HookEvent::SessionEnd {
+                    session_id: "s".into(),
+                },
+                "session_end",
+            ),
+            (
+                HookEvent::PreToolUse {
+                    session_id: "s".into(),
+                    tool_name: "Read".into(),
+                    tool_input: json!({"a": 1}),
+                },
+                "pre_tool_use",
+            ),
+            (
+                HookEvent::PostToolUse {
+                    session_id: "s".into(),
+                    tool_name: "Read".into(),
+                    tool_input: json!({}),
+                    tool_result: None,
+                },
+                "post_tool_use",
+            ),
+            (
+                HookEvent::Stop {
+                    session_id: "s".into(),
+                    stop_reason: Some("end_turn".into()),
+                    transcript_path: Some("/t.jsonl".into()),
+                    background_tasks: vec![],
+                    session_crons: vec![],
+                    last_assistant_message: None,
+                },
+                "stop",
+            ),
+            (
+                HookEvent::TaskCompleted {
+                    session_id: "s".into(),
+                    task_id: None,
+                    task_subject: Some("Fix bug".into()),
+                },
+                "task_completed",
+            ),
+            (
+                HookEvent::UserPromptSubmit {
+                    session_id: "s".into(),
+                },
+                "user_prompt_submit",
+            ),
+            (
+                HookEvent::TaskCreated {
+                    session_id: "s".into(),
+                    task_id: None,
+                    task_subject: Some("New task".into()),
+                    tool_input: json!({}),
+                },
+                "task_created",
+            ),
+            (
+                HookEvent::PlanReview {
+                    session_id: "s".into(),
+                    tool_name: "ExitPlanMode".into(),
+                    tool_input: json!({}),
+                    fifo_path: "/f".into(),
+                },
+                "plan_review",
+            ),
+            (
+                HookEvent::AskUser {
+                    session_id: "s".into(),
+                    tool_input: json!({}),
+                    fifo_path: "/f".into(),
+                },
+                "ask_user",
+            ),
+            (
+                HookEvent::Notification {
+                    session_id: "s".into(),
+                    notification_type: Some("permission_prompt".into()),
+                    message: None,
+                },
+                "notification",
+            ),
+            (
+                HookEvent::CwdChanged {
+                    session_id: "s".into(),
+                    cwd: Some("/cwd".into()),
+                },
+                "cwd_changed",
+            ),
+            (
+                HookEvent::FileChanged {
+                    session_id: "s".into(),
+                    file_path: Some("/f.rs".into()),
+                    event_type: Some("modified".into()),
+                },
+                "file_changed",
+            ),
+            (
+                HookEvent::PermissionDenied {
+                    session_id: "s".into(),
+                    tool_name: Some("Bash".into()),
+                    tool_input: json!({}),
+                    reason: Some("no".into()),
+                },
+                "permission_denied",
+            ),
+            (
+                HookEvent::StatusLine {
+                    session_id: "s".into(),
+                    model_id: None,
+                    model_name: None,
+                    context_used_pct: None,
+                    context_remaining_pct: None,
+                    context_window_size: None,
+                    rate_5h_pct: None,
+                    rate_5h_resets_at: None,
+                    rate_7d_pct: None,
+                    rate_7d_resets_at: None,
+                    duration_ms: None,
+                    api_duration_ms: None,
+                    lines_added: None,
+                    lines_removed: None,
+                },
+                "statusline",
+            ),
+            (
+                HookEvent::AgentStatus {
+                    session_id: "s".into(),
+                    agent_id: None,
+                    model_id: None,
+                    model_name: None,
+                    session_started_at: None,
+                    context_used_pct: None,
+                    context_window_size: None,
+                    rate_5h_pct: None,
+                    rate_5h_resets_at: None,
+                    rate_7d_pct: None,
+                    rate_7d_resets_at: None,
+                    effort_level: None,
+                },
+                "agent_status",
+            ),
+        ];
+
+        assert_eq!(
+            cases.len(),
+            16,
+            "every HookEvent variant must appear exactly once above"
+        );
+
+        for (event, expected_type) in cases {
+            let fe = FrontendHookEvent::from_hook(&event);
+            assert_eq!(fe.event_type, expected_type);
+            assert_eq!(fe.session_id, "s");
+        }
+    }
+
+    #[test]
+    fn from_hook_stop_carries_reason_and_transcript_path() {
+        let event = HookEvent::Stop {
+            session_id: "s".into(),
+            stop_reason: Some("end_turn".into()),
+            transcript_path: Some("/tmp/t.jsonl".into()),
+            background_tasks: vec![],
+            session_crons: vec![],
+            last_assistant_message: None,
+        };
+
+        let fe = FrontendHookEvent::from_hook(&event);
+
+        assert_eq!(fe.stop_reason.as_deref(), Some("end_turn"));
+        assert_eq!(fe.transcript_path.as_deref(), Some("/tmp/t.jsonl"));
+        assert!(fe.tool_name.is_none());
+    }
+
+    #[test]
+    fn from_hook_permission_denied_reuses_the_stop_reason_slot_for_reason() {
+        // PermissionDenied has no dedicated "reason" field on FrontendHookEvent —
+        // it's carried in stop_reason. Locking this down so a future refactor of
+        // the flat frontend shape doesn't silently drop it.
+        let event = HookEvent::PermissionDenied {
+            session_id: "s".into(),
+            tool_name: Some("Bash".into()),
+            tool_input: json!({"command": "rm -rf /"}),
+            reason: Some("destructive command".into()),
+        };
+
+        let fe = FrontendHookEvent::from_hook(&event);
+
+        assert_eq!(fe.tool_name.as_deref(), Some("Bash"));
+        assert_eq!(fe.stop_reason.as_deref(), Some("destructive command"));
+        assert_eq!(fe.tool_input, Some(json!({"command": "rm -rf /"})));
+    }
+
+    // -- session_log_line: the #2 log line per event --
+
+    #[test]
+    fn session_log_line_formats_edit_tools_with_file_path() {
+        let event = HookEvent::PreToolUse {
+            session_id: "s".into(),
+            tool_name: "Edit".into(),
+            tool_input: json!({ "file_path": "src/main.rs" }),
+        };
+
+        assert_eq!(
+            session_log_line(&event).as_deref(),
+            Some("Edit src/main.rs")
+        );
+    }
+
+    #[test]
+    fn session_log_line_formats_read_without_path_as_bare_read() {
+        let event = HookEvent::PreToolUse {
+            session_id: "s".into(),
+            tool_name: "Read".into(),
+            tool_input: json!({}),
+        };
+
+        assert_eq!(session_log_line(&event).as_deref(), Some("Read"));
+    }
+
+    #[test]
+    fn session_log_line_formats_unknown_tools_generically() {
+        let event = HookEvent::PreToolUse {
+            session_id: "s".into(),
+            tool_name: "Bash".into(),
+            tool_input: json!({}),
+        };
+
+        assert_eq!(session_log_line(&event).as_deref(), Some("Tool Bash"));
+    }
+
+    #[test]
+    fn session_log_line_skips_empty_stop_reason() {
+        let event = HookEvent::Stop {
+            session_id: "s".into(),
+            stop_reason: Some("".into()),
+            transcript_path: None,
+            background_tasks: vec![],
+            session_crons: vec![],
+            last_assistant_message: None,
+        };
+
+        assert!(session_log_line(&event).is_none());
+    }
+
+    #[test]
+    fn session_log_line_formats_permission_denied_with_fallbacks() {
+        let event = HookEvent::PermissionDenied {
+            session_id: "s".into(),
+            tool_name: None,
+            tool_input: json!({}),
+            reason: None,
+        };
+
+        assert_eq!(
+            session_log_line(&event).as_deref(),
+            Some("Permission denied: ? — —")
+        );
+    }
+
+    #[test]
+    fn session_log_line_none_for_unloggable_events() {
+        let event = HookEvent::CwdChanged {
+            session_id: "s".into(),
+            cwd: Some("/x".into()),
+        };
+
+        assert!(session_log_line(&event).is_none());
+    }
+
+    // -- file_path_from_tool_input: key-spelling fallback --
+
+    #[test]
+    fn file_path_from_tool_input_prefers_file_path_key() {
+        let input = json!({ "file_path": "a.rs", "filePath": "b.rs", "path": "c.rs" });
+
+        assert_eq!(file_path_from_tool_input(&input), Some("a.rs"));
+    }
+
+    #[test]
+    fn file_path_from_tool_input_falls_back_through_key_variants() {
+        assert_eq!(
+            file_path_from_tool_input(&json!({ "filePath": "b.rs" })),
+            Some("b.rs")
+        );
+        assert_eq!(
+            file_path_from_tool_input(&json!({ "path": "c.rs" })),
+            Some("c.rs")
+        );
+        assert_eq!(file_path_from_tool_input(&json!({})), None);
+    }
+}

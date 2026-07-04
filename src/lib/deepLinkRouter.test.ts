@@ -214,6 +214,47 @@ describe("open-workspace", () => {
   });
 });
 
+describe("hostile input handling", () => {
+  it("a malformed URL is rejected without throwing or invoking anything", () => {
+    expect(() => dispatchDeepLink("not-a-url-at-all")).not.toThrow();
+    expect(getActiveConfirm()).toBeNull();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("a well-formed URL on the wrong scheme is rejected without invoking anything", () => {
+    expect(() => dispatchDeepLink("https://evil.example.com/session/new?cwd=/tmp/x")).not.toThrow();
+    expect(getActiveConfirm()).toBeNull();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("an oversized path does not throw and still routes through the normal confirm gate", async () => {
+    const hugePath = `/tmp/${"a".repeat(200_000)}`;
+    expect(() => dispatchDeepLink(`nergal://open-file?path=${encodeURIComponent(hugePath)}`)).not.toThrow();
+    const pending = await waitForPendingConfirm();
+    expect(pending.opts.enterConfirms).toBe(false);
+    resolveConfirm(false);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(invokeMock.mock.calls.map((c) => c[0])).not.toContain("create_workspace");
+  });
+
+  it("a traversal-looking payload is still gated behind an explicit confirm, not auto-executed", async () => {
+    dispatchDeepLink("nergal://open-workspace?path=../../../../etc");
+    const pending = await waitForPendingConfirm();
+    expect(pending.opts.enterConfirms).toBe(false);
+    resolveConfirm(false);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(invokeMock.mock.calls.map((c) => c[0])).not.toContain("create_workspace");
+  });
+
+  it("an unknown action surfaces an info toast instead of throwing", () => {
+    expect(() => dispatchDeepLink("nergal://not-a-real-action?x=1")).not.toThrow();
+    expect(getActiveConfirm()).toBeNull();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("pending confirm queue", () => {
   it("a second deep link arriving while one confirm is pending is queued, not coalesced", async () => {
     dispatchDeepLink("nergal://session/new?cwd=/tmp/one&prompt=first-link");

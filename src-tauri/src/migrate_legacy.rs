@@ -48,6 +48,13 @@ fn remove_legacy_cache_dir() {
     let Some(cache) = dirs::cache_dir() else {
         return;
     };
+    remove_legacy_cache_dir_at(&cache);
+}
+
+/// Injectable-root core of [`remove_legacy_cache_dir`], parameterized on the
+/// cache-dir base so tests can point it at a tempdir instead of the real XDG
+/// cache dir. The public wrapper preserves the current call site.
+fn remove_legacy_cache_dir_at(cache: &Path) {
     let old = cache.join(OLD);
     if !old.is_dir() {
         return;
@@ -70,6 +77,13 @@ fn migrate_config_dir() {
     let Some(base) = dirs::config_dir() else {
         return;
     };
+    migrate_config_dir_at(&base);
+}
+
+/// Injectable-root core of [`migrate_config_dir`], parameterized on the
+/// config-dir base so tests can point it at a tempdir instead of the real XDG
+/// config dir. The public wrapper preserves the current call site.
+fn migrate_config_dir_at(base: &Path) {
     let old = base.join(OLD);
     let new = base.join(NEW);
     if !old.is_dir() || new.join("nergal.db").exists() {
@@ -474,5 +488,179 @@ mod tests {
             strip_legacy_scheme("[Default Applications]\nx-scheme-handler/nergal=Nergal.desktop\n")
                 .is_none()
         );
+    }
+
+    // -- migrate_config_dir_at: destructive fs op, tempdir-based --
+
+    #[test]
+    fn migrate_config_dir_at_fresh_install_is_noop() {
+        let base = tempfile::tempdir().unwrap();
+
+        migrate_config_dir_at(base.path());
+
+        assert!(
+            !base.path().join(NEW).exists(),
+            "no legacy dir → nothing created"
+        );
+    }
+
+    #[test]
+    fn migrate_config_dir_at_migrates_legacy_contents_including_db_rename() {
+        let base = tempfile::tempdir().unwrap();
+        let old = base.path().join(OLD);
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join(format!("{OLD}.db")), b"db bytes").unwrap();
+        std::fs::write(old.join(format!("{OLD}.db-wal")), b"wal bytes").unwrap();
+        std::fs::write(old.join("config.json"), b"{}").unwrap();
+
+        migrate_config_dir_at(base.path());
+
+        let new = base.path().join(NEW);
+        assert_eq!(
+            std::fs::read(new.join(format!("{NEW}.db"))).unwrap(),
+            b"db bytes"
+        );
+        assert_eq!(
+            std::fs::read(new.join(format!("{NEW}.db-wal"))).unwrap(),
+            b"wal bytes"
+        );
+        assert!(
+            new.join("config.json").exists(),
+            "non-prefixed files carry over unrenamed"
+        );
+        assert!(!old.exists(), "emptied legacy dir is removed");
+    }
+
+    #[test]
+    fn migrate_config_dir_at_rerun_is_idempotent() {
+        let base = tempfile::tempdir().unwrap();
+        let old = base.path().join(OLD);
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join(format!("{OLD}.db")), b"db bytes").unwrap();
+
+        migrate_config_dir_at(base.path());
+        migrate_config_dir_at(base.path()); // second run must no-op, not error or overwrite
+
+        let new = base.path().join(NEW);
+        assert_eq!(
+            std::fs::read(new.join(format!("{NEW}.db"))).unwrap(),
+            b"db bytes"
+        );
+    }
+
+    #[test]
+    fn migrate_config_dir_at_partial_legacy_migrates_available_files_without_panicking() {
+        // Degraded state: legacy dir present but the DB itself is missing —
+        // only a sibling config survives. Must not panic and must still move
+        // what IS there.
+        let base = tempfile::tempdir().unwrap();
+        let old = base.path().join(OLD);
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("config.json"), b"{}").unwrap();
+
+        migrate_config_dir_at(base.path());
+
+        let new = base.path().join(NEW);
+        assert!(new.join("config.json").exists());
+        assert!(!new.join(format!("{NEW}.db")).exists());
+        assert!(!old.exists());
+    }
+
+    #[test]
+    fn migrate_config_dir_at_never_overwrites_existing_new_dir_state() {
+        let base = tempfile::tempdir().unwrap();
+        let old = base.path().join(OLD);
+        let new = base.path().join(NEW);
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::create_dir_all(&new).unwrap();
+        std::fs::write(old.join("config.json"), b"legacy version").unwrap();
+        std::fs::write(new.join("config.json"), b"already-migrated version").unwrap();
+
+        migrate_config_dir_at(base.path());
+
+        assert_eq!(
+            std::fs::read(new.join("config.json")).unwrap(),
+            b"already-migrated version",
+            "existing new-dir file must never be clobbered"
+        );
+        assert!(
+            old.join("config.json").exists(),
+            "the un-migrated leftover is preserved, not deleted, when it can't be moved"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn migrate_config_dir_at_unreadable_legacy_dir_no_panic_and_source_preserved() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base = tempfile::tempdir().unwrap();
+        let old = base.path().join(OLD);
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join(format!("{OLD}.db")), b"db bytes").unwrap();
+
+        let mut perms = std::fs::metadata(&old).unwrap().permissions();
+        perms.set_mode(0o000);
+        std::fs::set_permissions(&old, perms).unwrap();
+
+        migrate_config_dir_at(base.path());
+
+        // Restore permissions before any assertion/cleanup touches the dir again.
+        let mut perms = std::fs::metadata(&old).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&old, perms).unwrap();
+
+        assert!(
+            old.join(format!("{OLD}.db")).exists(),
+            "unreadable source dir is left untouched, not destroyed"
+        );
+    }
+
+    // -- remove_legacy_cache_dir_at: destructive fs op, tempdir-based --
+
+    #[test]
+    fn remove_legacy_cache_dir_at_fresh_is_noop() {
+        let cache = tempfile::tempdir().unwrap();
+
+        remove_legacy_cache_dir_at(cache.path()); // no legacy dir — must not error
+
+        assert!(!cache.path().join(OLD).exists());
+    }
+
+    #[test]
+    fn remove_legacy_cache_dir_at_removes_legacy_dir() {
+        let cache = tempfile::tempdir().unwrap();
+        let old = cache.path().join(OLD);
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("nergal.log"), b"log bytes").unwrap();
+
+        remove_legacy_cache_dir_at(cache.path());
+
+        assert!(!old.exists());
+    }
+
+    #[test]
+    fn remove_legacy_cache_dir_at_rerun_is_idempotent() {
+        let cache = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(cache.path().join(OLD)).unwrap();
+
+        remove_legacy_cache_dir_at(cache.path());
+        remove_legacy_cache_dir_at(cache.path()); // second run: dir already gone, must not error
+
+        assert!(!cache.path().join(OLD).exists());
+    }
+
+    #[test]
+    fn remove_legacy_cache_dir_at_ignores_non_directory_entry() {
+        // Corrupt/unexpected state: `cluihud` exists but as a file, not a dir.
+        // `is_dir()` gates the removal, so this must be left untouched rather
+        // than blown away by a careless `remove_file` fallback.
+        let cache = tempfile::tempdir().unwrap();
+        let old = cache.path().join(OLD);
+        std::fs::write(&old, b"not a directory").unwrap();
+
+        remove_legacy_cache_dir_at(cache.path());
+
+        assert!(old.exists(), "non-dir entry left untouched, not destroyed");
     }
 }

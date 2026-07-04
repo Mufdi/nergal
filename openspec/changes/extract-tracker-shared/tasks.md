@@ -10,9 +10,9 @@
 
 ## 3. Slice 2 — closed-out marker trio
 
-- [ ] 3.1 Grep callers of `read_closed_out` (both trackers) — confirm none depend on ClickUp's insertion order before adding a deterministic `ORDER BY`.
-- [ ] 3.2 `tracker_shared/closed_out.rs`: `mark`/`read`/`unmark` free fns parametrized by table + id-column; add deterministic `ORDER BY closed_at` to both sides (consumer verified order-insensitive — behavior-preserving). Consolidate the trio's tests.
-- [ ] 3.3 Rewire `clickup/mirror.rs` + `linear/mirror.rs` closed-out call sites to the shared fns; delete the duplicated bodies. Gates green.
+- [x] 3.1 Grep callers of `read_closed_out` (both trackers) — confirm none depend on ClickUp's insertion order before adding a deterministic `ORDER BY`.
+- [x] 3.2 `tracker_shared/closed_out.rs`: `mark`/`read`/`unmark` free fns parametrized by table + id-column; add deterministic `ORDER BY closed_at` to both sides (consumer verified order-insensitive — behavior-preserving). Consolidate the trio's tests.
+- [x] 3.3 Rewire `clickup/mirror.rs` + `linear/mirror.rs` closed-out call sites to the shared fns; delete the duplicated bodies. Gates green.
 
 ## 4. Slice 3 — CredentialStore (security-reviewed)
 

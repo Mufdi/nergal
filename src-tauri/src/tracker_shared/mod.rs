@@ -4,4 +4,5 @@
 //! trackers — see `openspec/changes/extract-tracker-shared/design.md` (D1)
 //! for why a full `IssueTrackerAdapter` trait was rejected.
 
+pub mod closed_out;
 pub mod writeback_registry;

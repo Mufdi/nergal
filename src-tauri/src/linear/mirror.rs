@@ -857,36 +857,37 @@ pub fn upsert_comment(
 }
 
 // ── Worked & closed marker (linear-writeback) ──
+//
+// Mechanics (mark/read/unmark) live in `tracker_shared::closed_out`, shared
+// with ClickUp's identical-modulo-table-name trio.
 
 /// Record that an issue was closed out from a session.
 ///
 /// `ON CONFLICT DO UPDATE` so re-closing the same issue (e.g. after a crash
 /// and reopen) is safe: it just refreshes the timestamp.
 pub fn mark_closed_out(conn: &Connection, issue_id: &str, closed_at: i64) -> Result<()> {
-    conn.execute(
-        "INSERT INTO linear_closed_out (issue_id, closed_at) VALUES (?1, ?2) \
-         ON CONFLICT(issue_id) DO UPDATE SET closed_at=?2",
-        rusqlite::params![issue_id, closed_at],
-    )?;
-    Ok(())
+    crate::tracker_shared::closed_out::mark_closed_out(
+        conn,
+        "linear_closed_out",
+        "issue_id",
+        issue_id,
+        closed_at,
+    )
 }
 
 /// All issue ids that were closed out from a session.
 pub fn read_closed_out(conn: &Connection) -> Result<Vec<String>> {
-    let mut stmt = conn.prepare("SELECT issue_id FROM linear_closed_out ORDER BY closed_at")?;
-    let ids = stmt
-        .query_map([], |r| r.get(0))?
-        .collect::<std::result::Result<_, _>>()?;
-    Ok(ids)
+    crate::tracker_shared::closed_out::read_closed_out(conn, "linear_closed_out", "issue_id")
 }
 
 /// Remove the worked-closed marker for an issue, allowing it to be re-closed later.
 pub fn unmark_closed_out(conn: &Connection, issue_id: &str) -> Result<()> {
-    conn.execute(
-        "DELETE FROM linear_closed_out WHERE issue_id = ?1",
-        rusqlite::params![issue_id],
-    )?;
-    Ok(())
+    crate::tracker_shared::closed_out::unmark_closed_out(
+        conn,
+        "linear_closed_out",
+        "issue_id",
+        issue_id,
+    )
 }
 
 // ── Projects ──
@@ -1258,42 +1259,9 @@ mod tests {
         assert_eq!(count2, 1, "echo upsert must not duplicate the row");
     }
 
-    // 5.2 mark_closed_out and read_closed_out round-trip
-    #[test]
-    fn closed_out_round_trip() {
-        let conn = mem_db_wb();
-        assert!(read_closed_out(&conn).unwrap().is_empty());
-        mark_closed_out(&conn, "issue-a", 1000).unwrap();
-        mark_closed_out(&conn, "issue-b", 1001).unwrap();
-        let mut ids = read_closed_out(&conn).unwrap();
-        ids.sort();
-        assert_eq!(ids, vec!["issue-a", "issue-b"]);
-
-        // Re-closing the same issue updates the timestamp (idempotent).
-        mark_closed_out(&conn, "issue-a", 2000).unwrap();
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM linear_closed_out", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(count, 2, "re-close must not duplicate the row");
-    }
-
-    // 8.3 unmark_closed_out removes the marker
-    #[test]
-    fn unmark_closed_out_removes_marker() {
-        let conn = mem_db_wb();
-        mark_closed_out(&conn, "issue-x", 5000).unwrap();
-        let ids = read_closed_out(&conn).unwrap();
-        assert_eq!(ids, vec!["issue-x"]);
-
-        unmark_closed_out(&conn, "issue-x").unwrap();
-        assert!(
-            read_closed_out(&conn).unwrap().is_empty(),
-            "unmark must delete the row"
-        );
-
-        // Unmarking a non-existent id is a no-op (not an error).
-        unmark_closed_out(&conn, "no-such-issue").unwrap();
-    }
+    // 5.2/8.3 Closed-out marker trio (round-trip, idempotent re-mark, unmark)
+    // is consolidated in `tracker_shared::closed_out`'s own test module —
+    // these forwarders have no Linear-specific behavior to cover separately.
 
     // 8.4 read_projects returns rows ordered by name
     #[test]

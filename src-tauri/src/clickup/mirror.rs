@@ -775,36 +775,35 @@ pub fn read_custom_values(conn: &Connection, task_id: &str) -> Result<Vec<Custom
 }
 
 // ── Worked & closed marker (migration 019) ──
+//
+// Mechanics (mark/read/unmark) live in `tracker_shared::closed_out`, shared
+// with Linear's identical-modulo-table-name trio.
 
 /// Record that a task was closed out from a session. Local-only and separate
 /// from the ClickUp status (the task keeps whatever status ClickUp holds).
 pub fn mark_closed_out(conn: &Connection, task_id: &str, closed_at: i64) -> Result<()> {
-    conn.execute(
-        "INSERT INTO clickup_closed_out (task_id, closed_at) VALUES (?1, ?2) \
-         ON CONFLICT(task_id) DO UPDATE SET closed_at=?2",
-        params![task_id, closed_at],
-    )?;
-    Ok(())
+    crate::tracker_shared::closed_out::mark_closed_out(
+        conn,
+        "clickup_closed_out",
+        "task_id",
+        task_id,
+        closed_at,
+    )
 }
 
 /// All task ids that were closed out from a session (for the panel marker).
 pub fn read_closed_out(conn: &Connection) -> Result<Vec<String>> {
-    let mut stmt = conn.prepare("SELECT task_id FROM clickup_closed_out")?;
-    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
-    let mut out = Vec::new();
-    for row in rows {
-        out.push(row?);
-    }
-    Ok(out)
+    crate::tracker_shared::closed_out::read_closed_out(conn, "clickup_closed_out", "task_id")
 }
 
 /// Remove the worked-closed marker for a task, allowing it to be re-closed later.
 pub fn unmark_closed_out(conn: &Connection, task_id: &str) -> Result<()> {
-    conn.execute(
-        "DELETE FROM clickup_closed_out WHERE task_id = ?1",
-        params![task_id],
-    )?;
-    Ok(())
+    crate::tracker_shared::closed_out::unmark_closed_out(
+        conn,
+        "clickup_closed_out",
+        "task_id",
+        task_id,
+    )
 }
 
 #[cfg(test)]
@@ -1129,33 +1128,9 @@ mod tests {
         assert_eq!(total, 2, "shared id did not collide across lists");
     }
 
-    #[test]
-    fn closed_out_marker_round_trips_and_is_idempotent() {
-        let conn = mirror_conn();
-        conn.execute_batch(include_str!("../../migrations/019_clickup_closed_out.sql"))
-            .unwrap();
-        assert!(read_closed_out(&conn).unwrap().is_empty());
-        mark_closed_out(&conn, "task-a", 1000).unwrap();
-        mark_closed_out(&conn, "task-b", 1001).unwrap();
-        // Re-mark updates closed_at without duplicating the row.
-        mark_closed_out(&conn, "task-a", 2000).unwrap();
-        let mut ids = read_closed_out(&conn).unwrap();
-        ids.sort();
-        assert_eq!(ids, vec!["task-a".to_string(), "task-b".to_string()]);
-    }
-
-    #[test]
-    fn unmark_closed_out_removes_marker() {
-        let conn = mirror_conn();
-        conn.execute_batch(include_str!("../../migrations/019_clickup_closed_out.sql"))
-            .unwrap();
-        mark_closed_out(&conn, "task-x", 5000).unwrap();
-        assert_eq!(read_closed_out(&conn).unwrap(), vec!["task-x".to_string()]);
-        unmark_closed_out(&conn, "task-x").unwrap();
-        assert!(read_closed_out(&conn).unwrap().is_empty());
-        // Idempotent: clearing an absent marker is a no-op, not an error.
-        unmark_closed_out(&conn, "task-x").unwrap();
-    }
+    // Closed-out marker trio (round-trip, idempotent re-mark, unmark) is
+    // consolidated in `tracker_shared::closed_out`'s own test module — these
+    // forwarders have no ClickUp-specific behavior to cover separately.
 
     #[test]
     fn sync_state_round_trips() {

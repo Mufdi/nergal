@@ -24,6 +24,7 @@ import {
   Unlink,
 } from "lucide-react";
 import { invoke } from "@/lib/tauri";
+import { useStaleGuard } from "@/hooks/useStaleGuard";
 import { MarkdownView } from "@/components/plan/MarkdownView";
 import { DatePopover } from "@/components/clickup/DatePopover";
 import { StatusIcon } from "@/components/clickup/StatusIcon";
@@ -286,6 +287,9 @@ export function useClickUpTaskController({
   // Single-flight lock: the field name of the in-flight write, or null. Blocks
   // every write control until the previous one resolves.
   const [busy, setBusy] = useState<string | null>(null);
+  // Guards write-path async results (confirm polls, assignee/comment refreshes)
+  // and the busy lock against a stale completion landing after taskId moved on.
+  const capture = useStaleGuard(taskId);
   const commentRef = useRef<HTMLTextAreaElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const mainRef = useRef<HTMLDivElement | null>(null);
@@ -365,6 +369,9 @@ export function useClickUpTaskController({
   }, [navKey]);
 
   useEffect(() => {
+    // A write lock held for the previous task must not carry over — the new
+    // task's controls need to be usable immediately (D2).
+    setBusy(null);
     if (!taskId) {
       setDetail(null);
       setError(null);
@@ -431,12 +438,15 @@ export function useClickUpTaskController({
     field: string,
     matches: (d: ClickUpTaskDetailData) => boolean,
   ) {
+    const fresh = capture();
     for (let attempt = 0; attempt < 5; attempt++) {
       const updated = await invoke<ClickUpTaskDetailData>("clickup_task_detail", { taskId: id });
-      setDetail(updated);
+      if (fresh()) setDetail(updated);
       if (matches(updated)) break;
       if (attempt < 4) await new Promise((r) => setTimeout(r, 800));
     }
+    // The overlay map is keyed by task id, so clearing is safe even when stale
+    // — it prevents a stuck optimistic entry on a task the user left.
     clearOverlayEntry(setOverlay, id, field);
   }
 
@@ -477,6 +487,7 @@ export function useClickUpTaskController({
     setBusy(field);
     setOverlayEntry(setOverlay, taskId, field, statusName);
     const id = taskId;
+    const fresh = capture();
     try {
       await invoke("clickup_set_task_status", { taskId: id, statusName });
       await confirmAfterWrite(id, field, (d) => d.task?.status_name === statusName);
@@ -488,7 +499,8 @@ export function useClickUpTaskController({
         setTimeout(() => clearOverlayEntry(setOverlay, id, field), 50);
       }
     } finally {
-      setBusy(null);
+      // A stale completion must not clear a newer task's in-flight lock (D2).
+      if (fresh()) setBusy(null);
     }
   }
 
@@ -499,6 +511,7 @@ export function useClickUpTaskController({
     const id = taskId;
     setBusy(field);
     setOverlayEntry(setOverlay, id, field, newResolved ? "true" : "false");
+    const fresh = capture();
     try {
       await invoke("clickup_set_checklist_item", { checklistId, itemId: item.id, resolved: newResolved });
       await confirmAfterWrite(id, field, (d) =>
@@ -508,7 +521,7 @@ export function useClickUpTaskController({
       clearOverlayEntry(setOverlay, id, field);
       addToast({ message: "Checklist update failed", description: String(err), type: "error" });
     } finally {
-      setBusy(null);
+      if (fresh()) setBusy(null);
     }
   }
 
@@ -520,6 +533,7 @@ export function useClickUpTaskController({
     setEditingDesc(false);
     setBusy(field);
     setOverlayEntry(setOverlay, id, field, draft);
+    const fresh = capture();
     try {
       await invoke("clickup_update_task", { taskId: id, description: draft });
       await confirmAfterWrite(id, field, (d) => (d.description ?? "") === draft);
@@ -527,7 +541,7 @@ export function useClickUpTaskController({
       clearOverlayEntry(setOverlay, id, field);
       addToast({ message: "Description update failed", description: String(err), type: "error" });
     } finally {
-      setBusy(null);
+      if (fresh()) setBusy(null);
     }
   }
 
@@ -541,6 +555,7 @@ export function useClickUpTaskController({
     setDueOpen(false);
     setBusy(field);
     setOverlayEntry(setOverlay, id, field, ms !== null ? String(ms) : null);
+    const fresh = capture();
     try {
       await invoke("clickup_update_task", { taskId: id, dueDate: ms });
       await confirmAfterWrite(id, field, (d) => sameDueDay(d.task?.due_date ?? null, ms));
@@ -548,7 +563,7 @@ export function useClickUpTaskController({
       clearOverlayEntry(setOverlay, id, field);
       addToast({ message: "Due date update failed", description: String(err), type: "error" });
     } finally {
-      setBusy(null);
+      if (fresh()) setBusy(null);
     }
   }
 
@@ -556,14 +571,15 @@ export function useClickUpTaskController({
     if (!taskId || busy) return;
     const id = taskId;
     setBusy("assignee");
+    const fresh = capture();
     try {
       await invoke("clickup_update_task", { taskId: id, assigneesRem: [assigneeId] });
       const updated = await invoke<ClickUpTaskDetailData>("clickup_task_detail", { taskId: id });
-      setDetail(updated);
+      if (fresh()) setDetail(updated);
     } catch (err) {
       addToast({ message: "Remove assignee failed", description: String(err), type: "error" });
     } finally {
-      setBusy(null);
+      if (fresh()) setBusy(null);
     }
   }
 
@@ -572,6 +588,7 @@ export function useClickUpTaskController({
     const id = taskId;
     setPostingComment(true);
     setBusy("comment");
+    const fresh = capture();
     const text = commentDraft.trim();
     try {
       const token = await invoke<string>("clickup_request_closure_token", { taskId: id, status: null, comment: text });
@@ -581,7 +598,7 @@ export function useClickUpTaskController({
         // Hold the spinner until the comment actually shows (ClickUp lag).
         for (let attempt = 0; attempt < 5; attempt++) {
           const updated = await invoke<ClickUpTaskDetailData>("clickup_task_detail", { taskId: id });
-          setDetail(updated);
+          if (fresh()) setDetail(updated);
           if (updated.comments.some((c) => (c.text ?? "").includes(text))) break;
           if (attempt < 4) await new Promise((r) => setTimeout(r, 800));
         }
@@ -602,24 +619,34 @@ export function useClickUpTaskController({
       addToast({ message: "Comment failed", description: String(err), type: "error" });
     } finally {
       setPostingComment(false);
-      setBusy(null);
+      if (fresh()) setBusy(null);
     }
   }
 
   async function handleVerifyComment() {
     if (!taskId || !uncertainComment) return;
+    // Snapshot the task like every other handler so the second invoke can't be
+    // redirected to a task the user switched to mid-await. `uncertainComment`
+    // and `commentDraft` are controller-level (not task-keyed), so their resets
+    // must be gated too — a stale completion must not wipe a newer task's
+    // draft/banner.
+    const id = taskId;
+    const fresh = capture();
     try {
       const landed = await invoke<boolean>("clickup_verify_comment_landed", {
-        taskId,
+        taskId: id,
         text: uncertainComment.text,
         postedAtMs: uncertainComment.sentAtMs,
       });
+      if (!fresh()) return;
       if (landed) {
         addToast({ message: "Comment confirmed landed", type: "success" });
         setUncertainComment(null);
         setCommentDraft("");
-        const updated = await invoke<ClickUpTaskDetailData>("clickup_task_detail", { taskId });
-        setDetail(updated);
+        const updated = await invoke<ClickUpTaskDetailData>("clickup_task_detail", {
+          taskId: id,
+        });
+        if (fresh()) setDetail(updated);
       } else {
         addToast({ message: "Comment not found — safe to retry", type: "info" });
         setUncertainComment(null);

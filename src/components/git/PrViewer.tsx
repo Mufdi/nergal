@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { invoke } from "@/lib/tauri";
+import { useStaleGuard } from "@/hooks/useStaleGuard";
 import { open as openShell } from "@tauri-apps/plugin-shell";
 import {
   prAnnotationsMapAtom,
@@ -208,6 +209,10 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
   /// viewer's selection. PrViewer mirrors the Diff panel's "one file at a
   /// time" pattern; the picker (Ctrl+Shift+K) swaps files.
   const prKey = prAnnotationsKey(workspaceId, prNumber);
+  // Guards fetchDiff/fetchChecks results against a stale PR selection — the
+  // key matches the diff-cache key (workspaceId:prNumber), not prNumber alone,
+  // since two workspaces can show the same PR number.
+  const capture = useStaleGuard(prKey);
   const [selectedPrMap, setSelectedPrMap] = useAtom(selectedPrFileAtom);
   const selectedFile = selectedPrMap[prKey] ?? null;
   const setSelectedFile = useCallback(
@@ -274,17 +279,25 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
   const fetchDiff = useCallback((opts: { background?: boolean } = {}) => {
     if (!opts.background) setLoading(true);
     setError(null);
+    const fresh = capture();
     invoke<string>("get_pr_diff", { workspaceId, prNumber })
       .then((text) => {
         const cacheKey = `${workspaceId}:${prNumber}`;
+        // Cache write stays unguarded — it's per-PR keyed and safe to apply
+        // even if this PR is no longer displayed.
         setPrDiffCacheMap((prev) => ({ ...prev, [cacheKey]: { text, fetchedAt: Date.now() } }));
+        if (!fresh()) return;
         const parsed = parsePrDiff(text);
         setLines(parsed.lines);
         setHunks(parsed.hunks);
       })
-      .catch((err: unknown) => setError(String(err)))
-      .finally(() => setLoading(false));
-  }, [workspaceId, prNumber, setPrDiffCacheMap]);
+      .catch((err: unknown) => {
+        if (fresh()) setError(String(err));
+      })
+      .finally(() => {
+        if (fresh()) setLoading(false);
+      });
+  }, [workspaceId, prNumber, setPrDiffCacheMap, capture]);
 
   /// Unique file paths the PR touches, in the order the diff parser emitted
   /// them. Drives the file picker and the per-file filter that hides
@@ -352,10 +365,15 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
   }, [prFiles, fileStats, prKey, setPrFilesCache]);
 
   const fetchChecks = useCallback(() => {
+    const fresh = capture();
     invoke<PrChecks | null>("get_pr_checks", { workspaceId, prNumber })
-      .then((res) => setChecks(res))
-      .catch(() => setChecks(null));
-  }, [workspaceId, prNumber]);
+      .then((res) => {
+        if (fresh()) setChecks(res);
+      })
+      .catch(() => {
+        if (fresh()) setChecks(null);
+      });
+  }, [workspaceId, prNumber, capture]);
 
   /// Hydrate from the diff cache on mount: re-opening the same PR within
   /// PR_DIFF_TTL_MS skips the network round-trip and the spinner. A stale

@@ -257,6 +257,11 @@ export function ConflictsPanel({ sessionId, inZen = false, onToggleZen, onResolv
   /// merge). Disabled in Zen mode to avoid snapping the surface shut.
   /// `onResolved` routes the user away (chip mode → switch to PRs chip).
   const hadActivityRef = useRef(false);
+  // Activity seen for one session must never satisfy the gate for another —
+  // the panel is long-lived and receives a changing sessionId prop.
+  useEffect(() => {
+    hadActivityRef.current = false;
+  }, [sessionId]);
   useEffect(() => {
     if (files.length > 0 || pendingMerge) {
       hadActivityRef.current = true;
@@ -266,7 +271,11 @@ export function ConflictsPanel({ sessionId, inZen = false, onToggleZen, onResolv
     if (!onResolved) return;
     const t = setTimeout(onResolved, 1500);
     return () => clearTimeout(t);
-  }, [files.length, pendingMerge, inZen, onResolved]);
+    // `sessionId` is in deps (though unread here) so a switch to a session
+    // whose conflict count numerically coincides with the prior one still
+    // re-evaluates — otherwise the "mark activity" branch could be skipped for
+    // the new session and a genuine resolution never route.
+  }, [files.length, pendingMerge, inZen, onResolved, sessionId]);
 
   const completeMerge = useCallback(async () => {
     if (completing) return;

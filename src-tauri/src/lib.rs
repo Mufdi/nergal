@@ -305,7 +305,9 @@ pub fn run() {
             // Detached + non-blocking so the window closes immediately.
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 // Stop shell-started processes before exit so they don't leak
-                // (BUG-06). Quick (just signals); window still closes at once.
+                // (BUG-06). `shutdown_all` signals every tree synchronously
+                // (just kill() syscalls) and defers only the child reaping to
+                // a detached thread, so window close still isn't blocked.
                 let app = window.app_handle();
                 if let Some(pty) = app.try_state::<crate::pty::PtyManager>() {
                     // Stop docker compose stacks rooted in our workspaces /

@@ -42,6 +42,11 @@ struct PtyInstance {
     /// Shell child pid, kept so the aux-shell tracker can read the process's
     /// real cwd from /proc at command submit.
     child_pid: Option<u32>,
+    /// Owns the spawned shell's `Child` so it can be `wait()`ed on teardown
+    /// — `portable-pty`'s Unix `Child` wraps `std::process::Child`, whose
+    /// `Drop` does not reap, so dropping this unwaited leaves a zombie.
+    /// `Option` so `Drop` can move it out into a detached reaper thread.
+    child: Option<Box<dyn portable_pty::Child + Send + Sync>>,
     /// Dropping this handle shuts down the emitter task.
     terminal: TerminalHandle,
 }
@@ -57,7 +62,33 @@ impl Drop for PtyInstance {
         {
             crate::platform_proc::kill_tree(pid);
         }
+        // Reap AFTER the signal above, so we wait on a process that has
+        // already been asked to exit rather than blocking on one still
+        // running.
+        if let Some(child) = self.child.take() {
+            reap_child(child);
+        }
     }
+}
+
+/// Wait for `child` to exit so it doesn't linger as a zombie, bounded so a
+/// child that ignores its kill signal cannot deadlock instance teardown.
+/// Polls briefly (a signaled process normally reaps in well under the cap);
+/// past the cap, ownership moves to a detached thread that blocks on
+/// `wait()`, so the process is still reaped eventually without stalling
+/// whoever dropped the instance.
+fn reap_child(mut child: Box<dyn portable_pty::Child + Send + Sync>) {
+    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+    const MAX_POLLS: u32 = 40; // ~2s cap
+    for _ in 0..MAX_POLLS {
+        match child.try_wait() {
+            Ok(Some(_)) | Err(_) => return,
+            Ok(None) => std::thread::sleep(POLL_INTERVAL),
+        }
+    }
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
 }
 
 pub struct PtyManager {
@@ -94,13 +125,28 @@ impl PtyManager {
         }
     }
 
-    /// Tear down every live PTY (main + aux shells) on app exit. Clearing the
-    /// map drops each `PtyInstance`, whose `Drop` SIGTERMs the shell's process
-    /// group so shell-started processes don't outlive Nergal (BUG-06).
+    /// Tear down every live PTY (main + aux shells) on app exit. Takes the
+    /// instance map out from under the lock, signals every process tree
+    /// synchronously (the BUG-06 guarantee: shells get their SIGTERM even if
+    /// the process exits before a spawned thread ever runs), then drops the
+    /// map — and with it each instance's bounded reap — on a detached thread,
+    /// so the `CloseRequested` handler on the main event-loop thread is never
+    /// blocked for N instances × reap_child's wait. The re-signal inside each
+    /// `PtyInstance::drop` is a no-op (ESRCH) for already-dead trees.
     pub fn shutdown_all(&self) {
-        if let Ok(mut instances) = self.instances.lock() {
-            instances.clear();
+        let taken = self
+            .instances
+            .lock()
+            .map(|mut instances| std::mem::take(&mut *instances))
+            .unwrap_or_default();
+        for inst in taken.values() {
+            if let Some(pid) = inst.child_pid
+                && pid > 1
+            {
+                crate::platform_proc::kill_tree(pid);
+            }
         }
+        std::thread::spawn(move || drop(taken));
         if let Ok(mut s) = self.session_ptys.lock() {
             s.clear();
         }
@@ -385,7 +431,6 @@ fn spawn_pty(
 
     let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     let child_pid = child.process_id();
-    drop(child);
     drop(pair.slave);
 
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
@@ -464,13 +509,19 @@ fn spawn_pty(
         writer,
         master: pair.master,
         child_pid,
+        child: Some(child),
         terminal,
     };
-    state
+    // Bind (rather than discard inline) so the replaced value — if this
+    // pty_id ever collided with a live entry, which callers' idempotency
+    // checks should prevent — drops after the lock guard, not while it's
+    // still held as an unbound temporary would.
+    let replaced = state
         .instances
         .lock()
         .map_err(|e| e.to_string())?
         .insert(pty_id, instance);
+    drop(replaced);
 
     Ok(())
 }
@@ -945,8 +996,12 @@ pub fn kill_aux_shell(
         session_ptys.remove(&term_id)
     };
     if let Some(id) = pty_id {
-        let mut instances = state.instances.lock().map_err(|e| e.to_string())?;
-        instances.remove(&id);
+        // Reap outside the lock — see kill_session_aux_shells for why.
+        let removed = {
+            let mut instances = state.instances.lock().map_err(|e| e.to_string())?;
+            instances.remove(&id)
+        };
+        drop(removed);
     }
     if let Ok(mut trackers) = state.aux_line_trackers.lock() {
         trackers.remove(&term_id);
@@ -985,15 +1040,27 @@ fn kill_session_aux_shells(state: &PtyManager, session_id: &str) -> Result<(), S
     if term_ids.is_empty() {
         return Ok(());
     }
-    let mut session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
-    let mut instances = state.instances.lock().map_err(|e| e.to_string())?;
-    let mut trackers = state.aux_line_trackers.lock().map_err(|e| e.to_string())?;
-    for term_id in term_ids {
-        if let Some(pty_id) = session_ptys.remove(&term_id) {
-            instances.remove(&pty_id);
+    let removed: Vec<PtyInstance> = {
+        let mut session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
+        let mut instances = state.instances.lock().map_err(|e| e.to_string())?;
+        let mut trackers = state.aux_line_trackers.lock().map_err(|e| e.to_string())?;
+        let mut removed = Vec::with_capacity(term_ids.len());
+        for term_id in term_ids {
+            if let Some(pty_id) = session_ptys.remove(&term_id)
+                && let Some(inst) = instances.remove(&pty_id)
+            {
+                removed.push(inst);
+            }
+            trackers.remove(&term_id);
         }
-        trackers.remove(&term_id);
-    }
+        removed
+    };
+    // Dropping a PtyInstance reaps its child (bounded `try_wait`, ~2s cap) —
+    // this MUST happen after the three guards above are released. `instances`
+    // is the lock every session's terminal_input/write/resize/paste/scroll
+    // path takes; reaping under it would let one stuck child freeze
+    // terminal I/O for every other live session.
+    drop(removed);
     Ok(())
 }
 
@@ -1201,8 +1268,12 @@ pub fn kill_session_pty(state: State<'_, PtyManager>, session_id: String) -> Res
     };
 
     if let Some(id) = pty_id {
-        let mut instances = state.instances.lock().map_err(|e| e.to_string())?;
-        instances.remove(&id);
+        // Reap outside the lock — see kill_session_aux_shells for why.
+        let removed = {
+            let mut instances = state.instances.lock().map_err(|e| e.to_string())?;
+            instances.remove(&id)
+        };
+        drop(removed);
     }
 
     // Drop the ephemeral system-prompt file written for AppendSystemPromptFile
@@ -1889,4 +1960,57 @@ mod tests {
         let db = seeded_db_with_session(Some("ghost-task"));
         assert!(assemble_injected_context(&db, "sess1").is_none());
     }
+
+    // ── Zombie reaping ──
+
+    #[test]
+    fn reap_child_leaves_no_zombie() {
+        let pty_system = NativePtySystem::default();
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+        let mut cmd = CommandBuilder::new("sh");
+        cmd.arg("-c");
+        cmd.arg("exit 0");
+        let child = pair.slave.spawn_command(cmd).unwrap();
+        let pid = child.process_id().unwrap();
+        drop(pair.slave);
+
+        // reap_child's own try_wait polling blocks until the short-lived
+        // shell exits, so the process is already collected by the time it
+        // returns — unlike `drop(child)`, which (per portable-pty's Unix
+        // impl wrapping `std::process::Child`) never waits and leaves a
+        // defunct entry until the whole app exits.
+        reap_child(child);
+
+        assert_reaped(pid);
+    }
+
+    /// Assert `pid` was fully reaped (no lingering zombie). Linux-gated on
+    /// `/proc/<pid>/stat`, the only portable-free source of process state;
+    /// other targets have no equivalent introspection short of platform
+    /// APIs, so they skip the assertion and rely on `reap_child` itself not
+    /// panicking/hanging as the cross-platform signal.
+    #[cfg(target_os = "linux")]
+    fn assert_reaped(pid: u32) {
+        let path = format!("/proc/{pid}/stat");
+        for _ in 0..20 {
+            match std::fs::read_to_string(&path) {
+                Ok(stat) if stat.contains(") Z ") => {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Ok(_) => return,  // exists but not a zombie — fine
+                Err(_) => return, // /proc entry gone — fully reaped
+            }
+        }
+        panic!("pid {pid} still a zombie after reap_child");
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn assert_reaped(_pid: u32) {}
 }

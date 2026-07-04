@@ -1061,10 +1061,24 @@ fn git_show_stage(cwd: &Path, stage: u8, path: &str) -> String {
 }
 
 /// Read ours/theirs/merged versions of a conflicted file.
+///
+/// `path` is caller-supplied (via `get_file_conflict_versions`), so it is
+/// vetted through `fs_guard::resolve_within_base` before touching the
+/// filesystem or `git show`. The repo-relative path handed to `git show` is
+/// re-derived from the vetted, canonical path rather than trusting the raw
+/// input — `git show` takes a ref-relative path, not an absolute one.
 pub fn file_conflict_versions(cwd: &Path, path: &str) -> Result<ConflictVersions> {
-    let ours = git_show_stage(cwd, 2, path);
-    let theirs = git_show_stage(cwd, 3, path);
-    let merged_path = cwd.join(path);
+    let merged_path =
+        crate::fs_guard::resolve_within_base(cwd, path).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let canonical_cwd = dunce::canonicalize(cwd).context("failed to resolve session directory")?;
+    let repo_rel_path = merged_path
+        .strip_prefix(&canonical_cwd)
+        .map_err(|_| anyhow::anyhow!("path escapes the session directory"))?
+        .to_string_lossy()
+        .into_owned();
+
+    let ours = git_show_stage(cwd, 2, &repo_rel_path);
+    let theirs = git_show_stage(cwd, 3, &repo_rel_path);
     let merged = std::fs::read_to_string(&merged_path).unwrap_or_default();
     Ok(ConflictVersions {
         ours,

@@ -1928,19 +1928,18 @@ pub fn read_openspec_artifact(
 
     // Master specs live at openspec/specs/
     let file_path = if change_name == "_master" {
-        openspec_dir.join(&artifact_path)
+        crate::fs_guard::resolve_within_base(&openspec_dir, &artifact_path)?
     } else {
         let changes_dir = openspec_dir.join("changes");
         // Try active first, then archive
-        let change_dir = changes_dir.join(&change_name);
-        if change_dir.exists() {
-            change_dir.join(&artifact_path)
+        let active_dir = crate::fs_guard::resolve_within_base(&changes_dir, &change_name)?;
+        let change_dir = if active_dir.exists() {
+            active_dir
         } else {
-            changes_dir
-                .join("archive")
-                .join(&change_name)
-                .join(&artifact_path)
-        }
+            let archive_dir = changes_dir.join("archive");
+            crate::fs_guard::resolve_within_base(&archive_dir, &change_name)?
+        };
+        crate::fs_guard::resolve_within_base(&change_dir, &artifact_path)?
     };
 
     std::fs::read_to_string(&file_path)
@@ -1963,13 +1962,14 @@ pub fn write_openspec_artifact(
 
     let db = db.lock().map_err(|e| e.to_string())?;
     let openspec_dir = resolve_openspec_dir(&db, &session_id)?;
-    let change_dir = openspec_dir.join("changes").join(&change_name);
+    let changes_dir = openspec_dir.join("changes");
+    let change_dir = crate::fs_guard::resolve_within_base(&changes_dir, &change_name)?;
 
     if !change_dir.exists() {
         return Err("change not found or is archived".into());
     }
 
-    let file_path = change_dir.join(&artifact_path);
+    let file_path = crate::fs_guard::resolve_within_base(&change_dir, &artifact_path)?;
 
     // Ensure parent directory exists (for new spec files)
     if let Some(parent) = file_path.parent() {
@@ -2836,7 +2836,7 @@ pub fn save_conflict_resolution(
 ) -> Result<Vec<String>, String> {
     let db = db.lock().map_err(|e| e.to_string())?;
     let cwd = resolve_session_cwd(&db, &session_id)?;
-    let abs = cwd.join(&path);
+    let abs = crate::fs_guard::resolve_within_base(&cwd, &path)?;
     std::fs::write(&abs, merged).map_err(|e| format!("failed to write: {e}"))?;
     crate::worktree::stage_file(&cwd, &path).map_err(|e| e.to_string())?;
     crate::worktree::conflicted_files(&cwd).map_err(|e| e.to_string())
@@ -3054,11 +3054,7 @@ pub fn list_directory(
 ) -> Result<Vec<DirEntry>, String> {
     let db = db.lock().map_err(|e| e.to_string())?;
     let cwd = resolve_session_cwd(&db, &session_id)?;
-    let target = if path == "." {
-        cwd.clone()
-    } else {
-        cwd.join(&path)
-    };
+    let target = crate::fs_guard::resolve_within_base(&cwd, &path)?;
 
     let mut entries = Vec::new();
     let read_dir = std::fs::read_dir(&target).map_err(|e| e.to_string())?;
@@ -3171,7 +3167,7 @@ pub fn read_file_content(
 ) -> Result<String, String> {
     let db = db.lock().map_err(|e| e.to_string())?;
     let cwd = resolve_session_cwd(&db, &session_id)?;
-    let file_path = cwd.join(&path);
+    let file_path = crate::fs_guard::resolve_within_base(&cwd, &path)?;
     std::fs::read_to_string(&file_path).map_err(|e| e.to_string())
 }
 
@@ -3184,7 +3180,7 @@ pub fn write_file_content(
 ) -> Result<String, String> {
     let db = db.lock().map_err(|e| e.to_string())?;
     let cwd = resolve_session_cwd(&db, &session_id)?;
-    let file_path = cwd.join(&path);
+    let file_path = crate::fs_guard::resolve_within_base(&cwd, &path)?;
     std::fs::write(&file_path, &content).map_err(|e| e.to_string())?;
     Ok(file_path.to_string_lossy().to_string())
 }

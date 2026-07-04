@@ -6,6 +6,7 @@ mod commands;
 pub mod config;
 mod db;
 mod feeds;
+mod fs_guard;
 pub mod hooks;
 pub mod linear;
 pub mod mcp;

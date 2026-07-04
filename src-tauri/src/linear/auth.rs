@@ -1,22 +1,17 @@
 //! Linear Personal API key storage + the OAuth-extensible auth header.
 //!
-//! Primary store is the OS keyring (secret-service on Linux) under service
-//! `nergal` / account `linear-token`. When the keyring is unavailable the key
-//! falls back to `~/.config/nergal/linear.toml`, created atomically at mode
-//! 0600 (temp file opened with the final mode + rename — no write-then-chmod
-//! window), and the `on_disk` flag is surfaced so the UI can disclose it.
-//!
-//! Leak guard: no function here may embed the key in an error string or log
-//! line. TOML parse errors are redacted because toml's diagnostics quote
-//! source snippets.
+//! The keyring/fallback-file mechanics live in `tracker_shared::credential_store`
+//! (design D3). This module wraps `CredentialStore` with what's genuinely
+//! Linear-specific: `AuthMode`/`authorization_header_value` (the OAuth-extensible
+//! header seam) and multi-workspace namespacing (`validate_org_id`,
+//! `account_for`, `fallback_path_for`) — none of which has a ClickUp
+//! equivalent, so they stay outside the shared struct rather than becoming a
+//! dead field on it.
 
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::path::PathBuf;
+use anyhow::{Result, bail};
 
-use anyhow::{Context, Result, anyhow, bail};
+use crate::tracker_shared::credential_store::{CredentialStore, StoredSecret};
 
-const KEYRING_SERVICE: &str = "nergal";
 const KEYRING_ACCOUNT: &str = "linear-token";
 const FALLBACK_FILE: &str = "linear.toml";
 
@@ -42,7 +37,8 @@ pub fn authorization_header_value(mode: AuthMode, secret: &str) -> String {
     }
 }
 
-// Manual Debug impls: a derived `{:?}` would print the raw key.
+/// In-memory view of a stored key. `key` names the field (not `secret`) to
+/// keep this module's public surface unchanged for its callers.
 #[derive(Clone)]
 pub struct StoredKey {
     pub key: String,
@@ -59,48 +55,13 @@ impl std::fmt::Debug for StoredKey {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
-struct FallbackFile {
-    key: String,
-}
-
-impl std::fmt::Debug for FallbackFile {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FallbackFile")
-            .field("key", &"[redacted]")
-            .finish()
+impl From<StoredSecret> for StoredKey {
+    fn from(s: StoredSecret) -> Self {
+        StoredKey {
+            key: s.secret,
+            on_disk: s.on_disk,
+        }
     }
-}
-
-/// Directory for the plaintext fallback files. On Windows this is the NON-roaming
-/// local app-data dir (`%LOCALAPPDATA%`) so a plaintext key is never synced to an
-/// AD roaming-profile share; on other platforms the user config dir. Keyring
-/// (Credential Manager on Windows) stays the primary store — these files only
-/// appear when the keyring is unavailable.
-fn fallback_dir() -> PathBuf {
-    #[cfg(windows)]
-    let base = dirs::data_local_dir();
-    #[cfg(not(windows))]
-    let base = dirs::config_dir();
-    base.unwrap_or_else(|| {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join(".config")
-    })
-    .join("nergal")
-}
-
-fn fallback_path() -> PathBuf {
-    fallback_dir().join(FALLBACK_FILE)
-}
-
-/// Pre-hardening roaming counterpart (`%APPDATA%\nergal\<name>`) of a local
-/// fallback path — read + cleaned on Windows so a key written by an older build
-/// migrates to the local dir instead of being lost.
-#[cfg(windows)]
-fn roaming_counterpart(local: &std::path::Path) -> Option<PathBuf> {
-    let name = local.file_name()?;
-    dirs::config_dir().map(|d| d.join("nergal").join(name))
 }
 
 /// Defense in depth: `org_id` comes from the Linear API (a UUID) and is
@@ -125,113 +86,43 @@ fn account_for(org_id: &str) -> String {
     format!("{KEYRING_ACCOUNT}::{org_id}")
 }
 
-/// Per-workspace 0600 fallback file when the keyring is unavailable.
-fn fallback_path_for(org_id: &str) -> PathBuf {
-    // org_id is a Linear UUID (no path separators); safe as a filename component.
-    fallback_dir().join(format!("linear-{org_id}.toml"))
+/// Per-workspace 0600 fallback filename when the keyring is unavailable.
+/// `org_id` is a Linear UUID (no path separators); safe as a filename component.
+fn fallback_path_for(org_id: &str) -> String {
+    format!("linear-{org_id}.toml")
 }
 
-fn keyring_entry_for(account: &str) -> Result<keyring::Entry> {
-    keyring::Entry::new(KEYRING_SERVICE, account).map_err(|e| anyhow!("keyring entry init: {e}"))
+fn store_for(org_id: &str) -> CredentialStore {
+    CredentialStore::new("nergal", account_for(org_id), fallback_path_for(org_id))
 }
 
-/// Store a key under a specific keyring account + fallback path. Returns `true`
-/// when it landed in the on-disk fallback. A keyring write removes any stale
-/// fallback so a rotated key can't survive in plaintext.
-fn store_to(account: &str, fallback: &std::path::Path, key: &str) -> Result<bool> {
-    let key = key.trim();
-    if key.is_empty() {
-        bail!("key is empty");
-    }
-    match keyring_entry_for(account).and_then(|e| {
-        e.set_password(key)
-            .map_err(|err| anyhow!("keyring write: {err}"))
-    }) {
-        Ok(()) => {
-            remove_fallback_at(fallback)?;
-            Ok(false)
-        }
-        Err(e) => {
-            tracing::warn!("keyring unavailable ({e}); storing Linear key on disk at 0600");
-            write_fallback_file(fallback, key)?;
-            Ok(true)
-        }
-    }
-}
-
-fn load_from(account: &str, fallback: &std::path::Path) -> Result<Option<StoredKey>> {
-    let mut keyring_err: Option<anyhow::Error> = None;
-    match keyring_entry_for(account) {
-        Ok(entry) => match entry.get_password() {
-            Ok(key) => {
-                return Ok(Some(StoredKey {
-                    key,
-                    on_disk: false,
-                }));
-            }
-            Err(keyring::Error::NoEntry) => {}
-            Err(e) => {
-                tracing::warn!("keyring read failed ({e}); trying fallback file");
-                keyring_err = Some(anyhow!("keyring read failed: {e}"));
-            }
-        },
-        Err(e) => {
-            tracing::warn!("keyring init failed ({e}); trying fallback file");
-            keyring_err = Some(e);
-        }
-    }
-    if let Some(stored) = read_fallback_file(fallback)? {
-        return Ok(Some(stored));
-    }
-    // Windows: migrate a key left in the pre-hardening roaming location to the
-    // non-roaming dir, then drop the roaming plaintext copy.
-    #[cfg(windows)]
-    if let Some(legacy) = roaming_counterpart(fallback)
-        && let Some(stored) = read_fallback_file(&legacy)?
-    {
-        let _ = write_fallback_file(fallback, &stored.key);
-        let _ = std::fs::remove_file(&legacy);
-        return Ok(Some(stored));
-    }
-    match keyring_err {
-        Some(e) => Err(e),
-        None => Ok(None),
-    }
-}
-
-fn remove_from(account: &str, fallback: &std::path::Path) -> Result<()> {
-    if let Ok(entry) = keyring_entry_for(account) {
-        match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => {}
-            Err(e) => tracing::warn!("keyring delete failed: {e}"),
-        }
-    }
-    remove_fallback_at(fallback)
+fn legacy_store() -> CredentialStore {
+    CredentialStore::new("nergal", KEYRING_ACCOUNT, FALLBACK_FILE)
 }
 
 /// Store the active-workspace key (per-org account). Returns `true` if on-disk.
 pub fn store_key_for(org_id: &str, key: &str) -> Result<bool> {
     validate_org_id(org_id)?;
-    store_to(&account_for(org_id), &fallback_path_for(org_id), key)
+    store_for(org_id).store(key)
 }
 
 /// Load a workspace's key (per-org account). `None` when neither store has one.
 pub fn load_key_for(org_id: &str) -> Result<Option<StoredKey>> {
     validate_org_id(org_id)?;
-    load_from(&account_for(org_id), &fallback_path_for(org_id))
+    Ok(store_for(org_id).load()?.map(Into::into))
 }
 
 /// Remove a workspace's key from both stores. Idempotent.
 pub fn remove_key_for(org_id: &str) -> Result<()> {
     validate_org_id(org_id)?;
-    remove_from(&account_for(org_id), &fallback_path_for(org_id))
+    store_for(org_id).clear()
 }
 
 /// Store the legacy single key; returns `true` when it landed on disk. Kept so
 /// the legacy `linear_set_key` path still works (the next poll migrates it to a
 /// per-workspace entry).
 pub fn store_key(key: &str) -> Result<bool> {
-    store_to(KEYRING_ACCOUNT, &fallback_path(), key)
+    legacy_store().store(key)
 }
 
 /// Load the legacy single key (the pre-multi-workspace store). A transient
@@ -239,105 +130,18 @@ pub fn store_key(key: &str) -> Result<bool> {
 /// instead of treating it as "no legacy key". Used only by the one-time
 /// migration.
 pub fn load_key() -> Result<Option<StoredKey>> {
-    load_from(KEYRING_ACCOUNT, &fallback_path())
+    Ok(legacy_store().load()?.map(Into::into))
 }
 
 /// Remove the legacy key from both stores. Idempotent. Called after the legacy
 /// key has been migrated into a per-workspace entry.
 pub fn clear_key() -> Result<()> {
-    remove_from(KEYRING_ACCOUNT, &fallback_path())
-}
-
-fn remove_fallback_at(path: &std::path::Path) -> Result<()> {
-    remove_one(path)?;
-    // Windows: also drop any pre-hardening roaming copy so a cleared/rotated key
-    // can't survive in the old location.
-    #[cfg(windows)]
-    if let Some(legacy) = roaming_counterpart(path) {
-        remove_one(&legacy)?;
-    }
-    Ok(())
-}
-
-fn remove_one(path: &std::path::Path) -> Result<()> {
-    match std::fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(anyhow!("removing {}: {e}", path.display())),
-    }
-}
-
-fn write_fallback_file(path: &std::path::Path, key: &str) -> Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow!("key file path has no parent"))?;
-    std::fs::create_dir_all(parent)
-        .with_context(|| format!("creating config dir {}", parent.display()))?;
-
-    // Unique temp name per target file + process; create_new guarantees we
-    // never open a pre-existing (possibly wider-mode) file.
-    let fname = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(FALLBACK_FILE);
-    let tmp = parent.join(format!(".{fname}.tmp-{}", std::process::id()));
-    let _ = std::fs::remove_file(&tmp);
-    let mut opts = OpenOptions::new();
-    opts.write(true).create_new(true);
-    // 0o600 on Unix; Windows has no POSIX mode bits — the per-user (non-roaming
-    // local) dir ACL +
-    // Credential Manager (keyring) is the real boundary for this fallback file.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
-    }
-    let mut file = opts
-        .open(&tmp)
-        .with_context(|| format!("creating key temp file in {}", parent.display()))?;
-
-    let body = toml::to_string(&FallbackFile {
-        key: key.to_string(),
-    })
-    .map_err(|_| anyhow!("serializing key file"))?;
-
-    let write_result = file
-        .write_all(body.as_bytes())
-        .and_then(|()| file.sync_all());
-    if let Err(e) = write_result {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(anyhow!("writing key temp file: {e}"));
-    }
-    drop(file);
-
-    if let Err(e) = std::fs::rename(&tmp, path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(anyhow!("installing key file at {}: {e}", path.display()));
-    }
-    Ok(())
-}
-
-fn read_fallback_file(path: &std::path::Path) -> Result<Option<StoredKey>> {
-    let raw = match std::fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(anyhow!("reading {}: {e}", path.display())),
-    };
-    // toml errors quote source snippets — never propagate them verbatim or the
-    // key leaks into the error string.
-    let parsed: FallbackFile = toml::from_str(&raw)
-        .map_err(|_| anyhow!("malformed key file {} (redacted)", path.display()))?;
-    Ok(Some(StoredKey {
-        key: parsed.key,
-        on_disk: true,
-    }))
+    legacy_store().clear()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(unix)]
-    use std::os::unix::fs::PermissionsExt;
 
     const KEY: &str = "lin_api_SECRETSECRETSECRET";
 
@@ -351,76 +155,6 @@ mod tests {
         assert_eq!(
             authorization_header_value(AuthMode::OAuthBearer, "tok"),
             "Bearer tok"
-        );
-    }
-
-    #[test]
-    fn fallback_file_created_at_0600_and_round_trips() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("linear.toml");
-
-        write_fallback_file(&path, KEY).unwrap();
-
-        #[cfg(unix)]
-        {
-            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-            assert_eq!(mode, 0o600);
-        }
-
-        let loaded = read_fallback_file(&path).unwrap().unwrap();
-        assert_eq!(loaded.key, KEY);
-        assert!(loaded.on_disk);
-    }
-
-    #[test]
-    fn fallback_overwrite_keeps_0600() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("linear.toml");
-        write_fallback_file(&path, "first-key").unwrap();
-        write_fallback_file(&path, KEY).unwrap();
-
-        #[cfg(unix)]
-        {
-            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-            assert_eq!(mode, 0o600);
-        }
-        assert_eq!(read_fallback_file(&path).unwrap().unwrap().key, KEY);
-        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().contains("tmp"))
-            .collect();
-        assert!(leftovers.is_empty());
-    }
-
-    #[test]
-    fn fallback_write_error_never_contains_key() {
-        let dir = tempfile::tempdir().unwrap();
-        let blocker = dir.path().join("blocker");
-        std::fs::write(&blocker, "x").unwrap();
-        let path = blocker.join("sub").join("linear.toml");
-
-        let err = write_fallback_file(&path, KEY).unwrap_err();
-        assert!(!format!("{err:#}").contains(KEY));
-    }
-
-    #[test]
-    fn malformed_fallback_error_never_contains_key() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("linear.toml");
-        std::fs::write(&path, format!("key = {KEY}")).unwrap();
-
-        let err = read_fallback_file(&path).unwrap_err();
-        assert!(!format!("{err:#}").contains(KEY));
-    }
-
-    #[test]
-    fn missing_fallback_is_none() {
-        let dir = tempfile::tempdir().unwrap();
-        assert!(
-            read_fallback_file(&dir.path().join("linear.toml"))
-                .unwrap()
-                .is_none()
         );
     }
 

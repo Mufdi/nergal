@@ -227,6 +227,12 @@ pub fn start_rollout_tail(
 
 /// Seek to `offset`, drain to EOF, fold each line into `acc`, forward any
 /// emitted status to `sink`. Returns the new offset.
+///
+/// The offset advances only past the last `\n` in the read: a modify event
+/// can fire mid-write, so a trailing partial line is left unconsumed and
+/// re-read whole on the next event, instead of being dropped (and corrupting
+/// the following read, since the offset would otherwise already be past its
+/// bytes).
 async fn read_appended(
     file: &mut tokio::fs::File,
     offset: u64,
@@ -236,10 +242,20 @@ async fn read_appended(
     if file.seek(std::io::SeekFrom::Start(offset)).await.is_err() {
         return offset;
     }
-    let mut buf = String::new();
-    let n = file.read_to_string(&mut buf).await.unwrap_or(0);
-    let new_offset = offset + n as u64;
-    for line in buf.lines() {
+    let mut buf = Vec::new();
+    if file.read_to_end(&mut buf).await.is_err() {
+        return offset;
+    }
+    let Some(last_newline) = buf.iter().rposition(|&b| b == b'\n') else {
+        return offset;
+    };
+    let complete = &buf[..=last_newline];
+    let new_offset = offset + complete.len() as u64;
+    for line in complete.split(|&b| b == b'\n') {
+        let Ok(line) = std::str::from_utf8(line) else {
+            tracing::warn!("codex rollout line was not valid utf-8; skipping");
+            continue;
+        };
         if line.trim().is_empty() {
             continue;
         }
@@ -255,9 +271,149 @@ async fn read_appended(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncWriteExt;
 
     fn acc() -> StatusAcc {
         StatusAcc::new("sess-1".into(), 1000)
+    }
+
+    async fn append(path: &std::path::Path, bytes: &[u8]) {
+        let mut f = tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(path)
+            .await
+            .unwrap();
+        f.write_all(bytes).await.unwrap();
+        f.flush().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn half_line_holds_offset_until_completed() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        tokio::fs::write(
+            &path,
+            b"{\"type\":\"turn_context\",\"payload\":{\"model\":\"gpt-5.5\"}}\n",
+        )
+        .await
+        .unwrap();
+
+        let mut file = tokio::fs::OpenOptions::new()
+            .read(true)
+            .open(&path)
+            .await
+            .unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut a = acc();
+
+        let offset = read_appended(&mut file, 0, &mut a, &tx).await;
+        assert!(rx.try_recv().is_ok(), "the whole first line must emit");
+        assert!(rx.try_recv().is_err());
+
+        append(
+            &path,
+            br#"{"type":"turn_context","payload":{"model":"gpt-6"#,
+        )
+        .await;
+        let offset_after_partial = read_appended(&mut file, offset, &mut a, &tx).await;
+        assert_eq!(
+            offset_after_partial, offset,
+            "a partial line must not advance the offset"
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "a partial line must not emit a record"
+        );
+
+        append(&path, b"\"}}\n").await;
+        let offset_after_complete =
+            read_appended(&mut file, offset_after_partial, &mut a, &tx).await;
+        assert!(offset_after_complete > offset_after_partial);
+        match rx
+            .try_recv()
+            .expect("completed line must emit exactly once")
+        {
+            HookEvent::AgentStatus { model_name, .. } => {
+                assert_eq!(model_name.as_deref(), Some("gpt-6"));
+            }
+            other => panic!("expected AgentStatus, got {other:?}"),
+        }
+        assert!(rx.try_recv().is_err(), "must emit exactly one record");
+    }
+
+    #[tokio::test]
+    async fn multi_byte_utf8_char_split_across_read_boundary_is_not_lost() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        tokio::fs::write(&path, b"").await.unwrap();
+
+        let mut file = tokio::fs::OpenOptions::new()
+            .read(true)
+            .open(&path)
+            .await
+            .unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut a = acc();
+
+        // `😀` (U+1F600) is 4 bytes in UTF-8; split the append mid-character.
+        let emoji = "😀".as_bytes();
+        assert_eq!(emoji.len(), 4);
+        let mut line = br#"{"type":"turn_context","payload":{"model":""#.to_vec();
+        line.extend_from_slice(emoji);
+        line.extend_from_slice(br#""}}"#);
+        line.push(b'\n');
+
+        let split_at = line.len() - 3; // lands inside the 4-byte emoji sequence
+        append(&path, &line[..split_at]).await;
+        let offset = read_appended(&mut file, 0, &mut a, &tx).await;
+        assert_eq!(offset, 0, "no newline yet; nothing should be consumed");
+        assert!(rx.try_recv().is_err());
+
+        append(&path, &line[split_at..]).await;
+        let offset = read_appended(&mut file, offset, &mut a, &tx).await;
+        assert_eq!(offset as usize, line.len());
+        match rx
+            .try_recv()
+            .expect("completed line must emit exactly once")
+        {
+            HookEvent::AgentStatus { model_name, .. } => {
+                assert!(model_name.unwrap().contains('😀'));
+            }
+            other => panic!("expected AgentStatus, got {other:?}"),
+        }
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn whole_lines_appended_at_once_emit_one_record_each() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        tokio::fs::write(
+            &path,
+            b"{\"type\":\"turn_context\",\"payload\":{\"model\":\"a\"}}\n\
+              {\"type\":\"turn_context\",\"payload\":{\"model\":\"b\"}}\n\
+              {\"type\":\"turn_context\",\"payload\":{\"model\":\"c\"}}\n",
+        )
+        .await
+        .unwrap();
+
+        let mut file = tokio::fs::OpenOptions::new()
+            .read(true)
+            .open(&path)
+            .await
+            .unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut a = acc();
+
+        let offset = read_appended(&mut file, 0, &mut a, &tx).await;
+        let eof = tokio::fs::metadata(&path).await.unwrap().len();
+        assert_eq!(offset, eof, "offset must land exactly at EOF");
+
+        let mut models = Vec::new();
+        while let Ok(HookEvent::AgentStatus { model_name, .. }) = rx.try_recv() {
+            models.push(model_name.unwrap());
+        }
+        assert_eq!(models, vec!["a", "b", "c"]);
     }
 
     #[test]

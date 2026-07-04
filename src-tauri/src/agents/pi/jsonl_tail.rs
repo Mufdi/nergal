@@ -128,6 +128,12 @@ pub fn start_tail(
 
 /// Seek to `offset`, drain to EOF, parse each newline-delimited line through
 /// `parse_line`, forward to `sink`. Returns the new offset.
+///
+/// The offset advances only past the last `\n` in the read: a modify event
+/// can fire mid-write, so a trailing partial line is left unconsumed and
+/// re-read whole on the next event, instead of being dropped (and corrupting
+/// the following read, since the offset would otherwise already be past its
+/// bytes).
 async fn read_appended(
     file: &mut tokio::fs::File,
     offset: u64,
@@ -139,10 +145,20 @@ async fn read_appended(
     if file.seek(std::io::SeekFrom::Start(offset)).await.is_err() {
         return offset;
     }
-    let mut buf = String::new();
-    let n = file.read_to_string(&mut buf).await.unwrap_or(0);
-    let new_offset = offset + n as u64;
-    for line in buf.lines() {
+    let mut buf = Vec::new();
+    if file.read_to_end(&mut buf).await.is_err() {
+        return offset;
+    }
+    let Some(last_newline) = buf.iter().rposition(|&b| b == b'\n') else {
+        return offset;
+    };
+    let complete = &buf[..=last_newline];
+    let new_offset = offset + complete.len() as u64;
+    for line in complete.split(|&b| b == b'\n') {
+        let Ok(line) = std::str::from_utf8(line) else {
+            tracing::warn!("pi jsonl line was not valid utf-8; skipping");
+            continue;
+        };
         if line.trim().is_empty() {
             continue;
         }
@@ -245,6 +261,154 @@ fn absolutize_path_field(input: &mut serde_json::Value, cwd: &Path) {
 mod tests {
     use super::*;
     use serde_json::json;
+    use tokio::io::AsyncWriteExt;
+
+    /// Parses `{"name": "..."}` lines into a `ToolUse` so `wrap` turns them
+    /// into an observable `HookEvent::PostToolUse`.
+    fn test_parser() -> LineParser {
+        Arc::new(|line: &str| {
+            serde_json::from_str::<serde_json::Value>(line)
+                .ok()
+                .map(|v| TranscriptEvent::ToolUse {
+                    name: v
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("tool")
+                        .to_string(),
+                    input: json!({}),
+                })
+        })
+    }
+
+    async fn append(path: &Path, bytes: &[u8]) {
+        let mut f = tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(path)
+            .await
+            .unwrap();
+        f.write_all(bytes).await.unwrap();
+        f.flush().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn half_line_holds_offset_until_completed() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        tokio::fs::write(&path, b"{\"name\":\"a\"}\n")
+            .await
+            .unwrap();
+
+        let mut file = tokio::fs::OpenOptions::new()
+            .read(true)
+            .open(&path)
+            .await
+            .unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let parser = test_parser();
+        let cwd = std::env::temp_dir();
+
+        let offset = read_appended(&mut file, 0, &parser, &tx, &cwd, "sess").await;
+        assert!(rx.try_recv().is_ok(), "the whole first line must emit");
+        assert!(rx.try_recv().is_err());
+
+        append(&path, b"{\"name\":\"b\"").await;
+        let offset_after_partial =
+            read_appended(&mut file, offset, &parser, &tx, &cwd, "sess").await;
+        assert_eq!(
+            offset_after_partial, offset,
+            "a partial line must not advance the offset"
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "a partial line must not emit a record"
+        );
+
+        append(&path, b"}\n").await;
+        let offset_after_complete =
+            read_appended(&mut file, offset_after_partial, &parser, &tx, &cwd, "sess").await;
+        assert!(offset_after_complete > offset_after_partial);
+        match rx
+            .try_recv()
+            .expect("completed line must emit exactly once")
+        {
+            HookEvent::PostToolUse { tool_name, .. } => assert_eq!(tool_name, "b"),
+            other => panic!("expected PostToolUse, got {other:?}"),
+        }
+        assert!(rx.try_recv().is_err(), "must emit exactly one record");
+    }
+
+    #[tokio::test]
+    async fn multi_byte_utf8_char_split_across_read_boundary_is_not_lost() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        tokio::fs::write(&path, b"").await.unwrap();
+
+        let mut file = tokio::fs::OpenOptions::new()
+            .read(true)
+            .open(&path)
+            .await
+            .unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let parser = test_parser();
+        let cwd = std::env::temp_dir();
+
+        // `😀` (U+1F600) is 4 bytes in UTF-8; split the append mid-character.
+        let emoji = "😀".as_bytes();
+        assert_eq!(emoji.len(), 4);
+        let mut line = br#"{"name":""#.to_vec();
+        line.extend_from_slice(emoji);
+        line.extend_from_slice(br#""}"#);
+        line.push(b'\n');
+
+        let split_at = line.len() - 3; // lands inside the 4-byte emoji sequence
+        append(&path, &line[..split_at]).await;
+        let offset = read_appended(&mut file, 0, &parser, &tx, &cwd, "sess").await;
+        assert_eq!(offset, 0, "no newline yet; nothing should be consumed");
+        assert!(rx.try_recv().is_err());
+
+        append(&path, &line[split_at..]).await;
+        let offset = read_appended(&mut file, offset, &parser, &tx, &cwd, "sess").await;
+        assert_eq!(offset as usize, line.len());
+        match rx
+            .try_recv()
+            .expect("completed line must emit exactly once")
+        {
+            HookEvent::PostToolUse { tool_name, .. } => assert_eq!(tool_name, "😀"),
+            other => panic!("expected PostToolUse, got {other:?}"),
+        }
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn whole_lines_appended_at_once_emit_one_record_each() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        tokio::fs::write(
+            &path,
+            b"{\"name\":\"a\"}\n{\"name\":\"b\"}\n{\"name\":\"c\"}\n",
+        )
+        .await
+        .unwrap();
+
+        let mut file = tokio::fs::OpenOptions::new()
+            .read(true)
+            .open(&path)
+            .await
+            .unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let parser = test_parser();
+        let cwd = std::env::temp_dir();
+
+        let offset = read_appended(&mut file, 0, &parser, &tx, &cwd, "sess").await;
+        let eof = tokio::fs::metadata(&path).await.unwrap().len();
+        assert_eq!(offset, eof, "offset must land exactly at EOF");
+
+        let mut names = Vec::new();
+        while let Ok(HookEvent::PostToolUse { tool_name, .. }) = rx.try_recv() {
+            names.push(tool_name);
+        }
+        assert_eq!(names, vec!["a", "b", "c"]);
+    }
 
     #[test]
     fn absolutize_rewrites_relative_dot_path_under_cwd() {

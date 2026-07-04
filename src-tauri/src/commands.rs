@@ -1073,35 +1073,47 @@ pub async fn delete_session(
         );
     }
 
-    let db = db.lock().map_err(|e| e.to_string())?;
+    // Scoped guard: extract everything the (potentially slow) worktree
+    // removal needs, then let the guard drop at block end so removal runs
+    // with the DB unlocked for every other caller.
+    let worktree_cleanup = {
+        let db = db.lock().map_err(|e| e.to_string())?;
 
-    // Get session + workspace for worktree cleanup
-    let session = db.find_session(&session_id).map_err(|e| e.to_string())?;
+        // Get session + workspace for worktree cleanup
+        let session = db.find_session(&session_id).map_err(|e| e.to_string())?;
 
-    // Synchronous because the detached runner can't help here: it runs after
-    // the delete, and its MOC git diff needs the worktree still present.
-    // claim_finalization dedups against the PTY-EOF trigger firing as the PTY
-    // tears down, so the footer isn't appended twice.
-    if let Some(s) = &session
-        && let Ok(cfg) =
-            crate::obsidian::config::resolve(&s.workspace_id, |w| db.get_obsidian_config(w))
-        && crate::obsidian::post_session::claim_finalization(&session_id)
-    {
-        crate::hooks::server::write_session_log_footer(&db, &cfg, &session_id);
-        if cfg.moc_path.as_deref().filter(|p| !p.is_empty()).is_some()
-            && let Ok(Some(moc_path)) =
-                crate::obsidian::moc::MocBuilder::build(&session_id, &cfg, &db)
+        // Synchronous because the detached runner can't help here: it runs after
+        // the delete, and its MOC git diff needs the worktree still present.
+        // claim_finalization dedups against the PTY-EOF trigger firing as the PTY
+        // tears down, so the footer isn't appended twice.
+        if let Some(s) = &session
+            && let Ok(cfg) =
+                crate::obsidian::config::resolve(&s.workspace_id, |w| db.get_obsidian_config(w))
+            && crate::obsidian::post_session::claim_finalization(&session_id)
         {
-            let _ = crate::obsidian::moc::BacklinkUpdater::propagate(&moc_path, &cfg);
+            crate::hooks::server::write_session_log_footer(&db, &cfg, &session_id);
+            if cfg.moc_path.as_deref().filter(|p| !p.is_empty()).is_some()
+                && let Ok(Some(moc_path)) =
+                    crate::obsidian::moc::MocBuilder::build(&session_id, &cfg, &db)
+            {
+                let _ = crate::obsidian::moc::BacklinkUpdater::propagate(&moc_path, &cfg);
+            }
         }
-    }
 
-    if let Some(session) = &session
-        && let Some(wt_path) = &session.worktree_path
-        && let Some(repo_path) = db
-            .workspace_repo_path(&session.workspace_id)
-            .map_err(|e| e.to_string())?
-        && let Err(e) = crate::worktree::remove_worktree(&repo_path, wt_path)
+        let mut cleanup = None;
+        if let Some(session) = &session
+            && let Some(wt_path) = &session.worktree_path
+            && let Some(repo_path) = db
+                .workspace_repo_path(&session.workspace_id)
+                .map_err(|e| e.to_string())?
+        {
+            cleanup = Some((repo_path, wt_path.clone()));
+        }
+        cleanup
+    };
+
+    if let Some((repo_path, wt_path)) = worktree_cleanup
+        && let Err(e) = crate::worktree::remove_worktree(&repo_path, &wt_path)
     {
         tracing::warn!(
             session_id = %session_id,
@@ -1111,6 +1123,16 @@ pub async fn delete_session(
         );
     }
 
+    // Fresh guard for the finalize phase: re-validate since the row may have
+    // been removed by a concurrent delete while this one was unlocked above.
+    let db = db.lock().map_err(|e| e.to_string())?;
+    if db
+        .find_session(&session_id)
+        .map_err(|e| e.to_string())?
+        .is_none()
+    {
+        return Ok(());
+    }
     agents.forget_session(&session_id);
     db.delete_session(&session_id).map_err(|e| e.to_string())
 }
@@ -2658,25 +2680,31 @@ pub fn create_pr(
     title: String,
     body: String,
 ) -> Result<crate::worktree::PrInfo, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
+    // Extract everything under a short guard, then drop it before the
+    // network-bound list_branches / create_pr calls below.
+    let (cwd, branch, repo_path) = {
+        let db = db.lock().map_err(|e| e.to_string())?;
 
-    let Some(session) = db
-        .find_session(&session_id)
-        .map_err(|e: anyhow::Error| e.to_string())?
-    else {
-        return Err("session not found".into());
+        let Some(session) = db
+            .find_session(&session_id)
+            .map_err(|e: anyhow::Error| e.to_string())?
+        else {
+            return Err("session not found".into());
+        };
+
+        let Some(branch) = session.worktree_branch.clone() else {
+            return Err("session has no worktree branch".into());
+        };
+
+        let cwd = resolve_session_cwd(&db, &session_id)?;
+
+        let repo_path = db
+            .workspace_repo_path(&session.workspace_id)
+            .map_err(|e: anyhow::Error| e.to_string())?
+            .ok_or("workspace not found")?;
+
+        (cwd, branch, repo_path)
     };
-
-    let Some(ref branch) = session.worktree_branch else {
-        return Err("session has no worktree branch".into());
-    };
-
-    let cwd = resolve_session_cwd(&db, &session_id)?;
-
-    let repo_path = db
-        .workspace_repo_path(&session.workspace_id)
-        .map_err(|e: anyhow::Error| e.to_string())?
-        .ok_or("workspace not found")?;
 
     let branches = crate::worktree::list_branches(&repo_path).map_err(|e| e.to_string())?;
     let base = if branches.iter().any(|b| b == "main") {
@@ -2685,7 +2713,7 @@ pub fn create_pr(
         "master"
     };
 
-    crate::worktree::create_pr(&cwd, branch, base, &title, &body).map_err(|e| e.to_string())
+    crate::worktree::create_pr(&cwd, &branch, base, &title, &body).map_err(|e| e.to_string())
 }
 
 // ── Ship flow: push, ship, PR preview, CI checks, conflicts ──
@@ -2949,9 +2977,31 @@ pub fn git_ship(
     target_branch: Option<String>,
 ) -> Result<crate::worktree::ShipResult, String> {
     use tauri::Emitter;
-    let db = db.lock().map_err(|e| e.to_string())?;
-    let cwd = resolve_session_cwd(&db, &session_id)?;
-    let branch = resolve_session_branch(&db, &session_id)?;
+
+    // Extract everything under a short guard, then drop it before the
+    // git/network work below (branch/base resolution can shell out to git,
+    // and worktree::ship pushes + calls gh).
+    let (cwd, worktree_branch, repo_path) = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        let cwd = resolve_session_cwd(&db, &session_id)?;
+        let Some(session) = db
+            .find_session(&session_id)
+            .map_err(|e: anyhow::Error| e.to_string())?
+        else {
+            return Err("session not found".into());
+        };
+        let repo_path = db
+            .workspace_repo_path(&session.workspace_id)
+            .map_err(|e: anyhow::Error| e.to_string())?
+            .ok_or("workspace not found")?;
+        (cwd, session.worktree_branch, repo_path)
+    };
+
+    let branch = match worktree_branch {
+        Some(b) => b,
+        None => crate::worktree::current_branch(&cwd).map_err(|e| e.to_string())?,
+    };
+
     // Frontend override (PR target picker on Step 2) wins over the
     // session's resolved base when supplied; otherwise fall back to
     // the workspace default.
@@ -2961,7 +3011,14 @@ pub fn git_ship(
         .filter(|s| !s.is_empty())
     {
         Some(override_base) => override_base.to_string(),
-        None => resolve_session_base(&db, &session_id)?,
+        None => {
+            let branches = crate::worktree::list_branches(&repo_path).map_err(|e| e.to_string())?;
+            if branches.iter().any(|b| b == "main") {
+                "main".to_string()
+            } else {
+                "master".to_string()
+            }
+        }
     };
     let sid = session_id.clone();
     let app_clone = app.clone();

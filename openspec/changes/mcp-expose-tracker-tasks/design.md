@@ -41,3 +41,25 @@ A session's tools see only its own workspace's tracker bindings and git state (t
 
 - **User sign-off on D3 scoping** (workspace-scoped vs cross-workspace) before the build change is seeded.
 - Whether `get_pr_status` should include check-run details or just the rollup (build change can start with rollup).
+
+## Revision 1: user sign-off (2026-07-04)
+
+The user's decision — "incluyamos todo lo referente a clickup y linear en el mcp"
+(expose all ClickUp + Linear via MCP) — resolves the open sign-off items:
+
+- **D1 unified naming: ACCEPTED.** Both trackers surface through `list_tracker_tasks` /
+  `get_tracker_task` with a `source: "clickup" | "linear"` field, plus `get_pr_status` /
+  `get_git_status`. All four v1 tools are in scope.
+- **D3 scoping: workspace-scoped v1 (ACCEPTED, conservative default).** A session's tools
+  see only its own workspace's tracker bindings + git state. "Expose all ClickUp/Linear"
+  means both trackers, unified — NOT cross-workspace, which would be a *widening* of the
+  per-session scope that stays deferred (it would need its own explicit sign-off).
+- **`get_pr_status`: rollup-only for v1** (check-run details deferred) — the build change
+  starts with the rollup, per the design's own Open Question.
+- **Read-only guarantee stands**: zero write paths, zero live tracker API calls (mirror
+  reads only). Writes remain behind the human-gated UI.
+
+**Decision: GO.** Seed the build change (the four read-only tools + dispatch + mirror read
+mappers + `mirror_updated_at` staleness + D4 payload caps). Soft dependency
+`clickup-subdata-indexes` (index-backed mirror reads) already landed (Wave 2.11), so the
+build is unblocked.

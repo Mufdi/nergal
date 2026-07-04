@@ -438,6 +438,7 @@ pub fn run() {
             commands::get_cost,
             // Workspace commands
             commands::create_workspace,
+            commands::probe_workspace_path,
             commands::resolve_repo_root,
             commands::get_workspaces,
             commands::delete_workspace,

@@ -15,11 +15,27 @@ export interface ConfirmOptions {
   /// branch-rename mini-modal), so this no longer drives any visual.
   kind?: "warning" | "error" | "question";
   destructive?: boolean;
+  /// Safety property for confirmations triggered by external input (e.g. a
+  /// deep link). When `false`, Enter does NOT proceed — it cancels instead,
+  /// so a stray Enter while the user is typing elsewhere (attacker-
+  /// controlled timing) can't confirm; proceeding then requires an explicit
+  /// pointer/keyed action on the proceed button. Defaults to `true` (today's
+  /// behavior) — every existing caller is unaffected.
+  enterConfirms?: boolean;
 }
 
 export interface ActiveConfirm {
   opts: ConfirmOptions;
   resolve: (confirmed: boolean) => void;
+}
+
+/// Pure decision for what an Enter keypress does inside `ConfirmHost`'s
+/// capture-phase keydown handler. Extracted so the anti-stray-Enter property
+/// (confirm-deep-link-session-spawn D5) is unit-testable without rendering
+/// the dialog: Enter proceeds unless the caller opted into `enterConfirms:
+/// false` (external-input-triggered confirms).
+export function enterKeyConfirms(opts: ConfirmOptions): boolean {
+  return opts.enterConfirms !== false;
 }
 
 let active: ActiveConfirm | null = null;

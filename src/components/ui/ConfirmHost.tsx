@@ -9,6 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import {
+  enterKeyConfirms,
   getActiveConfirm,
   resolveConfirm,
   subscribeConfirm,
@@ -24,6 +25,11 @@ import {
 /// arrow keys can't land a ring on Cancel while the `Kbd` chip says Enter
 /// confirms, so Enter is unambiguously the proposed (destructive) action. The
 /// `Kbd` chips (esc / enter) are the affordance.
+///
+/// `opts.enterConfirms === false` (deep-link gate) flips this: Enter cancels
+/// instead of proceeding, and the confirm button's `Kbd` chip is hidden so
+/// the affordance never implies a keyboard path that doesn't exist —
+/// proceeding requires an explicit pointer/keyed action on the button.
 export function ConfirmHost() {
   const active = useSyncExternalStore(
     subscribeConfirm,
@@ -65,7 +71,7 @@ export function ConfirmHost() {
             if (e.key === "Enter") {
               e.preventDefault();
               e.stopPropagation();
-              resolveConfirm(true);
+              resolveConfirm(enterKeyConfirms(opts));
             }
           }}
         >
@@ -88,6 +94,7 @@ export function ConfirmHost() {
             >
               {opts.cancelLabel ?? "Cancel"}
               <Kbd keys="esc" className="ml-1.5" />
+              {opts.enterConfirms === false && <Kbd keys="enter" className="ml-1" />}
             </Button>
             <Button
               size="sm"
@@ -95,11 +102,13 @@ export function ConfirmHost() {
               onClick={() => resolveConfirm(true)}
             >
               {opts.confirmLabel ?? "Confirm"}
-              <Kbd
-                keys="enter"
-                tone={destructive ? "subtle" : "onPrimary"}
-                className="ml-1.5"
-              />
+              {opts.enterConfirms !== false && (
+                <Kbd
+                  keys="enter"
+                  tone={destructive ? "subtle" : "onPrimary"}
+                  className="ml-1.5"
+                />
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

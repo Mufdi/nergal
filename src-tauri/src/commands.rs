@@ -862,6 +862,27 @@ pub fn init_git_repo(db: State<'_, SharedDb>, workspace_id: String) -> Result<()
     crate::worktree::init_repo(&repo_path).map_err(|e| e.to_string())
 }
 
+/// Side-effect-free pre-creation check for the deep-link confirmation gate:
+/// reports dir + git-repo status for a path WITHOUT creating a workspace, so a
+/// declined confirm leaves no trace (confirm-deep-link-session-spawn).
+#[derive(serde::Serialize)]
+pub struct WorkspaceProbe {
+    pub is_dir: bool,
+    pub is_git_repo: bool,
+    pub resolved: String,
+}
+
+#[tauri::command]
+pub fn probe_workspace_path(path: String) -> WorkspaceProbe {
+    let raw = PathBuf::from(&path);
+    let resolved = std::fs::canonicalize(&raw).unwrap_or(raw);
+    WorkspaceProbe {
+        is_dir: resolved.is_dir(),
+        is_git_repo: crate::worktree::is_git_repo(&resolved),
+        resolved: resolved.to_string_lossy().into_owned(),
+    }
+}
+
 /// Lets a deep-link open a file in a project that isn't a Nergal workspace yet:
 /// the git root is the natural workspace root. None when the path is outside
 /// any git repo — deep links don't auto-create non-git workspaces.

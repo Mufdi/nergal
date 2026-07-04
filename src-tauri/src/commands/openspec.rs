@@ -192,6 +192,31 @@ pub fn list_openspec_changes(
     Ok(changes)
 }
 
+/// Resolve an artifact's path within an OpenSpec change: master specs live at
+/// `openspec_dir/specs/`, everything else tries the active `changes/` dir
+/// first and falls back to `changes/archive/` (a change moves there once
+/// shipped, so the same `change_name` must keep resolving after archival).
+/// Every join goes through `fs_guard::resolve_within_base` so `artifact_path`
+/// (and `change_name`) can't traverse outside their base.
+fn resolve_artifact_path(
+    openspec_dir: &std::path::Path,
+    change_name: &str,
+    artifact_path: &str,
+) -> Result<std::path::PathBuf, String> {
+    if change_name == "_master" {
+        return crate::fs_guard::resolve_within_base(openspec_dir, artifact_path);
+    }
+    let changes_dir = openspec_dir.join("changes");
+    let active_dir = crate::fs_guard::resolve_within_base(&changes_dir, change_name)?;
+    let change_dir = if active_dir.exists() {
+        active_dir
+    } else {
+        let archive_dir = changes_dir.join("archive");
+        crate::fs_guard::resolve_within_base(&archive_dir, change_name)?
+    };
+    crate::fs_guard::resolve_within_base(&change_dir, artifact_path)
+}
+
 /// Read a specific artifact file from an OpenSpec change.
 #[tauri::command]
 pub fn read_openspec_artifact(
@@ -205,21 +230,7 @@ pub fn read_openspec_artifact(
         resolve_openspec_dir(&db, &session_id)?
     };
 
-    // Master specs live at openspec/specs/
-    let file_path = if change_name == "_master" {
-        crate::fs_guard::resolve_within_base(&openspec_dir, &artifact_path)?
-    } else {
-        let changes_dir = openspec_dir.join("changes");
-        // Try active first, then archive
-        let active_dir = crate::fs_guard::resolve_within_base(&changes_dir, &change_name)?;
-        let change_dir = if active_dir.exists() {
-            active_dir
-        } else {
-            let archive_dir = changes_dir.join("archive");
-            crate::fs_guard::resolve_within_base(&archive_dir, &change_name)?
-        };
-        crate::fs_guard::resolve_within_base(&change_dir, &artifact_path)?
-    };
+    let file_path = resolve_artifact_path(&openspec_dir, &change_name, &artifact_path)?;
 
     std::fs::read_to_string(&file_path)
         .map_err(|e| format!("failed to read {}: {e}", file_path.display()))
@@ -365,4 +376,55 @@ pub fn watch_openspec_for_session(
         .map_err(|e| e.to_string())?
         .retarget(&dir)
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn write_file(path: &std::path::Path, content: &str) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+
+    #[test]
+    fn active_dir_hit() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(&tmp.path().join("changes/my-change/proposal.md"), "active");
+
+        let resolved = resolve_artifact_path(tmp.path(), "my-change", "proposal.md").unwrap();
+        assert_eq!(fs::read_to_string(resolved).unwrap(), "active");
+    }
+
+    #[test]
+    fn archive_fallback_when_active_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(
+            &tmp.path().join("changes/archive/my-change/proposal.md"),
+            "archived",
+        );
+
+        let resolved = resolve_artifact_path(tmp.path(), "my-change", "proposal.md").unwrap();
+        assert_eq!(fs::read_to_string(resolved).unwrap(), "archived");
+    }
+
+    #[test]
+    fn master_resolves_against_openspec_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(&tmp.path().join("specs/my-cap/spec.md"), "master");
+
+        let resolved =
+            resolve_artifact_path(tmp.path(), "_master", "specs/my-cap/spec.md").unwrap();
+        assert_eq!(fs::read_to_string(resolved).unwrap(), "master");
+    }
+
+    #[test]
+    fn traversal_is_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(&tmp.path().join("changes/my-change/proposal.md"), "active");
+
+        let result = resolve_artifact_path(tmp.path(), "my-change", "../../../etc/passwd");
+        assert!(result.is_err());
+    }
 }

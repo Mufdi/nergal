@@ -641,9 +641,21 @@ pub fn rename_current_branch(cwd: &Path, new_name: &str) -> Result<()> {
 }
 
 /// Stage a single file.
+///
+/// `path` is caller-supplied, so it is vetted through
+/// `fs_guard::resolve_within_base` before touching git (same convention as
+/// `file_conflict_versions`) — `git` bounds traversal on its own in practice,
+/// this is defense-in-depth consistency, not a live vuln fix.
+///
+/// Because the guard canonicalizes the leaf, a tracked symlink pointing outside
+/// the worktree is fail-closed rejected, and one pointing inside stages its
+/// resolved target (not the link entry). Uncommon for the git-panel use case
+/// and identical to `file_conflict_versions`; accepted over byte-parity.
 pub fn stage_file(cwd: &Path, path: &str) -> Result<()> {
+    let safe = crate::fs_guard::resolve_within_base(cwd, path).map_err(|e| anyhow::anyhow!(e))?;
     let output = git()
-        .args(["add", "--", path])
+        .args(["add", "--"])
+        .arg(&safe)
         .current_dir(cwd)
         .output()
         .context("failed to execute git add")?;
@@ -654,10 +666,12 @@ pub fn stage_file(cwd: &Path, path: &str) -> Result<()> {
     Ok(())
 }
 
-/// Unstage a single file.
+/// Unstage a single file. See `stage_file` for the path-vetting rationale.
 pub fn unstage_file(cwd: &Path, path: &str) -> Result<()> {
+    let safe = crate::fs_guard::resolve_within_base(cwd, path).map_err(|e| anyhow::anyhow!(e))?;
     let output = git()
-        .args(["restore", "--staged", "--", path])
+        .args(["restore", "--staged", "--"])
+        .arg(&safe)
         .current_dir(cwd)
         .output()
         .context("failed to execute git restore --staged")?;

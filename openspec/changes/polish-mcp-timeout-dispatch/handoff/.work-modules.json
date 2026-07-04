@@ -1,0 +1,23 @@
+{
+  "tier": "M",
+  "tier_source": "heuristic",
+  "ceremony": "standard",
+  "risk_tier": "medium",
+  "files_estimate": 3,
+  "tags": ["refactor", "resilience", "security", "test-coverage"],
+  "visibility": "private",
+  "spec_target": "nergal-mcp-server",
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "iprev_rounds": 0,
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": "security-auditor on stage_file vetting",
+    "gates_phases_run": ["compile", "test", "lint", "security"],
+    "per_phase_models": {
+      "design": "opus",
+      "implementation": "sonnet",
+      "validation": "sonnet",
+      "security_review": "opus"
+    }
+  }
+}

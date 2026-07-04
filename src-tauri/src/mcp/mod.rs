@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::agents::state::AgentRuntimeState;
 use crate::config::Config;
@@ -41,6 +42,11 @@ const INVALID_PARAMS: i64 = -32602;
 const INTERNAL_ERROR: i64 = -32603;
 /// Server is reachable but disabled by the user (default-off posture).
 const MCP_DISABLED: i64 = -32001;
+
+/// Bounds `get_pr_status`/`get_git_status`, whose sync bodies shell out to
+/// `gh`/`git` with no internal timeout — a network-stalled `gh` would
+/// otherwise pin a tokio worker thread for the subprocess's lifetime.
+const TRACKER_TOOL_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Dedicated MCP socket path inside the per-user IPC dir. NOT the hook socket.
 ///
@@ -161,6 +167,27 @@ fn tool_ok(id: Option<Value>, value: Value) -> JsonRpcResponse {
             "isError": false,
         }),
     )
+}
+
+/// Run a blocking tracker-tool body (subprocess-based, no internal timeout)
+/// off the tokio worker via `spawn_blocking`, bounded by
+/// `TRACKER_TOOL_TIMEOUT`. `tracker.rs` stays sync and unit-testable; this is
+/// the only place that knows about the async boundary.
+async fn run_blocking_tool(
+    id: Option<Value>,
+    f: impl FnOnce() -> anyhow::Result<Value> + Send + 'static,
+) -> JsonRpcResponse {
+    match tokio::time::timeout(TRACKER_TOOL_TIMEOUT, tokio::task::spawn_blocking(f)).await {
+        Ok(Ok(Ok(value))) => tool_ok(id, value),
+        Ok(Ok(Err(e))) => err(id, INTERNAL_ERROR, &e.to_string(), None),
+        Ok(Err(join_err)) => err(
+            id,
+            INTERNAL_ERROR,
+            &format!("tracker tool task failed: {join_err}"),
+            None,
+        ),
+        Err(_elapsed) => err(id, INTERNAL_ERROR, "tracker tool timed out", None),
+    }
 }
 
 /// The MCP `initialize` result — the single source the shim mirrors in degraded
@@ -364,8 +391,10 @@ pub fn tool_definitions() -> Vec<Value> {
 
 /// Pure JSON-RPC dispatch. `identity` is the caller's resolved nergal session
 /// id (or `None` = unidentified). `enabled` is resolved by the caller from
-/// config per request so this stays pure and unit-testable.
-pub fn dispatch(
+/// config per request so this stays pure and unit-testable (async because
+/// `get_pr_status`/`get_git_status` hop to the blocking pool; every other arm
+/// still resolves without an await point).
+pub async fn dispatch(
     ctx: &DaemonContext,
     identity: Option<&str>,
     enabled: bool,
@@ -618,11 +647,16 @@ pub fn dispatch(
                             None,
                         );
                     };
-                    let session_id = args.get("session_id").and_then(|v| v.as_str());
-                    match tracker::get_pr_status(ctx, caller, session_id) {
-                        Ok(v) => tool_ok(req.id.clone(), v),
-                        Err(e) => err(req.id.clone(), INTERNAL_ERROR, &e.to_string(), None),
-                    }
+                    let caller = caller.to_string();
+                    let session_id = args
+                        .get("session_id")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string);
+                    let ctx = ctx.clone();
+                    run_blocking_tool(req.id.clone(), move || {
+                        tracker::get_pr_status(&ctx, &caller, session_id.as_deref())
+                    })
+                    .await
                 }
                 Some("get_git_status") => {
                     let Some(caller) = identity else {
@@ -635,10 +669,13 @@ pub fn dispatch(
                     };
                     match args.get("session_id").and_then(|v| v.as_str()) {
                         Some(session_id) => {
-                            match tracker::get_git_status(ctx, caller, session_id) {
-                                Ok(v) => tool_ok(req.id.clone(), v),
-                                Err(e) => err(req.id.clone(), INTERNAL_ERROR, &e.to_string(), None),
-                            }
+                            let caller = caller.to_string();
+                            let session_id = session_id.to_string();
+                            let ctx = ctx.clone();
+                            run_blocking_tool(req.id.clone(), move || {
+                                tracker::get_git_status(&ctx, &caller, &session_id)
+                            })
+                            .await
                         }
                         None => err(
                             req.id.clone(),
@@ -750,7 +787,7 @@ async fn handle_connection(mut stream: crate::platform::PlatformStream, ctx: Dae
             .as_deref()
             .and_then(|h| ctx.agents.resolve_session_hint(h));
         let enabled = Config::load().mcp_server_enabled;
-        let resp = dispatch(&ctx, identity.as_deref(), enabled, &req);
+        let resp = dispatch(&ctx, identity.as_deref(), enabled, &req).await;
         if is_notification {
             continue;
         }
@@ -796,19 +833,19 @@ mod tests {
         }
     }
 
-    #[test]
-    fn initialize_reports_protocol_and_tools_capability() {
+    #[tokio::test]
+    async fn initialize_reports_protocol_and_tools_capability() {
         let ctx = test_ctx();
-        let r = dispatch(&ctx, None, true, &req("initialize", json!({})));
+        let r = dispatch(&ctx, None, true, &req("initialize", json!({}))).await;
         let result = r.result.unwrap();
         assert_eq!(result["protocolVersion"], MCP_PROTOCOL_VERSION);
         assert!(result["capabilities"]["tools"].is_object());
     }
 
-    #[test]
-    fn tools_list_returns_directory_and_messaging_tools() {
+    #[tokio::test]
+    async fn tools_list_returns_directory_and_messaging_tools() {
         let ctx = test_ctx();
-        let r = dispatch(&ctx, None, true, &req("tools/list", json!({})));
+        let r = dispatch(&ctx, None, true, &req("tools/list", json!({}))).await;
         let tools = r.result.unwrap()["tools"].as_array().unwrap().clone();
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         assert_eq!(
@@ -833,41 +870,43 @@ mod tests {
         );
     }
 
-    #[test]
-    fn tools_call_disabled_returns_mcp_disabled() {
+    #[tokio::test]
+    async fn tools_call_disabled_returns_mcp_disabled() {
         let ctx = test_ctx();
         let r = dispatch(
             &ctx,
             None,
             false,
             &req("tools/call", json!({ "name": "whoami", "arguments": {} })),
-        );
+        )
+        .await;
         let e = r.error.unwrap();
         assert_eq!(e.code, MCP_DISABLED);
         assert_eq!(e.data.unwrap()["reason"], "mcp_disabled");
     }
 
-    #[test]
-    fn unknown_method_is_method_not_found() {
+    #[tokio::test]
+    async fn unknown_method_is_method_not_found() {
         let ctx = test_ctx();
-        let r = dispatch(&ctx, None, true, &req("frobnicate", json!({})));
+        let r = dispatch(&ctx, None, true, &req("frobnicate", json!({}))).await;
         assert_eq!(r.error.unwrap().code, METHOD_NOT_FOUND);
     }
 
-    #[test]
-    fn unknown_tool_is_method_not_found() {
+    #[tokio::test]
+    async fn unknown_tool_is_method_not_found() {
         let ctx = test_ctx();
         let r = dispatch(
             &ctx,
             None,
             true,
             &req("tools/call", json!({ "name": "nope", "arguments": {} })),
-        );
+        )
+        .await;
         assert_eq!(r.error.unwrap().code, METHOD_NOT_FOUND);
     }
 
-    #[test]
-    fn get_session_without_id_is_invalid_params() {
+    #[tokio::test]
+    async fn get_session_without_id_is_invalid_params() {
         let ctx = test_ctx();
         let r = dispatch(
             &ctx,
@@ -877,12 +916,13 @@ mod tests {
                 "tools/call",
                 json!({ "name": "get_session", "arguments": {} }),
             ),
-        );
+        )
+        .await;
         assert_eq!(r.error.unwrap().code, INVALID_PARAMS);
     }
 
-    #[test]
-    fn list_sessions_empty_when_no_live_sessions() {
+    #[tokio::test]
+    async fn list_sessions_empty_when_no_live_sessions() {
         let ctx = test_ctx();
         let r = dispatch(
             &ctx,
@@ -892,7 +932,8 @@ mod tests {
                 "tools/call",
                 json!({ "name": "list_sessions", "arguments": {} }),
             ),
-        );
+        )
+        .await;
         // tool_ok wraps as content text; parse it back.
         let text = r.result.unwrap()["content"][0]["text"]
             .as_str()
@@ -902,15 +943,16 @@ mod tests {
         assert_eq!(list.as_array().unwrap().len(), 0);
     }
 
-    #[test]
-    fn whoami_unidentified_when_no_hint() {
+    #[tokio::test]
+    async fn whoami_unidentified_when_no_hint() {
         let ctx = test_ctx();
         let r = dispatch(
             &ctx,
             None,
             true,
             &req("tools/call", json!({ "name": "whoami", "arguments": {} })),
-        );
+        )
+        .await;
         let text = r.result.unwrap()["content"][0]["text"]
             .as_str()
             .unwrap()
@@ -919,8 +961,8 @@ mod tests {
         assert_eq!(who["identified"], false);
     }
 
-    #[test]
-    fn list_tracker_tasks_via_dispatch_empty_mirrors() {
+    #[tokio::test]
+    async fn list_tracker_tasks_via_dispatch_empty_mirrors() {
         let ctx = test_ctx();
         let r = dispatch(
             &ctx,
@@ -930,7 +972,8 @@ mod tests {
                 "tools/call",
                 json!({ "name": "list_tracker_tasks", "arguments": {} }),
             ),
-        );
+        )
+        .await;
         let text = r.result.unwrap()["content"][0]["text"]
             .as_str()
             .unwrap()
@@ -939,8 +982,8 @@ mod tests {
         assert_eq!(result["tasks"].as_array().unwrap().len(), 0);
     }
 
-    #[test]
-    fn get_pr_status_without_identity_is_invalid_params() {
+    #[tokio::test]
+    async fn get_pr_status_without_identity_is_invalid_params() {
         let ctx = test_ctx();
         let r = dispatch(
             &ctx,
@@ -950,12 +993,13 @@ mod tests {
                 "tools/call",
                 json!({ "name": "get_pr_status", "arguments": {} }),
             ),
-        );
+        )
+        .await;
         assert_eq!(r.error.unwrap().code, INVALID_PARAMS);
     }
 
-    #[test]
-    fn get_git_status_without_identity_is_invalid_params() {
+    #[tokio::test]
+    async fn get_git_status_without_identity_is_invalid_params() {
         let ctx = test_ctx();
         let r = dispatch(
             &ctx,
@@ -965,7 +1009,8 @@ mod tests {
                 "tools/call",
                 json!({ "name": "get_git_status", "arguments": { "session_id": "s1" } }),
             ),
-        );
+        )
+        .await;
         assert_eq!(r.error.unwrap().code, INVALID_PARAMS);
     }
 }

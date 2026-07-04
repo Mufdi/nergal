@@ -34,7 +34,6 @@ fn neutralize_fence_sentinels(s: &str) -> String {
         .replace("<<<BEGIN LINEAR ISSUE DATA>>>", "[removed: fence sentinel]")
 }
 
-
 /// Linear priority int → label, using the panel's exact vocabulary
 /// (`linearPriorityStr`, `src/components/linear/LinearPanel.tsx:52`). Note
 /// `3 → "normal"` (Linear's own word, NOT "Medium").

@@ -5,24 +5,39 @@ TBD - created by archiving change issue-tracker-adapter. Update Purpose after ar
 ## Requirements
 ### Requirement: Tracker integrations share one adapter contract
 
-Tracker integrations SHALL implement a shared `IssueTrackerAdapter` contract covering the mechanical layers — mirror reconcile lifecycle, poll cadence with tombstoning, own-echo writeback registry (provisional record before the API call, clear on failure, TTL), closure token flow, and keyring auth storage — with tracker-specific clients, models, and state vocabularies living behind the contract's associated types.
+Tracker integrations SHALL share the mechanically-duplicated slices the spike proved
+extractable with zero paper-migration leaks — a generic own-echo writeback registry
+(`WritebackRegistry<F>`: provisional record before the API call, clear on failure, TTL,
+parametrized over each tracker's write-field class preserving the Scalar/Additive split),
+a generic keyring credential store (`CredentialStore`: keyring + atomic 0600 fallback
+file, parametrized over service/account/filename, its on-disk fallback field accepting
+both legacy tracker key names so no stored credential is lost on upgrade), and the
+closed-out marker functions (parametrized by table name). Each tracker keeps its own
+client, model, state vocabulary, poller completeness model, mirror reconcile lifecycle,
+closure orchestration, AND its prompt-compose/budget framework — the compose layer's
+`fit_to_budget` carries a per-tracker control-flow divergence (ClickUp has a
+checklist-collapse attrition stage Linear lacks) that a shared trait would only paper over
+with per-tracker overrides, the same anti-pattern the spike rejected for
+poller/mirror/closure.
 
-#### Scenario: cross-tracker fix lands once
+#### Scenario: cross-tracker fix lands once on the shared slices
 
-- **WHEN** a defect is found in shared mechanics (e.g. echo-suppression ordering)
-- **THEN** the fix is made once in the adapter layer and every tracker integration inherits it
+- **WHEN** a defect is found in a shared slice (echo-registry logic, keyring fallback,
+  closed-out marker)
+- **THEN** the fix is made once in the shared module and every tracker inherits it
 
-#### Scenario: third tracker is a fill-in job
+#### Scenario: a third tracker reuses the shared slices, not the whole stack
 
 - **WHEN** a new tracker (e.g. GitHub Issues) is integrated
-- **THEN** the work is implementing the adapter's tracker-specific surface, not copying and adapting an existing stack
+- **THEN** it reuses the shared writeback registry / credential store / closed-out marker,
+  and still writes its own client, model, poller, mirror reconcile, and prompt-compose
+  (those layers do not converge across trackers — confirmed by the GitHub-Issues paper
+  sanity-check)
 
-### Requirement: Extraction is gated on the spike's go decision
+#### Scenario: behavior is preserved across the extraction
 
-The adapter extraction SHALL NOT begin until the spike deliverables exist (duplication inventory, trait draft, paper-migration of one tracker, go/no-go recommendation recorded in this change's design.md) and the go decision is made by the user.
-
-#### Scenario: no-go is a recorded outcome
-
-- **WHEN** the spike concludes the trackers are too divergent to extract profitably
-- **THEN** the recommendation and the duplication inventory are recorded, and no refactor proceeds
+- **WHEN** ClickUp and Linear are migrated onto the shared slices
+- **THEN** no tracker behavior, DB schema, or public command surface changes — the shared
+  code is behavior-identical to the per-tracker code it replaces, verified by the existing
+  per-tracker tests consolidating onto it
 

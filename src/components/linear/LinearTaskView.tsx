@@ -1266,7 +1266,7 @@ export function LinearIssueBody({
       <SectionCaps label="Description" />
       {issue.description && issue.description.trim() ? (
         <div className="-mx-3 -my-2 rounded">
-          <MarkdownView content={issue.description} gateRemoteImages linearAssets />
+          <MarkdownView content={issue.description} linearAssets />
         </div>
       ) : (
         <p className="text-xs text-muted-foreground">No description</p>
@@ -1321,7 +1321,7 @@ export function LinearIssueBody({
           )}
         </div>
         <div className="-my-1.5">
-          <MarkdownView content={comment.body ?? ""} gateRemoteImages linearAssets />
+          <MarkdownView content={comment.body ?? ""} linearAssets />
         </div>
       </div>
     );

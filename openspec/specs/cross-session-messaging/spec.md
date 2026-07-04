@@ -73,7 +73,7 @@ A thread SHALL be `{ id, originator_session, participants, status, max_hops, msg
 
 ### Requirement: Hybrid state-aware delivery
 
-The system SHALL wake a target according to its mode, through a `SessionDelivery` abstraction. An idle target SHALL receive a PTY stdin wake note (via the existing PTY writer, only the owning agent PTY, with every embedded relayed string sanitized) that **embeds the pending message bodies directly** — the wake IS the read, so no separate `read_messages` round-trip is needed; once the wake lands the system SHALL mark those messages `agent_consumed_at` (delivery == consume for the wake path). `read_messages` remains as a catch-up / full-history fallback. A working target's delivery SHALL be queued; on the target's next `Stop`, the `nergal hook stop` CLI command SHALL query for pending deliveries and emit `hookSpecificOutput.additionalContext` on its stdout (the hook socket is fire-and-forget and cannot return data). Delivery SHALL key off `agent_consumed_at` (set by the wake path or `read_messages`), never `human_seen_at`. If the wake fails to land the messages SHALL be left unconsumed so the next idle flip retries — never stranded.
+The system SHALL wake a target according to its mode, through a `SessionDelivery` abstraction. An idle target SHALL receive a PTY stdin wake note (via the existing PTY writer, only the owning agent PTY, with every embedded relayed string sanitized) that **embeds the pending message bodies directly** — the wake IS the read, so no separate `read_messages` round-trip is needed; once the wake lands the system SHALL mark those messages `agent_consumed_at` (delivery == consume for the wake path). A wake SHALL count as landed only when its deferred submit `\r` has been delivered to the target PTY — paste success alone SHALL NOT trigger consumption; the mark-consumed write and the `crossmsg:agent-consumed` emission SHALL run in the wake's completion path after a confirmed submit. While a wake's submit is pending, the target session SHALL be marked in-flight and further drains for it SHALL be skipped (no double paste of still-unconsumed bodies). `read_messages` remains as a catch-up / full-history fallback. A working target's delivery SHALL be queued; on the target's next `Stop`, the `nergal hook stop` CLI command SHALL query for pending deliveries and emit `hookSpecificOutput.additionalContext` on its stdout (the hook socket is fire-and-forget and cannot return data). Delivery SHALL key off `agent_consumed_at` (set by the wake path or `read_messages`), never `human_seen_at`. If the wake fails to land — paste failure **or** submit failure — the messages SHALL be left unconsumed so the next idle flip retries — never stranded.
 
 Every working→idle transition with a non-empty pending queue SHALL trigger a PTY wake, and a send to an **already-settled** idle target SHALL wake it immediately — the `additionalContext` path is a best-effort fast layer, never the sole delivery path, so a message sent just after a `Stop` is never stranded.
 
@@ -84,7 +84,19 @@ Every working→idle transition with a non-empty pending queue SHALL trigger a P
 #### Scenario: Deliver to a settled idle target
 
 - **WHEN** a message is recorded for a target whose mode is idle and that has been idle past the settle window (or whose mode is unknown)
-- **THEN** the system SHALL inject a sanitized wake note embedding the message bodies into the target's PTY stdin (pasted without the Enter, then submitted with a settled `\r`), then mark them `agent_consumed_at`
+- **THEN** the system SHALL inject a sanitized wake note embedding the message bodies into the target's PTY stdin (pasted without the Enter, then submitted with a settled `\r`), and mark them `agent_consumed_at` only after the submit is confirmed
+
+#### Scenario: Submit failure leaves messages pending
+
+- **GIVEN** a wake note was pasted and the target PTY closes before the deferred `\r` submit lands
+- **WHEN** the submit fails
+- **THEN** `agent_consumed_at` SHALL remain unset and the next working→idle transition SHALL retry with a fresh wake note
+
+#### Scenario: In-flight wake is not double-pasted
+
+- **GIVEN** a wake's submit is pending for a session
+- **WHEN** another drain (send-path immediate wake or a concurrent `Stop`) targets the same session in that window
+- **THEN** it SHALL skip the session (no second paste of the same still-unconsumed bodies)
 
 #### Scenario: Just-idled target is queued, not pasted
 

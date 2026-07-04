@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
 
@@ -51,24 +52,125 @@ pub fn list_branches(repo_path: &Path) -> Result<Vec<String>> {
     Ok(branches)
 }
 
+/// Prefix shared by every per-call merge temp worktree directory under
+/// `.worktrees/nergal/`. Each full name is `<PREFIX><pid>.<seq>`.
+const MERGE_TMP_PREFIX: &str = "_merge_tmp.";
+
+/// Process-local counter disambiguating concurrent `squash_merge` calls in
+/// the same process (mirrors the `atomic_write.rs` `SEQ` technique) — pid
+/// alone isn't enough since two merges can run on different threads of the
+/// same process.
+static MERGE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Derive a per-call unique temp worktree path so concurrent merges into the
+/// same repo never share (and thus never force-remove) each other's worktree.
+fn derive_merge_tmp_dir(repo_path: &Path) -> PathBuf {
+    let pid = std::process::id();
+    let seq = MERGE_SEQ.fetch_add(1, Ordering::Relaxed);
+    repo_path
+        .join(".worktrees")
+        .join("nergal")
+        .join(format!("{MERGE_TMP_PREFIX}{pid}.{seq}"))
+}
+
+/// Whether `pid` is currently running. Used by the stale-sweep to tell a
+/// crashed leftover temp worktree (owning pid dead — safe to remove) apart
+/// from a concurrent in-flight merge (owning pid alive — must not touch).
+/// `sysinfo`-only per the cross-platform invariant: no `cfg(unix)` seam, no
+/// `/proc` reads, no `libc::kill`.
+fn pid_is_alive(pid: u32) -> bool {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+    let spid = Pid::from_u32(pid);
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[spid]),
+        false,
+        ProcessRefreshKind::nothing(),
+    );
+    sys.process(spid).is_some()
+}
+
+/// Sweep `_merge_tmp.<pid>.<seq>` siblings whose embedded pid is no longer
+/// alive, plus a best-effort `git worktree prune`. Runs on entry to
+/// `squash_merge`, before creating this call's own temp worktree.
+///
+/// A sibling name that doesn't parse as `<PREFIX><pid>.<seq>` is left alone —
+/// conservative by design: an unparseable name is more likely a future naming
+/// change we don't understand than a safe-to-delete leftover, and the cost of
+/// under-sweeping (a stray dir) is far lower than the cost of over-sweeping
+/// (deleting a live concurrent merge).
+fn sweep_stale_merge_worktrees(repo_path: &Path, nergal_worktrees_dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(nergal_worktrees_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(rest) = name.strip_prefix(MERGE_TMP_PREFIX) else {
+            continue;
+        };
+        let Some(pid_str) = rest.split('.').next() else {
+            continue;
+        };
+        let Ok(pid) = pid_str.parse::<u32>() else {
+            continue; // malformed — leave it, conservative
+        };
+        if pid_is_alive(pid) {
+            continue; // owned by a concurrent in-flight merge — never touch
+        }
+
+        let stale_path = entry.path();
+        let _ = git()
+            .args(["worktree", "remove", "--force"])
+            .arg(&stale_path)
+            .current_dir(repo_path)
+            .output();
+        let _ = std::fs::remove_dir_all(&stale_path);
+    }
+    let _ = git()
+        .args(["worktree", "prune"])
+        .current_dir(repo_path)
+        .output();
+}
+
+/// RAII guard that force-removes this call's temp merge worktree on drop,
+/// regardless of which exit path `squash_merge` takes (success, conflict,
+/// commit failure, ref-update failure). Replaces the ~5 manual cleanup calls
+/// that used to be duplicated across every early return.
+struct MergeWorktreeGuard {
+    repo_path: PathBuf,
+    tmp_dir: PathBuf,
+}
+
+impl Drop for MergeWorktreeGuard {
+    fn drop(&mut self) {
+        let _ = git()
+            .args(["worktree", "remove", "--force"])
+            .arg(&self.tmp_dir)
+            .current_dir(&self.repo_path)
+            .output();
+        // Best-effort: `worktree remove` already deletes the dir on success;
+        // this catches the case where it refused (e.g. dirty submodule) so no
+        // `_merge_tmp.*` residue survives this call.
+        let _ = std::fs::remove_dir_all(&self.tmp_dir);
+    }
+}
+
 /// Squash-merge `source` branch into `target` branch with a single commit message.
 ///
 /// Uses a temporary detached worktree so the main repo directory is NEVER touched.
-/// This prevents disrupting Vite/HMR or the running app.
+/// This prevents disrupting Vite/HMR or the running app. The temp worktree lives
+/// at a per-call unique path (see `derive_merge_tmp_dir`) so concurrent merges
+/// into the same repo cannot interleave or delete each other's in-progress work.
 pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str) -> Result<()> {
-    let tmp_dir = repo_path
-        .join(".worktrees")
-        .join("nergal")
-        .join("_merge_tmp");
+    let nergal_worktrees_dir = repo_path.join(".worktrees").join("nergal");
+    sweep_stale_merge_worktrees(repo_path, &nergal_worktrees_dir);
 
-    // Clean up any leftover temp worktree
-    if tmp_dir.exists() {
-        let _ = git()
-            .args(["worktree", "remove", "--force"])
-            .arg(&tmp_dir)
-            .current_dir(repo_path)
-            .output();
-    }
+    let tmp_dir = derive_merge_tmp_dir(repo_path);
+    let _guard = MergeWorktreeGuard {
+        repo_path: repo_path.to_path_buf(),
+        tmp_dir: tmp_dir.clone(),
+    };
 
     // Create temp worktree detached at target branch tip
     let add = git()
@@ -103,11 +205,6 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
             .args(["merge", "--abort"])
             .current_dir(&tmp_dir)
             .output();
-        let _ = git()
-            .args(["worktree", "remove", "--force"])
-            .arg(&tmp_dir)
-            .current_dir(repo_path)
-            .output();
         anyhow::bail!("conflict:{detail}");
     }
 
@@ -123,11 +220,6 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
         let stdout = String::from_utf8_lossy(&commit.stdout);
         // "nothing to commit" can appear in stdout or stderr
         if stderr.contains("nothing to commit") || stdout.contains("nothing to commit") {
-            let _ = git()
-                .args(["worktree", "remove", "--force"])
-                .arg(&tmp_dir)
-                .current_dir(repo_path)
-                .output();
             return Ok(());
         }
         let detail = if stderr.trim().is_empty() {
@@ -135,11 +227,6 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
         } else {
             stderr
         };
-        let _ = git()
-            .args(["worktree", "remove", "--force"])
-            .arg(&tmp_dir)
-            .current_dir(repo_path)
-            .output();
         anyhow::bail!("commit failed: {detail}");
     }
 
@@ -160,20 +247,8 @@ pub fn squash_merge(repo_path: &Path, source: &str, target: &str, message: &str)
 
     if !update.status.success() {
         let stderr = String::from_utf8_lossy(&update.stderr);
-        let _ = git()
-            .args(["worktree", "remove", "--force"])
-            .arg(&tmp_dir)
-            .current_dir(repo_path)
-            .output();
         anyhow::bail!("failed to update {target} ref: {stderr}");
     }
-
-    // Clean up temp worktree
-    let _ = git()
-        .args(["worktree", "remove", "--force"])
-        .arg(&tmp_dir)
-        .current_dir(repo_path)
-        .output();
 
     Ok(())
 }
@@ -1458,5 +1533,211 @@ mod tests {
         let entry = parse_stash_line(line).expect("should parse");
         assert_eq!(entry.branch, "main");
         assert_eq!(entry.message, "feat: add new api endpoint");
+    }
+
+    #[test]
+    fn derive_merge_tmp_dir_is_unique_per_call() {
+        let repo = Path::new("/tmp/fake-repo-for-derivation-test");
+        let a = derive_merge_tmp_dir(repo);
+        let b = derive_merge_tmp_dir(repo);
+        assert_ne!(a, b, "two calls must never collide on the same tmp path");
+        assert!(a.starts_with(repo.join(".worktrees").join("nergal")));
+    }
+
+    #[test]
+    fn pid_is_alive_distinguishes_live_and_dead() {
+        assert!(
+            pid_is_alive(std::process::id()),
+            "the test process itself must read as alive"
+        );
+        assert!(
+            !pid_is_alive(u32::MAX),
+            "a pid that cannot exist must read as dead"
+        );
+    }
+
+    /// Full git plumbing for the concurrency test below.
+    fn init_repo_with_two_branch_pairs(repo: &Path) {
+        assert!(
+            git()
+                .args(["init", "-q", "-b", "main"])
+                .current_dir(repo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            git()
+                .args(["config", "user.email", "test@nergal.dev"])
+                .current_dir(repo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            git()
+                .args(["config", "user.name", "Nergal Test"])
+                .current_dir(repo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        std::fs::write(repo.join("README.md"), "init").unwrap();
+        assert!(
+            git()
+                .args(["add", "-A"])
+                .current_dir(repo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            git()
+                .args(["commit", "-q", "-m", "init"])
+                .current_dir(repo)
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        // Two independent target branches off the same initial commit, so the
+        // two concurrent merges below never race on the same ref update.
+        for target in ["target1", "target2"] {
+            assert!(
+                git()
+                    .args(["branch", target, "main"])
+                    .current_dir(repo)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        // Two source branches, each adding one distinct file.
+        for (source, file) in [("source1", "a.txt"), ("source2", "b.txt")] {
+            assert!(
+                git()
+                    .args(["checkout", "-q", "-b", source, "main"])
+                    .current_dir(repo)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            std::fs::write(repo.join(file), "content").unwrap();
+            assert!(
+                git()
+                    .args(["add", "-A"])
+                    .current_dir(repo)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            let msg = format!("add {file}");
+            assert!(
+                git()
+                    .args(["commit", "-q", "-m", &msg])
+                    .current_dir(repo)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        assert!(
+            git()
+                .args(["checkout", "-q", "main"])
+                .current_dir(repo)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+
+    /// Whether `path` exists in `target`'s tree, via `git cat-file -e`.
+    fn tree_has_file(repo: &Path, target: &str, path: &str) -> bool {
+        git()
+            .args(["cat-file", "-e", &format!("{target}:{path}")])
+            .current_dir(repo)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn squash_merge_concurrent_calls_do_not_interfere() {
+        // Regression test for the bug this change fixes: the old code used ONE
+        // fixed `_merge_tmp` path for every call, so two concurrent merges —
+        // even into different targets — would race on the same directory and
+        // the second's cleanup could delete the first's in-progress worktree.
+        // With per-call unique paths, both merges below run genuinely
+        // concurrently (synchronized to start together via a barrier) and must
+        // each land only their own branch's content.
+        use std::sync::{Arc, Barrier};
+
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path();
+        init_repo_with_two_branch_pairs(repo);
+
+        let barrier = Arc::new(Barrier::new(2));
+        let (repo1, repo2) = (repo.to_path_buf(), repo.to_path_buf());
+        let (b1, b2) = (barrier.clone(), barrier.clone());
+
+        let t1 = std::thread::spawn(move || {
+            b1.wait();
+            squash_merge(&repo1, "source1", "target1", "merge source1")
+        });
+        let t2 = std::thread::spawn(move || {
+            b2.wait();
+            squash_merge(&repo2, "source2", "target2", "merge source2")
+        });
+
+        t1.join()
+            .unwrap()
+            .expect("merge into target1 should succeed");
+        t2.join()
+            .unwrap()
+            .expect("merge into target2 should succeed");
+
+        // Each target must contain ONLY its own branch's file — proves no
+        // cross-merge content leakage through a shared temp worktree.
+        assert!(tree_has_file(repo, "target1", "a.txt"));
+        assert!(!tree_has_file(repo, "target1", "b.txt"));
+        assert!(tree_has_file(repo, "target2", "b.txt"));
+        assert!(!tree_has_file(repo, "target2", "a.txt"));
+
+        // No leftover temp worktree directories after both merges complete.
+        let worktrees_dir = repo.join(".worktrees").join("nergal");
+        if worktrees_dir.exists() {
+            let leftover: Vec<_> = std::fs::read_dir(&worktrees_dir)
+                .unwrap()
+                .flatten()
+                .filter(|e| e.file_name().to_string_lossy().starts_with("_merge_tmp"))
+                .collect();
+            assert!(leftover.is_empty(), "leftover merge tmp dirs: {leftover:?}");
+        }
+    }
+
+    #[test]
+    fn squash_merge_sequential_calls_leave_no_residue() {
+        // Complements the concurrency test with the simpler sequential case:
+        // two back-to-back merges into the same target must both land
+        // correctly and never accumulate `_merge_tmp*` residue between calls.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path();
+        init_repo_with_two_branch_pairs(repo);
+
+        squash_merge(repo, "source1", "target1", "merge source1").unwrap();
+        squash_merge(repo, "source2", "target1", "merge source2").unwrap();
+
+        assert!(tree_has_file(repo, "target1", "a.txt"));
+        assert!(tree_has_file(repo, "target1", "b.txt"));
+
+        let worktrees_dir = repo.join(".worktrees").join("nergal");
+        if worktrees_dir.exists() {
+            let leftover: Vec<_> = std::fs::read_dir(&worktrees_dir)
+                .unwrap()
+                .flatten()
+                .filter(|e| e.file_name().to_string_lossy().starts_with("_merge_tmp"))
+                .collect();
+            assert!(leftover.is_empty(), "leftover merge tmp dirs: {leftover:?}");
+        }
     }
 }

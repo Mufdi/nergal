@@ -1,6 +1,7 @@
 import { atom } from "jotai";
 import { activeSessionIdAtom } from "./workspace";
 import { closedTabsStackAtom } from "./shortcuts";
+import { sessionScopedMapAtom } from "./sessionScope";
 // Safe cycle with pinnedNotes.ts: both sides only touch the imported atoms inside callbacks.
 import { pinnedNotesMapAtom } from "./pinnedNotes";
 import { toastsAtom } from "./toast";
@@ -82,12 +83,12 @@ export const filePickerOpenAtom = atom(false);
 /// showing — switching sessions and back restores the panel without needing
 /// a tab to anchor it. Tabs already persist via `tabStateMapAtom`; this is
 /// the equivalent for tab-less standalone panels.
-export const activePanelViewMapAtom = atom<Record<string, TabType | null>>({});
+export const activePanelViewMapAtom = sessionScopedMapAtom<TabType | null>();
 
 /// Missing entry means "no user gesture yet, defer to layout preset" —
 /// the layout effect needs this third state to avoid clobbering the
 /// preset on first encounter while still respecting a saved gesture.
-export const rightPanelCollapsedMapAtom = atom<Record<string, boolean>>({});
+export const rightPanelCollapsedMapAtom = sessionScopedMapAtom<boolean>();
 
 /// Sentinel map key for panel state when no session is active. Session-less
 /// views (ClickUp reads a global mirror) must still open — without this the
@@ -108,7 +109,7 @@ export const activePanelViewAtom = atom<TabType | null, [TabType | null], void>(
   },
 );
 
-export const tabStateMapAtom = atom<Record<string, TabState>>({});
+export const tabStateMapAtom = sessionScopedMapAtom<TabState>();
 
 export const activeTabStateAtom = atom<TabState>((get) => {
   const id = get(activeSessionIdAtom);
@@ -323,9 +324,11 @@ interface FileBrowserState {
 /// Module-level so reopening the file picker (or its mount-unmount cycle as
 /// the overlay opens/closes) doesn't drop expanded dirs, cached listings, or
 /// the last-opened file. Keyed per session.
-export const fileBrowserStateMapAtom = atom<Record<string, FileBrowserState>>({});
+export const fileBrowserStateMapAtom = sessionScopedMapAtom<FileBrowserState>();
 
 /// Persists the active sub-tab (pill) per spec change across tab switches.
+/// Keyed by changeName, NOT sessionId — a spec change is shared across
+/// sessions, so this stays a plain atom (out of the session-prune registry).
 export const specSubTabMapAtom = atom<Record<string, string>>({});
 
 

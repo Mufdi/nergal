@@ -2,11 +2,12 @@ import { atom } from "jotai";
 import type { PlanMode, DiffLine, PlanCapabilityWire } from "@/lib/types";
 import { activeSessionIdAtom } from "./workspace";
 import { invoke } from "@/lib/tauri";
+import { sessionScopedMapAtom } from "./sessionScope";
 
 export type PlanSidebarTab = "files" | "annotations";
 export const planSidebarTabAtom = atom<PlanSidebarTab>("files");
 
-export const planCapabilityMapAtom = atom<Record<string, PlanCapabilityWire>>({});
+export const planCapabilityMapAtom = sessionScopedMapAtom<PlanCapabilityWire>();
 
 export const activePlanCapabilityAtom = atom<PlanCapabilityWire | null>((get) => {
   const id = get(activeSessionIdAtom);
@@ -30,7 +31,7 @@ export const fetchPlanCapabilityAction = atom(null, async (get, set, sessionId: 
 
 export type PlanReviewStatus = "idle" | "pending_review" | "submitted";
 
-export const planReviewStatusMapAtom = atom<Record<string, PlanReviewStatus>>({});
+export const planReviewStatusMapAtom = sessionScopedMapAtom<PlanReviewStatus>();
 
 export const activePlanReviewStatusAtom = atom<PlanReviewStatus>((get) => {
   const id = get(activeSessionIdAtom);
@@ -50,7 +51,7 @@ export interface PlanState {
 
 export const defaultPlanState: PlanState = { content: "", original: "", path: "", mode: "view", diff: [], claudeSessionId: "", decisionPath: "" };
 
-export const planStateMapAtom = atom<Record<string, PlanState>>({});
+export const planStateMapAtom = sessionScopedMapAtom<PlanState>();
 
 // Derived for active session
 export const activePlanAtom = atom<PlanState>((get) => {
@@ -78,7 +79,8 @@ export const setPlanModeAtom = atom(null, (get, set, mode: PlanMode) => {
   }));
 });
 
-// Plan documents keyed by file path (supports multiple plans open as document tabs)
+// Plan documents keyed by file path, NOT sessionId (supports multiple plans
+// open as document tabs) — stays a plain atom, out of the session-prune registry.
 export const planDocumentsAtom = atom<Record<string, PlanState>>({});
 
 export const setPlanDocContentAtom = atom(null, (_get, set, params: { path: string; content: string }) => {
@@ -101,7 +103,7 @@ export interface SessionPlan {
   name: string;
 }
 
-export const sessionPlansAtom = atom<Record<string, SessionPlan[]>>({});
+export const sessionPlansAtom = sessionScopedMapAtom<SessionPlan[]>();
 
 export const registerPlanAtom = atom(
   null,

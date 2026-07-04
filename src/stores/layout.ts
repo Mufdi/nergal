@@ -1,6 +1,7 @@
 import { atom } from "jotai";
 import { activePanelCategoryAtom, type PanelCategory } from "./rightPanel";
 import { activeSessionIdAtom } from "./workspace";
+import { sessionScopedMapAtom } from "./sessionScope";
 
 export type LayoutPreset = "terminal-focus" | "doc-review" | "tool-workspace";
 
@@ -46,7 +47,7 @@ export const layoutPresetAtom = atom<LayoutPreset>((get) => {
 
 /// Per-session layout preset persistence.
 /// Stores the last active preset for each session so switching sessions restores layout.
-export const sessionLayoutMapAtom = atom<Record<string, LayoutPreset>>({});
+export const sessionLayoutMapAtom = sessionScopedMapAtom<LayoutPreset>();
 
 export const sessionLayoutPresetAtom = atom(
   (get): LayoutPreset => {

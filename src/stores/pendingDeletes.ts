@@ -12,6 +12,8 @@ import { appStore } from "./jotaiStore";
 import { CountdownLabel } from "./sessionTabs";
 import * as terminalService from "@/components/terminal/terminalService";
 import { invoke } from "@/lib/tauri";
+import { pruneSessionStateAction } from "./sessionScope";
+import { pruneConflictSessionAction } from "./conflict";
 
 const DELETE_GRACE_MS = 5_000;
 /// Slack between the countdown reaching 0 and the physical deletion, so an
@@ -95,6 +97,8 @@ export const deleteSessionWithGraceAction = atom(null, (get, set, session: Sessi
       graceTimers.delete(session.id);
       sileo.dismiss(toastId);
       terminalService.destroy(session.id);
+      appStore.set(pruneSessionStateAction, session.id);
+      appStore.set(pruneConflictSessionAction, session.id);
       invoke("delete_session", { sessionId: session.id }).catch(() => {});
     }, DELETE_GRACE_MS + FINALIZE_SLACK_MS),
   );
@@ -150,7 +154,11 @@ export const deleteWorkspaceWithGraceAction = atom(null, (get, set, workspace: W
     setTimeout(() => {
       graceTimers.delete(workspace.id);
       sileo.dismiss(toastId);
-      for (const id of sessionIds) terminalService.destroy(id);
+      for (const id of sessionIds) {
+        terminalService.destroy(id);
+        appStore.set(pruneSessionStateAction, id);
+        appStore.set(pruneConflictSessionAction, id);
+      }
       invoke("delete_workspace", { workspaceId: workspace.id }).catch(() => {});
     }, DELETE_GRACE_MS + FINALIZE_SLACK_MS),
   );

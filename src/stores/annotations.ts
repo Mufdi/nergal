@@ -3,6 +3,7 @@ import { activeSessionIdAtom } from "./workspace";
 import { activePlanReviewStatusAtom } from "./plan";
 import { invoke } from "@/lib/tauri";
 import type { DomMeta } from "@/lib/highlighter";
+import { sessionScopedMapAtom } from "./sessionScope";
 
 export type AnnotationType = "comment" | "replace" | "delete" | "insert";
 
@@ -30,7 +31,8 @@ export const canEnterAnnotationModeAtom = atom((get) => {
   return get(activePlanReviewStatusAtom) === "pending_review";
 });
 
-export const annotationMapAtom = atom<Record<string, Annotation[]>>({});
+export const annotationMapAtom = sessionScopedMapAtom<Annotation[]>();
+// Keyed by specPath, not sessionId — plain atom (out of the session-prune registry).
 export const specAnnotationMapAtom = atom<Record<string, Annotation[]>>({});
 
 function resolveScope(get: Getter): AnnotationScope | null {

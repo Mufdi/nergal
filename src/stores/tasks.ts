@@ -2,8 +2,9 @@ import { atom } from "jotai";
 import type { Task } from "@/lib/types";
 import { invoke } from "@/lib/tauri";
 import { activeSessionIdAtom } from "./workspace";
+import { sessionScopedMapAtom } from "./sessionScope";
 
-export const taskMapAtom = atom<Record<string, Task[]>>({});
+export const taskMapAtom = sessionScopedMapAtom<Task[]>();
 
 export const activeSessionTasksAtom = atom<Task[]>((get) => {
   const id = get(activeSessionIdAtom);

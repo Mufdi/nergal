@@ -14,6 +14,7 @@ import {
   workspacesAtom,
   type Session,
 } from "./workspace";
+import { sessionScopedMapAtom } from "./sessionScope";
 
 // ── Writeback: optimistic overlay (task 2.1) ──
 
@@ -298,11 +299,11 @@ export const clickupTokenOnDiskAtom = atom(false);
 /// session_id → active task id. `null` = explicitly unbound this run; an
 /// absent key falls back to the Session row (same seeding pattern as
 /// `pinnedNotesMapAtom`).
-export const clickupBindingMapAtom = atom<Record<string, string | null>>({});
+export const clickupBindingMapAtom = sessionScopedMapAtom<string | null>();
 
 /// session_id → pinned task ids (command results are authoritative; absent
 /// key falls back to the Session row).
-export const clickupPinsMapAtom = atom<Record<string, string[]>>({});
+export const clickupPinsMapAtom = sessionScopedMapAtom<string[]>();
 
 /// Pending send-as-prompt confirmation (Decision 6: the send auto-submits a
 /// turn, so the user reviews the composed block first). null = dialog closed.

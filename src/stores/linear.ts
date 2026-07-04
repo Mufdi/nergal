@@ -13,6 +13,7 @@ import {
   workspacesAtom,
   type Session,
 } from "./workspace";
+import { sessionScopedMapAtom } from "./sessionScope";
 
 // ── Writeback: optimistic overlay (task 6.1 / Decision 1) ──
 
@@ -254,11 +255,11 @@ export const copyLinearIssueAction = atom(null, (_get, set, identifier: string) 
 
 /// session_id → active issue id (command results are authoritative; absent key
 /// falls back to the Session row). Mirrors `clickupBindingMapAtom`.
-export const linearBindingMapAtom = atom<Record<string, string | null>>({});
+export const linearBindingMapAtom = sessionScopedMapAtom<string | null>();
 
 /// session_id → pinned issue ids (command results are authoritative; absent key
 /// falls back to the Session row).
-export const linearPinsMapAtom = atom<Record<string, string[]>>({});
+export const linearPinsMapAtom = sessionScopedMapAtom<string[]>();
 
 /// Pending send-as-prompt confirmation (the send auto-submits a turn, so the
 /// user reviews the composed block first). null = dialog closed.

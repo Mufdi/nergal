@@ -2,6 +2,7 @@ import { atom } from "jotai";
 import { activeSessionIdAtom } from "./workspace";
 import { openTabAction } from "./rightPanel";
 import { invoke } from "@/lib/tauri";
+import { sessionScopedMapAtom } from "./sessionScope";
 
 function noteName(path: string): string {
   const base = path.split("/").pop() ?? path;
@@ -21,11 +22,11 @@ export type ContextInjectionTier =
 
 /// session_id -> absolute vault-note paths pinned to it (single source for
 /// #3/#H and the #P panel).
-export const pinnedNotesMapAtom = atom<Record<string, string[]>>({});
+export const pinnedNotesMapAtom = sessionScopedMapAtom<string[]>();
 
 /// session_id -> the active adapter's injection tier, for the chip's honesty
 /// tooltip. Loaded lazily alongside the pins.
-export const injectionTierMapAtom = atom<Record<string, ContextInjectionTier>>({});
+export const injectionTierMapAtom = sessionScopedMapAtom<ContextInjectionTier>();
 
 export const activeSessionPinnedNotesAtom = atom<string[]>((get) => {
   const id = get(activeSessionIdAtom);

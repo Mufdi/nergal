@@ -1,6 +1,7 @@
 import { atom } from "jotai";
 import { invoke } from "@/lib/tauri";
 import { activeSessionIdAtom } from "./workspace";
+import { sessionScopedMapAtom } from "./sessionScope";
 
 export type BrowserMode = "dock" | "floating";
 export type BrowserColorScheme = "light" | "dark";
@@ -54,7 +55,7 @@ function deriveLabel(url: string): string {
   }
 }
 
-export const browserSessionsAtom = atom<Record<string, BrowserSessionState>>({});
+export const browserSessionsAtom = sessionScopedMapAtom<BrowserSessionState>();
 
 export const browserSessionForActiveAtom = atom<BrowserSessionState>((get) => {
   const sid = get(activeSessionIdAtom);

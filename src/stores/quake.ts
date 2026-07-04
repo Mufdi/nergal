@@ -3,6 +3,7 @@ import { invoke, listen, generateId } from "@/lib/tauri";
 import { appStore } from "./jotaiStore";
 import { activeSessionIdAtom, workspacesAtom } from "./workspace";
 import * as terminalService from "@/components/terminal/terminalService";
+import { sessionScopedMapAtom } from "./sessionScope";
 
 export interface QuakeShell {
   shellId: string;
@@ -25,10 +26,10 @@ function sessionCwd(sessionId: string): string | null {
 
 /// Visibility is per-session, like the right panel's collapsed map: switching
 /// to a session where the quake was closed keeps it closed.
-export const quakeOpenMapAtom = atom<Record<string, boolean>>({});
+export const quakeOpenMapAtom = sessionScopedMapAtom<boolean>();
 export const quakeHeightAtom = atom(300);
-export const quakeShellsAtom = atom<Record<string, QuakeShell[]>>({});
-export const activeQuakeShellAtom = atom<Record<string, string | null>>({});
+export const quakeShellsAtom = sessionScopedMapAtom<QuakeShell[]>();
+export const activeQuakeShellAtom = sessionScopedMapAtom<string | null>();
 
 export function newShellId(): string {
   return generateId("shell");

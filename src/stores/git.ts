@@ -2,6 +2,7 @@ import { atom } from "jotai";
 import { activeSessionIdAtom, sessionTabIdsAtom, workspacesAtom, type Workspace } from "./workspace";
 import { toastsAtom } from "./toast";
 import { invoke } from "@/lib/tauri";
+import { sessionScopedMapAtom } from "./sessionScope";
 
 export interface GitInfo {
   branch: string;
@@ -34,7 +35,7 @@ export interface PrAnnotation {
   text: string;
 }
 
-export const gitInfoMapAtom = atom<Record<string, GitInfo>>({});
+export const gitInfoMapAtom = sessionScopedMapAtom<GitInfo>();
 
 export const renameBranchSignalAtom = atom(0);
 
@@ -53,7 +54,7 @@ export const refreshGitInfoAtom = atom(null, async (_get, set, sessionId: string
   }
 });
 
-export const conflictedFilesMapAtom = atom<Record<string, string[]>>({});
+export const conflictedFilesMapAtom = sessionScopedMapAtom<string[]>();
 
 export const activeConflictedFilesAtom = atom<string[]>((get) => {
   const id = get(activeSessionIdAtom);
@@ -70,7 +71,7 @@ export const refreshConflictedFilesAtom = atom(null, async (_get, set, sessionId
   }
 });
 
-export const prChecksMapAtom = atom<Record<string, PrChecks | null>>({});
+export const prChecksMapAtom = sessionScopedMapAtom<PrChecks | null>();
 
 export const activePrChecksAtom = atom<PrChecks | null>((get) => {
   const id = get(activeSessionIdAtom);
@@ -90,7 +91,7 @@ export const CHIP_ORDER: ChipMode[] = ["files", "history", "stashes", "prs", "co
 /// a per-session UI choice. Earlier this was per-workspace, which leaked the
 /// chip selection across sessions of the same repo — switching from a
 /// conflicted session to a clean sibling kept the Conflicts chip showing.
-export const gitChipModeAtom = atom<Record<string, ChipMode>>({});
+export const gitChipModeAtom = sessionScopedMapAtom<ChipMode>();
 
 /// A stash entry surfaced by the backend's `git_stash_list`. Mirrors the
 /// Rust `StashEntry` struct exactly.
@@ -125,6 +126,8 @@ export interface PrsCacheEntry {
   data: PrSummary[];
   fetchedAt: number;
 }
+// Keyed by workspaceId, not sessionId — stays a plain atom (out of the
+// session-prune registry; workspaces are few and long-lived).
 export const prsCacheMapAtom = atom<Record<string, PrsCacheEntry>>({});
 
 /// TTL for `gh pr list` revalidation. Background refresh fires when the
@@ -138,7 +141,7 @@ export interface StashCountCacheEntry {
   count: number;
   fetchedAt: number;
 }
-export const stashCountMapAtom = atom<Record<string, StashCountCacheEntry>>({});
+export const stashCountMapAtom = sessionScopedMapAtom<StashCountCacheEntry>();
 
 export const STASH_CACHE_TTL_MS = 10_000;
 
@@ -152,7 +155,7 @@ export interface GitHeaderCacheEntry {
   ahead: number;
   fetchedAt: number;
 }
-export const gitHeaderMapAtom = atom<Record<string, GitHeaderCacheEntry>>({});
+export const gitHeaderMapAtom = sessionScopedMapAtom<GitHeaderCacheEntry>();
 
 /// Per-session cached PR status (`gh pr view <branch>`). Network call when
 /// `gh` is configured; cached so session switches don't re-hit GitHub for
@@ -161,7 +164,7 @@ export interface PrInfoCacheEntry {
   data: { number: number; title: string; state: string; url: string } | null;
   fetchedAt: number;
 }
-export const prInfoMapAtom = atom<Record<string, PrInfoCacheEntry>>({});
+export const prInfoMapAtom = sessionScopedMapAtom<PrInfoCacheEntry>();
 
 /// Per-session cached `has_pending_merge` flag. Local git check, but cached
 /// for symmetry — keeps the green "in-progress merge" banner stable across
@@ -170,7 +173,7 @@ export interface PendingMergeCacheEntry {
   pending: boolean;
   fetchedAt: number;
 }
-export const pendingMergeMapAtom = atom<Record<string, PendingMergeCacheEntry>>({});
+export const pendingMergeMapAtom = sessionScopedMapAtom<PendingMergeCacheEntry>();
 
 /// TTL shared by header + pendingMerge. Short because these reflect local
 /// git state that the user can change between switches.
@@ -188,6 +191,7 @@ export interface PrDiffCacheEntry {
   text: string;
   fetchedAt: number;
 }
+// Keyed by `${workspaceId}:${prNumber}`, not sessionId — plain atom.
 export const prDiffCacheMapAtom = atom<Record<string, PrDiffCacheEntry>>({});
 
 export const PR_DIFF_TTL_MS = 60_000;
@@ -197,6 +201,7 @@ export const PR_DIFF_TTL_MS = 60_000;
 /// opened PR (and via `selectedPrFileAtom`, the file they were viewing
 /// inside it) instead of dropping back to the PR list. Cleared explicitly
 /// on Backspace ("All PRs" button).
+// Keyed by workspaceId, not sessionId — plain atom.
 export const activePrInChipMapAtom = atom<Record<string, number | null>>({});
 
 /// Per-PR annotations keyed by `${workspaceId}:${prNumber}`. v3 MVP keeps
@@ -217,11 +222,12 @@ export interface PrFileInfo {
   adds: number;
   removes: number;
 }
+// Keyed identically to prAnnotationsMapAtom (`${workspaceId}:${prNumber}`) — plain atom.
 export const prFilesCacheAtom = atom<Record<string, PrFileInfo[]>>({});
 
 /// The currently-selected file for each PR's PrViewer instance. Lifted here
 /// so the in-Zen viewer and the Zen sidebar see the same selection without
-/// passing refs through ZenMode.
+/// passing refs through ZenMode. Keyed by the PR key, not sessionId — plain atom.
 export const selectedPrFileAtom = atom<Record<string, string | null>>({});
 
 export interface TransitionAfterCleanupParams {

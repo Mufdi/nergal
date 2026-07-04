@@ -1,6 +1,7 @@
 import { atom } from "jotai";
 import { activeSessionIdAtom } from "./workspace";
 import { invoke } from "@/lib/tauri";
+import { sessionScopedMapAtom } from "./sessionScope";
 
 export interface ModifiedFile {
   path: string;
@@ -9,7 +10,7 @@ export interface ModifiedFile {
 }
 
 // Map of session_id -> modified files (deduped by path, keeps latest)
-export const fileMapAtom = atom<Record<string, ModifiedFile[]>>({});
+export const fileMapAtom = sessionScopedMapAtom<ModifiedFile[]>();
 
 export const activeSessionFilesAtom = atom<ModifiedFile[]>((get) => {
   const id = get(activeSessionIdAtom);

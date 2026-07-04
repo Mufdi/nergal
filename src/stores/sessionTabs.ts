@@ -5,6 +5,8 @@ import { activeSessionIdAtom, sessionTabIdsAtom, workspacesAtom } from "./worksp
 import { appStore } from "./jotaiStore";
 import { pushNotificationAction } from "./notifications";
 import * as terminalService from "@/components/terminal/terminalService";
+import { pruneSessionStateAction } from "./sessionScope";
+import { pruneConflictSessionAction } from "./conflict";
 
 const SOFT_CLOSE_TTL_MS = 5_000;
 
@@ -171,8 +173,8 @@ export const undoSessionCloseAction = atom(null, (get, set, sessionId?: string) 
 });
 
 /// Permanently destroy a soft-closed session: kills the PTY, removes the
-/// terminal container, drops the pending entry. Called by the finalize
-/// timer; idempotent.
+/// terminal container, drops the pending entry, and reclaims every
+/// session-keyed store map. Called by the finalize timer; idempotent.
 export const finalizeSessionCloseAction = atom(null, (get, set, sessionId: string) => {
   clearTimerFor(sessionId);
   const pending = get(pendingSessionClosesAtom);
@@ -180,6 +182,8 @@ export const finalizeSessionCloseAction = atom(null, (get, set, sessionId: strin
   if (!entry) return;
 
   terminalService.destroy(sessionId);
+  set(pruneSessionStateAction, sessionId);
+  set(pruneConflictSessionAction, sessionId);
   set(pendingSessionClosesAtom, pending.filter((p) => p.sessionId !== sessionId));
 });
 

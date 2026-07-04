@@ -1,10 +1,11 @@
 import { atom } from "jotai";
 import type { ActivityEntry } from "@/lib/types";
 import { activeSessionIdAtom } from "./workspace";
+import { sessionScopedMapAtom } from "./sessionScope";
 
 const MAX_ENTRIES = 200;
 
-export const activityMapAtom = atom<Record<string, ActivityEntry[]>>({});
+export const activityMapAtom = sessionScopedMapAtom<ActivityEntry[]>();
 
 export const activeActivityAtom = atom<ActivityEntry[]>((get) => {
   const id = get(activeSessionIdAtom);

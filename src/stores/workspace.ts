@@ -1,5 +1,6 @@
 import { atom } from "jotai";
 import type { CostSummary } from "@/lib/types";
+import { sessionScopedMapAtom } from "./sessionScope";
 
 /// Mirrors `PermissionPreset` in src-tauri/src/models.rs (kebab-case wire
 /// form). One mode per session — CC's `--dangerously-skip-permissions` is
@@ -152,11 +153,13 @@ export const sessionTabIdsAtom = atom<string[]>([]);
 export const expandedWorkspaceIdsAtom = atom<Set<string> | null>(null);
 
 // Session-scoped state maps
-export const costMapAtom = atom<Record<string, CostSummary>>({});
-export const modeMapAtom = atom<Record<string, string>>({});
-export const cwdMapAtom = atom<Record<string, string>>({});
+export const costMapAtom = sessionScopedMapAtom<CostSummary>();
+export const modeMapAtom = sessionScopedMapAtom<string>();
+export const cwdMapAtom = sessionScopedMapAtom<string>();
+// `Set<sessionId>`, not `Record<sessionId, T>` — outside the registry's shape
+// (D3); low-risk (transient "just spawned" marker, small and short-lived).
 export const freshSessionsAtom = atom<Set<string>>(new Set<string>());
-export const sessionLaunchModeAtom = atom<Record<string, "new" | "continue">>({});
+export const sessionLaunchModeAtom = sessionScopedMapAtom<"new" | "continue">();
 
 
 const defaultCost: CostSummary = {
@@ -216,7 +219,7 @@ const defaultAgentStatus: AgentStatus = {
   effort_level: null,
 };
 
-export const agentStatusMapAtom = atom<Record<string, AgentStatus>>({});
+export const agentStatusMapAtom = sessionScopedMapAtom<AgentStatus>();
 
 export const activeAgentStatusAtom = atom<AgentStatus>((get) => {
   const id = get(activeSessionIdAtom);

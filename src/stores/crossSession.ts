@@ -3,6 +3,7 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import { invoke, listen } from "@/lib/tauri";
 import { activePanelViewAtom, expandRightPanelAtom } from "./rightPanel";
 import { configAtom } from "./config";
+import { sessionScopedMapAtom } from "./sessionScope";
 
 type Store = ReturnType<typeof getDefaultStore>;
 
@@ -38,7 +39,7 @@ export const crossSessionThreadsAtom = atom<CrossSessionThread[]>([]);
 
 /// Per-session human-unread counts (drives the SessionRow badge). Keyed by
 /// `to_session`. Independent of agent delivery (`agent_consumed_at`).
-export const crossSessionUnreadMapAtom = atom<Record<string, number>>({});
+export const crossSessionUnreadMapAtom = sessionScopedMapAtom<number>();
 
 /// Session ids that participate in at least one ACTIVE (non-closed) thread —
 /// drives the "this session is in a live conversation" indicator on every

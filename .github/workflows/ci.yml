@@ -205,7 +205,7 @@ jobs:
   # Frontend-only PRs previously ran zero CI (the old path filter was
   # src-tauri/** only) — this closes that gap.
   frontend-check:
-    name: Frontend type check (tsc --noEmit)
+    name: Frontend type check + tests (tsc, vitest)
     needs: changes
     if: needs.changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-22.04
@@ -229,6 +229,12 @@ jobs:
 
       - name: tsc --noEmit
         run: npx tsc --noEmit
+
+      # `pnpm test` (vitest) runs the frontend unit suite — including the
+      # confirm-body-escaping security scan — so it's actually gated, not just
+      # runnable locally.
+      - name: vitest
+        run: pnpm test
 
   # pnpm release:test (package.json) never ran in CI before this change.
   release-scripts-test:

@@ -16,6 +16,7 @@ pub mod registration;
 pub mod router;
 pub mod shim;
 pub mod summary;
+pub mod tracker;
 pub mod transport;
 pub mod worktree_sessions;
 
@@ -317,6 +318,47 @@ pub fn tool_definitions() -> Vec<Value> {
                 "additionalProperties": false,
             },
         }),
+        json!({
+            "name": "list_tracker_tasks",
+            "description": "Read-only: list tasks/issues unified over the ClickUp + Linear mirrors (each row tagged `source`: \"clickup\" | \"linear\", plus a `fields` bag for tracker-specifics). Summary rows only (no full descriptions/comments), capped (default ~50, `limit` param, max 200), ordered by `date_updated` descending. Mirror-only: never triggers a live ClickUp/Linear API call — the response carries `mirror_updated_at` per tracker so you can judge freshness instead.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "source": { "type": "string", "enum": ["clickup", "linear"], "description": "Restrict to one tracker (omit for both, unified)." },
+                    "limit": { "type": "integer", "description": "Max rows to return (default ~50, max 200)." }
+                },
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "get_tracker_task",
+            "description": "Read-only: full detail for one ClickUp task or Linear issue by id — description, subdata counts (checklists/attachments/comments for ClickUp; sub-issues/comments for Linear), and comments trimmed to a budget (newest first, capped count and length). Mirror-only: never triggers a live ClickUp/Linear API call. Tries both mirrors (ClickUp and Linear ids don't collide); returns null content if the id isn't in either mirror.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "id": { "type": "string", "description": "The ClickUp task id or Linear issue id." } },
+                "required": ["id"],
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "get_pr_status",
+            "description": "Read-only: the PR + CI checks rollup for a session's branch (open/closed/merged state, checks passing/failing/pending counts) — the same `gh`-backed read the ship-flow PR panel uses. Scoped to the session identity your client asserted at connect: omit session_id to use your own; a session_id that doesn't match your asserted identity is rejected (a cooperative check on a same-user local socket, not a cryptographic boundary). Rollup only (no individual check-run detail in v1).",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "session_id": { "type": "string", "description": "Defaults to your own asserted session; a different session's id is rejected (cooperative same-user check, not cryptographically enforced)." } },
+                "additionalProperties": false,
+            },
+        }),
+        json!({
+            "name": "get_git_status",
+            "description": "Read-only: branch/dirty/ahead-of-main for a session's working directory — the same data the status bar shows. Scoped to the session identity your client asserted at connect: a session_id that doesn't match it is rejected (a cooperative check on a same-user local socket, not a cryptographic boundary).",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "session_id": { "type": "string", "description": "Your own asserted session id (from whoami); a different id is rejected." } },
+                "required": ["session_id"],
+                "additionalProperties": false,
+            },
+        }),
     ]
 }
 
@@ -552,6 +594,60 @@ pub fn dispatch(
                         ),
                     }
                 }
+                Some("list_tracker_tasks") => {
+                    let filter = tracker::parse_list_filter(&args);
+                    match tracker::list_tracker_tasks(ctx, &filter) {
+                        Ok(v) => tool_ok(req.id.clone(), v),
+                        Err(e) => err(req.id.clone(), INTERNAL_ERROR, &e.to_string(), None),
+                    }
+                }
+                Some("get_tracker_task") => match args.get("id").and_then(|v| v.as_str()) {
+                    Some(id) => match tracker::get_tracker_task(ctx, id) {
+                        Ok(Some(v)) => tool_ok(req.id.clone(), v),
+                        Ok(None) => tool_ok(req.id.clone(), Value::Null),
+                        Err(e) => err(req.id.clone(), INTERNAL_ERROR, &e.to_string(), None),
+                    },
+                    None => err(req.id.clone(), INVALID_PARAMS, "id is required", None),
+                },
+                Some("get_pr_status") => {
+                    let Some(caller) = identity else {
+                        return err(
+                            req.id.clone(),
+                            INVALID_PARAMS,
+                            "caller could not be identified (no live session hint)",
+                            None,
+                        );
+                    };
+                    let session_id = args.get("session_id").and_then(|v| v.as_str());
+                    match tracker::get_pr_status(ctx, caller, session_id) {
+                        Ok(v) => tool_ok(req.id.clone(), v),
+                        Err(e) => err(req.id.clone(), INTERNAL_ERROR, &e.to_string(), None),
+                    }
+                }
+                Some("get_git_status") => {
+                    let Some(caller) = identity else {
+                        return err(
+                            req.id.clone(),
+                            INVALID_PARAMS,
+                            "caller could not be identified (no live session hint)",
+                            None,
+                        );
+                    };
+                    match args.get("session_id").and_then(|v| v.as_str()) {
+                        Some(session_id) => {
+                            match tracker::get_git_status(ctx, caller, session_id) {
+                                Ok(v) => tool_ok(req.id.clone(), v),
+                                Err(e) => err(req.id.clone(), INTERNAL_ERROR, &e.to_string(), None),
+                            }
+                        }
+                        None => err(
+                            req.id.clone(),
+                            INVALID_PARAMS,
+                            "session_id is required",
+                            None,
+                        ),
+                    }
+                }
                 Some(other) => err(
                     req.id.clone(),
                     METHOD_NOT_FOUND,
@@ -729,6 +825,10 @@ mod tests {
                 "request_session_resume",
                 "get_worktree_request_status",
                 "cancel_worktree_request",
+                "list_tracker_tasks",
+                "get_tracker_task",
+                "get_pr_status",
+                "get_git_status",
             ]
         );
     }
@@ -817,5 +917,55 @@ mod tests {
             .to_string();
         let who: Value = serde_json::from_str(&text).unwrap();
         assert_eq!(who["identified"], false);
+    }
+
+    #[test]
+    fn list_tracker_tasks_via_dispatch_empty_mirrors() {
+        let ctx = test_ctx();
+        let r = dispatch(
+            &ctx,
+            None,
+            true,
+            &req(
+                "tools/call",
+                json!({ "name": "list_tracker_tasks", "arguments": {} }),
+            ),
+        );
+        let text = r.result.unwrap()["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let result: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(result["tasks"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn get_pr_status_without_identity_is_invalid_params() {
+        let ctx = test_ctx();
+        let r = dispatch(
+            &ctx,
+            None,
+            true,
+            &req(
+                "tools/call",
+                json!({ "name": "get_pr_status", "arguments": {} }),
+            ),
+        );
+        assert_eq!(r.error.unwrap().code, INVALID_PARAMS);
+    }
+
+    #[test]
+    fn get_git_status_without_identity_is_invalid_params() {
+        let ctx = test_ctx();
+        let r = dispatch(
+            &ctx,
+            None,
+            true,
+            &req(
+                "tools/call",
+                json!({ "name": "get_git_status", "arguments": { "session_id": "s1" } }),
+            ),
+        );
+        assert_eq!(r.error.unwrap().code, INVALID_PARAMS);
     }
 }

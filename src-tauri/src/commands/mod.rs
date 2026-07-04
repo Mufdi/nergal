@@ -6,7 +6,7 @@ mod git;
 mod obsidian;
 mod openspec;
 mod plans;
-mod shared;
+pub(crate) mod shared;
 mod ship_pr;
 mod tasks_costs;
 mod workspaces_sessions;

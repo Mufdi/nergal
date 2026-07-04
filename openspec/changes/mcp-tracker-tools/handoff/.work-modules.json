@@ -1,0 +1,10 @@
+{
+  "tier": "M",
+  "tier_source": "build of mcp-expose-tracker-tasks design (user GO 2026-07-04)",
+  "ceremony": "standard",
+  "risk_tier": "medium",
+  "files_estimate": 2,
+  "tags": ["feature", "mcp"],
+  "visibility": "public",
+  "spec_target": "nergal-mcp-server"
+}

@@ -69,7 +69,7 @@ src-tauri/src/                    # Rust backend
 ## Event flow
 
 1. Agent CLI runs inside a PTY spawned by the app.
-2. The CLI's hooks (async) write events to `/tmp/nergal.sock` via `nergal hook send`.
+2. The CLI's hooks (async) write events to the hook socket (`hook.sock` in the per-user IPC dir — see `docs/hooks.md`) via `nergal hook send`.
 3. The app listens on the socket and watches transcript files via inotify.
 4. Events flow through tokio channels → Tauri `emit()` → Jotai atom updates.
 5. React components re-render on atom changes.

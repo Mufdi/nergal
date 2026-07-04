@@ -2,13 +2,15 @@
 
 Nergal observes the agent CLI through its hook pipeline. The CLI calls `nergal hook ...` subcommands, which write to a Unix socket the GUI listens on. Two hooks are blocking and use named FIFOs for the round-trip decision.
 
+All endpoints live in a per-user IPC directory resolved by `ipc_dir()` (`src-tauri/src/platform/mod.rs`): on Linux, `/run/user/<uid>/nergal/` (systemd-managed, un-squattable) with a `~/.local/share/nergal/ipc/` fallback — it never falls back to a guessable path under shared `/tmp`. On macOS the equivalent is `temp_dir()/nergal/` (already per-user `0700`). On Windows there is no filesystem path — endpoints are per-user named pipes (`\\.\pipe\nergal-<user-SID>-<endpoint>`).
+
 ## CLI surface
 
 | Subcommand | Mode | Purpose |
 |---|---|---|
-| `nergal hook send <event>` | async | Forward an event payload to `/tmp/nergal.sock`. |
+| `nergal hook send <event>` | async | Forward an event payload to the hook socket (`hook.sock` in the per-user IPC dir). |
 | `nergal hook inject-edits` | sync | Modify the prompt before submission (used on `UserPromptSubmit`). |
-| `nergal hook plan-review` | blocking, FIFO | Block on `/tmp/nergal-plan-{pid}.fifo` until the GUI returns `allow` / `deny`. |
+| `nergal hook plan-review` | blocking, FIFO | Block on the plan-review FIFO (`plan-{pid}.fifo` in the per-user IPC dir) until the GUI returns `allow` / `deny`. |
 | `nergal hook ask-user` | async (notifier) | Fire-and-forget signal that AskUserQuestion is pending. CC's TUI owns the question; nergal only blinks the session tab. |
 | `nergal setup` | one-shot | Auto-configure hook entries in `~/.claude/settings.json` and per-agent equivalents (e.g., `~/.codex/hooks.json`), conservatively merging with existing user hooks. |
 
@@ -21,7 +23,7 @@ A user-installed shell wrapper at `~/.claude/hooks/nergal-conditional.sh` inspec
 ## Plan review flow (blocking via PermissionRequest)
 
 1. Claude calls `ExitPlanMode`. The `PermissionRequest[ExitPlanMode]` hook fires.
-2. `nergal hook plan-review` blocks on `/tmp/nergal-plan-{pid}.fifo`.
+2. `nergal hook plan-review` blocks on `plan-{pid}.fifo` in the per-user IPC dir.
 3. The GUI loads the plan in `AnnotatableMarkdownView`. The user can add inline annotations while `planReviewStatusMapAtom` is in `pending_review`.
 4. Accept → GUI writes `allow` to the FIFO → Claude proceeds.
 5. Reject → GUI writes `deny` with a Plannotator-style message that points Claude back to the edited plan file → Claude re-reads and re-plans.
@@ -50,4 +52,4 @@ State machine: `idle → pending_review → submitted` in `src/stores/plan.ts`.
 }
 ```
 
-`nergal setup` writes this for you. Re-run after editing `src-tauri/src/hooks/cli.rs` and reinstalling the binary (`cargo install --path src-tauri --force`).
+`nergal setup` writes this for you. Re-run after editing `src-tauri/src/hooks/cli.rs` and reinstalling the binary via `pnpm tauri build && sudo dpkg -i src-tauri/target/release/bundle/deb/Nergal_*.deb` — NOT `cargo install --path src-tauri --force`, which puts a binary in `~/.cargo/bin/` that shadows `/usr/bin/nergal` for the GNOME launcher and skips the Tauri frontend bundling step.

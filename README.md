@@ -125,6 +125,21 @@ pnpm install
 pnpm tauri dev
 ```
 
+Linux build prerequisites (the Tauri `-sys` crates need these headers to compile, and GStreamer needs its plugin dir set for a working AppImage):
+
+```bash
+sudo apt-get install -y \
+  libwebkit2gtk-4.1-dev \
+  libgtk-3-dev \
+  libsoup-3.0-dev \
+  libappindicator3-dev \
+  librsvg2-dev \
+  patchelf \
+  gstreamer1.0-plugins-base \
+  gstreamer1.0-plugins-good
+export GSTREAMER_PLUGINS_DIR=/usr/lib/x86_64-linux-gnu/gstreamer-1.0
+```
+
 For a production build:
 
 ```bash
@@ -132,10 +147,10 @@ pnpm tauri build
 # Bundles in src-tauri/target/release/bundle/{deb,rpm,appimage}/
 ```
 
-The agent CLI's hook entries point at the `nergal` binary (the internal name — see *Status* below). Install it on your `PATH` and let Nergal write the hook config:
+The agent CLI's hook entries point at the `nergal` binary (the internal name — see *Status* below). After the production build above, install the bundled `.deb` and let Nergal write the hook config — do NOT `cargo install --path src-tauri`, which shadows `/usr/bin/nergal` for the GNOME launcher and skips frontend bundling:
 
 ```bash
-cargo install --path src-tauri --force
+sudo dpkg -i src-tauri/target/release/bundle/deb/Nergal_*.deb
 nergal setup
 ```
 
@@ -149,7 +164,7 @@ nergal setup
 
 **Active development.** Features land in [OpenSpec changes](./openspec/changes/) before they ship as [specs](./openspec/specs/). Expect iteration; the surface is not yet stable.
 
-**Naming.** **Nergal** end to end — the brand and the internal name (binary, hook subcommands `nergal hook ...`, env vars `NERGAL_SESSION_ID`, IPC paths `/tmp/nergal.sock`, config `~/.config/nergal/`, deep-link scheme `nergal://`). The project was originally code-named `cluihud`; a one-time, non-destructive startup migration moves any leftover `cluihud` state (config dir + DB, Claude Code hook entries, keyring tokens, MCP registrations) to the new names, so upgrading installs carry over without losing anything.
+**Naming.** **Nergal** end to end — the brand and the internal name (binary, hook subcommands `nergal hook ...`, env vars `NERGAL_SESSION_ID`, IPC paths under the per-user `ipc_dir()` (`/run/user/<uid>/nergal/` on Linux, `temp_dir()/nergal/` on macOS, named pipes on Windows), config `~/.config/nergal/`, deep-link scheme `nergal://`). The project was originally code-named `cluihud`; a one-time, non-destructive startup migration moves any leftover `cluihud` state (config dir + DB, Claude Code hook entries, keyring tokens, MCP registrations) to the new names, so upgrading installs carry over without losing anything.
 
 ## Inspiration
 

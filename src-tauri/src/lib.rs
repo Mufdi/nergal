@@ -416,7 +416,6 @@ pub fn run() {
             commands::approve_plan,
             commands::reject_plan,
             commands::submit_plan_decision,
-            commands::submit_ask_answer,
             commands::list_session_plans,
             commands::get_session_plan_capability,
             commands::load_plan,

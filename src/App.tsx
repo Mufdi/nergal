@@ -1,7 +1,6 @@
 import { useEffect, Component, type ReactNode } from "react";
 import { useAtomValue, useSetAtom, useStore } from "jotai";
 import { Workspace } from "./components/layout/Workspace";
-import { AskUserModal } from "./components/session/AskUserModal";
 import { WorktreeGate } from "./components/worktree/WorktreeGate";
 import { setupAgentListeners } from "./stores/agent";
 import { setupHookListeners } from "./stores/hooks";
@@ -192,7 +191,6 @@ export function App() {
   return (
     <ErrorBoundary>
       <Workspace />
-      <AskUserModal />
       <WorktreeGate />
     </ErrorBoundary>
   );

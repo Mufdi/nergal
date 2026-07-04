@@ -638,18 +638,6 @@ pub trait AgentAdapter: Send + Sync {
         None
     }
 
-    /// For adapters that declare [`AgentCapability::ASK_USER_BLOCKING`].
-    /// Default returns `NotSupported`.
-    async fn submit_ask_answer(
-        &self,
-        _session_id: &str,
-        _answers: serde_json::Value,
-    ) -> Result<(), AdapterError> {
-        Err(AdapterError::NotSupported(
-            AgentCapability::ASK_USER_BLOCKING,
-        ))
-    }
-
     /// Apply nergal's active theme to the agent's native theming subsystem.
     ///
     /// Best-effort by contract: implementations write namespaced files

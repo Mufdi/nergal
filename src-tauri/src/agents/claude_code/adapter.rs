@@ -6,18 +6,20 @@
 //! sites to go through this trait so OpenCode/Pi/Codex can plug in without
 //! special-casing.
 //!
-//! Two pieces of state live here, populated by the hook dispatcher when the
-//! corresponding hook event fires for a CC session:
-//! - `pending_plan_fifos`: maps `session_id` → FIFO path written by
-//!   `nergal hook plan-review`. [`Self::submit_plan_decision`] reads this
-//!   to know where to unblock the CLI.
-//! - `pending_ask_fifos`: same, for `nergal hook ask-user`.
+//! `pending_plan_fifos` maps `session_id` → FIFO path written by
+//! `nergal hook plan-review`; the hook dispatcher populates it when a
+//! `PlanReview` hook event fires, and [`Self::submit_plan_decision`] reads it
+//! to unblock the waiting CLI. This flow is live and load-bearing.
 //!
-//! Until the hook dispatcher is rewired (commit 4), these maps stay empty
-//! and `submit_*` returns [`AdapterError::SessionLocked`] on miss. The
-//! existing Tauri commands (`commands::submit_plan_decision`,
-//! `commands::submit_ask_answer`) remain the production call path during
-//! the transition; the trait methods are the future call path.
+//! Ask-user has no equivalent blocking round-trip: since v0.1.2, `nergal hook
+//! ask-user` only fires a non-blocking attention signal (CC's own TUI renders
+//! the prompt and owns the answer). An earlier blocking-dialog flow — a
+//! `pending_ask_fifos` map, an `AgentAdapter::submit_ask_answer` trait method,
+//! and a `submit_ask_answer` Tauri command — was removed as dead code; git
+//! history holds the implementation if a future adapter needs a true
+//! blocking ask-user round-trip. The `ASK_USER_BLOCKING` capability flag is
+//! unaffected: it still gates attention-UX rendering independent of any
+//! answer channel.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -40,7 +42,6 @@ use super::plans_path::resolve_cc_plans_directory;
 pub struct ClaudeCodeAdapter {
     capabilities: AgentCapabilities,
     pending_plan_fifos: Arc<DashMap<String, PathBuf>>,
-    pending_ask_fifos: Arc<DashMap<String, PathBuf>>,
 }
 
 impl Default for ClaudeCodeAdapter {
@@ -65,7 +66,6 @@ impl ClaudeCodeAdapter {
                 supported_models: vec![],
             },
             pending_plan_fifos: Arc::new(DashMap::new()),
-            pending_ask_fifos: Arc::new(DashMap::new()),
         }
     }
 
@@ -73,12 +73,6 @@ impl ClaudeCodeAdapter {
     /// the hook dispatcher when a `PlanReview` hook event arrives.
     pub fn register_pending_plan_fifo(&self, session_id: &str, path: PathBuf) {
         self.pending_plan_fifos.insert(session_id.to_string(), path);
-    }
-
-    /// Record the FIFO path for a session's pending ask-user. Called by the
-    /// hook dispatcher when an `AskUser` hook event arrives.
-    pub fn register_pending_ask_fifo(&self, session_id: &str, path: PathBuf) {
-        self.pending_ask_fifos.insert(session_id.to_string(), path);
     }
 }
 
@@ -291,21 +285,6 @@ impl AgentAdapter for ClaudeCodeAdapter {
                 .unwrap_or_else(|| "Plan changes requested".to_string());
             serde_json::json!({ "approved": false, "message": msg })
         };
-        tokio::fs::write(&fifo_path, body.to_string())
-            .await
-            .map_err(AdapterError::Io)?;
-        Ok(())
-    }
-
-    async fn submit_ask_answer(
-        &self,
-        session_id: &str,
-        answers: serde_json::Value,
-    ) -> Result<(), AdapterError> {
-        let Some((_, fifo_path)) = self.pending_ask_fifos.remove(session_id) else {
-            return Err(AdapterError::SessionLocked);
-        };
-        let body = serde_json::json!({ "answers": answers });
         tokio::fs::write(&fifo_path, body.to_string())
             .await
             .map_err(AdapterError::Io)?;

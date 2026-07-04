@@ -399,20 +399,35 @@ pub async fn run_cycle(
 
     let mut fetch_error: Option<String> = None;
 
-    // Set 1: window. Set 2: viewer-assigned. Both scoped to selected teams.
-    let (win_issues, win_complete) = if selected_team_ids.is_empty() {
+    // No explicit team selection ⇒ sync ALL teams so the mirror populates out
+    // of the box. `bump_generation_and_wipe` clears the selection on every
+    // key/workspace change (mirror.rs), and without this the poller would fetch
+    // nothing and the mirror would stay empty until the user manually
+    // re-selected teams — the Linear-only "issues list empty" bug ClickUp avoids
+    // via auto-selection. This matches the read filter's `team_id: None`
+    // default. Tombstoning stays gated on the ORIGINAL selection (FetchedCycle
+    // keeps `selected_team_ids` below), so an all-teams fetch populates without
+    // pruning anything.
+    let effective_team_ids: Vec<String> = if selected_team_ids.is_empty() {
+        teams.iter().map(|t| t.id.clone()).collect()
+    } else {
+        selected_team_ids.clone()
+    };
+
+    // Set 1: window. Set 2: viewer-assigned. Both scoped to the effective teams.
+    let (win_issues, win_complete) = if effective_team_ids.is_empty() {
         (Vec::new(), true)
     } else {
         let (v, c, e) =
-            paginate(|after| client.issues_page(&selected_team_ids, &updated_after, after)).await;
+            paginate(|after| client.issues_page(&effective_team_ids, &updated_after, after)).await;
         fetch_error = fetch_error.or(e);
         (v, c)
     };
-    let (assigned_issues, assigned_complete) = if selected_team_ids.is_empty() {
+    let (assigned_issues, assigned_complete) = if effective_team_ids.is_empty() {
         (Vec::new(), true)
     } else {
         let (v, c, e) =
-            paginate(|after| client.viewer_assigned_issues(&selected_team_ids, &viewer.id, after))
+            paginate(|after| client.viewer_assigned_issues(&effective_team_ids, &viewer.id, after))
                 .await;
         fetch_error = fetch_error.or(e);
         (v, c)

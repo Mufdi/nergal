@@ -24,6 +24,7 @@ import {
 } from "@/stores/conflict";
 import { activeConflictedFilesAtom, refreshConflictedFilesAtom } from "@/stores/git";
 import { toastsAtom } from "@/stores/toast";
+import { useConflictResolution, hasConflictMarkers, type RegionChoice } from "@/hooks/useConflictResolution";
 import { focusZoneAtom } from "@/stores/shortcuts";
 import { zenModeAtom, prZenAtom } from "@/stores/zenMode";
 import * as terminalService from "@/components/terminal/terminalService";
@@ -56,18 +57,6 @@ interface Props {
   /// inside a chip — the chip uses this to switch to the PRs chip.
   onResolved?: () => void;
 }
-
-interface Region {
-  start: number;
-  sep: number;
-  end: number;
-  oursLines: string[];
-  theirsLines: string[];
-}
-
-const START_RE = /^<{7}(\s|$)/;
-const SEP_RE = /^={7}(\s|$)/;
-const END_RE = /^>{7}(\s|$)/;
 
 function getLanguageExtension(filePath: string) {
   const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
@@ -187,36 +176,6 @@ class AcceptActionsWidget extends WidgetType {
   }
 
   ignoreEvent(): boolean { return false; }
-}
-
-function parseRegions(text: string): Region[] {
-  const lines = text.split("\n");
-  const regions: Region[] = [];
-  let start = -1;
-  let sep = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (START_RE.test(lines[i])) { start = i; sep = -1; }
-    else if (SEP_RE.test(lines[i]) && start !== -1) { sep = i; }
-    else if (END_RE.test(lines[i]) && start !== -1 && sep !== -1) {
-      regions.push({
-        start, sep, end: i,
-        oursLines: lines.slice(start + 1, sep),
-        theirsLines: lines.slice(sep + 1, i),
-      });
-      start = -1; sep = -1;
-    }
-  }
-  return regions;
-}
-
-function applyChoice(text: string, region: Region, choice: "ours" | "theirs" | "both"): string {
-  const lines = text.split("\n");
-  const replacement =
-    choice === "ours" ? region.oursLines
-    : choice === "theirs" ? region.theirsLines
-    : [...region.oursLines, ...region.theirsLines];
-  lines.splice(region.start, region.end - region.start + 1, ...replacement);
-  return lines.join("\n");
 }
 
 export function ConflictsPanel({ sessionId, inZen = false, onToggleZen, onResolved }: Props) {
@@ -396,15 +355,7 @@ function ConflictView({
   const refreshConflicts = useSetAtom(refreshConflictedFilesAtom);
   const addToast = useSetAtom(toastsAtom);
   const setFocusZone = useSetAtom(focusZoneAtom);
-  const [focusedRegion, setFocusedRegion] = useState<number>(0);
   const [sending, setSending] = useState(false);
-  /// File picker state — mirrors PrViewer's pattern. The picker swaps which
-  /// file the panel shows; opened via Ctrl+Shift+K (global) or the chevrons.
-  /// j/k drives the cursor without committing; Enter commits + closes; Esc
-  /// closes without changing the file. Cursor seeds from the active file
-  /// every time the picker opens so navigation starts in a useful spot.
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerCursor, setPickerCursor] = useState(0);
   /// Sync-scroll lock. On by default — JetBrains-style 3-pane review only
   /// makes sense when scrolling one pane drags the others. The toggle exists
   /// for the rare moment the user wants to look at theirs at line 200 while
@@ -440,7 +391,98 @@ function ConflictView({
       .catch((e) => addToast({ message: "Load conflict failed", description: String(e), type: "error" }));
   }, [current, key, sessionId, path, setStateMap, addToast]);
 
-  const regions = useMemo(() => current?.loaded ? parseRegions(current.merged) : [], [current?.merged, current?.loaded]);
+  const updateMerged = useCallback((next: string) => {
+    setStateMap((prev) => {
+      const cs = prev[key] ?? { ours: "", theirs: "", merged: "", originalMerged: "", loaded: false };
+      return { ...prev, [key]: { ...cs, merged: next } };
+    });
+  }, [key, setStateMap]);
+
+  const resetMerged = useCallback(() => {
+    if (!current) return;
+    updateMerged(current.originalMerged);
+    addToast({ message: "Reset", description: "Merged restored with conflict markers", type: "info" });
+  }, [current, updateMerged, addToast]);
+
+  const askClaude = useCallback(async () => {
+    if (!current || sending) return;
+    setSending(true);
+    try {
+      const prompt = await invoke<string>("build_conflict_prompt", {
+        sessionId,
+        path,
+        ours: current.ours,
+        theirs: current.theirs,
+        originalMerged: current.originalMerged,
+        intent: intent || null,
+      });
+      setFocusZone("terminal");
+      terminalService.focusActive();
+      await terminalService.writeToSession(sessionId, `${prompt}\r`);
+      addToast({ message: "Sent to Claude", description: "Prompt submitted with conflict context", type: "success" });
+      setIntentMap((prev) => ({ ...prev, [key]: "" }));
+    } catch (e) {
+      addToast({ message: "Failed", description: String(e), type: "error" });
+    } finally {
+      setSending(false);
+    }
+  }, [current, sending, sessionId, path, intent, key, setFocusZone, addToast, setIntentMap]);
+
+  const saveResolution = useCallback(async () => {
+    if (!current) return;
+    if (hasConflictMarkers(current.merged)) {
+      addToast({
+        message: "Cannot save",
+        description: "Resolve all conflict markers (<<<<<<< / ======= / >>>>>>>) before saving.",
+        type: "error",
+      });
+      return;
+    }
+    try {
+      await invoke<string[]>("save_conflict_resolution", { sessionId, path, merged: current.merged });
+      refreshConflicts(sessionId);
+      addToast({ message: "Resolved", description: `${path} saved and staged`, type: "success" });
+    } catch (e) {
+      addToast({ message: "Save failed", description: String(e), type: "error" });
+    }
+  }, [current, sessionId, path, refreshConflicts, addToast]);
+
+  const toggleSyncScroll = useCallback(() => setSyncScroll((v) => !v), []);
+
+  const handleAcceptAll = useCallback((choice: RegionChoice, regionCount: number) => {
+    addToast({
+      message: `Accepted all ${choice}`,
+      description: `${regionCount} region${regionCount !== 1 ? "s" : ""} resolved. Edit the merged pane to refine.`,
+      type: "success",
+    });
+  }, [addToast]);
+
+  const {
+    regions,
+    focusedRegion,
+    setFocusedRegion,
+    scrollNonce,
+    applyRegion,
+    acceptAll,
+    pickerOpen,
+    setPickerOpen,
+    pickerCursor,
+    setPickerCursor,
+  } = useConflictResolution({
+    merged: current?.merged ?? "",
+    loaded: current?.loaded ?? false,
+    updateMerged,
+    files,
+    path,
+    listenerActive: listenerActiveInner,
+    onNavFile,
+    onPickFile,
+    toggleSyncScroll,
+    onSave: saveResolution,
+    onReset: resetMerged,
+    onAskClaude: askClaude,
+    onAcceptAll: handleAcceptAll,
+  });
 
   /// Per-region line offsets in the ours and theirs reference files. The
   /// merged document inserts conflict markers and theirs content (or ours
@@ -581,15 +623,10 @@ function ConflictView({
     return out;
   }, [regions, sideMapping, focusedRegion]);
 
-  /// When the user navigates regions (via j/k, header-row click, or chevron
-  /// nav), drag all three panes to the corresponding region. The nonce bumps
-  /// on every focusedRegion change so consecutive picks of the same region
-  /// re-scroll if the user moved the editor manually. Side panes use the
-  /// sideMapping offsets; the merged pane uses the marker line directly.
-  const [scrollNonce, setScrollNonce] = useState(0);
-  useEffect(() => {
-    setScrollNonce((n) => n + 1);
-  }, [focusedRegion]);
+  /// Scroll targets for the 3 panes — recomputed whenever the hook's
+  /// focusedRegion/scrollNonce change, dragging all three panes to the
+  /// corresponding region. Side panes use the sideMapping offsets; the
+  /// merged pane uses the marker line directly.
   const mergedScrollTarget = useMemo(() => {
     const region = regions[focusedRegion];
     if (!region) return null;
@@ -605,46 +642,6 @@ function ConflictView({
     if (!m) return null;
     return { line: m.theirsLine, nonce: scrollNonce };
   }, [sideMapping, focusedRegion, scrollNonce]);
-
-  useEffect(() => {
-    if (focusedRegion >= regions.length) setFocusedRegion(Math.max(0, regions.length - 1));
-  }, [regions.length, focusedRegion]);
-
-  const updateMerged = useCallback((next: string) => {
-    setStateMap((prev) => {
-      const cs = prev[key] ?? { ours: "", theirs: "", merged: "", originalMerged: "", loaded: false };
-      return { ...prev, [key]: { ...cs, merged: next } };
-    });
-  }, [key, setStateMap]);
-
-  const applyRegion = useCallback((regionIdx: number, choice: "ours" | "theirs" | "both") => {
-    if (!current) return;
-    const regs = parseRegions(current.merged);
-    const region = regs[regionIdx];
-    if (!region) return;
-    updateMerged(applyChoice(current.merged, region, choice));
-  }, [current, updateMerged]);
-
-  /// Accept the same choice for every remaining conflict region. Iterates
-  /// bottom-up so each splice doesn't shift indices we haven't visited yet.
-  /// Used by the "All Ours" / "All Theirs" buttons and Ctrl+Shift+O/T — handy
-  /// when a merge is overwhelmingly dominated by one side and the user wants
-  /// to bulk-resolve, then hand-edit a few exceptions in the merged pane.
-  const acceptAll = useCallback((choice: "ours" | "theirs" | "both") => {
-    if (!current) return;
-    let next = current.merged;
-    const regs = parseRegions(next);
-    if (regs.length === 0) return;
-    for (let i = regs.length - 1; i >= 0; i--) {
-      next = applyChoice(next, regs[i], choice);
-    }
-    updateMerged(next);
-    addToast({
-      message: `Accepted all ${choice}`,
-      description: `${regs.length} region${regs.length !== 1 ? "s" : ""} resolved. Edit the merged pane to refine.`,
-      type: "success",
-    });
-  }, [current, updateMerged, addToast]);
 
   /// Piecewise line-mapping between the three panes. Lines outside any
   /// conflict region map 1:1 with a fixed drift (the merged view inserts 3
@@ -781,168 +778,6 @@ function ConflictView({
       theirs.scrollDOM.removeEventListener("scroll", theirsListener);
     };
   }, [syncScroll, lineMaps, oursView, mergedView, theirsView]);
-
-  const resetMerged = useCallback(() => {
-    if (!current) return;
-    updateMerged(current.originalMerged);
-    addToast({ message: "Reset", description: "Merged restored with conflict markers", type: "info" });
-  }, [current, updateMerged, addToast]);
-
-  const askClaude = useCallback(async () => {
-    if (!current || sending) return;
-    setSending(true);
-    try {
-      const prompt = await invoke<string>("build_conflict_prompt", {
-        sessionId,
-        path,
-        ours: current.ours,
-        theirs: current.theirs,
-        originalMerged: current.originalMerged,
-        intent: intent || null,
-      });
-      setFocusZone("terminal");
-      terminalService.focusActive();
-      await terminalService.writeToSession(sessionId, `${prompt}\r`);
-      addToast({ message: "Sent to Claude", description: "Prompt submitted with conflict context", type: "success" });
-      setIntentMap((prev) => ({ ...prev, [key]: "" }));
-    } catch (e) {
-      addToast({ message: "Failed", description: String(e), type: "error" });
-    } finally {
-      setSending(false);
-    }
-  }, [current, sending, sessionId, path, intent, key, setFocusZone, addToast, setIntentMap]);
-
-  const saveResolution = useCallback(async () => {
-    if (!current) return;
-    // Guard: merged must not contain unresolved conflict markers.
-    const hasMarkers = current.merged
-      .split("\n")
-      .some((line) => START_RE.test(line) || SEP_RE.test(line) || END_RE.test(line));
-    if (hasMarkers) {
-      addToast({
-        message: "Cannot save",
-        description: "Resolve all conflict markers (<<<<<<< / ======= / >>>>>>>) before saving.",
-        type: "error",
-      });
-      return;
-    }
-    try {
-      await invoke<string[]>("save_conflict_resolution", { sessionId, path, merged: current.merged });
-      refreshConflicts(sessionId);
-      addToast({ message: "Resolved", description: `${path} saved and staged`, type: "success" });
-    } catch (e) {
-      addToast({ message: "Save failed", description: String(e), type: "error" });
-    }
-  }, [current, sessionId, path, refreshConflicts, addToast]);
-
-  /// Global Ctrl+Shift+K → toggle file picker. Same dispatcher PrViewer uses,
-  /// so muscle memory carries between panels. Opening the picker seeds the
-  /// cursor at the active file's index so j/k starts in context.
-  useEffect(() => {
-    if (!listenerActiveInner) return;
-    function onToggle() {
-      setPickerOpen((open) => {
-        if (!open) {
-          const idx = files.indexOf(path);
-          setPickerCursor(idx >= 0 ? idx : 0);
-        }
-        return !open;
-      });
-    }
-    document.addEventListener("nergal:toggle-file-picker", onToggle);
-    return () => document.removeEventListener("nergal:toggle-file-picker", onToggle);
-  }, [listenerActiveInner, files, path]);
-
-  useEffect(() => {
-    if (!listenerActiveInner) return;
-    function onKey(e: KeyboardEvent) {
-      const target = e.target as HTMLElement | null;
-      const inEditor = target?.tagName === "TEXTAREA"
-        || target?.tagName === "INPUT"
-        || !!target?.closest(".cm-editor");
-      // Picker open: j/k drives the cursor, Enter commits, Esc closes. Steal
-      // these keys away from chunk navigation while the picker has the floor.
-      if (pickerOpen) {
-        if (e.code === "Escape" || e.key === "Escape") {
-          e.preventDefault();
-          e.stopPropagation();
-          setPickerOpen(false);
-          return;
-        }
-        if (files.length === 0) return;
-        if (e.code === "KeyJ" || e.code === "ArrowDown") {
-          e.preventDefault();
-          e.stopPropagation();
-          setPickerCursor((i) => (i + 1) % files.length);
-          return;
-        }
-        if (e.code === "KeyK" || e.code === "ArrowUp") {
-          e.preventDefault();
-          e.stopPropagation();
-          setPickerCursor((i) => (i - 1 + files.length) % files.length);
-          return;
-        }
-        if (e.code === "Enter") {
-          e.preventDefault();
-          e.stopPropagation();
-          const pick = files[pickerCursor];
-          if (pick && onPickFile) onPickFile(pick);
-          setPickerOpen(false);
-          return;
-        }
-        return;
-      }
-      // Ctrl+←/→ — file prev/next across the conflicted-files list. Owner
-      // wires the actual move via onNavFile so this stays editor-agnostic.
-      if (onNavFile && e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
-        if (e.code === "ArrowLeft") {
-          e.preventDefault();
-          e.stopPropagation();
-          onNavFile("prev");
-          return;
-        }
-        if (e.code === "ArrowRight") {
-          e.preventDefault();
-          e.stopPropagation();
-          onNavFile("next");
-          return;
-        }
-      }
-      if (!inEditor && regions.length > 0) {
-        // Arrow or J/K navigation between regions (parity with DiffView hunk nav).
-        if ((e.key === "ArrowDown" || e.key === "j" || e.key === "J") && !(e.ctrlKey || e.metaKey) && !e.shiftKey) {
-          e.preventDefault();
-          setFocusedRegion((i) => Math.min(i + 1, regions.length - 1));
-          return;
-        }
-        if ((e.key === "ArrowUp" || e.key === "k" || e.key === "K") && !(e.ctrlKey || e.metaKey) && !e.shiftKey) {
-          e.preventDefault();
-          setFocusedRegion((i) => Math.max(i - 1, 0));
-          return;
-        }
-        if (e.key === "o" || e.key === "O") { e.preventDefault(); applyRegion(focusedRegion, "ours"); return; }
-        if (e.key === "t" || e.key === "T") { e.preventDefault(); applyRegion(focusedRegion, "theirs"); return; }
-        if (e.key === "b" || e.key === "B") { e.preventDefault(); applyRegion(focusedRegion, "both"); return; }
-        if (e.key === "s" || e.key === "S") { e.preventDefault(); setSyncScroll((v) => !v); return; }
-      }
-      if (!(e.ctrlKey || e.metaKey) || !e.shiftKey) return;
-      // Ctrl+Shift+O / Ctrl+Shift+T: accept ALL regions of one side. Mirrors
-      // IntelliJ's "Apply Non-Conflicting Changes from Left/Right Side" but
-      // applied to every conflict, since git's <<<<<<< blocks are by
-      // definition conflicting. Lowercase O/T already handle per-region.
-      if (e.code === "KeyO") { e.preventDefault(); acceptAll("ours"); }
-      else if (e.code === "KeyT") { e.preventDefault(); acceptAll("theirs"); }
-      else if (e.code === "KeyZ") { e.preventDefault(); resetMerged(); }
-      else if (e.key === "Enter") { e.preventDefault(); saveResolution(); }
-    }
-    function onResolveActive() { askClaude(); }
-    window.addEventListener("keydown", onKey, true);
-    document.addEventListener("nergal:resolve-conflict-active-tab", onResolveActive);
-    return () => {
-      window.removeEventListener("keydown", onKey, true);
-      document.removeEventListener("nergal:resolve-conflict-active-tab", onResolveActive);
-    };
-  }, [regions, focusedRegion, applyRegion, acceptAll, resetMerged, saveResolution, askClaude, listenerActiveInner, onNavFile, pickerOpen, pickerCursor, files, onPickFile]);
 
   if (!current?.loaded) {
     return (

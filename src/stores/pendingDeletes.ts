@@ -20,15 +20,45 @@ const DELETE_GRACE_MS = 5_000;
 /// Undo clicked at the last visible second still lands before the timer.
 const FINALIZE_SLACK_MS = 2_000;
 
-/// Timers are disposable resources, not data — kept outside Jotai.
-const graceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/// A deferred deletion: its grace timer plus the awaitable finalize that
+/// performs the real destruction (PTY kill + prune + backend delete). Kept
+/// outside Jotai — timers are disposable resources, not state. `finalize` is
+/// stored so a shutdown hook can drain it synchronously on app close (BUG-28).
+interface PendingDelete {
+  timer: ReturnType<typeof setTimeout>;
+  finalize: () => Promise<void>;
+}
+const pending = new Map<string, PendingDelete>();
 
 function cancelTimer(key: string): boolean {
-  const handle = graceTimers.get(key);
-  if (handle === undefined) return false;
-  clearTimeout(handle);
-  graceTimers.delete(key);
+  const entry = pending.get(key);
+  if (entry === undefined) return false;
+  clearTimeout(entry.timer);
+  pending.delete(key);
   return true;
+}
+
+/// True while at least one deletion is still inside its grace window.
+export function hasPendingDeletes(): boolean {
+  return pending.size > 0;
+}
+
+/// Runs every still-pending deletion's finalize immediately, awaiting the
+/// backend deletes. Wired to the window-close hook so a close during the
+/// grace window doesn't strand the delete (leaving the workspace to reappear
+/// and its worktree/branch orphaned). Undo is impossible past this point by
+/// construction — the app is exiting.
+export async function flushPendingDeletes(): Promise<void> {
+  const entries = Array.from(pending.values());
+  pending.clear();
+  await Promise.all(
+    entries.map((e) => {
+      clearTimeout(e.timer);
+      // Never reject: a rejected finalize would bubble to the close hook and
+      // stop it from destroying the window.
+      return e.finalize().catch(() => {});
+    }),
+  );
 }
 
 function tooLateToast(): void {
@@ -90,18 +120,20 @@ export const deleteSessionWithGraceAction = atom(null, (get, set, session: Sessi
     },
   });
 
+  const finalize = async () => {
+    pending.delete(session.id);
+    sileo.dismiss(toastId);
+    terminalService.destroy(session.id);
+    appStore.set(pruneSessionStateAction, session.id);
+    appStore.set(pruneConflictSessionAction, session.id);
+    await invoke("delete_session", { sessionId: session.id }).catch(() => {});
+  };
+
   cancelTimer(session.id);
-  graceTimers.set(
-    session.id,
-    setTimeout(() => {
-      graceTimers.delete(session.id);
-      sileo.dismiss(toastId);
-      terminalService.destroy(session.id);
-      appStore.set(pruneSessionStateAction, session.id);
-      appStore.set(pruneConflictSessionAction, session.id);
-      invoke("delete_session", { sessionId: session.id }).catch(() => {});
-    }, DELETE_GRACE_MS + FINALIZE_SLACK_MS),
-  );
+  pending.set(session.id, {
+    finalize,
+    timer: setTimeout(() => void finalize(), DELETE_GRACE_MS + FINALIZE_SLACK_MS),
+  });
 });
 
 /// Workspace counterpart: hides the workspace (and its session tabs) for
@@ -148,18 +180,20 @@ export const deleteWorkspaceWithGraceAction = atom(null, (get, set, workspace: W
     },
   });
 
+  const finalize = async () => {
+    pending.delete(workspace.id);
+    sileo.dismiss(toastId);
+    for (const id of sessionIds) {
+      terminalService.destroy(id);
+      appStore.set(pruneSessionStateAction, id);
+      appStore.set(pruneConflictSessionAction, id);
+    }
+    await invoke("delete_workspace", { workspaceId: workspace.id }).catch(() => {});
+  };
+
   cancelTimer(workspace.id);
-  graceTimers.set(
-    workspace.id,
-    setTimeout(() => {
-      graceTimers.delete(workspace.id);
-      sileo.dismiss(toastId);
-      for (const id of sessionIds) {
-        terminalService.destroy(id);
-        appStore.set(pruneSessionStateAction, id);
-        appStore.set(pruneConflictSessionAction, id);
-      }
-      invoke("delete_workspace", { workspaceId: workspace.id }).catch(() => {});
-    }, DELETE_GRACE_MS + FINALIZE_SLACK_MS),
-  );
+  pending.set(workspace.id, {
+    finalize,
+    timer: setTimeout(() => void finalize(), DELETE_GRACE_MS + FINALIZE_SLACK_MS),
+  });
 });

@@ -16,6 +16,7 @@ import { migrateKeymapOverrides } from "./lib/keymapMigration";
 import { initKeyboardLayoutLabels } from "./lib/keymap";
 import { invoke, listen } from "./lib/tauri";
 import { dispatchDeepLink } from "./lib/deepLinkRouter";
+import { hasPendingDeletes, flushPendingDeletes } from "./stores/pendingDeletes";
 import { applyTheme, extractPaletteFromComputedStyle } from "./lib/themes";
 import type { Config, ThemePalette } from "./lib/types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -81,6 +82,34 @@ export function App() {
     getCurrentWindow().show().catch(() => {});
     // Cosmetic layout probe for key labels (Ñ vs ;) — no-op on WebKitGTK.
     void initKeyboardLayoutLabels();
+  }, []);
+
+  // Flush in-flight grace-window deletions before the window closes, so a
+  // close inside the 7s undo window still finalizes the delete + cleanup
+  // (BUG-28). No pending deletes → close normally. The race caps the wait so
+  // a stuck backend delete can't wedge the close.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    getCurrentWindow()
+      .onCloseRequested(async (event) => {
+        if (!hasPendingDeletes()) return;
+        event.preventDefault();
+        await Promise.race([
+          flushPendingDeletes(),
+          new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
+        ]);
+        await getCurrentWindow().destroy();
+      })
+      .then((u) => {
+        if (disposed) u();
+        else unlisten = u;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, []);
 
   useEffect(() => {

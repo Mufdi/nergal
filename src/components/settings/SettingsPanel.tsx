@@ -2805,6 +2805,10 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
   const navRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const footerRef = useRef<HTMLDivElement>(null);
+  // Set when the active section changes via rail arrow-nav, so the
+  // content-auto-focus effect keeps focus on the rail instead of yanking it
+  // into the form (BUG-27).
+  const railNavRef = useRef(false);
 
   useEffect(() => {
     getVersion().then(setAppVersion).catch(() => setAppVersion(""));
@@ -2884,6 +2888,17 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
   // capture-phase focus trap that would otherwise reclaim focus on reopen.
   useEffect(() => {
     if (!open) return;
+    // Section changed via rail arrow-nav → keep focus on the rail, moving it
+    // to the newly-active nav button instead of diving into the content.
+    if (railNavRef.current) {
+      railNavRef.current = false;
+      const raf = requestAnimationFrame(() => {
+        navRef.current
+          ?.querySelector<HTMLElement>('button[data-active="true"]')
+          ?.focus({ preventScroll: true });
+      });
+      return () => cancelAnimationFrame(raf);
+    }
     let raf2: number | null = null;
     const raf1 = requestAnimationFrame(() => {
       raf2 = requestAnimationFrame(() => {
@@ -3123,12 +3138,28 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
-            Configure paths and preferences. Press <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Alt+1</kbd>–<kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Alt+9</kbd> to jump between sections, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Tab</kbd> to enter the form, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+Enter</kbd> to save, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+,</kbd> to toggle.
+            Configure paths and preferences. Press <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Alt+1</kbd>–<kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Alt+9</kbd> or <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">↑</kbd><kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">↓</kbd> to move between sections, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Tab</kbd> to enter the form, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+Enter</kbd> to save, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+,</kbd> to toggle.
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid grid-cols-[180px_1fr] gap-5 h-[460px]">
-          <nav ref={navRef} className="flex flex-col gap-0.5 border-r border-border/40 pr-2">
+          <nav
+            ref={navRef}
+            // Arrow-nav across the rail so every section is keyboard-reachable
+            // (Alt+1-9 only covers the first 9 of 12 — BUG-27). Up/Down wrap;
+            // focus stays on the rail via railNavRef.
+            onKeyDown={(e) => {
+              if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+              e.preventDefault();
+              e.stopPropagation();
+              const dir = e.key === "ArrowDown" ? 1 : -1;
+              const curIdx = SECTIONS.findIndex((s) => s.id === activeSection);
+              const nextIdx = (curIdx + dir + SECTIONS.length) % SECTIONS.length;
+              railNavRef.current = true;
+              setActiveSection(SECTIONS[nextIdx].id);
+            }}
+            className="flex flex-col gap-0.5 border-r border-border/40 pr-2"
+          >
             {SECTIONS.map((section, idx) => {
               const Icon = section.icon;
               const isActive = section.id === activeSection;

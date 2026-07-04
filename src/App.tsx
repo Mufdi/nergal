@@ -99,7 +99,15 @@ export function App() {
           flushPendingDeletes(),
           new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
         ]);
-        await getCurrentWindow().destroy();
+        // flushPendingDeletes() emptied the pending map, so a re-issued close
+        // no longer prevents. destroy() force-closes (needs allow-destroy); if
+        // it ever fails, fall back to close() which now sails through — never
+        // leave the window stuck open.
+        try {
+          await getCurrentWindow().destroy();
+        } catch {
+          await getCurrentWindow().close();
+        }
       })
       .then((u) => {
         if (disposed) u();

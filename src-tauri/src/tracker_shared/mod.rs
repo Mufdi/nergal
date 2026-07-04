@@ -5,5 +5,6 @@
 //! for why a full `IssueTrackerAdapter` trait was rejected.
 
 pub mod closed_out;
+pub mod context_budget;
 pub mod credential_store;
 pub mod writeback_registry;

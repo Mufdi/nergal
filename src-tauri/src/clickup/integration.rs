@@ -9,6 +9,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use super::mirror;
 use crate::models::Session;
+use crate::tracker_shared::context_budget::head_tail_truncate;
 
 /// The vault-note block already claims 64KB (half the 128KB session-log cap);
 /// the ClickUp block takes half the remaining headroom so the combined
@@ -34,9 +35,6 @@ fn neutralize_fence_sentinels(s: &str) -> String {
     s.replace("<<<END CLICKUP TASK DATA>>>", "[removed: fence sentinel]")
         .replace("<<<BEGIN CLICKUP TASK DATA>>>", "[removed: fence sentinel]")
 }
-
-const DESCRIPTION_TRUNC_MARKER: &str =
-    "\n_[… description truncated to fit the context budget …]_\n";
 
 /// Compose one task into the fenced, budget-capped markdown block. `None`
 /// when the task is absent from the mirror (a dangling binding).
@@ -431,30 +429,6 @@ fn fit_to_budget(tasks: &mut [ComposedTask], budget: usize) -> String {
     out
 }
 
-/// Remove at least `remove` bytes from the middle, keeping head + tail around
-/// a visible marker. Cuts are adjusted inward to char boundaries, so the
-/// result only ever shrinks further.
-fn head_tail_truncate(desc: &str, remove: usize) -> String {
-    let keep = desc
-        .len()
-        .saturating_sub(remove + DESCRIPTION_TRUNC_MARKER.len());
-    let head_len = keep * 2 / 3;
-    let tail_len = keep - head_len;
-    let mut head_end = head_len.min(desc.len());
-    while !desc.is_char_boundary(head_end) {
-        head_end -= 1;
-    }
-    let mut tail_start = desc.len().saturating_sub(tail_len);
-    while !desc.is_char_boundary(tail_start) {
-        tail_start += 1;
-    }
-    format!(
-        "{}{DESCRIPTION_TRUNC_MARKER}{}",
-        &desc[..head_end],
-        &desc[tail_start..]
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -759,13 +733,5 @@ mod tests {
         // The fence survives attrition too.
         assert!(out.starts_with(FENCE_OPEN));
         assert!(out.ends_with(FENCE_CLOSE));
-    }
-
-    #[test]
-    fn head_tail_truncate_is_char_boundary_safe() {
-        let desc = "á".repeat(100);
-        let out = head_tail_truncate(&desc, 120);
-        assert!(out.contains(DESCRIPTION_TRUNC_MARKER.trim()));
-        assert!(out.len() < desc.len());
     }
 }

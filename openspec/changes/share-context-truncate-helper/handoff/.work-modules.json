@@ -1,0 +1,22 @@
+{
+  "tier": "S",
+  "tier_source": "heuristic",
+  "ceremony": "quick-fix",
+  "risk_tier": "low",
+  "files_estimate": 4,
+  "tags": ["refactor", "dedup", "decision-record"],
+  "visibility": "private",
+  "spec_target": "issue-tracker-adapter",
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "iprev_rounds": 0,
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": ["compile", "test", "lint"],
+    "per_phase_models": {
+      "design": "opus",
+      "implementation": "sonnet",
+      "validation": "sonnet"
+    }
+  }
+}

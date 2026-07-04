@@ -543,8 +543,10 @@ mod tests {
         // A full serialized config — several fields are required (no serde
         // default), so a partial hand-written JSON would itself count as
         // corrupt; round-trip a complete one.
-        let mut base = Config::default();
-        base.default_agent = Some("codex".to_string());
+        let base = Config {
+            default_agent: Some("codex".to_string()),
+            ..Config::default()
+        };
         std::fs::write(&path, serde_json::to_string(&base).unwrap()).unwrap();
 
         let cfg = Config::load_from(&path);

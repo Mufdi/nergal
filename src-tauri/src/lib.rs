@@ -609,6 +609,7 @@ pub fn run() {
             linear::linear_read_team_states,
             linear::linear_read_team_cycles,
             linear::linear_set_issue_state,
+            linear::linear_mark_issue_duplicate,
             linear::linear_set_assignee,
             linear::linear_set_issue_cycle,
             linear::linear_mark_closed_out,

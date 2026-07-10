@@ -488,6 +488,49 @@ impl LinearClient {
             .map(|c| c.id)
             .ok_or_else(|| anyhow!("commentCreate succeeded but returned no comment"))
     }
+
+    /// Create an issue relation — used to mark `issue_id` as a `duplicate` of
+    /// `related_issue_id`. Linear rejects moving an issue into a "Duplicate"
+    /// workflow state (`missing duplicate relation`) unless this relation exists
+    /// first. `relation_type` is Linear's `IssueRelationType` (`duplicate`).
+    ///
+    /// Returns `Err` on a GraphQL error OR when `success != true`.
+    pub async fn issue_relation_create(
+        &self,
+        issue_id: &str,
+        related_issue_id: &str,
+        relation_type: &str,
+    ) -> Result<()> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct RelationPayload {
+            success: bool,
+        }
+        #[derive(Deserialize)]
+        struct Data {
+            #[serde(rename = "issueRelationCreate")]
+            issue_relation_create: RelationPayload,
+        }
+        const MUTATION: &str = "mutation Relate($input: IssueRelationCreateInput!) {
+  issueRelationCreate(input: $input) {
+    success
+  }
+}";
+        let d: Data = self
+            .execute(
+                MUTATION,
+                serde_json::json!({ "input": {
+                    "issueId": issue_id,
+                    "relatedIssueId": related_issue_id,
+                    "type": relation_type,
+                }}),
+            )
+            .await?;
+        if !d.issue_relation_create.success {
+            bail!("issueRelationCreate returned success=false for issue {issue_id}");
+        }
+        Ok(())
+    }
 }
 
 /// Updated issue fields returned by `issueUpdate`.

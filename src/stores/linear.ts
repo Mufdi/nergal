@@ -55,6 +55,20 @@ export function clearLinearOverlayEntry(
   });
 }
 
+// ── Duplicate-of picker (BUG-35) ──
+
+/// Non-null when a state change was rejected with "missing duplicate relation"
+/// — Linear needs the canonical issue this one duplicates before it can move
+/// into a Duplicate-typed state. The DuplicateOfPicker resolves it, then calls
+/// `linear_mark_issue_duplicate` (relation + state in one shot).
+export interface LinearDuplicateRequest {
+  issueId: string;
+  teamId: string;
+  stateId: string;
+}
+
+export const linearDuplicateRequestAtom = atom<LinearDuplicateRequest | null>(null);
+
 // ── Closure offer atom (task 6.1) ──
 
 export interface LinearClosureOffer {

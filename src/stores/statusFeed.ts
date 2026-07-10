@@ -12,6 +12,11 @@ export interface ProviderStatus {
 
 export const providerStatusAtom = atom<ProviderStatus[]>([]);
 
+/// Which provider's status popover is open (null = closed). Shared as an atom
+/// (not local StatusBar state) so the leader dispatcher can dismiss it before
+/// arming a chord — an open popover otherwise traps keyboard focus.
+export const providerStatusOpenAtom = atom<string | null>(null);
+
 /// Providers with an active incident — what the StatusBar chip renders.
 /// "unknown" is a fetch failure on our side, not an incident.
 export const activeIncidentsAtom = atom<ProviderStatus[]>((get) =>

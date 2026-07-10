@@ -34,6 +34,7 @@ import { BrowserHost } from "@/components/browser/BrowserHost";
 import { ClickUpTaskDetail } from "@/components/clickup/ClickUpTaskDetail";
 import { ClickUpSendConfirmDialog } from "@/components/clickup/ClickUpConfirmDialogs";
 import { LinearSendConfirmDialog } from "@/components/linear/LinearConfirmDialogs";
+import { LinearDuplicateOfPicker } from "@/components/linear/DuplicateOfPicker";
 import { ClickUpClosureDialog } from "@/components/clickup/ClickUpClosureDialog";
 import { LinearClosureDialog } from "@/components/linear/LinearClosureDialog";
 import { LinearTaskDetail } from "@/components/linear/LinearTaskDetail";
@@ -446,6 +447,7 @@ export function Workspace() {
       <ClickUpClosureDialog />
       <LinearTaskDetail />
       <LinearSendConfirmDialog />
+      <LinearDuplicateOfPicker />
       <LinearClosureDialog />
     </div>
   );

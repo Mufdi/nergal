@@ -44,7 +44,7 @@ export function CommandPalette() {
       }
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        setSelectedIndex((prev) => Math.min(prev + 1, filtered.length + filteredTemplates.length - 1));
+        setSelectedIndex((prev) => Math.min(prev + 1, orderedActions.length + filteredTemplates.length - 1));
         return;
       }
       if (e.key === "ArrowUp") {
@@ -54,13 +54,16 @@ export function CommandPalette() {
       }
       if (e.key === "Enter") {
         e.preventDefault();
-        const action = filtered[selectedIndex];
+        // selectedIndex tracks the grouped render order, not registry order —
+        // index the same flat list the render walks (orderedActions), else the
+        // highlighted row and the fired action desync across categories.
+        const action = orderedActions[selectedIndex];
         if (action) {
           setOpen(false);
           action.handler();
           return;
         }
-        const template = filteredTemplates[selectedIndex - filtered.length];
+        const template = filteredTemplates[selectedIndex - orderedActions.length];
         if (template) void sendTemplate(template);
         return;
       }
@@ -142,6 +145,11 @@ export function CommandPalette() {
     list.push(action);
     grouped.set(action.category, list);
   }
+
+  // Flat list in the exact order the render walks (category groups, in
+  // `categories` order). selectedIndex is assigned against this order, so
+  // Enter must resolve the action from here — not from registry-order `filtered`.
+  const orderedActions = categories.flatMap((cat) => grouped.get(cat) ?? []);
 
   let flatIndex = 0;
 

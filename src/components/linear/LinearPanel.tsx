@@ -51,6 +51,7 @@ import {
   linearAssignedToMeAtom,
   linearClosedOutAtom,
   linearDetailIssueIdAtom,
+  linearDuplicateRequestAtom,
   linearGroupByAtom,
   linearIssuesAtom,
   linearLabelFilterAtom,
@@ -1332,6 +1333,7 @@ function LinearIssueRow({
   const closedOut = closedOutSet.has(issue.id);
   const [overlay, setOverlay] = useAtom(linearOverlayAtom);
   const addToast = useSetAtom(toastsAtom);
+  const setDuplicateRequest = useSetAtom(linearDuplicateRequestAtom);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [stateOptions, setStateOptions] = useState<WorkflowStateView[]>([]);
   const [statesLoading, setStatesLoading] = useState(false);
@@ -1353,6 +1355,12 @@ function LinearIssueRow({
     setLinearOverlayEntry(setOverlay, issue.id, "state", stateId);
     invoke("linear_set_issue_state", { issueId: issue.id, stateId }).catch((err) => {
       clearLinearOverlayEntry(setOverlay, issue.id, "state");
+      // Linear rejects a move into a Duplicate-typed state until we record
+      // which issue this duplicates — open the picker instead of erroring out.
+      if (/duplicate relation/i.test(String(err))) {
+        setDuplicateRequest({ issueId: issue.id, teamId: issue.teamId, stateId });
+        return;
+      }
       addToast({ message: "State change failed", description: String(err), type: "error" });
     });
   }

@@ -13,7 +13,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { toastsAtom } from "@/stores/toast";
-import { linearIssuesAtom, linearSendConfirmAtom } from "@/stores/linear";
+import {
+  linearIssuesAtom,
+  linearSendConfirmAtom,
+  linearDetailIssueIdAtom,
+  suppressLinearDetailCloseFocus,
+} from "@/stores/linear";
+import { focusZoneAtom } from "@/stores/shortcuts";
+import * as terminalService from "@/components/terminal/terminalService";
 
 /// Send-as-prompt confirmation (mirrors ClickUpSendConfirmDialog): the send
 /// auto-submits the composed brief as a turn, so the user reviews exactly WHAT
@@ -23,6 +30,8 @@ export function LinearSendConfirmDialog() {
   const [request, setRequest] = useAtom(linearSendConfirmAtom);
   const issues = useAtomValue(linearIssuesAtom);
   const addToast = useSetAtom(toastsAtom);
+  const [detailIssueId, setDetailIssueId] = useAtom(linearDetailIssueIdAtom);
+  const setFocusZone = useSetAtom(focusZoneAtom);
   const [compose, setCompose] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -59,6 +68,15 @@ export function LinearSendConfirmDialog() {
       });
       addToast({ message: "Issue sent as prompt", description: issueName, type: "success" });
       setRequest(null);
+      // When sent from the detail modal, close it and steer focus to the
+      // terminal (mirror of ClickUp). Guard on the detail atom so the panel-row
+      // send path (no modal open) is untouched (BUG-36).
+      if (detailIssueId !== null) {
+        suppressLinearDetailCloseFocus();
+        setDetailIssueId(null);
+        setFocusZone("terminal");
+        requestAnimationFrame(() => terminalService.focusActive());
+      }
     } catch (err) {
       addToast({ message: "Send failed", description: String(err), type: "error" });
       setSending(false);

@@ -43,6 +43,7 @@ import {
   LINEAR_ACTION_LABELS,
   linearClosedOutAtom,
   linearClosureOfferAtom,
+  linearDuplicateRequestAtom,
   linearIssuesAtom,
   linearOverlayAtom,
   linearSyncStatusAtom,
@@ -705,6 +706,7 @@ function StatePickerRail({
   const [states, setStates] = useState<WorkflowStateView[]>([]);
   const setOverlay = useSetAtom(linearOverlayAtom);
   const addToast = useSetAtom(toastsAtom);
+  const setDuplicateRequest = useSetAtom(linearDuplicateRequestAtom);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
 
@@ -736,6 +738,10 @@ function StatePickerRail({
     setLinearOverlayEntry(setOverlay, issueId, "state", stateId);
     invoke("linear_set_issue_state", { issueId, stateId }).catch((err) => {
       clearLinearOverlayEntry(setOverlay, issueId, "state");
+      if (/duplicate relation/i.test(String(err))) {
+        setDuplicateRequest({ issueId, teamId, stateId });
+        return;
+      }
       addToast({ message: "State change failed", description: String(err), type: "error" });
     });
   }

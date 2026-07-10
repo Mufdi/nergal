@@ -24,7 +24,7 @@ import * as terminalService from "@/components/terminal/terminalService";
 import { Badge } from "@/components/ui/badge";
 import { Kbd } from "@/components/ui/kbd";
 import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock, Globe, CalendarRange, Pencil, TriangleAlert, Timer, History, X, Copy, ExternalLink } from "lucide-react";
-import { activeIncidentsAtom, type ProviderStatusDetail } from "@/stores/statusFeed";
+import { activeIncidentsAtom, providerStatusOpenAtom, type ProviderStatusDetail } from "@/stores/statusFeed";
 import { notificationHistoryAtom, clearNotificationsAtom, notificationHistoryOpenAtom, type NotificationEntry } from "@/stores/notifications";
 import {
   Tooltip,
@@ -95,7 +95,7 @@ export function StatusBar() {
   // Owns the provider-status popover state so it's reachable both from an
   // incident chip click AND the palette-only "Provider status" entry (which
   // has no chip to anchor to when nothing is currently incident-flagged).
-  const [openProvider, setOpenProvider] = useState<string | null>(null);
+  const [openProvider, setOpenProvider] = useAtom(providerStatusOpenAtom);
   useEffect(() => {
     function onOpenProviderStatus(e: Event) {
       const requested = (e as CustomEvent<{ provider?: string }>).detail?.provider;
@@ -592,9 +592,18 @@ function IncidentChips({
   setOpenProvider: (p: string | null | ((prev: string | null) => string | null)) => void;
 }) {
   const incidents = useAtomValue(activeIncidentsAtom);
+  const setFocusZone = useSetAtom(focusZoneAtom);
   const [detail, setDetail] = useState<ProviderStatusDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Dismissing the popover returns focus to the terminal prompt (patterns.md
+  // §5.1) — mirrors closeAndFocusTerminal in the ports/notifications popovers.
+  function closeAndFocusTerminal() {
+    setOpenProvider(null);
+    setFocusZone("terminal");
+    requestAnimationFrame(() => terminalService.focusActive());
+  }
 
   useEffect(() => {
     if (!openProvider) return;
@@ -614,7 +623,7 @@ function IncidentChips({
       if (!containerRef.current?.contains(e.target as Node)) setOpenProvider(null);
     }
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") { e.preventDefault(); setOpenProvider(null); }
+      if (e.key === "Escape") { e.preventDefault(); closeAndFocusTerminal(); }
     }
     document.addEventListener("pointerdown", onDown, true);
     document.addEventListener("keydown", onKey, true);
@@ -634,7 +643,7 @@ function IncidentChips({
       {incidents.map((s) => (
         <Tooltip key={s.provider}>
           <TooltipTrigger
-            onClick={() => setOpenProvider((p) => (p === s.provider ? null : s.provider))}
+            onClick={() => (openProvider === s.provider ? closeAndFocusTerminal() : setOpenProvider(s.provider))}
             aria-expanded={openProvider === s.provider}
             className={`flex h-5 shrink-0 items-center gap-1 rounded px-1.5 text-[10px] font-medium leading-none whitespace-nowrap transition-colors ${
               s.indicator === "minor"

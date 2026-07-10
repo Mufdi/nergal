@@ -44,6 +44,22 @@ function commandFromToolInput(input: unknown): string | undefined {
   return typeof c === "string" && c ? c : undefined;
 }
 
+/// Best-effort human labels for CC's background_tasks / session_crons objects
+/// (CC-defined shapes) — tries common descriptive keys, joins for the detail.
+function summarizeItems(items: Record<string, unknown>[] | undefined, keys: string[]): string | undefined {
+  if (!items || items.length === 0) return undefined;
+  const labels = items
+    .map((it) => {
+      for (const k of keys) {
+        const v = it[k];
+        if (typeof v === "string" && v) return v;
+      }
+      return null;
+    })
+    .filter((l): l is string => Boolean(l));
+  return labels.length ? labels.join(", ") : undefined;
+}
+
 function clearKey<T extends Record<string, unknown>>(prev: T, key: string): T {
   if (!(key in prev)) return prev;
   const next = { ...prev };
@@ -104,6 +120,30 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
           set(pendingAttentionAtom, (prev) => clearKey(prev, sid));
           set(pendingAsksAtom, (prev) => clearKey(prev, sid));
           set(addActivityAtom, { sessionId: sid, entry: createActivity("session", `Stopped: ${stop_reason ?? "completed"}`) });
+          {
+            const bg = event.background_tasks;
+            if (bg && bg.length > 0) {
+              set(addActivityAtom, {
+                sessionId: sid,
+                entry: createActivity(
+                  "session",
+                  `${bg.length} background task${bg.length > 1 ? "s" : ""} still running`,
+                  summarizeItems(bg, ["description", "command", "name", "id"]),
+                ),
+              });
+            }
+            const crons = event.session_crons;
+            if (crons && crons.length > 0) {
+              set(addActivityAtom, {
+                sessionId: sid,
+                entry: createActivity(
+                  "session",
+                  `${crons.length} scheduled cron${crons.length > 1 ? "s" : ""} pending`,
+                  summarizeItems(crons, ["prompt", "description", "schedule", "name", "id"]),
+                ),
+              });
+            }
+          }
           set(refreshGitInfoAtom, sid);
           notify("Claude stopped", stop_reason ?? "completed");
           break;

@@ -11,6 +11,10 @@ export interface HookEvent {
   tool_input?: unknown;
   stop_reason?: string;
   transcript_path?: string;
+  /// Present on Stop events only (CC v2.1.150+): background tasks / crons still
+  /// live when the turn ended. Shapes are CC-defined JSON objects.
+  background_tasks?: Record<string, unknown>[];
+  session_crons?: Record<string, unknown>[];
 }
 
 export interface Task {

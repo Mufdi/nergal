@@ -29,6 +29,9 @@ import {
   restoreLastClosedScratchTab,
 } from "@/stores/scratchpad";
 import { appStore } from "@/stores/jotaiStore";
+import { portsPopoverOpenAtom } from "@/stores/browser";
+import { notificationHistoryOpenAtom } from "@/stores/notifications";
+import { providerStatusOpenAtom } from "@/stores/statusFeed";
 import { configAtom } from "@/stores/config";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { addAdHocShell, closeActiveQuakeShell } from "@/stores/quake";
@@ -315,6 +318,20 @@ export function useKeyboardShortcuts() {
           if (action.id === "leader") {
             e.preventDefault();
             e.stopPropagation();
+            // An open status popover (ports / notifications / provider-status)
+            // holds keyboard focus inside itself, so a leader chord would fire
+            // against the popover's hovered row (BUG-31). Dismiss it first and
+            // consume this press; the next leader press arms the chord cleanly.
+            if (
+              appStore.get(portsPopoverOpenAtom) ||
+              appStore.get(notificationHistoryOpenAtom) ||
+              appStore.get(providerStatusOpenAtom)
+            ) {
+              appStore.set(portsPopoverOpenAtom, false);
+              appStore.set(notificationHistoryOpenAtom, false);
+              appStore.set(providerStatusOpenAtom, null);
+              return;
+            }
             startLeaderPending();
             return;
           }

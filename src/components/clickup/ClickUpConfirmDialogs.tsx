@@ -13,7 +13,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { toastsAtom } from "@/stores/toast";
-import { clickupSendConfirmAtom, clickupTasksAtom } from "@/stores/clickup";
+import {
+  clickupSendConfirmAtom,
+  clickupTasksAtom,
+  clickupDetailTaskIdAtom,
+  suppressClickUpDetailCloseFocus,
+} from "@/stores/clickup";
+import { focusZoneAtom } from "@/stores/shortcuts";
+import * as terminalService from "@/components/terminal/terminalService";
 
 /// Send-as-prompt confirmation (Decision 6, reframed 2026-06-11): the send
 /// auto-submits the composed brief as a turn, so the user reviews exactly
@@ -23,6 +30,8 @@ export function ClickUpSendConfirmDialog() {
   const [request, setRequest] = useAtom(clickupSendConfirmAtom);
   const tasks = useAtomValue(clickupTasksAtom);
   const addToast = useSetAtom(toastsAtom);
+  const [detailTaskId, setDetailTaskId] = useAtom(clickupDetailTaskIdAtom);
+  const setFocusZone = useSetAtom(focusZoneAtom);
   const [compose, setCompose] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -60,6 +69,15 @@ export function ClickUpSendConfirmDialog() {
       });
       addToast({ message: "Task sent as prompt", description: taskName, type: "success" });
       setRequest(null);
+      // When sent from the detail modal, close it and steer focus to the
+      // terminal (mirror of spawnWorktreeWithTaskAction). Guard on the detail
+      // atom so the panel-row send path (no modal open) is untouched (BUG-36).
+      if (detailTaskId !== null) {
+        suppressClickUpDetailCloseFocus();
+        setDetailTaskId(null);
+        setFocusZone("terminal");
+        requestAnimationFrame(() => terminalService.focusActive());
+      }
     } catch (err) {
       addToast({ message: "Send failed", description: String(err), type: "error" });
       setSending(false);

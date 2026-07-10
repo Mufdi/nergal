@@ -22,6 +22,12 @@ struct FrontendHookEvent {
     tool_input: Option<serde_json::Value>,
     stop_reason: Option<String>,
     transcript_path: Option<String>,
+    /// Background tasks / crons still live at Stop (CC v2.1.150+). Only carried
+    /// on Stop events; skipped when empty so other event types stay lean.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    background_tasks: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    session_crons: Vec<serde_json::Value>,
 }
 
 impl FrontendHookEvent {
@@ -177,6 +183,14 @@ impl FrontendHookEvent {
                     (session_id.clone(), "agent_status", None, None, None, None)
                 }
             };
+        let (background_tasks, session_crons) = match event {
+            HookEvent::Stop {
+                background_tasks,
+                session_crons,
+                ..
+            } => (background_tasks.clone(), session_crons.clone()),
+            _ => (Vec::new(), Vec::new()),
+        };
         Self {
             session_id,
             nergal_session_id: None,
@@ -185,6 +199,8 @@ impl FrontendHookEvent {
             tool_input,
             stop_reason,
             transcript_path,
+            background_tasks,
+            session_crons,
         }
     }
 }

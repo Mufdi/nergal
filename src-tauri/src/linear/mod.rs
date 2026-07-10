@@ -1034,6 +1034,69 @@ pub async fn linear_set_issue_state(
     }
 }
 
+/// Mark an issue as a duplicate of `canonical_issue_id` and move it into
+/// `state_id`. Linear rejects `issueUpdate` into a duplicate-typed state with
+/// "missing duplicate relation" unless the `duplicate` relation exists first,
+/// so this creates the relation, then applies the state via the same validated
+/// registry-guarded path as `linear_set_issue_state`.
+#[tauri::command]
+pub async fn linear_mark_issue_duplicate(
+    issue_id: String,
+    canonical_issue_id: String,
+    state_id: String,
+    db: tauri::State<'_, crate::db::SharedDb>,
+    registry: tauri::State<'_, writeback::WritebackRegistry>,
+) -> Result<(), String> {
+    let pre = {
+        let guard = db.lock().map_err(|_| "db lock poisoned".to_string())?;
+        let team_id =
+            mirror::get_issue_team_id(guard.conn(), &issue_id).map_err(|e| format!("{e:#}"))?;
+        mirror::validate_state_for_team(guard.conn(), &team_id, &state_id)
+            .map_err(|e| format!("{e:#}"))?;
+        use rusqlite::OptionalExtension;
+        guard
+            .conn()
+            .query_row(
+                "SELECT state_id FROM linear_issues WHERE id = ?1",
+                [&issue_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(|e| format!("{e:#}"))?
+            .flatten()
+    };
+
+    registry.record(
+        &issue_id,
+        writeback::WriteField::State,
+        &state_id,
+        pre.as_deref(),
+    );
+
+    let stored = load_active_stored_key(&db).await?;
+    let client = build_client(stored.key);
+    // Relation first — Linear requires it before the state can move to duplicate.
+    if let Err(e) = client
+        .issue_relation_create(&issue_id, &canonical_issue_id, "duplicate")
+        .await
+    {
+        registry.clear_entry(&issue_id, &writeback::WriteField::State);
+        return Err(format!("{e:#}"));
+    }
+    let input = client::IssueUpdateInput {
+        state_id: Some(state_id.clone()),
+        assignee_id: None,
+        cycle_id: None,
+    };
+    match client.issue_update(&issue_id, input).await {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            registry.clear_entry(&issue_id, &writeback::WriteField::State);
+            Err(format!("{e:#}"))
+        }
+    }
+}
+
 /// Update the issue's assignee (reversible, un-token-gated).
 ///
 /// `assignee_id = None` → explicit unassign (sends `assigneeId: null`).

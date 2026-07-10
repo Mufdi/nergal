@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useAtomValue } from "jotai";
 import { leaderPendingAtom } from "@/stores/leader";
 import { resolvedShortcutsAtom, type ShortcutAction } from "@/stores/shortcuts";
+import { scratchpadOpacityAtom } from "@/stores/scratchpad";
 import { isChord, chordContinuation } from "@/lib/keymap";
 import { Kbd } from "@/components/ui/kbd";
 
@@ -24,7 +25,12 @@ const GROUP_LABELS: Record<string, string> = {
 export function WhichKeyPopover() {
   const pending = useAtomValue(leaderPendingAtom);
   const registry = useAtomValue(resolvedShortcutsAtom);
+  const opacity = useAtomValue(scratchpadOpacityAtom);
   const [visible, setVisible] = useState(false);
+
+  // Same translucency treatment as the scratchpad (user request): color-mix
+  // the theme's --card token so the popover shows the terminal faintly behind.
+  const cardBg = `color-mix(in srgb, var(--card) ${opacity * 100}%, transparent)`;
 
   useEffect(() => {
     if (!pending) {
@@ -41,8 +47,11 @@ export function WhichKeyPopover() {
 
   if (pending.mode === "raw") {
     return (
-      <div className="fixed inset-x-0 bottom-8 z-50 flex justify-center">
-        <div className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-[11px] text-foreground shadow-2xl">
+      <div className="fixed inset-x-0 bottom-8 z-[60] flex justify-center">
+        <div
+          className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-[11px] text-foreground shadow-2xl"
+          style={{ background: cardBg }}
+        >
           <Kbd keys={leaderKeys} />
           <Kbd keys="." />
           <span className="text-muted-foreground">next keystroke goes to the terminal</span>
@@ -68,8 +77,11 @@ export function WhichKeyPopover() {
   ];
 
   return (
-    <div className="fixed inset-x-0 bottom-8 z-50 flex justify-center">
-      <div className="max-w-[90vw] rounded-lg border border-border bg-card p-2 shadow-2xl">
+    <div className="fixed inset-x-0 bottom-8 z-[60] flex justify-center">
+      <div
+        className="max-w-[90vw] rounded-lg border border-border p-2 shadow-2xl"
+        style={{ background: cardBg }}
+      >
         <div className="mb-1.5 flex flex-wrap items-center gap-1.5 px-1">
           <Kbd keys={leaderKeys} />
           <span className="text-[10px] text-muted-foreground">…</span>

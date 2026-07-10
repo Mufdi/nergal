@@ -888,26 +888,34 @@ export function ClickUpTaskBody({ c, layout }: { c: TaskController; layout: "mod
       </div>
     ) : null;
   if (placeholder || !detail) {
+    // Wrap in the SAME TooltipProvider the loaded branches use (:1343 / :1384)
+    // so the contentRef <div> reconciles as one node across loading → detail.
+    // Without it the loaded branch's added wrapper changes the root element
+    // type, React remounts the div, and the first open drops focus (BUG-30).
     return isTab ? (
-      <div
-        ref={setOuterRef}
-        tabIndex={0}
-        onKeyDown={c.handleNavKeyDown}
-        onClick={c.handleContainerClick}
-        className="h-full overflow-y-auto outline-none"
-      >
-        {placeholder}
-      </div>
+      <TooltipProvider delay={0}>
+        <div
+          ref={setOuterRef}
+          tabIndex={0}
+          onKeyDown={c.handleNavKeyDown}
+          onClick={c.handleContainerClick}
+          className="h-full overflow-y-auto outline-none"
+        >
+          {placeholder}
+        </div>
+      </TooltipProvider>
     ) : (
-      <div
-        ref={c.contentRef}
-        tabIndex={0}
-        onKeyDown={c.handleNavKeyDown}
-        onClick={c.handleContainerClick}
-        className="flex h-full outline-none"
-      >
-        {placeholder}
-      </div>
+      <TooltipProvider delay={0}>
+        <div
+          ref={c.contentRef}
+          tabIndex={0}
+          onKeyDown={c.handleNavKeyDown}
+          onClick={c.handleContainerClick}
+          className="flex h-full outline-none"
+        >
+          {placeholder}
+        </div>
+      </TooltipProvider>
     );
   }
 

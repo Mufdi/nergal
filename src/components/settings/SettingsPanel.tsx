@@ -15,6 +15,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { VaultNoteChipInput } from "@/components/settings/VaultNoteChipInput";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
@@ -761,22 +762,15 @@ function ObsidianSection() {
       </div>
 
       <div className="grid gap-1.5">
-        <Label htmlFor="obsidian-default-pins">Default pinned notes (one absolute path per line)</Label>
-        <textarea
-          id="obsidian-default-pins"
-          rows={3}
-          value={(draft.default_pinned_note_paths ?? []).join("\n")}
-          onChange={(e) =>
-            setField(
-              "default_pinned_note_paths",
-              e.target.value.split("\n").map((l) => l.trim()).filter(Boolean),
-            )
-          }
-          placeholder={"/path/to/vault/Projects/nergal/nergal.md\n/path/to/vault/Areas/Context.md"}
-          className="min-h-16 rounded-md border border-border bg-transparent px-3 py-2 font-mono text-xs outline-none focus-visible:border-ring"
+        <Label htmlFor="obsidian-default-pins">Default pinned notes</Label>
+        <VaultNoteChipInput
+          value={draft.default_pinned_note_paths ?? []}
+          onChange={(paths) => setField("default_pinned_note_paths", paths)}
+          workspaceId={effective?.id ?? null}
+          vaultSubdir={null}
         />
         <p className="text-xs text-muted-foreground">
-          Vault notes auto-pinned into every <strong>new</strong> session in this workspace, so it starts with your standing context (seeded into the agent's system prompt at spawn). Empty = none.
+          Type to search vault notes; each becomes a chip. Auto-pinned into every <strong>new</strong> session in this workspace, so it starts with your standing context (seeded into the agent's system prompt at spawn). Empty = none.
         </p>
       </div>
 
@@ -2940,41 +2934,56 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
 
   useEffect(() => {
     if (!open) return;
-    // Two-tier section nav (BUG-27), mirroring the sidebar workspace/session
-    // pickers. Ctrl+Shift+N → category N (lands on its first section). Alt+N →
-    // the Nth section of the ACTIVE category (dynamic). The central shortcut
-    // dispatcher already bails while a dialog is open, so there is no collision
-    // with the sidebar's own Ctrl+Shift+N / Ctrl+N — we only need to swallow
-    // the key so it never reaches the terminal. event.code keeps it
-    // layout-independent (WebKitGTK convention).
+    // Section nav: Alt+Left/Right move focus between the rail (section menu) and
+    // the content; ↑/↓ inside the rail step through ALL sections flat (the
+    // category headers are just dividers). Replaces the confusing dual
+    // Ctrl+Shift+N / Alt+N number chords. event.code keeps it layout-independent.
+    function focusRail() {
+      navRef.current?.querySelector<HTMLElement>('button[data-active="true"]')?.focus();
+    }
+    function focusContent() {
+      contentRef.current
+        ?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)
+        ?.focus({ preventScroll: true });
+    }
+    function moveSection(delta: number) {
+      const flat = CATEGORIES.flatMap((c) => c.sections);
+      const idx = flat.findIndex((s) => s.id === activeSectionRef.current);
+      const next = flat[Math.min(Math.max(idx + delta, 0), flat.length - 1)];
+      if (!next || next.id === activeSectionRef.current) return;
+      setActiveSection(next.id);
+      // The moved-to category expands on the next render — land focus on it.
+      requestAnimationFrame(() =>
+        navRef.current?.querySelector<HTMLElement>('button[data-active="true"]')?.focus(),
+      );
+    }
     function handleKeyDown(e: KeyboardEvent) {
       if (appStore.get(keymapCaptureActiveAtom)) return;
-      if (e.metaKey) return;
-      const m = /^Digit([1-9])$/.exec(e.code);
-      if (!m) return;
-      const n = parseInt(m[1], 10);
-
-      // Ctrl+Shift+N → category.
-      if (e.ctrlKey && e.shiftKey && !e.altKey) {
-        const cat = CATEGORIES[n - 1];
-        if (!cat) return;
+      if (e.metaKey || e.ctrlKey) return;
+      const inRail = !!(e.target as HTMLElement | null)?.closest("[data-settings-rail]");
+      if (e.altKey && e.code === "ArrowLeft") {
         e.preventDefault();
         e.stopPropagation();
-        setActiveSection(cat.sections[0].id);
+        focusRail();
         return;
       }
-
-      // Alt+N → section within the active category.
-      if (e.altKey && !e.ctrlKey && !e.shiftKey) {
-        const cat =
-          CATEGORIES.find((c) =>
-            c.sections.some((s) => s.id === activeSectionRef.current),
-          ) ?? CATEGORIES[0];
-        const target = cat.sections[n - 1];
-        if (!target) return;
+      if (e.altKey && e.code === "ArrowRight") {
         e.preventDefault();
         e.stopPropagation();
-        setActiveSection(target.id);
+        focusContent();
+        return;
+      }
+      if (e.altKey) return;
+      if (inRail && (e.code === "ArrowDown" || e.code === "ArrowUp")) {
+        e.preventDefault();
+        e.stopPropagation();
+        moveSection(e.code === "ArrowDown" ? 1 : -1);
+        return;
+      }
+      if (inRail && (e.code === "Enter" || e.code === "ArrowRight")) {
+        e.preventDefault();
+        e.stopPropagation();
+        focusContent();
       }
     }
     window.addEventListener("keydown", handleKeyDown, true);
@@ -3125,6 +3134,9 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
       const tag = target.tagName;
       const role = target.getAttribute("role");
       if (tag === "TEXTAREA" || role === "listbox") return;
+      // An open combobox (e.g. the vault-note chip input) owns the arrow keys
+      // to drive its suggestion list — don't hijack them for form nav.
+      if (target.getAttribute("aria-expanded") === "true") return;
       if (!contentRef.current?.contains(target)) return;
 
       const focusables = Array.from(
@@ -3258,13 +3270,14 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
-            Configure paths and preferences. Press <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+Shift+N</kbd> for a category, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Alt+N</kbd> for a section within it, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Tab</kbd> to enter the form, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+F</kbd> to search, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+Enter</kbd> to save, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+,</kbd> or <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Esc</kbd> to close.
+            Configure paths and preferences. Press <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Alt+←/→</kbd> to move between the menu and the form, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">↑/↓</kbd> to switch section, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+F</kbd> to search, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+Enter</kbd> to save, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+,</kbd> or <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Esc</kbd> to close.
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid grid-cols-[180px_1fr] gap-5 h-[460px]">
           <nav
             ref={navRef}
+            data-settings-rail
             className="flex flex-col gap-1.5 overflow-y-auto border-r border-border/40 pr-2"
           >
             <input
@@ -3281,7 +3294,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
               const activeCatId = CATEGORIES.find((c) =>
                 c.sections.some((s) => s.id === activeSection),
               )?.id;
-              return CATEGORIES.map((cat, catIdx) => {
+              return CATEGORIES.map((cat) => {
                 const matched = searching
                   ? cat.sections.filter(
                       (s) =>
@@ -3301,29 +3314,22 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
                 // Only the active category is expanded (sidebar parity); search
                 // expands every surviving group so hits are visible.
                 const expanded = searching || cat.id === activeCatId;
-                const isActiveCat = cat.id === activeCatId;
                 return (
                   <div key={cat.id} className="flex flex-col gap-0.5">
                     <button
                       type="button"
                       tabIndex={-1}
                       onClick={() => setActiveSection(cat.sections[0].id)}
-                      className="flex items-center justify-between px-2 py-0.5 outline-none hover:text-foreground"
+                      className="flex items-center px-2 py-0.5 outline-none hover:text-foreground"
                     >
                       <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground/60">
                         {cat.label}
                       </span>
-                      {/* Category hint always visible — mirrors the sidebar's
-                          per-workspace number that shows even when collapsed. */}
-                      <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border border-border/40 text-muted-foreground">
-                        ⌃⇧{catIdx + 1}
-                      </kbd>
                     </button>
                     {expanded &&
                       sections.map((section) => {
                         const Icon = section.icon;
                         const isActive = section.id === activeSection;
-                        const secIdx = cat.sections.indexOf(section);
                         return (
                           <button
                             key={section.id}
@@ -3331,23 +3337,14 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
                             tabIndex={isActive ? 0 : -1}
                             data-active={isActive}
                             onClick={() => setActiveSection(section.id)}
-                            className={`flex items-center justify-between rounded-md px-2 py-1 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring ${
+                            className={`flex items-center gap-2 rounded-md px-2 py-1 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring ${
                               isActive
                                 ? "bg-secondary text-foreground"
                                 : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
                             }`}
                           >
-                            <span className="flex items-center gap-2">
-                              <Icon size={13} className="shrink-0" />
-                              <span>{section.label}</span>
-                            </span>
-                            {/* Alt+N applies to the active category only, so its
-                                hint shows only there (sidebar session parity). */}
-                            {isActiveCat && (
-                              <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border border-border/40 text-muted-foreground">
-                                ⌥{secIdx + 1}
-                              </kbd>
-                            )}
+                            <Icon size={13} className="shrink-0" />
+                            <span>{section.label}</span>
                           </button>
                         );
                       })}

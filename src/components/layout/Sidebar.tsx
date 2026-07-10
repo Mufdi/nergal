@@ -4,9 +4,10 @@ import { configAtom } from "@/stores/config";
 import { useFocusPulse } from "@/hooks/useFocusPulse";
 import { confirm as swalConfirm } from "@/lib/confirm";
 import { escapeHtml } from "@/lib/escapeHtml";
-import { Pencil, Trash2 } from "lucide-react";
+import { Pencil, Pin, Trash2 } from "lucide-react";
 import { TextInputDialog } from "@/components/ui/TextInputDialog";
 import { deleteSessionWithGraceAction, deleteWorkspaceWithGraceAction } from "@/stores/pendingDeletes";
+import { pinnedNotesMapAtom } from "@/stores/pinnedNotes";
 import { focusZoneAtom, previousNonTerminalZoneAtom, triggerResumeSessionAtom, triggerNewSessionAtom, triggerAddWorkspaceAtom, triggerMergeAtom, triggerJumpToProjectAtom, sidebarSelectedIdxAtom, focusedWorkspaceIdAtom } from "@/stores/shortcuts";
 import {
   workspacesAtom,
@@ -381,6 +382,7 @@ function WorkspacesView() {
   const setSidebarIdxDirect = useSetAtom(sidebarSelectedIdxAtom);
   const focusedWorkspaceId = useAtomValue(focusedWorkspaceIdAtom);
   const setFocusedWorkspaceId = useSetAtom(focusedWorkspaceIdAtom);
+  const pinnedNotesMap = useAtomValue(pinnedNotesMapAtom);
   const setSelectedWorkspaceId = useSetAtom(selectedWorkspaceIdAtom);
   const focusZone = useAtomValue(focusZoneAtom);
 
@@ -757,6 +759,11 @@ function WorkspacesView() {
           const isShortcutWorkspace = ws.id === shortcutWsId;
           const nonCompletedSessions = ws.sessions.filter((s) => s.status !== "completed");
           const isBeingDragged = dragSrcIdx === wsIdx;
+          // Notes pinned across this workspace's sessions — surfaced as a pin
+          // badge next to the name (hover lists them).
+          const pinnedNotes = Array.from(
+            new Set(ws.sessions.flatMap((s) => pinnedNotesMap[s.id] ?? s.pinned_note_paths ?? [])),
+          );
         return (
           <div key={ws.id} className={isBeingDragged ? "opacity-40" : undefined}>
             {/* Drop-slot indicator above this row (visual only — the drop target
@@ -804,6 +811,22 @@ function WorkspacesView() {
               <span className="flex-1 truncate text-[11px] font-medium text-foreground/90">
                 {ws.name}
               </span>
+              {pinnedNotes.length > 0 && (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className="flex shrink-0 items-center text-muted-foreground/70">
+                        <Pin className="size-3" />
+                      </span>
+                    }
+                  />
+                  <TooltipContent side="top" className="max-w-56 text-[10px]">
+                    {pinnedNotes.map((p) => (
+                      <div key={p}>{p.split("/").pop()?.replace(/\.md$/i, "") ?? p}</div>
+                    ))}
+                  </TooltipContent>
+                </Tooltip>
+              )}
               {!ws.is_git && (
                 <Tooltip>
                   <TooltipTrigger

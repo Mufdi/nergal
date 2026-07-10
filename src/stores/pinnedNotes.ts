@@ -28,6 +28,20 @@ export const pinnedNotesMapAtom = sessionScopedMapAtom<string[]>();
 /// tooltip. Loaded lazily alongside the pins.
 export const injectionTierMapAtom = sessionScopedMapAtom<ContextInjectionTier>();
 
+/// workspace_id → the workspace's DEFAULT pinned note paths (Obsidian
+/// settings). Drives the sidebar's per-workspace pin badge — distinct from
+/// per-session pins (those show on the session tab).
+export const workspaceDefaultPinsMapAtom = atom<Record<string, string[]>>({});
+
+export const loadWorkspaceDefaultPinsAtom = atom(null, async (_get, set) => {
+  try {
+    const map = await invoke<Record<string, string[]>>("list_workspace_default_pins");
+    set(workspaceDefaultPinsMapAtom, map);
+  } catch (err) {
+    console.warn("[pinnedNotes] load workspace default pins failed:", err);
+  }
+});
+
 export const activeSessionPinnedNotesAtom = atom<string[]>((get) => {
   const id = get(activeSessionIdAtom);
   if (!id) return [];

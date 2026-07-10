@@ -525,6 +525,7 @@ pub fn run() {
             commands::pin_vault_note,
             commands::unpin_vault_note,
             commands::list_pinned_notes,
+            commands::list_workspace_default_pins,
             commands::get_context_injection_tier,
             commands::read_vault_note,
             commands::resolve_vault_note,

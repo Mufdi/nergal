@@ -3031,7 +3031,10 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
     let raf2: number | null = null;
     const raf1 = requestAnimationFrame(() => {
       raf2 = requestAnimationFrame(() => {
-        if (activeSection === "appearance") {
+        // Read the section live via the ref: this effect fires on OPEN only
+        // (not on section change) so rail nav never yanks focus into the form —
+        // Alt+Right does that explicitly (BUG report 2026-07-10).
+        if (activeSectionRef.current === "appearance") {
           const cards = contentRef.current?.querySelectorAll<HTMLButtonElement>(
             "[data-theme-card]",
           );
@@ -3053,7 +3056,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
       cancelAnimationFrame(raf1);
       if (raf2 !== null) cancelAnimationFrame(raf2);
     };
-  }, [open, activeSection, config.theme_mode]);
+  }, [open, config.theme_mode]);
 
   // Arrow-key navigation across the dialog content.
   //   - Theme card grid (`[data-theme-card]`): genuine 2D nav, 2 cols, clamps
@@ -3337,7 +3340,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
                             tabIndex={isActive ? 0 : -1}
                             data-active={isActive}
                             onClick={() => setActiveSection(section.id)}
-                            className={`flex items-center gap-2 rounded-md px-2 py-1 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring ${
+                            className={`flex items-center gap-2 rounded-md px-2 py-1 text-xs outline-none transition-colors ${
                               isActive
                                 ? "bg-secondary text-foreground"
                                 : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"

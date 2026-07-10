@@ -66,8 +66,13 @@ export function CrossSessionPanel() {
     void loadCrossSessionThreads(store);
   }, [store]);
 
+  // Remembers the thread just opened so returning to the list restores the
+  // cursor onto it instead of snapping back to the first row.
+  const lastThreadRef = useRef<string | null>(null);
+
   const open = useCallback(
     (threadId: string) => {
+      lastThreadRef.current = threadId;
       void openCrossSessionThread(store, threadId);
     },
     [store],
@@ -101,9 +106,15 @@ export function CrossSessionPanel() {
       if (!root) return;
       focusIfPanelZone(root);
       if (root.querySelector("[data-nav-selected='true']")) return;
-      root
-        .querySelector<HTMLElement>("[data-nav-item]")
-        ?.setAttribute("data-nav-selected", "true");
+      // Prefer the thread we just came back from; fall back to the first row.
+      const target =
+        (lastThreadRef.current &&
+          root.querySelector<HTMLElement>(
+            `[data-thread-id="${lastThreadRef.current}"]`,
+          )) ||
+        root.querySelector<HTMLElement>("[data-nav-item]");
+      target?.setAttribute("data-nav-selected", "true");
+      target?.scrollIntoView({ block: "nearest" });
     }, 50);
     return () => clearTimeout(timer);
   }, [activeThreadId]);

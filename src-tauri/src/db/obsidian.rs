@@ -73,6 +73,31 @@ impl Database {
         Ok(())
     }
 
+    /// workspace_id → default pinned note paths, for every workspace that has
+    /// any configured. Feeds the sidebar's per-workspace pin badge in one query.
+    pub fn all_workspace_default_pins(
+        &self,
+    ) -> Result<std::collections::HashMap<String, Vec<String>>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT workspace_id, default_pinned_note_paths FROM obsidian_config \
+             WHERE default_pinned_note_paths IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+        })?;
+        let mut out = std::collections::HashMap::new();
+        for row in rows {
+            let (ws, json) = row?;
+            let paths: Vec<String> = json
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
+            if !paths.is_empty() {
+                out.insert(ws, paths);
+            }
+        }
+        Ok(out)
+    }
+
     pub fn delete_obsidian_config(&self, workspace_id: &str) -> Result<()> {
         self.conn.execute(
             "DELETE FROM obsidian_config WHERE workspace_id = ?1",

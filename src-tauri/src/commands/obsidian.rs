@@ -431,6 +431,16 @@ pub fn list_pinned_notes(
     db.get_pinned_notes(&session_id).map_err(|e| e.to_string())
 }
 
+/// workspace_id → its default pinned note paths (Obsidian settings). Drives the
+/// sidebar's per-workspace pin badge.
+#[tauri::command]
+pub fn list_workspace_default_pins(
+    db: State<'_, SharedDb>,
+) -> Result<std::collections::HashMap<String, Vec<String>>, String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    db.all_workspace_default_pins().map_err(|e| e.to_string())
+}
+
 // ── Vault note reading (#P Obsidian panel) ──
 
 fn resolve_vault_root(db: &SharedDb, workspace_id: &str) -> Result<PathBuf, String> {

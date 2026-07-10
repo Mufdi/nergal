@@ -9,6 +9,7 @@ import {
 } from "./obsidianTemplates";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { toastsAtom } from "./toast";
+import { loadWorkspaceDefaultPinsAtom } from "./pinnedNotes";
 
 export interface PinnedNoteChangedPayload {
   session_id: string;
@@ -127,6 +128,8 @@ export const saveObsidianConfigAtom = atom(
       if (active && active.id === args.workspaceId) {
         set(obsidianConfigAtom, resolved);
       }
+      // Refresh the sidebar's per-workspace pin badge (default pins may have changed).
+      void set(loadWorkspaceDefaultPinsAtom);
       return resolved;
     } catch (err) {
       console.warn("[obsidian] save_obsidian_config failed:", err);

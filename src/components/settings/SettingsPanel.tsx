@@ -2872,6 +2872,18 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
     activeSectionRef.current = activeSection;
   }, [activeSection]);
 
+  // Collapsed category groups (all expanded by default). Space/Left on a rail
+  // row collapses its group; Right/Space expands — mirrors the sidebar's
+  // workspace→sessions collapse.
+  const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
+  const toggleCat = (id: string) =>
+    setCollapsedCats((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
   const [sectionSearch, setSectionSearch] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
   // Fresh search each time the dialog opens.
@@ -2938,29 +2950,36 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
     // the content; ↑/↓ inside the rail step through ALL sections flat (the
     // category headers are just dividers). Replaces the confusing dual
     // Ctrl+Shift+N / Alt+N number chords. event.code keeps it layout-independent.
+    const railRows = () =>
+      Array.from(navRef.current?.querySelectorAll<HTMLElement>("[data-rail-nav]") ?? []);
     function focusRail() {
-      navRef.current?.querySelector<HTMLElement>('button[data-active="true"]')?.focus();
+      const active = navRef.current?.querySelector<HTMLElement>('[data-rail-nav][data-active="true"]');
+      (active ?? railRows()[0])?.focus();
     }
     function focusContent() {
       contentRef.current
         ?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)
         ?.focus({ preventScroll: true });
     }
-    function moveSection(delta: number) {
-      const flat = CATEGORIES.flatMap((c) => c.sections);
-      const idx = flat.findIndex((s) => s.id === activeSectionRef.current);
-      const next = flat[Math.min(Math.max(idx + delta, 0), flat.length - 1)];
-      if (!next || next.id === activeSectionRef.current) return;
-      setActiveSection(next.id);
-      // The moved-to category expands on the next render — land focus on it.
-      requestAnimationFrame(() =>
-        navRef.current?.querySelector<HTMLElement>('button[data-active="true"]')?.focus(),
-      );
+    function focusRow(el: HTMLElement | undefined) {
+      if (!el) return;
+      el.focus();
+      const sid = el.dataset.sectionId;
+      if (sid) setActiveSection(sid as SectionId);
+      el.scrollIntoView({ block: "nearest" });
     }
+    const collapse = (id: string) => setCollapsedCats((prev) => new Set(prev).add(id));
+    const expand = (id: string) =>
+      setCollapsedCats((prev) => {
+        const n = new Set(prev);
+        n.delete(id);
+        return n;
+      });
     function handleKeyDown(e: KeyboardEvent) {
       if (appStore.get(keymapCaptureActiveAtom)) return;
       if (e.metaKey || e.ctrlKey) return;
-      const inRail = !!(e.target as HTMLElement | null)?.closest("[data-settings-rail]");
+      const target = e.target as HTMLElement | null;
+      // Alt+←/→ swap focus between the rail and the form, from anywhere.
       if (e.altKey && e.code === "ArrowLeft") {
         e.preventDefault();
         e.stopPropagation();
@@ -2974,16 +2993,71 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
         return;
       }
       if (e.altKey) return;
-      if (inRail && (e.code === "ArrowDown" || e.code === "ArrowUp")) {
-        e.preventDefault();
-        e.stopPropagation();
-        moveSection(e.code === "ArrowDown" ? 1 : -1);
-        return;
-      }
-      if (inRail && (e.code === "Enter" || e.code === "ArrowRight")) {
-        e.preventDefault();
-        e.stopPropagation();
-        focusContent();
+      if (!target?.closest("[data-settings-rail]")) return;
+      const rows = railRows();
+      const cur = target.closest<HTMLElement>("[data-rail-nav]");
+      const idx = cur ? rows.indexOf(cur) : -1;
+      const isCat = !!cur?.dataset.catId;
+      const catId = cur?.dataset.catId ?? cur?.dataset.parentCat;
+      const collapsed = cur?.dataset.railCollapsed === "true";
+      const focusHeader = (id: string) =>
+        requestAnimationFrame(() =>
+          navRef.current
+            ?.querySelector<HTMLElement>(`[data-rail-nav][data-cat-id="${id}"]`)
+            ?.focus(),
+        );
+      switch (e.code) {
+        case "ArrowDown":
+          e.preventDefault();
+          e.stopPropagation();
+          focusRow(rows[Math.min(idx + 1, rows.length - 1)]);
+          return;
+        case "ArrowUp":
+          e.preventDefault();
+          e.stopPropagation();
+          focusRow(rows[Math.max(idx - 1, 0)]);
+          return;
+        case "Space":
+          // Collapse/expand the group. On a section this collapses its parent,
+          // so move focus up to the header (the section is about to hide).
+          e.preventDefault();
+          e.stopPropagation();
+          if (isCat && catId) toggleCat(catId);
+          else if (catId) {
+            collapse(catId);
+            focusHeader(catId);
+          }
+          return;
+        case "Enter":
+          e.preventDefault();
+          e.stopPropagation();
+          if (isCat && catId) toggleCat(catId);
+          else focusContent();
+          return;
+        case "ArrowLeft":
+          e.preventDefault();
+          e.stopPropagation();
+          if (isCat && catId) collapse(catId);
+          else if (catId) {
+            collapse(catId);
+            focusHeader(catId);
+          }
+          return;
+        case "ArrowRight":
+          e.preventDefault();
+          e.stopPropagation();
+          if (isCat && catId) {
+            if (collapsed) expand(catId);
+            else
+              requestAnimationFrame(() =>
+                focusRow(
+                  navRef.current?.querySelector<HTMLElement>(
+                    `[data-rail-nav][data-parent-cat="${catId}"]`,
+                  ) ?? undefined,
+                ),
+              );
+          } else focusContent();
+          return;
       }
     }
     window.addEventListener("keydown", handleKeyDown, true);
@@ -3273,7 +3347,7 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
-            Configure paths and preferences. Press <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Alt+←/→</kbd> to move between the menu and the form, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">↑/↓</kbd> to switch section, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+F</kbd> to search, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+Enter</kbd> to save, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+,</kbd> or <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Esc</kbd> to close.
+            Configure paths and preferences. Press <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Alt+←/→</kbd> to move between the menu and the form, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">↑/↓</kbd> to move, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Space</kbd> to collapse a group, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+F</kbd> to search, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+Enter</kbd> to save, <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Ctrl+,</kbd> or <kbd className="text-[10px] px-1 py-0.5 rounded bg-muted border">Esc</kbd> to close.
           </DialogDescription>
         </DialogHeader>
 
@@ -3294,9 +3368,6 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
             {(() => {
               const q = sectionSearch.trim().toLowerCase();
               const searching = q.length > 0;
-              const activeCatId = CATEGORIES.find((c) =>
-                c.sections.some((s) => s.id === activeSection),
-              )?.id;
               return CATEGORIES.map((cat) => {
                 const matched = searching
                   ? cat.sections.filter(
@@ -3314,22 +3385,32 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
                   searching && catLabelMatches && matched.length === 0
                     ? cat.sections
                     : matched;
-                // Only the active category is expanded (sidebar parity); search
-                // expands every surviving group so hits are visible.
-                const expanded = searching || cat.id === activeCatId;
+                // All groups expand by default; the user collapses any group
+                // (Space/Left). Search force-expands every surviving group.
+                const collapsed = !searching && collapsedCats.has(cat.id);
                 return (
                   <div key={cat.id} className="flex flex-col gap-0.5">
                     <button
                       type="button"
                       tabIndex={-1}
-                      onClick={() => setActiveSection(cat.sections[0].id)}
-                      className="flex items-center px-2 py-0.5 outline-none hover:text-foreground"
+                      data-rail-nav
+                      data-cat-id={cat.id}
+                      data-rail-collapsed={collapsed ? "true" : "false"}
+                      onClick={() => toggleCat(cat.id)}
+                      className="flex items-center gap-1 px-2 py-0.5 outline-none hover:text-foreground focus:bg-secondary/40 rounded"
                     >
+                      <svg
+                        width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"
+                        className={`shrink-0 text-muted-foreground/50 transition-transform ${collapsed ? "" : "rotate-90"}`}
+                      >
+                        <polyline points="9 18 15 12 9 6" />
+                      </svg>
                       <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground/60">
                         {cat.label}
                       </span>
                     </button>
-                    {expanded &&
+                    {!collapsed &&
                       sections.map((section) => {
                         const Icon = section.icon;
                         const isActive = section.id === activeSection;
@@ -3338,12 +3419,15 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
                             key={section.id}
                             type="button"
                             tabIndex={isActive ? 0 : -1}
+                            data-rail-nav
+                            data-section-id={section.id}
+                            data-parent-cat={cat.id}
                             data-active={isActive}
                             onClick={() => setActiveSection(section.id)}
                             className={`flex items-center gap-2 rounded-md px-2 py-1 text-xs outline-none transition-colors ${
                               isActive
                                 ? "bg-secondary text-foreground"
-                                : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+                                : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground focus:bg-secondary/40 focus:text-foreground"
                             }`}
                           >
                             <Icon size={13} className="shrink-0" />

@@ -77,7 +77,9 @@ export const obsidianDraftDirtyAtom = atom((get) => {
     draft.templates_path !== resolved.templates_path ||
     draft.backlinks_enabled !== resolved.backlinks_enabled ||
     draft.render_wikilinks !== resolved.render_wikilinks ||
-    draft.search_subdir !== resolved.search_subdir
+    draft.search_subdir !== resolved.search_subdir ||
+    JSON.stringify(draft.default_pinned_note_paths ?? []) !==
+      JSON.stringify(resolved.default_pinned_note_paths ?? [])
   );
 });
 

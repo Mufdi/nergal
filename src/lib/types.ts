@@ -248,6 +248,8 @@ export interface ObsidianConfig {
   render_wikilinks: boolean;
   /** Vault-relative folder that scopes vault search + the @@ picker. Null/empty = whole vault. */
   search_subdir: string | null;
+  /** Vault note paths auto-pinned into every new session in this workspace. */
+  default_pinned_note_paths: string[];
 }
 
 export type ResolvedObsidianConfig = ObsidianConfig;

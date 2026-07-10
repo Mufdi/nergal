@@ -234,6 +234,9 @@ pub fn obsidian_create_project_note(
                 backlinks_enabled: donor.backlinks_enabled,
                 render_wikilinks: donor.render_wikilinks,
                 search_subdir: None,
+                // Standing context is workspace-specific — don't inherit a
+                // sibling's default pins.
+                default_pinned_note_paths: Vec::new(),
             };
             crate::obsidian::config::normalize_file_channels(&mut inherited);
             db.upsert_obsidian_config(&workspace_id, &inherited)

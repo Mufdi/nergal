@@ -45,6 +45,7 @@ export const obsidianDefaultConfig: ResolvedObsidianConfig = {
   backlinks_enabled: false,
   render_wikilinks: true,
   search_subdir: null,
+  default_pinned_note_paths: [],
 };
 
 export const obsidianConfigAtom = atom<ResolvedObsidianConfig | null>(null);

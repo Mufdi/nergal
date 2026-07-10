@@ -284,6 +284,7 @@ fn build_new_session(
     agent_capabilities: Vec<String>,
     launch_options: Option<crate::models::LaunchOptions>,
     env_shells: Option<Vec<crate::models::EnvShellDef>>,
+    default_pinned_notes: Vec<String>,
 ) -> Session {
     Session {
         id: session_id,
@@ -298,7 +299,9 @@ fn build_new_session(
         agent_id: agent_id.as_str().to_string(),
         agent_internal_session_id: None,
         agent_capabilities,
-        pinned_note_paths: Vec::new(),
+        // Seed with the workspace's default pinned notes (Obsidian settings) so
+        // a fresh session starts with the standing context. Empty = none.
+        pinned_note_paths: default_pinned_notes,
         // Drop all-default options so the column stays NULL for the common
         // case (and resume short-circuits the lookup).
         launch_options: launch_options.filter(|o| !o.is_noop()),
@@ -338,6 +341,15 @@ pub fn create_session(
         .map_err(|e| e.to_string())?
         == 0;
 
+    // Workspace default pinned notes (Obsidian settings) seed every new session.
+    // Read while the guard is held — the worktree branch drops it below.
+    let default_pinned_notes = guard
+        .get_obsidian_config(&workspace_id)
+        .ok()
+        .flatten()
+        .map(|c| c.default_pinned_note_paths)
+        .unwrap_or_default();
+
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -372,6 +384,7 @@ pub fn create_session(
             agent_capabilities,
             launch_options,
             env_shells,
+            default_pinned_notes.clone(),
         );
         guard.create_session(&session).map_err(|e| e.to_string())?;
         session
@@ -395,6 +408,7 @@ pub fn create_session(
             agent_capabilities,
             launch_options,
             env_shells,
+            default_pinned_notes,
         );
         let guard = db.lock().map_err(|e| e.to_string())?;
         guard.create_session(&session).map_err(|e| e.to_string())?;

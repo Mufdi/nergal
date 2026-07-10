@@ -15,6 +15,10 @@ pub struct ObsidianConfig {
     pub render_wikilinks: bool,
     /// Vault-relative folder scoping vault search + the `@@` picker; None/empty = whole vault.
     pub search_subdir: Option<String>,
+    /// Vault note paths auto-pinned into every NEW session created in this
+    /// workspace (standing context). Empty = none. Stored as a JSON array.
+    #[serde(default)]
+    pub default_pinned_note_paths: Vec<String>,
 }
 
 impl ObsidianConfig {

@@ -760,6 +760,26 @@ function ObsidianSection() {
         </p>
       </div>
 
+      <div className="grid gap-1.5">
+        <Label htmlFor="obsidian-default-pins">Default pinned notes (one absolute path per line)</Label>
+        <textarea
+          id="obsidian-default-pins"
+          rows={3}
+          value={(draft.default_pinned_note_paths ?? []).join("\n")}
+          onChange={(e) =>
+            setField(
+              "default_pinned_note_paths",
+              e.target.value.split("\n").map((l) => l.trim()).filter(Boolean),
+            )
+          }
+          placeholder={"/path/to/vault/Projects/nergal/nergal.md\n/path/to/vault/Areas/Context.md"}
+          className="min-h-16 rounded-md border border-border bg-transparent px-3 py-2 font-mono text-xs outline-none focus-visible:border-ring"
+        />
+        <p className="text-xs text-muted-foreground">
+          Vault notes auto-pinned into every <strong>new</strong> session in this workspace, so it starts with your standing context (seeded into the agent's system prompt at spawn). Empty = none.
+        </p>
+      </div>
+
       <div className="grid gap-3 rounded-md border border-border/40 p-3">
         <label className="flex items-start gap-3">
           <Switch

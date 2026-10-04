@@ -4,7 +4,11 @@
   "ceremony": "deep",
   "risk_tier": "medium",
   "files_estimate": 9,
-  "tags": ["feature", "onboarding", "ux"],
+  "tags": [
+    "feature",
+    "onboarding",
+    "ux"
+  ],
   "visibility": "public",
   "spec_target": "setup-wizard",
   "rigor_applied": {
@@ -27,5 +31,11 @@
     "blocking": "skippable, non-blocking; pending checks reachable from a status indicator"
   },
   "events": [],
-  "notes": "DOC-ONLY for now (user constraint): produce proposal + specs + design + implementation + tasks, then park. Implementation happens AFTER the Windows port walk completes. Walk findings related to onboarding may be folded into this same change."
+  "notes": "DOC-ONLY for now (user constraint): produce proposal + specs + design + implementation + tasks, then park. Windows port frozen 2026-10-04 (Linux + Claude Code focus), so implementation no longer waits for the Windows walk.",
+  "tracker": {
+    "system": "linear",
+    "id": "FRI-498",
+    "url": "https://linear.app/redribbon/issue/FRI-498",
+    "pending": []
+  }
 }

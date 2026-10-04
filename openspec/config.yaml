@@ -16,6 +16,7 @@ rules:
 
   specs:
     - Cada requirement debe ser verificable y tener al menos un scenario concreto
+    - "Cada scenario debe poder traducirse a un test automatizado: GIVEN/WHEN/THEN con valores concretos (inputs, estados, outputs esperados), no adjetivos ('rápido', 'correcto')."
     - Incluir modelo de datos (tablas, campos, tipos) cuando el requirement lo amerite
     - Detalles de implementación van en implementation.md, no en specs
 
@@ -25,6 +26,7 @@ rules:
     - Para decisiones de UI, referenciar las specs de layout (adaptive-layout, panel-categories) si aplica
 
   tasks:
+    - "Test-first: en cada grupo con comportamiento, la primera tarea es 'N.1 Test (Red): <scenario(s)>' y las de implementación van después. Bug fix: la primera tarea reproduce el bug con un test que falla. Excepciones: copy/label/color (sin test) y UI puramente visual ('N.1 Screenshot check: <vista> vs spec')."
     - Tareas atómicas y accionables — cada una debe poder implementarse sin depender de contexto externo
     - Cambios de schema SQLite como migraciones en src-tauri/migrations/
     - Incluir descripción de schema (campos, tipos, FKs) en cada tarea de creación de tabla
@@ -36,6 +38,7 @@ rules:
     - "Mid-implementation revision: cuando la implementación revela que el design es incorrecto o subóptimo, actualizar los artifacts del change existente (no crear uno nuevo) si el intent original se mantiene. Agregar sección '## Revision N: <título>' en design.md documentando qué cambió y por qué. Reescribir tasks.md preservando tareas completadas que siguen siendo válidas y reemplazando las que cambian. Reescribir implementation.md con el nuevo approach."
     - "Post-implementation spec update: después de completar todas las tareas, verificar si la implementación reveló comportamientos o decisiones no capturadas en las specs. Si es así, actualizar las delta specs del change antes de archivar. Las specs deben reflejar la realidad implementada, no solo la intención original."
     - "Revert de tareas invalidadas: si una revision invalida tareas ya completadas, revertir el código de esas tareas antes de reimplementar. Marcar como '- [ ] (revised)' en tasks.md para distinguirlas de tareas nuevas."
+    - "Cerrar tasks.md con un grupo '## N. Verification' que cite los comandos de verificación del proyecto (CLAUDE.md, o derivados de los manifests) + los checks manuales específicos del change."
 
   implementation:
     - "Anclar contra el código real: verificar símbolos contra archivos en disco y citar line refs (path:line). NO asumir APIs. Sección 'Verified codebase facts (do not re-assume)' obligatoria."

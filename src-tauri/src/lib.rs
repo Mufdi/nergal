@@ -137,25 +137,89 @@ fn open_windows_log_file() -> Option<std::fs::File> {
 /// File written to `~/.nergal-active` while the app is running, so the
 /// `nergal-conditional.sh` hook wrapper can detect whether forwarding
 /// hook events to `nergal hook ...` is worth doing. Removed on Drop.
+///
+/// Written only once armed from Tauri `setup`: a second launch is killed by the
+/// single-instance plugin before `setup` runs (via `process::exit`, skipping
+/// Drop), so writing earlier left the sentinel pointing at its dead PID and the
+/// conditional hooks went silent (BUG-39).
 struct SentinelGuard {
     path: PathBuf,
+    armed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[derive(Clone)]
+struct SentinelArm {
+    path: PathBuf,
+    armed: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl SentinelGuard {
     fn new() -> Self {
-        let path = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join(".nergal-active");
-        if let Err(e) = std::fs::write(&path, std::process::id().to_string()) {
-            tracing::warn!("failed to write sentinel {}: {e}", path.display());
+        Self::at(
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("/tmp"))
+                .join(".nergal-active"),
+        )
+    }
+
+    fn at(path: PathBuf) -> Self {
+        Self {
+            path,
+            armed: Default::default(),
         }
-        Self { path }
+    }
+
+    fn arm_handle(&self) -> SentinelArm {
+        SentinelArm {
+            path: self.path.clone(),
+            armed: self.armed.clone(),
+        }
+    }
+}
+
+impl SentinelArm {
+    fn arm(&self) {
+        if let Err(e) = std::fs::write(&self.path, std::process::id().to_string()) {
+            tracing::warn!("failed to write sentinel {}: {e}", self.path.display());
+            return;
+        }
+        self.armed.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
 impl Drop for SentinelGuard {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
+        if self.armed.load(std::sync::atomic::Ordering::SeqCst) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+#[cfg(test)]
+mod sentinel_tests {
+    use super::SentinelGuard;
+
+    #[test]
+    fn unarmed_guard_neither_writes_nor_removes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".nergal-active");
+        std::fs::write(&path, "4242").unwrap();
+        drop(SentinelGuard::at(path.clone()));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "4242");
+    }
+
+    #[test]
+    fn armed_guard_writes_own_pid_and_cleans_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".nergal-active");
+        let guard = SentinelGuard::at(path.clone());
+        guard.arm_handle().arm();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            std::process::id().to_string()
+        );
+        drop(guard);
+        assert!(!path.exists());
     }
 }
 
@@ -219,9 +283,12 @@ fn augment_path_from_user_shell() {
     }
 }
 
+const CLOSE_WATCHDOG: std::time::Duration = std::time::Duration::from_secs(8);
+
 pub fn run() {
     redirect_journald_stdio_to_logfile();
-    let _sentinel = SentinelGuard::new();
+    let sentinel = SentinelGuard::new();
+    let sentinel_arm = sentinel.arm_handle();
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     #[cfg(windows)]
@@ -332,6 +399,16 @@ pub fn run() {
                     pty.shutdown_all();
                 }
                 queue_close_markers(app);
+
+                // The JS close listener (BUG-28 delete flush) makes Tauri route
+                // the close through the webview, so a frozen renderer swallows
+                // it and the window never dies (BUG-38). Force it once the JS
+                // side has had its full flush cap (5s) plus slack.
+                let window = window.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(CLOSE_WATCHDOG);
+                    let _ = window.destroy();
+                });
             }
         })
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -379,7 +456,7 @@ pub fn run() {
             pty::queue_session_prompt,
             pty::resize_session_terminal,
             pty::terminal_input,
-            pty::terminal_get_full_grid,
+            pty::terminal_attach,
             pty::terminal_scroll,
             pty::terminal_scroll_to_bottom,
             pty::terminal_mouse_button,
@@ -640,6 +717,7 @@ pub fn run() {
             updater::collect_diagnostics,
         ])
         .setup(move |app| {
+            sentinel_arm.arm();
             if let Some(window) = app.get_webview_window("main") {
                 let icon = tauri::include_image!("icons/icon.png");
                 tracing::info!(

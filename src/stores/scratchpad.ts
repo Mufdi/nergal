@@ -1,6 +1,7 @@
 import { atom } from "jotai";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@/lib/tauri";
+import { pushBounded } from "@/lib/boundedRecord";
 import { appStore } from "./jotaiStore";
 import { toastsAtom } from "./toast";
 
@@ -64,6 +65,7 @@ export const currentScratchpadSelectionAtom = atom<string>("");
 /// In-memory stack of recently soft-deleted tab ids in this session.
 /// Drives Ctrl+Shift+T restore. Files still live in `.trash/` until purge.
 export const closedScratchTabsAtom = atom<string[]>([]);
+const CLOSED_SCRATCH_TABS_MAX = 30;
 
 /// Bumped each time the scratchpad panel becomes visible, so the editor
 /// can re-focus reliably even when the active tab id hasn't changed.
@@ -135,7 +137,7 @@ export async function closeScratchTab(tabId: string): Promise<void> {
       delete next[tabId];
       return next;
     });
-    appStore.set(closedScratchTabsAtom, (prev) => [...prev, tabId]);
+    appStore.set(closedScratchTabsAtom, (prev) => pushBounded(prev, tabId, CLOSED_SCRATCH_TABS_MAX));
     await reloadTabsFromBackend();
   } catch (err) {
     pushToast("error", `Failed to close scratchpad tab: ${err}`);

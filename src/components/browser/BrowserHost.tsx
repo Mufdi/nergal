@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useAtomValue, useSetAtom } from "jotai";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { invoke, listen } from "@/lib/tauri";
+import { invoke, subscribe } from "@/lib/tauri";
 import { activePanelViewAtom, activeTabAtom } from "@/stores/rightPanel";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import {
@@ -180,8 +180,7 @@ export function BrowserHost() {
   // mounted across visibility flips so we don't miss events emitted while
   // a register/unregister roundtrip is in flight.
   useEffect(() => {
-    let unlistenFn: (() => void) | null = null;
-    void listen<string>("browser:intercepted-shortcut", (payload) => {
+    return subscribe<string>("browser:intercepted-shortcut", (payload) => {
       if (!sessionId) return;
       switch (payload) {
         case "browser:new-tab":
@@ -212,12 +211,7 @@ export function BrowserHost() {
           return;
         }
       }
-    }).then((fn) => {
-      unlistenFn = fn;
     });
-    return () => {
-      if (unlistenFn) unlistenFn();
-    };
   }, [
     sessionId,
     sessionState.activeTabId,

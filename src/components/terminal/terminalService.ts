@@ -4,15 +4,16 @@
 /// a canvas entry.
 ///
 /// Flow per frame:
-///   1. Backend's emitter task coalesces PTY bytes and emits `terminal:grid-update`.
+///   1. Backend's emitter task coalesces PTY bytes and sends deltas over this
+///      terminal's own channel (attached via `terminal_attach`).
 ///   2. We apply the changed rows into the local shadow grid.
 ///   3. Changed rows are redrawn on the canvas using the [`FontAtlas`].
 ///   4. Cursor is drawn on top (erase old cell, paint new).
 ///
 /// No parsing happens here — all VT state lives in the backend.
 
-import { invoke, listen } from "@/lib/tauri";
-import type { UnlistenFn } from "@tauri-apps/api/event";
+import { invoke } from "@/lib/tauri";
+import { Channel } from "@tauri-apps/api/core";
 import { open as openShell } from "@tauri-apps/plugin-shell";
 import { readText as readClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import type { CellSnapshot, GridUpdate, TerminalKeyEvent } from "@/lib/types";
@@ -21,6 +22,9 @@ import { toastsAtom } from "@/stores/toast";
 
 import { FontAtlas, isWideCell, measureFont, type FontMetrics } from "./fontAtlas";
 import { TERM_FONT, TERM_THEME, refreshTermTheme, rgbaToCss } from "./theme";
+
+const ATTACH_ATTEMPTS = 20;
+const ATTACH_RETRY_MS = 100;
 
 interface CellCoord {
   col: number;
@@ -69,7 +73,7 @@ interface Entry {
   title: string | null;
   scrollOffset: number;
   isAltScreen: boolean;
-  unlisten: UnlistenFn;
+  unlisten: () => void;
   selection: Selection | null;
   // scrollOffset at selection time, used by the primary-screen delta sync.
   selectionScrollOffset: number;
@@ -391,18 +395,24 @@ async function showTerminal(opts: {
       await invoke("resize_session_terminal", { sessionId: key, cols, rows }).catch(() => {});
     }
 
-    entry.unlisten = await listen<GridUpdate>("terminal:grid-update", (payload) => {
-      if (payload.sessionId !== key) return;
-      applyUpdate(entry, payload);
-    });
+    const channel = new Channel<GridUpdate>((update) => applyUpdate(entry, update));
+    entry.unlisten = () => {
+      channel.onmessage = () => {};
+    };
 
-    // Seed the shadow grid with whatever state the backend already holds
-    // (for resumed sessions or reopened windows).
-    try {
-      const initial = await invoke<GridUpdate>("terminal_get_full_grid", { sessionId: key });
-      applyUpdate(entry, initial);
-    } catch {
-      // No backend state yet — the first grid-update will paint the screen.
+    // Attaching also seeds the shadow grid with whatever state the backend
+    // already holds (resumed sessions, reopened windows). Updates only flow
+    // through an attached channel, so retry while a concurrent spawn of the
+    // same session is still between reserving its slot and registering it.
+    for (let attempt = 0; attempt < ATTACH_ATTEMPTS; attempt++) {
+      try {
+        const initial = await invoke<GridUpdate>("terminal_attach", { sessionId: key, onUpdate: channel });
+        applyUpdate(entry, initial);
+        break;
+      } catch (err) {
+        if (attempt === ATTACH_ATTEMPTS - 1) console.error("terminal: attach failed", key, err);
+        else await new Promise((resolve) => setTimeout(resolve, ATTACH_RETRY_MS));
+      }
     }
 
     paintAll(entry);

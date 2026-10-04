@@ -242,7 +242,7 @@ pub fn stop_compose_projects(owned_dirs: &[String]) {
             use std::os::windows::process::CommandExt;
             cmd.creation_flags(0x0000_0008 | 0x0000_0200);
         }
-        let _ = cmd.spawn();
+        let _ = crate::platform_spawn::SpawnReaped::spawn_reaped(&mut cmd);
     }
 }
 
@@ -445,7 +445,7 @@ fn spawn_pty(
         config,
     );
     let mut terminal = TerminalHandle::new(session);
-    terminal.spawn_emitter(app.clone(), session_id.to_owned());
+    terminal.spawn_emitter(session_id.to_owned());
 
     let reader_session = Arc::clone(&terminal.session);
     let reader_notify = Arc::clone(&terminal.notify);
@@ -1830,13 +1830,14 @@ pub fn terminal_scroll_to_bottom(
     Ok(())
 }
 
-/// Return the current full grid for a session. Invalidates the differ so the
-/// next `terminal:grid-update` delta will also be a full resend — ensuring
-/// the frontend can sync state deterministically on mount/reload.
+/// Attach the frontend renderer's channel to a session's terminal and return
+/// the current full grid. Invalidates the differ so the next delta is also a
+/// full resend — ensuring the frontend syncs deterministically on mount/reload.
 #[tauri::command]
-pub fn terminal_get_full_grid(
+pub fn terminal_attach(
     state: State<'_, PtyManager>,
     session_id: String,
+    on_update: tauri::ipc::Channel<crate::terminal::GridUpdate>,
 ) -> Result<crate::terminal::GridUpdate, String> {
     let pty_id = {
         let session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
@@ -1849,6 +1850,7 @@ pub fn terminal_get_full_grid(
     let instances = state.instances.lock().map_err(|e| e.to_string())?;
     let instance = instances.get(&pty_id).ok_or("PTY instance not found")?;
     let handle = &instance.terminal;
+    handle.attach(on_update);
 
     let snapshot = handle
         .session
@@ -2061,8 +2063,7 @@ mod tests {
 
     /// Build a real `PtyInstance` the same way `spawn_pty` does (minus the
     /// reader thread and `spawn_emitter`, neither of which this test needs —
-    /// `spawn_emitter` requires a live `AppHandle`, unavailable in a unit
-    /// test, but `TerminalHandle::new` alone yields a fully valid instance).
+    /// `TerminalHandle::new` alone yields a fully valid instance).
     /// Mirrors the harness `reap_child_leaves_no_zombie` uses below.
     fn build_test_pty_instance(shell_command: &str) -> (PtyInstance, u32) {
         let pty_system = NativePtySystem::default();

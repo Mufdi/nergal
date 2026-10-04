@@ -131,7 +131,7 @@ pub fn spawn_runner_detached() -> Result<()> {
             Ok(())
         });
     }
-    cmd.spawn()
+    crate::platform_spawn::SpawnReaped::spawn_reaped(&mut cmd)
         .context("spawning detached nergal post-session")?;
     Ok(())
 }
@@ -202,7 +202,12 @@ pub fn probe_spawn_health() -> bool {
         // Clean early exit (drained + released the lock) → spawning works.
         Ok(Some(status)) => status.success(),
         // Still draining after 200ms → spawning works; it is doing real work.
-        Ok(None) => true,
+        Ok(None) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+            true
+        }
         Err(_) => false,
     };
     RUNNER_HEALTHY.store(healthy, Ordering::Relaxed);

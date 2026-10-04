@@ -1,6 +1,7 @@
 import { atom } from "jotai";
 import { activeSessionIdAtom } from "./workspace";
-import { closedTabsStackAtom } from "./shortcuts";
+import { closedTabsStackAtom, CLOSED_TABS_MAX } from "./shortcuts";
+import { pushBounded } from "@/lib/boundedRecord";
 import { sessionScopedMapAtom } from "./sessionScope";
 // Safe cycle with pinnedNotes.ts: both sides only touch the imported atoms inside callbacks.
 import { pinnedNotesMapAtom } from "./pinnedNotes";
@@ -217,7 +218,7 @@ export const closeTabAction = atom(null, (get, set, tabId: string) => {
     const index = state.tabs.findIndex((t) => t.id === tabId);
     const next = state.tabs.filter((t) => t.id !== tabId);
 
-    set(closedTabsStackAtom, (stack) => [...stack, tab]);
+    set(closedTabsStackAtom, (stack) => pushBounded(stack, tab, CLOSED_TABS_MAX));
 
     let activeTabId = state.activeTabId;
     if (activeTabId === tabId) {

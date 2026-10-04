@@ -239,8 +239,7 @@ pub fn open_in_editor(
         command.arg(fp);
     }
 
-    command
-        .spawn()
+    crate::platform_spawn::SpawnReaped::spawn_reaped(&mut command)
         .map_err(|e| format!("failed to open {cmd}: {e}"))?;
 
     Ok(())

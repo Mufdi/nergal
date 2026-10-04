@@ -41,6 +41,8 @@ async fn run_async() -> anyhow::Result<()> {
             crate::platform_proc::ancestor_env(&["NERGAL_SESSION_ID", "CLAUDE_CODE_SESSION_ID"], 8)
         });
 
+    let mut origin: Option<Origin> = None;
+
     // Fast, non-hanging connect: a missing/dead endpoint → degraded mode.
     let mut daemon = crate::platform::PlatformStream::connect(&super::socket_path())
         .await
@@ -99,11 +101,11 @@ async fn run_async() -> anyhow::Result<()> {
                 Err(_) => {
                     // Daemon died mid-session → degrade from here on.
                     daemon = None;
-                    degraded_response(&msg)
+                    degraded_response(&msg, *origin.get_or_insert_with(Origin::detect))
                 }
             }
         } else {
-            degraded_response(&msg)
+            degraded_response(&msg, *origin.get_or_insert_with(Origin::detect))
         };
 
         let mut out = serde_json::to_vec(&response)?;
@@ -124,9 +126,33 @@ async fn relay(conn: &mut crate::platform::PlatformStream, msg: &Value) -> anyho
     Ok(serde_json::from_slice(&frame)?)
 }
 
+/// Whether the agent hosting this shim was launched by Nergal. The MCP is
+/// registered user-wide, so plain-terminal agent sessions load it too; telling
+/// them the daemon is "down" made agents report Nergal as broken (BUG-43).
+/// `CLAUDE_CODE_SESSION_ID` can't decide this: every CC session has it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Origin {
+    InsideNergal,
+    OutsideNergal,
+}
+
+impl Origin {
+    fn detect() -> Self {
+        let own = std::env::var("NERGAL_SESSION_ID")
+            .ok()
+            .filter(|s| !s.is_empty());
+        if own.is_some() || crate::platform_proc::ancestor_env(&["NERGAL_SESSION_ID"], 8).is_some()
+        {
+            Origin::InsideNergal
+        } else {
+            Origin::OutsideNergal
+        }
+    }
+}
+
 /// Build a local response when the daemon is unreachable. `initialize` +
 /// `tools/list` mirror the daemon-owned source; everything else is an error.
-fn degraded_response(msg: &Value) -> Value {
+fn degraded_response(msg: &Value, origin: Origin) -> Value {
     let id = msg.get("id").cloned().unwrap_or(Value::Null);
     let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("");
     match method {
@@ -134,11 +160,20 @@ fn degraded_response(msg: &Value) -> Value {
         "tools/list" => {
             json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": super::tool_definitions() } })
         }
-        "tools/call" => json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "error": { "code": -32001, "message": "nergal MCP daemon unreachable", "data": { "reason": "daemon_down" } },
-        }),
+        "tools/call" => {
+            let (message, reason) = match origin {
+                Origin::InsideNergal => ("nergal MCP daemon unreachable", "daemon_down"),
+                Origin::OutsideNergal => (
+                    "nergal MCP is only available in agent sessions launched by Nergal; this session runs outside the app, so nothing is wrong with Nergal",
+                    "outside_nergal",
+                ),
+            };
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32001, "message": message, "data": { "reason": reason } },
+            })
+        }
         other => json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -181,7 +216,7 @@ mod tests {
     #[test]
     fn degraded_initialize_mirrors_daemon_source() {
         let m = json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} });
-        let r = degraded_response(&m);
+        let r = degraded_response(&m, Origin::InsideNergal);
         assert_eq!(
             r["result"]["protocolVersion"],
             super::super::MCP_PROTOCOL_VERSION
@@ -191,7 +226,7 @@ mod tests {
     #[test]
     fn degraded_tools_list_matches_registry() {
         let m = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {} });
-        let r = degraded_response(&m);
+        let r = degraded_response(&m, Origin::InsideNergal);
         let names: Vec<String> = r["result"]["tools"]
             .as_array()
             .unwrap()
@@ -207,9 +242,22 @@ mod tests {
     }
 
     #[test]
-    fn degraded_tools_call_is_structured_error() {
+    fn degraded_tools_call_inside_nergal_reports_daemon_down() {
         let m = json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": { "name": "whoami" } });
-        let r = degraded_response(&m);
+        let r = degraded_response(&m, Origin::InsideNergal);
         assert_eq!(r["error"]["data"]["reason"], "daemon_down");
+    }
+
+    #[test]
+    fn degraded_tools_call_outside_nergal_says_so() {
+        let m = json!({ "jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": { "name": "whoami" } });
+        let r = degraded_response(&m, Origin::OutsideNergal);
+        assert_eq!(r["error"]["data"]["reason"], "outside_nergal");
+        assert!(
+            r["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("launched by Nergal")
+        );
     }
 }

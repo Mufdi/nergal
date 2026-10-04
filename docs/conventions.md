@@ -20,7 +20,7 @@ Project-specific rules. Standard language conventions are not duplicated here.
 - Frontend → backend via `invoke<T>(command, args)`. Never construct shell commands client-side.
 - Backend → frontend via Tauri `listen()`. Translate to atom updates in `src/stores/hooks.ts`.
 - TailwindCSS utility classes; shadcn/ui primitives.
-- Terminal lives outside React. `terminalService.ts` owns the canvas + glyph atlas and renders rows on `terminal:grid-update`. Do not introduce xterm.js.
+- Terminal lives outside React. `terminalService.ts` owns the canvas + glyph atlas and renders rows from its own grid-update channel (`terminal_attach`). Do not introduce xterm.js.
 - Keyboard shortcuts use `event.code` (not `event.key`) — WebKitGTK Linux bug.
 - Verify `src/stores/shortcuts.ts` before adding a binding. Collisions silently break existing flows.
 - Keyboard-nav popovers: scroll must follow the index cursor (`scrollIntoView({ block: "nearest" })`) with a sticky hints header + `scroll-mt-*` rows — see `docs/patterns.md` §5.6.

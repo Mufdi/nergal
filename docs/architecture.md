@@ -64,7 +64,7 @@ src-tauri/src/                    # Rust backend
 1. **Frontend → Backend**: `invoke<T>(command, args)` over Tauri IPC.
 2. **Backend → Frontend**: Tauri `emit()` events (async).
 3. **State sync**: Jotai atoms; `setupHookListeners()` translates Tauri events into atom updates.
-4. **Terminal**: `wezterm-term` parses PTY bytes server-side; an emitter coalesces deltas at ~8 ms and emits `terminal:grid-update`. The canvas renders only changed rows via a glyph atlas and sends keystrokes through `invoke("terminal_input")`.
+4. **Terminal**: `wezterm-term` parses PTY bytes server-side; an emitter coalesces deltas at ~8 ms and sends them over a per-terminal `tauri::ipc::Channel` the frontend attaches with `terminal_attach` (never an app-wide event: broadcast emits are eval'd per webview listener and froze the webview over long sessions). The canvas renders only changed rows via a glyph atlas and sends keystrokes through `invoke("terminal_input")`.
 
 ## Event flow
 

@@ -5,7 +5,7 @@ use super::types::{CellSnapshot, CursorSnapshot, GridRow, GridSnapshot, GridUpda
 
 /// Keeps track of the last emitted state so subsequent [`GridDiffer::compute_update`]
 /// calls can return only the rows that actually changed. This is the core of
-/// the "send only deltas" contract on the `terminal:grid-update` event.
+/// the "send only deltas" contract on the grid-update channel.
 pub struct GridDiffer {
     row_hashes: Vec<u64>,
     last_cursor: Option<CursorSnapshot>,
@@ -25,7 +25,7 @@ impl GridDiffer {
 
     /// Force the next `compute_update` call to treat every row as changed.
     /// Useful after a resize or when the client explicitly asks for the full
-    /// grid (see the `terminal_get_full_grid` command).
+    /// grid (see the `terminal_attach` command).
     pub fn invalidate(&mut self) {
         self.row_hashes.clear();
         self.last_cursor = None;

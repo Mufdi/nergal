@@ -183,7 +183,10 @@ fn capabilities_for_agent_id(agents: &AgentRuntimeState, agent_id: &str) -> Vec<
 }
 
 #[tauri::command]
-pub fn delete_workspace(db: State<'_, SharedDb>, workspace_id: String) -> Result<(), String> {
+pub fn delete_workspace(
+    db: State<'_, SharedDb>,
+    workspace_id: String,
+) -> Result<Vec<String>, String> {
     struct SessionCleanup {
         moc_inputs: Option<crate::obsidian::moc::MocInputs>,
         worktree_path: Option<PathBuf>,
@@ -202,6 +205,7 @@ pub fn delete_workspace(db: State<'_, SharedDb>, workspace_id: String) -> Result
             // need to re-acquire for the delete.
             return db
                 .delete_workspace(&workspace_id)
+                .map(|()| Vec::new())
                 .map_err(|e| e.to_string());
         };
 
@@ -246,9 +250,13 @@ pub fn delete_workspace(db: State<'_, SharedDb>, workspace_id: String) -> Result
             }
         }
     }
+    let mut cleanup_errors = Vec::new();
     for s in &sessions {
-        if let Some(wt) = &s.worktree_path {
-            let _ = crate::worktree::remove_worktree(&repo_path, wt);
+        if let Some(wt) = &s.worktree_path
+            && let Err(e) = crate::worktree::remove_worktree(&repo_path, wt)
+        {
+            tracing::warn!(worktree = %wt.display(), error = %e, "worktree cleanup failed");
+            cleanup_errors.push(e.to_string());
         }
         // Delete the per-session branch too (after its worktree is gone, else
         // git refuses) so a workspace nuke leaves no orphan `nergal/*` branches
@@ -260,7 +268,8 @@ pub fn delete_workspace(db: State<'_, SharedDb>, workspace_id: String) -> Result
 
     let db = db.lock().map_err(|e| e.to_string())?;
     db.delete_workspace(&workspace_id)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(cleanup_errors)
 }
 
 #[tauri::command]
@@ -429,7 +438,7 @@ pub async fn delete_session(
     db: State<'_, SharedDb>,
     agents: State<'_, AgentRuntimeState>,
     session_id: String,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     // Resolve adapter for stop_event_pump before tearing down the cache /
     // worktree / DB row, since stop_event_pump may need the adapter's per-
     // session state to be still intact (e.g. OpenCode supervisor stop kills
@@ -500,6 +509,7 @@ pub async fn delete_session(
         let _ = crate::obsidian::moc::BacklinkUpdater::propagate(&moc_path, &cfg);
     }
 
+    let mut cleanup_errors = Vec::new();
     if let Some((repo_path, wt_path)) = worktree_cleanup
         && let Err(e) = crate::worktree::remove_worktree(&repo_path, &wt_path)
     {
@@ -509,6 +519,7 @@ pub async fn delete_session(
             error = %e,
             "worktree cleanup failed; session delete continues",
         );
+        cleanup_errors.push(e.to_string());
     }
 
     // Fresh guard for the finalize phase: re-validate since the row may have
@@ -519,10 +530,11 @@ pub async fn delete_session(
         .map_err(|e| e.to_string())?
         .is_none()
     {
-        return Ok(());
+        return Ok(cleanup_errors);
     }
     agents.forget_session(&session_id);
-    db.delete_session(&session_id).map_err(|e| e.to_string())
+    db.delete_session(&session_id).map_err(|e| e.to_string())?;
+    Ok(cleanup_errors)
 }
 
 #[tauri::command]

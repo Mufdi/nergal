@@ -399,16 +399,32 @@ pub fn remove_worktree(repo_path: &Path, worktree_path: &Path) -> Result<()> {
     }
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
 
-    if worktree_path.exists() {
-        std::fs::remove_dir_all(worktree_path).with_context(|| {
-            format!("removing orphaned worktree dir {}", worktree_path.display())
-        })?;
-    }
+    let dir_removal = if worktree_path.exists() {
+        std::fs::remove_dir_all(worktree_path)
+    } else {
+        Ok(())
+    };
     let prune = git()
         .args(["worktree", "prune"])
         .current_dir(repo_path)
         .output()
         .context("failed to execute git worktree prune")?;
+    if let Err(e) = dir_removal {
+        // Containers writing through a bind mount as root (BUG-42) leave files
+        // the user cannot delete; spell out the manual step instead of a bare EACCES.
+        let remedy = if e.kind() == std::io::ErrorKind::PermissionDenied {
+            format!(
+                ". Some files are owned by another user (often root, from a Docker bind mount); remove them with `sudo rm -rf {}`",
+                worktree_path.display()
+            )
+        } else {
+            String::new()
+        };
+        anyhow::bail!(
+            "could not remove worktree dir {}: {e}{remedy}",
+            worktree_path.display()
+        );
+    }
     if !prune.status.success() {
         let prune_err = String::from_utf8_lossy(&prune.stderr);
         anyhow::bail!("git worktree remove failed ({stderr}); prune also failed: {prune_err}");
@@ -1568,6 +1584,60 @@ mod tests {
             !pid_is_alive(u32::MAX),
             "a pid that cannot exist must read as dead"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remove_worktree_permission_error_names_path_and_remedy() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        let run = |args: &[&str], cwd: &Path| {
+            let out = git().args(args).current_dir(cwd).output().unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        run(&["init", "-q", "-b", "main"], &repo);
+        run(
+            &[
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+            &repo,
+        );
+        let wt = repo.join(".worktrees").join("nergal").join("locked");
+        run(
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "nergal/locked",
+                wt.to_str().unwrap(),
+            ],
+            &repo,
+        );
+        let sealed = wt.join("cache");
+        std::fs::create_dir(&sealed).unwrap();
+        std::fs::write(sealed.join("artifact"), "x").unwrap();
+        std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let err = remove_worktree(&repo, &wt).unwrap_err().to_string();
+
+        std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(err.contains(&wt.display().to_string()), "{err}");
+        assert!(err.contains("sudo rm -rf"), "{err}");
     }
 
     /// Full git plumbing for the concurrency test below.

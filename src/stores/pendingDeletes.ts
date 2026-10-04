@@ -14,6 +14,7 @@ import * as terminalService from "@/components/terminal/terminalService";
 import { invoke } from "@/lib/tauri";
 import { pruneSessionStateAction } from "./sessionScope";
 import { pruneConflictSessionAction } from "./conflict";
+import { toastsAtom } from "./toast";
 
 const DELETE_GRACE_MS = 5_000;
 /// Slack between the countdown reaching 0 and the physical deletion, so an
@@ -59,6 +60,12 @@ export async function flushPendingDeletes(): Promise<void> {
       return e.finalize().catch(() => {});
     }),
   );
+}
+
+function reportCleanupErrors(errors: string[] | undefined): void {
+  for (const description of errors ?? []) {
+    appStore.set(toastsAtom, { message: "Worktree left on disk", description, type: "error" });
+  }
 }
 
 function tooLateToast(): void {
@@ -126,7 +133,10 @@ export const deleteSessionWithGraceAction = atom(null, (get, set, session: Sessi
     terminalService.destroy(session.id);
     appStore.set(pruneSessionStateAction, session.id);
     appStore.set(pruneConflictSessionAction, session.id);
-    await invoke("delete_session", { sessionId: session.id }).catch(() => {});
+    const errors = await invoke<string[]>("delete_session", { sessionId: session.id }).catch(
+      () => undefined,
+    );
+    reportCleanupErrors(errors);
   };
 
   cancelTimer(session.id);
@@ -188,7 +198,10 @@ export const deleteWorkspaceWithGraceAction = atom(null, (get, set, workspace: W
       appStore.set(pruneSessionStateAction, id);
       appStore.set(pruneConflictSessionAction, id);
     }
-    await invoke("delete_workspace", { workspaceId: workspace.id }).catch(() => {});
+    const errors = await invoke<string[]>("delete_workspace", {
+      workspaceId: workspace.id,
+    }).catch(() => undefined);
+    reportCleanupErrors(errors);
   };
 
   cancelTimer(workspace.id);

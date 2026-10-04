@@ -401,11 +401,12 @@ pub fn open_log_file(app: tauri::AppHandle) -> Result<(), String> {
 /// `gtk-launch` or a `text/plain` default.
 #[cfg(target_os = "linux")]
 fn open_log_path(_app: &tauri::AppHandle, log_path: &Path) -> Result<(), String> {
+    use crate::platform_spawn::SpawnReaped;
     if let Some(app_id) = default_app_for_mime("text/plain")
         && std::process::Command::new("gtk-launch")
             .arg(&app_id)
             .arg(log_path)
-            .spawn()
+            .spawn_reaped()
             .is_ok()
     {
         return Ok(());
@@ -415,7 +416,7 @@ fn open_log_path(_app: &tauri::AppHandle, log_path: &Path) -> Result<(), String>
         .ok_or_else(|| "log path has no parent".to_string())?;
     std::process::Command::new("xdg-open")
         .arg(dir)
-        .spawn()
+        .spawn_reaped()
         .map_err(|e| format!("xdg-open: {e}"))?;
     Ok(())
 }

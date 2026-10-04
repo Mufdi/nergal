@@ -64,6 +64,7 @@ export const focusZoneAtom = atom<FocusZone>("terminal");
 export const previousNonTerminalZoneAtom = atom<FocusZone>("panel");
 export const commandPaletteOpenAtom = atom(false);
 export const closedTabsStackAtom = atom<Tab[]>([]);
+export const CLOSED_TABS_MAX = 30;
 
 export const toggleSidebarAtom = atom(0);
 export const toggleRightPanelAtom = atom(0);

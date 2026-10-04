@@ -23,13 +23,14 @@ pub fn send(app: &tauri::AppHandle, title: &str, body: &str) {
         // confirms the plugin displays, replace this block with the macOS
         // branch below.
         let _ = app;
+        use crate::platform_spawn::SpawnReaped;
         if let Err(e) = std::process::Command::new("notify-send")
             .arg("--app-name=nergal")
             .arg("--expire-time=4000")
             .arg("--urgency=normal")
             .arg(title)
             .arg(body)
-            .spawn()
+            .spawn_reaped()
         {
             tracing::warn!("notify-send failed: {e}");
         }

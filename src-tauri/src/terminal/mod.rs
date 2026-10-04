@@ -2,7 +2,7 @@
 //!
 //! Each [`TerminalSession`] owns a wezterm `Terminal` and a PTY writer;
 //! the [`TerminalHandle`] wraps it with a [`GridDiffer`] and an async
-//! emitter task that ships `terminal:grid-update` events to the frontend.
+//! emitter task that ships grid updates to the frontend over a per-terminal channel.
 //! [`NergalTerminalConfig`] is the [`TerminalConfiguration`] impl — it
 //! defaults to Kitty keyboard protocol on and bumps scrollback to 10k
 //! rows.

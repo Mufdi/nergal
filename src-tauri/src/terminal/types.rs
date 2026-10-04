@@ -37,7 +37,7 @@ pub struct CursorSnapshot {
     pub visible: bool,
 }
 
-/// Full grid snapshot used by Phase 1 tests and by the `terminal_get_full_grid`
+/// Full grid snapshot used by Phase 1 tests and by the `terminal_attach`
 /// command introduced in Phase 2. `rows[0]` is the top visible row.
 ///
 /// `scroll_offset` is the number of lines the visible window is scrolled above
@@ -52,7 +52,7 @@ pub struct GridSnapshot {
     pub is_alt_screen: bool,
 }
 
-/// Delta-ish payload emitted over the `terminal:grid-update` Tauri event.
+/// Delta-ish payload sent over each terminal's attached grid-update channel.
 ///
 /// Only rows that changed since the last emission are included, each paired
 /// with their visible-row index. `cursor` and `title` always reflect the

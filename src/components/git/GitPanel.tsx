@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef, useState } from "react";
-import { invoke, listen } from "@/lib/tauri";
+import { invoke, subscribe } from "@/lib/tauri";
 import { focusIfPanelZone } from "@/lib/panelFocus";
 import {
   refreshGitInfoAtom,
@@ -178,19 +178,18 @@ export function GitPanel({ sessionId }: GitPanelProps) {
     if (!stashEntry || now - stashEntry.fetchedAt > STASH_CACHE_TTL_MS) refreshStashCount();
     refreshConflicts(sessionId);
 
-    const unlisteners: (() => void)[] = [];
-    listen("files:modified", () => {
+    const unlisten = subscribe("files:modified", () => {
       refreshHeader();
       refreshConflicts(sessionId);
       refreshPendingMerge();
       refreshStashCount();
-    }).then((fn) => unlisteners.push(fn));
+    });
     const id = setInterval(() => {
       refreshHeader();
       refreshPr();
       refreshPendingMerge();
     }, 5000);
-    return () => { for (const fn of unlisteners) fn(); clearInterval(id); };
+    return () => { unlisten(); clearInterval(id); };
     // Cache atoms intentionally omitted from deps: read for the staleness
     // gate but the effect must not re-run on every cache mutation (would
     // create a refresh loop).

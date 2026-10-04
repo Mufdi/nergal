@@ -2,6 +2,7 @@ import { atom } from "jotai";
 import type { PlanMode, DiffLine, PlanCapabilityWire } from "@/lib/types";
 import { activeSessionIdAtom } from "./workspace";
 import { invoke } from "@/lib/tauri";
+import { withBoundedEntry } from "@/lib/boundedRecord";
 import { sessionScopedMapAtom } from "./sessionScope";
 
 export type PlanSidebarTab = "files" | "annotations";
@@ -82,19 +83,28 @@ export const setPlanModeAtom = atom(null, (get, set, mode: PlanMode) => {
 // Plan documents keyed by file path, NOT sessionId (supports multiple plans
 // open as document tabs) — stays a plain atom, out of the session-prune registry.
 export const planDocumentsAtom = atom<Record<string, PlanState>>({});
+export const PLAN_DOCUMENTS_MAX = 50;
 
 export const setPlanDocContentAtom = atom(null, (_get, set, params: { path: string; content: string }) => {
-  set(planDocumentsAtom, (prev) => ({
-    ...prev,
-    [params.path]: { ...(prev[params.path] ?? defaultPlanState), content: params.content },
-  }));
+  set(planDocumentsAtom, (prev) =>
+    withBoundedEntry(
+      prev,
+      params.path,
+      { ...(prev[params.path] ?? defaultPlanState), content: params.content },
+      PLAN_DOCUMENTS_MAX,
+    ),
+  );
 });
 
 export const setPlanDocModeAtom = atom(null, (_get, set, params: { path: string; mode: PlanMode }) => {
-  set(planDocumentsAtom, (prev) => ({
-    ...prev,
-    [params.path]: { ...(prev[params.path] ?? defaultPlanState), mode: params.mode },
-  }));
+  set(planDocumentsAtom, (prev) =>
+    withBoundedEntry(
+      prev,
+      params.path,
+      { ...(prev[params.path] ?? defaultPlanState), mode: params.mode },
+      PLAN_DOCUMENTS_MAX,
+    ),
+  );
 });
 
 // Session plans registry

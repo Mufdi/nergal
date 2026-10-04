@@ -200,7 +200,9 @@ pub fn initialize_result() -> Value {
         // Server-level guidance (MCP `instructions`): teach the pull workflow so
         // the agent uses the directory autonomously without asking the user.
         "instructions": "nergal session directory — observe the user's other agent \
-    sessions running in this app (cross-workspace, same machine). Workflow:\n\
+    sessions running in this app (cross-workspace, same machine). Only works from \
+    an agent session launched inside the Nergal desktop app; outside it every tool \
+    call fails with `outside_nergal`, which is expected and not an outage. Workflow:\n\
     - `whoami` returns your own session id; pass it as `exclude`-equivalent via \
     `list_sessions`'s `include_self=false` (default) to skip yourself.\n\
     - `list_sessions` is the cheap discovery view: it returns every live session \

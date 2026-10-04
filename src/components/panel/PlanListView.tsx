@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
 import {
   planDocumentsAtom,
+  PLAN_DOCUMENTS_MAX,
   defaultPlanState,
   fetchPlanCapabilityAction,
 } from "@/stores/plan";
@@ -9,6 +10,7 @@ import { activeSessionIdAtom } from "@/stores/workspace";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { openTabAction, activeTabAtom } from "@/stores/rightPanel";
 import { invoke } from "@/lib/tauri";
+import { withBoundedEntry } from "@/lib/boundedRecord";
 import { listen } from "@tauri-apps/api/event";
 import type { PlanSummary, SessionPlansResponse } from "@/lib/types";
 import { FileText } from "lucide-react";
@@ -64,15 +66,19 @@ export function PlanListView() {
   function loadAndOpenPlan(path: string, name: string) {
     invoke<{ path: string; content: string; has_edits: boolean }>("load_plan", { sessionId, path })
       .then((result) => {
-        setPlanDocs((prev) => ({
-          ...prev,
-          [result.path]: {
-            ...(prev[result.path] ?? defaultPlanState),
-            content: result.content,
-            original: result.content,
-            path: result.path,
-          },
-        }));
+        setPlanDocs((prev) =>
+          withBoundedEntry(
+            prev,
+            result.path,
+            {
+              ...(prev[result.path] ?? defaultPlanState),
+              content: result.content,
+              original: result.content,
+              path: result.path,
+            },
+            PLAN_DOCUMENTS_MAX,
+          ),
+        );
         openTab({
           tab: { id: `plan-${result.path}`, type: "plan", label: name, data: { path: result.path } },
         });

@@ -4,7 +4,8 @@ import type { HookEvent, CostSummary, Task, ActivityEntry } from "@/lib/types";
 import { costMapAtom, modeMapAtom, cwdMapAtom, agentStatusMapAtom, activeSessionIdAtom, type AgentStatus } from "./workspace";
 import { taskMapAtom } from "./tasks";
 import { fileMapAtom, type ModifiedFile } from "./files";
-import { planStateMapAtom, planDocumentsAtom, registerPlanAtom, planReviewStatusMapAtom } from "./plan";
+import { planStateMapAtom, planDocumentsAtom, PLAN_DOCUMENTS_MAX, registerPlanAtom, planReviewStatusMapAtom } from "./plan";
+import { withBoundedEntry } from "@/lib/boundedRecord";
 import { pendingAsksAtom, pendingAttentionAtom } from "./askUser";
 import { openTabAction, expandRightPanelAtom, activePanelViewAtom } from "./rightPanel";
 import { refreshGitInfoAtom } from "./git";
@@ -236,7 +237,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
         decisionPath: payload.decision_path ?? "",
       };
       set(planStateMapAtom, (prev) => ({ ...prev, [sid]: planData }));
-      set(planDocumentsAtom, (prev) => ({ ...prev, [payload.path]: planData }));
+      set(planDocumentsAtom, (prev) => withBoundedEntry(prev, payload.path, planData, PLAN_DOCUMENTS_MAX));
       set(registerPlanAtom, { sessionId: sid, path: payload.path });
       set(planReviewStatusMapAtom, (prev) => ({ ...prev, [sid]: "pending_review" }));
       set(addActivityAtom, { sessionId: sid, entry: createActivity("plan", "Plan ready for review") });

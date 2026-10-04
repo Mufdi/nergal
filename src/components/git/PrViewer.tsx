@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { invoke } from "@/lib/tauri";
 import { useStaleGuard } from "@/hooks/useStaleGuard";
+import { withBoundedEntry } from "@/lib/boundedRecord";
 import { open as openShell } from "@tauri-apps/plugin-shell";
 import {
   prAnnotationsMapAtom,
@@ -11,6 +12,7 @@ import {
   prFilesCacheAtom,
   selectedPrFileAtom,
   prDiffCacheMapAtom,
+  PR_DIFF_CACHE_MAX,
   PR_DIFF_TTL_MS,
   type PrAnnotation,
   type PrChecks,
@@ -285,7 +287,9 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
         const cacheKey = `${workspaceId}:${prNumber}`;
         // Cache write stays unguarded — it's per-PR keyed and safe to apply
         // even if this PR is no longer displayed.
-        setPrDiffCacheMap((prev) => ({ ...prev, [cacheKey]: { text, fetchedAt: Date.now() } }));
+        setPrDiffCacheMap((prev) =>
+          withBoundedEntry(prev, cacheKey, { text, fetchedAt: Date.now() }, PR_DIFF_CACHE_MAX),
+        );
         if (!fresh()) return;
         const parsed = parsePrDiff(text);
         setLines(parsed.lines);

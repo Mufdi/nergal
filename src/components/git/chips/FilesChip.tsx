@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { invoke, listen } from "@/lib/tauri";
+import { invoke, subscribe } from "@/lib/tauri";
 import { useSetAtom, useAtomValue } from "jotai";
 import { refreshGitInfoAtom } from "@/stores/git";
 import { triggerShipAtom } from "@/stores/ship";
@@ -104,10 +104,9 @@ export function FilesChip({ sessionId, ahead, inZen = false }: FilesChipProps) {
 
   useEffect(() => {
     refresh();
-    const unlisteners: (() => void)[] = [];
-    listen("files:modified", () => refresh()).then((fn) => unlisteners.push(fn));
+    const unlisten = subscribe("files:modified", () => refresh());
     const id = setInterval(() => { if (!committing) refresh(); }, 10000);
-    return () => { for (const fn of unlisteners) fn(); clearInterval(id); };
+    return () => { unlisten(); clearInterval(id); };
   }, [refresh, committing]);
 
   function handleStageFile(path: string) {

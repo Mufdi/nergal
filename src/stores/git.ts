@@ -195,6 +195,8 @@ export interface PrDiffCacheEntry {
 export const prDiffCacheMapAtom = atom<Record<string, PrDiffCacheEntry>>({});
 
 export const PR_DIFF_TTL_MS = 60_000;
+/// Diffs run to several MB each; keep only the most recently opened PRs.
+export const PR_DIFF_CACHE_MAX = 8;
 
 /// Per-workspace memory of "which PR was open in the chip". When the user
 /// navigates away from the PRs chip and returns, restore the previously

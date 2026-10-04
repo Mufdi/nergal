@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { invoke, listen } from "@/lib/tauri";
+import { invoke, subscribe } from "@/lib/tauri";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { openTabAction } from "@/stores/rightPanel";
@@ -42,16 +42,12 @@ export function SpecListView() {
     if (sessionId) {
       invoke("watch_openspec_for_session", { sessionId }).catch(() => {});
     }
-    const unlisteners: (() => void)[] = [];
-
-    listen("openspec:changed", () => refresh())
-      .then((fn) => unlisteners.push(fn));
-
-    listen<{ path: string }>("files:modified", (payload) => {
+    const unlistenChanged = subscribe("openspec:changed", () => refresh());
+    const unlistenModified = subscribe<{ path: string }>("files:modified", (payload) => {
       if (payload.path.includes("/openspec/")) refresh();
-    }).then((fn) => unlisteners.push(fn));
+    });
 
-    return () => { for (const fn of unlisteners) fn(); };
+    return () => { unlistenChanged(); unlistenModified(); };
   }, [refresh]);
 
   function handleClick(change: OpenSpecChange) {

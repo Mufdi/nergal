@@ -608,7 +608,7 @@ pub fn ask_user(socket_path: &Path) -> Result<()> {
 ///
 /// Never returns an error: a statusline command that fails its render loop
 /// leaves CC's status row blank, so all failures are swallowed (and traced).
-pub fn statusline(socket_path: &Path) {
+pub fn statusline(socket_path: &Path, silent: bool) {
     let mut input = String::new();
     if std::io::stdin().read_to_string(&mut input).is_err() {
         return;
@@ -640,9 +640,17 @@ pub fn statusline(socket_path: &Path) {
         }
     }
 
-    // CC renders our stdout as its status row. Keep it to one compact line; the
-    // full breakdown lives in Nergal's own status bar.
-    let _ = std::io::stdout().write_all(statusline_tui_text(&cc).as_bytes());
+    let _ = std::io::stdout().write_all(statusline_stdout(&cc, silent).as_bytes());
+}
+
+/// CC renders our stdout as its status row. Keep it to one compact line (the
+/// full breakdown lives in Nergal's own status bar), or nothing when the user
+/// wants CC's row left empty.
+fn statusline_stdout(cc: &serde_json::Value, silent: bool) -> String {
+    if silent {
+        return String::new();
+    }
+    statusline_tui_text(cc)
 }
 
 /// Map CC's statusLine session snapshot (documented schema) to the
@@ -962,6 +970,19 @@ mod tests {
     #[test]
     fn tui_text_empty_for_empty_snapshot() {
         assert_eq!(statusline_tui_text(&serde_json::json!({})), "");
+    }
+
+    #[test]
+    fn silent_statusline_writes_nothing_for_the_tui() {
+        assert_eq!(statusline_stdout(&full_cc_snapshot(), true), "");
+    }
+
+    #[test]
+    fn default_statusline_echoes_the_tui_line() {
+        assert_eq!(
+            statusline_stdout(&full_cc_snapshot(), false),
+            "Opus · 8% ctx"
+        );
     }
 
     #[test]

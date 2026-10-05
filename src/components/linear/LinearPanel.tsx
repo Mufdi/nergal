@@ -445,6 +445,7 @@ export function LinearPanel() {
   }, [issues, teamFilter, assignedToMe, showCompleted, groupBy, syncStatus?.viewerId, sort, labelFilter, projectFilter, hiddenStates]);
 
   allParentIdsRef.current = new Set(childMap.keys());
+  const hiddenStateCount = stateOptions.filter((o) => hiddenStates.has(o.key)).length;
 
   const allExpanded = expandedIssueIds.size > 0;
   const isDefaultSort = sort.field === "updated" && sort.dir === "desc";
@@ -989,9 +990,9 @@ export function LinearPanel() {
                     aria-label="Filter by state"
                     aria-haspopup="listbox"
                     aria-expanded={statePopoverOpen}
-                    aria-pressed={hiddenStates.size > 0}
+                    aria-pressed={hiddenStateCount > 0}
                     className={`flex size-6 shrink-0 items-center justify-center rounded transition-colors ${
-                      hiddenStates.size > 0
+                      hiddenStateCount > 0
                         ? "bg-primary/10 text-primary"
                         : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
                     }`}
@@ -1001,8 +1002,8 @@ export function LinearPanel() {
                 <ListFilter size={13} />
               </TooltipTrigger>
               <TooltipContent side="bottom">
-                {hiddenStates.size > 0
-                  ? `States: ${hiddenStates.size} hidden`
+                {hiddenStateCount > 0
+                  ? `States: ${hiddenStateCount} hidden`
                   : "Filter by state"}
               </TooltipContent>
             </Tooltip>

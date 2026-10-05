@@ -1,0 +1,5 @@
+6076c1a58c1e5d24fe979af38e82cf11cd1f404e  src/lib/agentTelemetry.test.ts
+# Re-locked after review-fix Red tests were appended (no locked line removed: `git diff -U0 94d8bc6 -- src/lib/agentTelemetry.test.ts` has no `-` lines).
+# Rust Red tests live inline in #[cfg(test)] modules (repo convention), so file hashes cannot lock them.
+# Lock = Red commit 94d8bc6: `git diff 94d8bc6 HEAD -- <file>` shows only rustfmt reflows inside the tests modules of
+# src-tauri/src/hooks/{events,server,cli}.rs, src-tauri/src/setup.rs, src-tauri/src/agents/claude_code/cost.rs (verified 2026-10-05).

@@ -43,7 +43,14 @@ Clearing: a permission prompt is answered in the same session, so a PostToolUse 
 - Frontend: `pendingAttentionAtom` stores the notification type as its value (was `true`). `agent_completed` deletes the entry only when the value is `agent_needs_input`. Consumers keep reading it as truthy.
 - Backend: `waiting_for()` for `agent_needs_input` starts with the fixed prefix `background agent`. `mcp_activity_after_completion` resets the recorded activity to `idle` with no `waiting_for` only when the mode is `needs_attention` and `waiting_for` carries that prefix.
 
-The existing clears (PostToolUse, Stop, prompt submit, session end) stay.
+## Revision 1: background waits survive foreground turn events
+
+The adversarial review found that a foreground PostToolUse or Stop cleared a background agent's wait while it still waited, and a PreToolUse overwrote the MCP `waiting_for`. A background agent wait now clears only on `agent_completed`, UserPromptSubmit, or SessionEnd.
+
+- Frontend: PostToolUse and Stop clear `pendingAttentionAtom` only when its value is not `agent_needs_input` (`shouldClearOnTurnEvent`).
+- Backend: `process_event` skips `record_activity` while the recorded activity is a background wait, unless the event is UserPromptSubmit, SessionEnd, or a Notification (`preserves_background_wait`).
+
+Other attention sources keep the old clears (PostToolUse, Stop, prompt submit, session end).
 
 - Alternative: a per-session source marker in `AgentRuntimeState`. Rejected: the prefix needs no new state and the descriptor already exposes `waiting_for`.
 
@@ -58,7 +65,7 @@ The existing clears (PostToolUse, Stop, prompt submit, session end) stay.
 - Alternative: reuse `tool_name` for `agent_type` and `stop_reason` for the message. Rejected: two meanings per field is a known incoherence (the `permission_denied` reason slot already does this).
 - Alternative: derive subagents from `PreToolUse[Agent]`. Rejected: background subagents finish long after the tool returns; only `SubagentStop` marks the real end.
 
-Dedup with the `Agent` tool row: `PreToolUse` is unmatched, so the `Agent` (older CC: `Task`) tool call already adds a running `tool_use` row. `Agent` is not in the PostToolUse matcher, so that row only closes through the any-name fallback of `completeToolActivityAtom`, often by an unrelated tool. On `subagent_start`, React converts the newest running `Agent`/`Task` row (not yet claimed by an agent id) into the subagent row: type `subagent`, the agent id, the new label. With no such row, it appends a new one. Without subagent hooks installed, the old behaviour is unchanged. Hooks are async, so a parallel tool's PostToolUse could close the `Agent` row through the any-name fallback before SubagentStart arrives. `completeToolActivityAtom` therefore never closes an `Agent`/`Task` row through the fallback; only a same-name PostToolUse closes it.
+Dedup with the `Agent` tool row: `PreToolUse` is unmatched, so the `Agent` (older CC: `Task`) tool call already adds a running `tool_use` row. `Agent` is not in the PostToolUse matcher, so that row only closes through the any-name fallback of `completeToolActivityAtom`, often by an unrelated tool. On `subagent_start`, React converts the newest running `Agent`/`Task` row (not yet claimed by an agent id) into the subagent row: type `subagent`, the agent id, the new label. With no such row, it appends a new one. Without subagent hooks installed, a running `Agent` row closes at the next Stop (see Revision 2). Hooks are async, so a parallel tool's PostToolUse could close the `Agent` row through the any-name fallback before SubagentStart arrives. `completeToolActivityAtom` therefore never closes an `Agent`/`Task` row through the fallback; only a same-name PostToolUse closes it.
 
 - Alternative: hide `Agent` rows when subagent hooks are installed. Rejected: the frontend cannot know which hooks the user's settings hold.
 - Alternative: keep both rows. Rejected: duplicate rows, and the tool row closes at a wrong time.
@@ -120,6 +127,9 @@ flowchart LR
 - [Transcript lags the turn at `Stop` (hooks.md says writes are async)] → the effort may reflect the previous message. Effort rarely changes per message; the tooltip labels it "Last response".
 - [Attention for `agent_needs_input` may outlive the wait when the background agent is answered in agent view and never completes] → `agent_completed` clears it; PostToolUse / Stop / prompt submit / session end also clear it. A wait answered without any of these keeps the tint until the next turn event.
 - [Last writer wins on the attention source: `permission_prompt` pending, then `agent_needs_input`, then `agent_completed` clears the tint while the prompt is still on screen] → rare; the next PostToolUse re-syncs. Accepted to keep one attention slot per session.
+- [Several background agents share one attention slot: one agent's `agent_completed` clears another agent's pending wait] → accepted; the payload carries no agent id to key the slot.
+- [Parallel `Agent` calls of different types: SubagentStart claims the newest unclaimed row, so two labels may swap] → accepted; durations stay close and the stop pairs by `agent_id`.
+- [A Stop scan can land after a quick prompt submit and re-show the previous effort] → accepted; the next Stop overwrites it.
 - [Subagent hooks add two process spawns per subagent] → async hooks, matcher `.+` skips internal agents.
 - [Concurrent edit of `setup.rs` by FRI-498] → edits limited to the `HOOKS` table and new tests.
 
@@ -130,3 +140,7 @@ No data migration. Users run `nergal setup` (or the app runs it) to upgrade the 
 ## Open Questions
 
 - Should the cold marker also tint the chip (e.g. `text-yellow-500`)? Default: word only, no new color encoding.
+
+## Revision 2: close unclaimed Agent rows at Stop
+
+Excluding `Agent`/`Task` from the any-name fallback left rows running forever when no SubagentStart claimed them (old settings, rejected type, interrupt). At `stop`, React now marks every running, unclaimed `Agent`/`Task` tool row `done` (`closeUnclaimedSubagentToolRows`). A foreground `Agent` call returns before Stop, and a background one is already claimed by its SubagentStart.

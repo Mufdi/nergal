@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ActivityEntry } from "./types";
 import {
   applySubagentStart,
+  closeUnclaimedSubagentToolRows,
   applySubagentStop,
   effortChipText,
   formatMissCauses,
@@ -9,6 +10,7 @@ import {
   pickToolRowToComplete,
   promptCacheChip,
   shouldClearOnBackgroundCompletion,
+  shouldClearOnTurnEvent,
   type PromptCacheStatus,
 } from "./agentTelemetry";
 
@@ -373,5 +375,51 @@ describe("effortChipText", () => {
   it("is null when neither is known", () => {
     expect(effortChipText(null, null)).toBeNull();
     expect(effortChipText(undefined, undefined)).toBeNull();
+  });
+});
+
+describe("closeUnclaimedSubagentToolRows", () => {
+  const row = (over: Partial<ActivityEntry>): ActivityEntry => ({
+    id: Math.random().toString(36),
+    timestamp: 1_000,
+    type: "tool_use",
+    message: "Agent",
+    status: "running",
+    toolName: "Agent",
+    ...over,
+  });
+
+  it("closes running Agent and Task rows that no subagent claimed", () => {
+    const list = [row({}), row({ toolName: "Task", message: "Task" })];
+    const out = closeUnclaimedSubagentToolRows(list, 4_000);
+    expect(out.map((e) => e.status)).toEqual(["done", "done"]);
+    expect(out[0].durationMs).toBe(3_000);
+  });
+
+  it("leaves claimed subagent rows and other running tools alone", () => {
+    const list = [
+      row({ type: "subagent", agentId: "a1", message: "Subagent: Explore" }),
+      row({ toolName: "Bash", message: "Bash" }),
+    ];
+    const out = closeUnclaimedSubagentToolRows(list, 4_000);
+    expect(out[0].status).toBe("running");
+    expect(out[1].status).toBe("running");
+  });
+
+  it("returns the same array when nothing changes", () => {
+    const list = [row({ status: "done" })];
+    expect(closeUnclaimedSubagentToolRows(list, 4_000)).toBe(list);
+  });
+});
+
+describe("shouldClearOnTurnEvent", () => {
+  it("keeps a background agent input wait across foreground turn events", () => {
+    expect(shouldClearOnTurnEvent("agent_needs_input")).toBe(false);
+  });
+
+  it("clears every other attention source", () => {
+    expect(shouldClearOnTurnEvent("permission_prompt")).toBe(true);
+    expect(shouldClearOnTurnEvent("input")).toBe(true);
+    expect(shouldClearOnTurnEvent(undefined)).toBe(true);
   });
 });

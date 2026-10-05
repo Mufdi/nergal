@@ -60,7 +60,7 @@ function resolveState(
   modeMap: Record<string, string>,
   planReviewMap: Record<string, string>,
   pendingAsks: Record<string, true>,
-  pendingAttention: Record<string, true>,
+  pendingAttention: Record<string, string>,
 ): IndicatorState {
   if (planReviewMap[sessionId] === "pending_review") return "attention";
   if (pendingAsks[sessionId]) return "attention";

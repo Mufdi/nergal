@@ -259,6 +259,7 @@ fn translate_event(nergal_session_id: &str, raw: &str) -> Option<HookEvent> {
                 rate_7d_pct: None,
                 rate_7d_resets_at: None,
                 effort_level: None,
+                prompt_cache: None,
             })
         }
         _ => None,

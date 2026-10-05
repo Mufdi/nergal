@@ -20,9 +20,15 @@
   "rigor_applied": {
     "discovery_invoked": false,
     "iprev_rounds": 3,
-    "reviewer_mode": "single-sequential",
+    "reviewer_mode": "spec+frontend (sonnet) + adversarial (opus), once per change",
     "reviewer_escalation": null,
-    "gates_phases_run": [],
+    "gates_phases_run": [
+      "compile",
+      "test",
+      "lint",
+      "fmt",
+      "placeholders"
+    ],
     "per_phase_models": {
       "design": "opus",
       "implementation": "sonnet",
@@ -48,6 +54,11 @@
       "ts": "2026-10-05T20:30:00Z",
       "type": "validated",
       "reason": "iprev claude evaluator (opus) APPROVED round 3; proposal sha256 5160963958e4392799adf5fa0509420f3823469b7af81ed34275c4b732d1ba0c"
+    },
+    {
+      "ts": "2026-10-05T21:20:00Z",
+      "type": "reviews",
+      "reason": "spec PASS; frontend 3 warn fixed; adversarial PASS_WITH_NOTES, 2 Important fixed (design Revisions 1-2)"
     }
   ],
   "interview_ts": "2026-10-05T19:40:00Z"

@@ -21,6 +21,7 @@ const TYPE_COLORS: Record<ActivityEntry["type"], string> = {
   plan: "bg-primary",
   error: "bg-destructive",
   file_modified: "bg-yellow-500",
+  subagent: "bg-sky-400",
 };
 
 /// Filter chips, important types first.
@@ -28,6 +29,7 @@ const TYPE_ORDER: ActivityEntry["type"][] = [
   "tool_use",
   "file_modified",
   "task",
+  "subagent",
   "error",
   "plan",
   "session",

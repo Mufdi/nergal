@@ -12,6 +12,8 @@ All endpoints live in a per-user IPC directory resolved by `ipc_dir()` (`src-tau
 | `nergal hook inject-edits` | sync | Modify the prompt before submission (used on `UserPromptSubmit`). |
 | `nergal hook plan-review` | blocking, FIFO | Block on the plan-review FIFO (`plan-{pid}.fifo` in the per-user IPC dir) until the GUI returns `allow` / `deny`. |
 | `nergal hook ask-user` | async (notifier) | Fire-and-forget signal that AskUserQuestion is pending. CC's TUI owns the question; nergal only blinks the session tab. |
+| `nergal hook notification` | async | Forward `Notification` payloads (matcher `permission_prompt\|agent_needs_input\|agent_completed`). `permission_prompt` and `agent_needs_input` light the session attention tint (`attention:pending`); `agent_needs_input` also marks the MCP descriptor as waiting on a "background agent". `agent_completed` emits `agent:background-completed`, logs "Background agent finished" in Activities and clears the tint only when it came from `agent_needs_input`. |
+| `nergal hook send subagent-start` / `subagent-stop` | async | Forward `SubagentStart` / `SubagentStop` (matcher `.+`). Events without an `agent_type` are dropped in `process_event`. The frontend pairs them by `agent_id` into one sky-400 "Subagent: <type>" Activities row (claiming the pending `Agent`/`Task` tool row), with duration, last message and effort on stop. |
 | `nergal setup` | one-shot | Auto-configure hook entries in `~/.claude/settings.json` and per-agent equivalents (e.g., `~/.codex/hooks.json`), conservatively merging with existing user hooks. |
 
 Source: `src-tauri/src/hooks/{cli,server,events,state}.rs`, `src-tauri/src/setup.rs`.
@@ -45,6 +47,9 @@ State machine: `idle → pending_review → submitted` in `src/stores/plan.ts`.
     "PreToolUse": [{ "matcher": "ExitPlanMode", "hooks": [{ "type": "command", "command": "nergal hook send plan-ready", "async": true }] }],
     "PostToolUse": [{ "hooks": [{ "type": "command", "command": "nergal hook send tool-done", "async": true }] }],
     "TaskCompleted": [{ "hooks": [{ "type": "command", "command": "nergal hook send task-done", "async": true }] }],
+    "Notification": [{ "matcher": "permission_prompt|agent_needs_input|agent_completed", "hooks": [{ "type": "command", "command": "nergal hook notification", "async": true }] }],
+    "SubagentStart": [{ "matcher": ".+", "hooks": [{ "type": "command", "command": "nergal hook send subagent-start", "async": true }] }],
+    "SubagentStop": [{ "matcher": ".+", "hooks": [{ "type": "command", "command": "nergal hook send subagent-stop", "async": true }] }],
     "Stop": [{ "hooks": [{ "type": "command", "command": "nergal hook send stop", "async": true }] }],
     "SessionEnd": [{ "hooks": [{ "type": "command", "command": "nergal hook send session-end", "async": true }] }],
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "nergal hook inject-edits" }] }]

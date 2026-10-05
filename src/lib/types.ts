@@ -15,6 +15,10 @@ export interface HookEvent {
   /// live when the turn ended. Shapes are CC-defined JSON objects.
   background_tasks?: Record<string, unknown>[];
   session_crons?: Record<string, unknown>[];
+  agent_id?: string;
+  agent_type?: string;
+  agent_message?: string;
+  effort_level?: string;
 }
 
 export interface Task {
@@ -172,7 +176,7 @@ export type PlanMode = "view" | "edit";
 export interface ActivityEntry {
   id: string;
   timestamp: number;
-  type: "tool_use" | "file_modified" | "session" | "task" | "plan" | "error";
+  type: "tool_use" | "file_modified" | "session" | "task" | "plan" | "error" | "subagent";
   message: string;
   detail?: string;
   /// Tool lifecycle: "running" set on PreToolUse, "done" patched on PostToolUse.
@@ -186,6 +190,8 @@ export interface ActivityEntry {
   /// The shell command a Bash tool ran — surfaced so "Bash" isn't opaque.
   /// Kept separate from `detail` (the >50-char "thinking" collapse path).
   command?: string;
+  /// Pairs SubagentStart with SubagentStop and marks the Agent tool row it claimed.
+  agentId?: string;
 }
 
 export interface DiffLine {

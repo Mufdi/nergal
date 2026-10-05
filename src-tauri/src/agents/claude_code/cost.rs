@@ -47,22 +47,58 @@ impl CostSummary {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct TranscriptScan {
+    pub cost: CostSummary,
+    pub last_effort: Option<String>,
+}
+
 /// Parse token usage from all entries in a Claude Code transcript (.jsonl).
 pub fn parse_cost_from_transcript(path: &Path) -> CostSummary {
+    scan_transcript(path).cost
+}
+
+/// Top-level `effort` of an assistant record. Other record types can carry the
+/// key with a different meaning, so they are excluded.
+pub fn assistant_effort_in_line(line: &str) -> Option<String> {
+    let entry: serde_json::Value = serde_json::from_str(line).ok()?;
+    assistant_effort(&entry)
+}
+
+fn assistant_effort(entry: &serde_json::Value) -> Option<String> {
+    if entry.get("type").and_then(|v| v.as_str()) != Some("assistant") {
+        return None;
+    }
+    entry
+        .get("effort")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+}
+
+/// Single pass so Stop reads the transcript once for both cost and effort.
+pub fn scan_transcript(path: &Path) -> TranscriptScan {
     let mut summary = CostSummary::default();
+    let mut last_effort = None;
 
     let file = match File::open(path) {
         Ok(f) => f,
-        Err(_) => return summary,
+        Err(_) => {
+            return TranscriptScan {
+                cost: summary,
+                last_effort,
+            };
+        }
     };
 
-    let reader = BufReader::new(file);
-
-    for line in reader.lines() {
+    for line in BufReader::new(file).lines() {
         let Ok(line) = line else { continue };
         let Ok(entry) = serde_json::from_str::<serde_json::Value>(&line) else {
             continue;
         };
+
+        if let Some(effort) = assistant_effort(&entry) {
+            last_effort = Some(effort);
+        }
 
         let Some(usage) = entry.get("message").and_then(|m| m.get("usage")) else {
             continue;
@@ -88,7 +124,10 @@ pub fn parse_cost_from_transcript(path: &Path) -> CostSummary {
         }
     }
 
-    summary.with_cost()
+    TranscriptScan {
+        cost: summary.with_cost(),
+        last_effort,
+    }
 }
 
 /// Parse a single transcript JSONL line into a [`RawCost`].
@@ -234,7 +273,10 @@ mod tests {
             r#"{"type":"assistant","effort":"medium"}"#,
             r#"{"type":"user","message":{"role":"user"}}"#,
         ]);
-        assert_eq!(scan_transcript(&path).last_effort.as_deref(), Some("medium"));
+        assert_eq!(
+            scan_transcript(&path).last_effort.as_deref(),
+            Some("medium")
+        );
     }
 
     #[test]
@@ -248,10 +290,8 @@ mod tests {
 
     #[test]
     fn scan_transcript_skips_malformed_trailing_line() {
-        let (_dir, path) = write_transcript(&[
-            r#"{"type":"assistant","effort":"low"}"#,
-            "{not valid json",
-        ]);
+        let (_dir, path) =
+            write_transcript(&[r#"{"type":"assistant","effort":"low"}"#, "{not valid json"]);
         assert_eq!(scan_transcript(&path).last_effort.as_deref(), Some("low"));
     }
 

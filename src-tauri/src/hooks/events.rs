@@ -1,6 +1,41 @@
 #![allow(dead_code)]
 use serde::{Deserialize, Serialize};
 
+pub const BACKGROUND_INPUT_WAITING_PREFIX: &str = "background agent";
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PromptCacheStatus {
+    #[serde(default)]
+    pub warm: Option<bool>,
+    #[serde(default)]
+    pub caching_observed: Option<bool>,
+    #[serde(default)]
+    pub ttl: Option<String>,
+    #[serde(default)]
+    pub expires_at: Option<u64>,
+    #[serde(default)]
+    pub requests: Option<u64>,
+    #[serde(default)]
+    pub misses: Option<u64>,
+    #[serde(default)]
+    pub hit_ratio: Option<f64>,
+    #[serde(default)]
+    pub miss_recache_tokens: Option<u64>,
+    #[serde(default)]
+    pub last_miss_at: Option<u64>,
+    #[serde(default, deserialize_with = "null_as_empty_vec")]
+    pub last_miss_causes: Vec<String>,
+}
+
+/// One explicit `null` would otherwise fail the whole `AgentStatus` and drop
+/// the status update silently.
+fn null_as_empty_vec<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<Vec<String>>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "hook_event_name")]
 pub enum HookEvent {
@@ -92,6 +127,26 @@ pub enum HookEvent {
         #[serde(default)]
         message: Option<String>,
     },
+    #[serde(rename = "SubagentStart")]
+    SubagentStart {
+        session_id: String,
+        #[serde(default)]
+        agent_id: Option<String>,
+        #[serde(default)]
+        agent_type: Option<String>,
+    },
+    #[serde(rename = "SubagentStop")]
+    SubagentStop {
+        session_id: String,
+        #[serde(default)]
+        agent_id: Option<String>,
+        #[serde(default)]
+        agent_type: Option<String>,
+        #[serde(default)]
+        last_assistant_message: Option<String>,
+        #[serde(default)]
+        effort: serde_json::Value,
+    },
     #[serde(rename = "CwdChanged")]
     CwdChanged {
         session_id: String,
@@ -176,6 +231,8 @@ pub enum HookEvent {
         rate_7d_resets_at: Option<u64>,
         #[serde(default)]
         effort_level: Option<String>,
+        #[serde(default)]
+        prompt_cache: Option<PromptCacheStatus>,
     },
 }
 
@@ -193,6 +250,9 @@ impl HookEvent {
             | Self::PostToolUse { .. }
             | Self::TaskCreated { .. }
             | Self::TaskCompleted { .. } => Some("running"),
+            Self::Notification {
+                notification_type, ..
+            } if notification_type.as_deref() == Some("agent_completed") => None,
             Self::PlanReview { .. }
             | Self::AskUser { .. }
             | Self::Notification { .. }
@@ -200,8 +260,20 @@ impl HookEvent {
             Self::Stop { .. } | Self::SessionEnd { .. } => Some("idle"),
             Self::CwdChanged { .. }
             | Self::FileChanged { .. }
+            | Self::SubagentStart { .. }
+            | Self::SubagentStop { .. }
             | Self::StatusLine { .. }
             | Self::AgentStatus { .. } => None,
+        }
+    }
+
+    pub fn effort_level(&self) -> Option<String> {
+        match self {
+            Self::SubagentStop { effort, .. } => effort
+                .get("level")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            _ => None,
         }
     }
 
@@ -215,10 +287,17 @@ impl HookEvent {
                 notification_type,
                 message,
                 ..
-            } => message
-                .clone()
-                .or_else(|| notification_type.clone())
-                .or_else(|| Some("notification".to_string())),
+            } => match notification_type.as_deref() {
+                Some("agent_completed") => None,
+                Some("agent_needs_input") => Some(match message {
+                    Some(m) => format!("{BACKGROUND_INPUT_WAITING_PREFIX}: {m}"),
+                    None => BACKGROUND_INPUT_WAITING_PREFIX.to_string(),
+                }),
+                _ => message
+                    .clone()
+                    .or_else(|| notification_type.clone())
+                    .or_else(|| Some("notification".to_string())),
+            },
             Self::AskUser { .. } => Some("answering a question".to_string()),
             Self::PlanReview { .. } => Some("plan review".to_string()),
             Self::PermissionDenied {
@@ -245,6 +324,8 @@ impl HookEvent {
             | Self::PlanReview { session_id, .. }
             | Self::AskUser { session_id, .. }
             | Self::Notification { session_id, .. }
+            | Self::SubagentStart { session_id, .. }
+            | Self::SubagentStop { session_id, .. }
             | Self::CwdChanged { session_id, .. }
             | Self::FileChanged { session_id, .. }
             | Self::PermissionDenied { session_id, .. }
@@ -615,6 +696,20 @@ mod tests {
                 let pc = prompt_cache.unwrap();
                 assert_eq!(pc.warm, Some(false));
                 assert!(pc.hit_ratio.is_none());
+                assert!(pc.last_miss_causes.is_empty());
+            }
+            _ => panic!("expected AgentStatus"),
+        }
+    }
+
+    #[test]
+    fn prompt_cache_tolerates_explicit_null_causes() {
+        let json = r#"{"hook_event_name":"AgentStatus","session_id":"s","prompt_cache":{"warm":true,"last_miss_causes":null}}"#;
+        let ev: HookEvent = serde_json::from_str(json).unwrap();
+        match ev {
+            HookEvent::AgentStatus { prompt_cache, .. } => {
+                let pc = prompt_cache.unwrap();
+                assert_eq!(pc.warm, Some(true));
                 assert!(pc.last_miss_causes.is_empty());
             }
             _ => panic!("expected AgentStatus"),

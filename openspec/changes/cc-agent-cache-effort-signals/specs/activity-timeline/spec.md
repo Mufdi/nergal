@@ -2,7 +2,7 @@
 
 ### Requirement: Subagent lifecycle entries
 
-The system SHALL record a `subagent` activity entry when a `SubagentStart` hook arrives with a non-empty `agent_type`. The entry SHALL read `Subagent: <agent_type>`, carry the `agent_id`, and start in `running` status. A `SubagentStop` with the same `agent_id` SHALL mark that entry `done`, stamp its duration, and set its detail to the subagent's `last_assistant_message`. When the `SubagentStop` payload carries `effort.level`, the entry message SHALL append `· <level>`. Events with an empty or missing `agent_type` (CC internal agents such as prompt suggestions) SHALL be dropped. Entries SHALL be flat: hook payloads carry no parent agent id, so nesting is not rendered. On `SubagentStart`, the newest running `tool_use` entry for the `Agent` or `Task` tool that has no agent id SHALL become the subagent entry (type, label, agent id) instead of a second row. A PostToolUse of a different tool SHALL never close a running `Agent`/`Task` row through the any-name fallback.
+The system SHALL record a `subagent` activity entry when a `SubagentStart` hook arrives with a non-empty `agent_type`. The entry SHALL read `Subagent: <agent_type>`, carry the `agent_id`, and start in `running` status. A `SubagentStop` with the same `agent_id` SHALL mark that entry `done`, stamp its duration, and set its detail to the subagent's `last_assistant_message`. When the `SubagentStop` payload carries `effort.level`, the entry message SHALL append `· <level>`. Events with an empty or missing `agent_type` (CC internal agents such as prompt suggestions) SHALL be dropped. Entries SHALL be flat: hook payloads carry no parent agent id, so nesting is not rendered. On `SubagentStart`, the newest running `tool_use` entry for the `Agent` or `Task` tool that has no agent id SHALL become the subagent entry (type, label, agent id) instead of a second row. A PostToolUse of a different tool SHALL never close a running `Agent`/`Task` row through the any-name fallback. A `Stop` SHALL mark every running `Agent`/`Task` tool row without an agent id as `done`.
 
 #### Scenario: Start and stop pair by agent id
 - **WHEN** `SubagentStart {agent_id: "a1", agent_type: "Explore"}` arrives, then `SubagentStop {agent_id: "a1", agent_type: "Explore", last_assistant_message: "Found 3 files", effort: {level: "medium"}}`
@@ -16,6 +16,11 @@ The system SHALL record a `subagent` activity entry when a `SubagentStart` hook 
 #### Scenario: Parallel tool completion does not close the Agent row
 - **WHEN** a running `Agent` tool row exists and a `PostToolUse {tool_name: "Bash"}` arrives with no running `Bash` row
 - **THEN** the `Agent` row SHALL stay `running`
+
+#### Scenario: Stop closes an Agent row no subagent claimed
+- **WHEN** a running `Agent` tool row has no agent id and a `Stop` arrives for the session
+- **THEN** the row SHALL be `done` with a duration
+- **AND** a running `subagent` entry SHALL stay `running`
 
 #### Scenario: Stop without a matching start
 - **WHEN** `SubagentStop {agent_id: "a9", agent_type: "Plan"}` arrives with no running entry for `a9`

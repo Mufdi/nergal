@@ -650,6 +650,30 @@ pub fn statusline(socket_path: &Path) {
 /// unit-tested against the schema. Every field is optional: CC omits
 /// `rate_limits` for non-Pro/Max plans, `effort` for models without reasoning
 /// effort, and the `context_window` percentages early in a session.
+fn prompt_cache_status(cc: &serde_json::Value) -> serde_json::Value {
+    let Some(pc) = cc.get("prompt_cache").and_then(|v| v.as_object()) else {
+        return serde_json::Value::Null;
+    };
+    let causes: Vec<&str> = pc
+        .get("last_miss_cause")
+        .and_then(|c| c.get("causes"))
+        .and_then(|c| c.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    serde_json::json!({
+        "warm": pc.get("warm").and_then(serde_json::Value::as_bool),
+        "caching_observed": pc.get("caching_observed").and_then(serde_json::Value::as_bool),
+        "ttl": pc.get("ttl").and_then(|v| v.as_str()),
+        "expires_at": pc.get("expires_at").and_then(serde_json::Value::as_u64),
+        "requests": pc.get("requests").and_then(serde_json::Value::as_u64),
+        "misses": pc.get("misses").and_then(serde_json::Value::as_u64),
+        "hit_ratio": pc.get("hit_ratio").and_then(serde_json::Value::as_f64),
+        "miss_recache_tokens": pc.get("miss_recache_tokens").and_then(serde_json::Value::as_u64),
+        "last_miss_at": pc.get("last_miss_at").and_then(serde_json::Value::as_u64),
+        "last_miss_causes": causes,
+    })
+}
+
 fn statusline_to_agent_status(cc: &serde_json::Value, nergal_id: &str) -> serde_json::Value {
     let model = cc.get("model");
     let ctx = cc.get("context_window");
@@ -682,6 +706,7 @@ fn statusline_to_agent_status(cc: &serde_json::Value, nergal_id: &str) -> serde_
             .and_then(|s| s.get("resets_at"))
             .and_then(serde_json::Value::as_u64),
         "effort_level": cc.get("effort").and_then(|e| e.get("level")).and_then(|v| v.as_str()),
+        "prompt_cache": prompt_cache_status(cc),
         "nergal_session_id": nergal_id,
     })
 }
@@ -897,7 +922,10 @@ mod tests {
         let cc = serde_json::json!({
             "prompt_cache": { "last_miss_cause": { "causes": "tools_changed" } }
         });
-        assert_eq!(prompt_cache_status(&cc)["last_miss_causes"], serde_json::json!([]));
+        assert_eq!(
+            prompt_cache_status(&cc)["last_miss_causes"],
+            serde_json::json!([])
+        );
     }
 
     #[test]

@@ -1442,20 +1442,18 @@ fn process_task_event(
         return;
     }
 
-    let is_task_create;
-    let is_task_update;
-
-    if tool_name == "TodoUpdate" || tool_name == "Task" {
+    let (is_task_create, is_task_update) = if tool_name == "TodoUpdate" || tool_name == "Task" {
         let command = tool_input
             .get("command")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        is_task_create = command == "create" || command == "add";
-        is_task_update = command == "update" || command == "delete" || command == "complete";
+        (
+            command == "create" || command == "add",
+            command == "update" || command == "delete" || command == "complete",
+        )
     } else {
-        is_task_create = tool_name == "TaskCreate";
-        is_task_update = tool_name == "TaskUpdate";
-    }
+        (tool_name == "TaskCreate", tool_name == "TaskUpdate")
+    };
 
     if !is_task_create && !is_task_update {
         return;

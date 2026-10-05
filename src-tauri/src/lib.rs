@@ -195,34 +195,6 @@ impl Drop for SentinelGuard {
     }
 }
 
-#[cfg(test)]
-mod sentinel_tests {
-    use super::SentinelGuard;
-
-    #[test]
-    fn unarmed_guard_neither_writes_nor_removes() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(".nergal-active");
-        std::fs::write(&path, "4242").unwrap();
-        drop(SentinelGuard::at(path.clone()));
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "4242");
-    }
-
-    #[test]
-    fn armed_guard_writes_own_pid_and_cleans_up() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(".nergal-active");
-        let guard = SentinelGuard::at(path.clone());
-        guard.arm_handle().arm();
-        assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
-            std::process::id().to_string()
-        );
-        drop(guard);
-        assert!(!path.exists());
-    }
-}
-
 /// Linux desktop launchers hand us a minimal PATH (no nvm, no `~/.opencode/bin`),
 /// so `which::which("pi"|"opencode")` fails, the registry reports only Claude
 /// Code as installed, and the agent picker silently auto-resolves to CC.
@@ -1233,5 +1205,33 @@ fn reconcile_worktrees(db: &Database) {
             );
             let _ = db.clear_session_worktree(&session_id);
         }
+    }
+}
+
+#[cfg(test)]
+mod sentinel_tests {
+    use super::SentinelGuard;
+
+    #[test]
+    fn unarmed_guard_neither_writes_nor_removes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".nergal-active");
+        std::fs::write(&path, "4242").unwrap();
+        drop(SentinelGuard::at(path.clone()));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "4242");
+    }
+
+    #[test]
+    fn armed_guard_writes_own_pid_and_cleans_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".nergal-active");
+        let guard = SentinelGuard::at(path.clone());
+        guard.arm_handle().arm();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            std::process::id().to_string()
+        );
+        drop(guard);
+        assert!(!path.exists());
     }
 }

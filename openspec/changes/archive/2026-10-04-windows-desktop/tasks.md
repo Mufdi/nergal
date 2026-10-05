@@ -9,11 +9,11 @@ Depends on `windows-compile` (compile gate). Notification AUMID + `nergal://` sc
 
 ## 2. Confirm cross-platform plugin paths on Windows (no code)
 
-- [ ] 2.1 Verify (Windows gate + walk) that `opener` (open log / open `nergal://` URI / reveal downloaded file), `tauri-plugin-notification` (post-install AUMID), `dirs` (downloads/cache), and `check_system_health` (no xdg-*) all work on Windows. No code change expected; record any surprise as a follow-up.
+- [ ] 2.1 Verify (Windows gate + walk) that `opener` (open log / open `nergal://` URI / reveal downloaded file), `tauri-plugin-notification` (post-install AUMID), `dirs` (downloads/cache), and `check_system_health` (no xdg-*) all work on Windows. No code change expected; record any surprise as a follow-up. — **FROZEN 2026-10-04**: Windows quedó congelado (foco Linux + Claude Code); esta verificación no se hará. Archivado sin ella.
 
 ## 3. Verification
 
 - [x] 3.1 **Windows gate green** ✅ — `cargo check --target x86_64-pc-windows-msvc` (CI run `28333623016`, first-try; `std::os::windows::process::CommandExt::creation_flags` is std, no `windows` crate import needed here).
 - [x] 3.2 **Linux full check** ✅ — `cargo clippy -- -D warnings` (no issues) + `cargo test` (699 passed, 1 ignored) + `cargo fmt --check` (clean). The `#[cfg(target_os = "linux")]`/`#[cfg(unix)]` detach paths untouched.
 - [x] 3.3 **macOS gate green** ✅ — `cargo check --target aarch64-apple-darwin` (same CI run `28333623016`; the `#[cfg(not(any(windows, target_os = "linux")))]` no-op catch-all compiles on macOS).
-- [ ] 3.4 **User Windows-machine walk (UNVERIFIED-pending)** — post-session runner survives GUI exit (add BREAKAWAY if a job object kills it); docker-stop completes after Nergal exit; open-log / reveal / open-`nergal://` / notification (post-install) / downloads all work.
+- [ ] 3.4 **User Windows-machine walk (UNVERIFIED-pending)** — post-session runner survives GUI exit (add BREAKAWAY if a job object kills it); docker-stop completes after Nergal exit; open-log / reveal / open-`nergal://` / notification (post-install) / downloads all work. — **FROZEN 2026-10-04**: Windows quedó congelado (foco Linux + Claude Code); esta verificación no se hará. Archivado sin ella.

@@ -5,22 +5,22 @@ TBD - created by archiving change platform-ipc. Update Purpose after archive.
 ## Requirements
 ### Requirement: Platform transport abstraction
 
-The system SHALL define a `PlatformListener` / `PlatformStream` transport abstraction through which the hook server, the MCP daemon, cross-session messaging, and the blocking request/response round-trips bind, accept, and connect. The hook server and MCP daemon SHALL obtain their listener and streams from this abstraction rather than referencing `std::os::unix::net` or `tokio::net::Unix*` types directly at the call site. The Unix implementation SHALL wrap the existing `UnixListener` / `UnixStream` code with no behavioural change; the existing length-framing helpers (`read_frame` / `write_frame`, generic over async reader/writer) SHALL remain unchanged and continue to operate over the abstracted stream.
+The system SHALL define a `PlatformListener` / `PlatformStream` transport abstraction through which the hook server, the MCP daemon, cross-session messaging, and the blocking request/response round-trips bind, accept, and connect. The hook server and MCP daemon SHALL obtain their listener and streams from this abstraction rather than referencing `std::os::unix::net` / `tokio::net::Unix*` types (Unix) or `tokio::net::windows::named_pipe` types (Windows) directly at the call site. The Unix implementation SHALL wrap the existing `UnixListener` / `UnixStream` code with no behavioural change; the Windows implementation SHALL wrap `tokio::net::windows::named_pipe`. The existing length-framing helpers (`read_frame` / `write_frame`, generic over async reader/writer) SHALL remain unchanged and continue to operate over the abstracted stream on both families. `accept` SHALL return `(PlatformStream, PeerIdentity)`.
 
 #### Scenario: Hook server binds through the abstraction
 
-- **WHEN** the hook server starts and binds its socket
-- **THEN** it SHALL obtain the listener via the `PlatformListener` abstraction and accept connections as `PlatformStream` values, with no raw `unix::net` type at the call site
+- **WHEN** the hook server starts and binds its socket on Unix or Windows
+- **THEN** it SHALL obtain the listener via the `PlatformListener` abstraction and accept connections as `(PlatformStream, PeerIdentity)`, with no raw `unix::net` or `named_pipe` type at the call site
 
 #### Scenario: MCP daemon binds through the abstraction
 
-- **WHEN** the MCP daemon starts and binds its socket
-- **THEN** it SHALL obtain the listener via the `PlatformListener` abstraction, and the length-framed read/write helpers SHALL operate unchanged over the resulting stream
+- **WHEN** the MCP daemon starts and binds its socket on Unix or Windows
+- **THEN** it SHALL obtain the listener via the `PlatformListener` abstraction (replacing the former `UnixSocketTransport`), and the length-framed read/write helpers SHALL operate unchanged over the resulting `PlatformStream`
 
 #### Scenario: Connect side uses the abstraction
 
-- **WHEN** the hook CLI or the MCP shim connects to a daemon socket
-- **THEN** it SHALL connect via the `PlatformStream` abstraction rather than calling `UnixStream::connect` directly at the call site
+- **WHEN** the hook CLI or the MCP shim connects to a daemon socket on Unix or Windows
+- **THEN** it SHALL connect via the `PlatformStream` abstraction rather than calling `UnixStream::connect` / `ClientOptions::open` directly at the call site
 
 ### Requirement: Per-user IPC runtime directory rooted at an un-squattable base
 
@@ -69,24 +69,26 @@ Because `#[cfg(unix)]` is true on macOS, the system SHALL run the existing Unix-
 
 ### Requirement: Per-platform peer-authentication boundary
 
-The transport SHALL enforce a per-platform peer-authentication boundary on the security-sensitive sockets — both the MCP daemon socket AND the hook event socket. On Unix the boundary SHALL be the peer-credential uid check obtained through `tokio`'s `peer_cred()` (backed by `SO_PEERCRED` on Linux and by `LOCAL_PEERCRED` / `getpeereid` on macOS): a connection from a process owned by a different uid SHALL be rejected, regardless of whether the OS additionally exposes a peer PID (macOS does not — the boundary SHALL rely on the uid, never on a peer PID). On Windows the boundary SHALL be a named-pipe security descriptor (owner-only ACL) or, for the TCP-loopback variant, a per-session authentication token presented on connect; this Windows behaviour is the target contract and is deferred to the Windows iteration.
+The transport SHALL enforce a per-platform peer-authentication boundary on the security-sensitive sockets — both the MCP daemon socket AND the hook event socket. On Unix the boundary SHALL be the peer-credential uid check obtained through `tokio`'s `peer_cred()` (backed by `SO_PEERCRED` on Linux and by `LOCAL_PEERCRED` / `getpeereid` on macOS): a connection from a process owned by a different uid SHALL be rejected, regardless of whether the OS additionally exposes a peer PID (macOS does not — the boundary SHALL rely on the uid, never on a peer PID). On Windows the boundary SHALL be the named-pipe owner-only security descriptor (SDDL `D:P(A;;GA;;;<user-SID>)`) AND a client-SID check performed in the accept loop: the server extracts the connected client's user SID via `ImpersonateNamedPipeClient` → token query → `RevertToSelf` and rejects the connection unless that SID `EqualSid` the server process's owner SID. Both layers SHALL be enforced (ACL restricts who can open the pipe at all; the SID check is defense in depth, mirroring the Unix `0700` dir + peer-cred pairing).
 
-The hook event socket — which today authenticates by file mode alone and reads fire-and-forget newline-delimited events with no credential check — SHALL additionally reject foreign-uid connections in its accept loop, closing the create-then-`chmod` window (a different-uid process could otherwise `connect()` in the interval between `bind()` under the process umask and `set_permissions(0600)`). The per-user `0700` IPC directory makes this window unreachable structurally; the peer-uid check on accept is defence in depth.
+The hook event socket — which today authenticates by file mode alone and reads fire-and-forget newline-delimited events with no credential check — SHALL additionally reject foreign-principal connections in its accept loop, closing the create-then-`chmod` window. On Unix the per-user `0700` IPC directory makes this window unreachable structurally; on Windows the owner-only security descriptor makes the pipe un-openable by a foreign user from creation; the peer check on accept is defence in depth on both.
 
 #### Scenario: Different-uid peer is rejected on Unix
 
 - **WHEN** a process owned by a different uid connects to the MCP daemon socket or the hook event socket on Unix (Linux or macOS)
 - **THEN** the transport SHALL reject the connection via the peer-credential uid check, and SHALL log the rejected uid
 
+#### Scenario: Different-SID peer is rejected on Windows
+
+- **WHEN** a process owned by a different user SID connects to the MCP daemon or hook named pipe on Windows
+- **THEN** the transport SHALL reject the connection — the owner-only security descriptor SHALL block the open, and as defense in depth the accept-loop client-SID check SHALL reject any connection whose client SID does not `EqualSid` the process owner SID, with `RevertToSelf` invoked on every path (including errors), and the rejected SID SHALL be logged
+
 #### Scenario: macOS peer uid is extracted correctly (committed real foreign-uid harness)
 
 - **WHEN** a tiny connector binary, staged in a world-execable location (`/tmp`, `/usr/local/bin`), is run as the always-present unprivileged `nobody` account (`sudo -u nobody`, NOT a mock and NOT a setuid helper) and connects to a **dedicated test socket bound in a deliberately-traversable parent** (`0711`/`0755`) — NOT the production socket inside the `0700` per-user dir, which a foreign uid cannot traverse
 - **THEN** the foreign peer SHALL actually reach `accept()`, `peer_cred().uid()` SHALL return nobody's real uid (via `LOCAL_PEERCRED` / `getpeereid`), and the boundary SHALL reject it post-accept; the harness SHALL distinguish an `EACCES`-at-`connect` (directory blocked the peer — `peer_cred` NOT exercised → test INVALID) and an `EACCES`-at-`exec` (connector not traversable by `nobody` → harness not runnable) from a genuine peer-cred rejection, recording an un-runnable harness or unavailable `sudo` as explicitly UNVERIFIED-pending rather than as a pass or as covered by the mocked comparison-branch test
 
-#### Scenario: Windows peer authentication (deferred)
-
-- **WHEN** the Windows transport iteration is implemented
-- **THEN** the named-pipe variant SHALL restrict access via an owner-only security descriptor, OR the loopback variant SHALL require a valid per-session token on connect, denying unauthenticated peers — matching the owner-only boundary the Unix uid check provides today, subject to the loopback-fallback constraints below
+---
 
 ### Requirement: Constrained Windows loopback fallback
 
@@ -99,40 +101,49 @@ If the deferred Windows transport adopts the TCP-loopback-plus-token fallback in
 
 ### Requirement: Platform-gated socket permissions
 
-The system SHALL gate all Unix-only permission calls behind `#[cfg(unix)]` so the crate compiles under a non-Unix target. Specifically the hook server's `set_permissions(socket, 0o600)` block SHALL be `#[cfg(unix)]`-gated (matching the already-gated MCP transport at `mcp/transport.rs:83`). On Windows, owner-only access SHALL be provided by the named-pipe security descriptor instead of POSIX file mode (deferred). Because the endpoint now lives inside the per-user `0700` IPC directory, the socket is never group/world-connectable even in the interval before the per-socket `0600` chmod takes effect.
+The system SHALL gate all Unix-only permission calls behind `#[cfg(unix)]` so the crate compiles under a non-Unix target. On Unix the hook server's `set_permissions(socket, 0o600)` block SHALL be `#[cfg(unix)]`-gated (matching the MCP transport), and because the endpoint lives inside the per-user `0700` IPC directory, the socket is never group/world-connectable even before the per-socket `0600` chmod takes effect. On Windows owner-only access SHALL be provided by the named-pipe security descriptor (SDDL `D:P(A;;GA;;;<user-SID>)`) attached at pipe creation via `create_with_security_attributes_raw`, NOT by a POSIX file mode — the pipe is un-openable by a foreign user from the instant it is created, so there is no create-then-restrict window on Windows.
 
 #### Scenario: Hook server permissions are gated on Unix
 
 - **WHEN** the hook server binds its socket on Unix
 - **THEN** it SHALL set mode `0600` inside a `#[cfg(unix)]` block, the socket SHALL reside inside the per-user `0700` IPC directory so no different-uid process can connect at any instant, and the same code SHALL compile (excluding the POSIX mode call) under a Windows target
 
+#### Scenario: Windows pipe is owner-restricted at creation
+
+- **WHEN** the hook or MCP named pipe is created on Windows
+- **THEN** its security descriptor SHALL grant access only to the current user's SID (no create-then-chmod window), and a foreign-user open attempt SHALL be denied by the OS before any accept
+
+---
+
 ### Requirement: Unified blocking request/response primitive
 
-The blocking plan-review and ask-user round-trips SHALL be expressible over the same `PlatformStream` primitive as the rest of IPC, rather than depending on a separate `mkfifo` mechanism that does not exist on Windows. The observable blocking semantics SHALL be preserved: the hook CLI blocks until the GUI writes a decision/answer, then proceeds. The blocking round-trip carries an authorization decision (plan-review feeds the human approval gate on agent-spawned worktrees), so it SHALL enforce the SAME owner-only boundary as the rest of IPC: the only process permitted to write the decision/answer is one owned by the current uid, enforced structurally by placing the FIFO inside the per-user IPC directory (and, when migrated onto `PlatformStream`, by the peer-credential / ACL boundary of that primitive). The blocking wait SHALL be resolved by a **liveness-aware** rule, NOT a blunt wall-clock timeout, AND the rule SHALL be implemented with primitives that actually exist on the connectionless FIFO this iteration ships: the GUI writes a `gui.pid` file in the per-user IPC directory containing its pid AND a process-start-time token (Linux `/proc/<pid>/stat` starttime, macOS `proc_pidinfo`/`kinfo_proc` start time; a `pidfd` MAY be preferred on Linux). The hook CLI opens the FIFO non-blocking (`O_RDONLY | O_NONBLOCK`) and polls it with an explicit bounded timeout (≈1 s) that drives the liveness cadence — NOT an infinite/`POLLHUP`-edge wait (a writerless read-only FIFO returns `POLLHUP` continuously with platform-divergent semantics, which would busy-spin or stall the liveness check); it ignores `POLLHUP`, reads on `POLLIN`, and on each timeout tick checks GUI liveness via the pid+start-time token. `gui.pid` SHALL be written and refreshed only by the instance holding the IPC `flock` (so the pidfile always names the live server, never a launch-race sibling that deferred and exited). Detected GUI death — `ESRCH` OR a start-time mismatch (pid recycled to an unrelated process) — SHALL resolve to a safe deny so a crashed GUI cannot hang the agent loop indefinitely or silently degrade fast-death-detection to the backstop; but a live GUI (matching pid+token) with a still-pending human decision SHALL NOT be force-denied — plan review legitimately stays pending while the user reads. A connection-close/EOF death signal SHALL NOT be assumed on the FIFO (there is no connected writer during deliberation); that signal applies only after the deferred migration onto `PlatformStream`. Any wall-clock backstop SHALL be human-scale (minutes, configurable) and SHOULD surface a re-arm rather than a silent deny. The FIFO SHALL be unlinked on entry and on exit (RAII cleanup), and a pre-existing FIFO at the expected path SHALL be treated as hostile (removed, not reused) so a stale or pre-seeded decision from a crashed run or a recycled PID cannot be read as a live answer.
+The blocking plan-review and ask-user round-trips SHALL be expressible over the same `PlatformStream` primitive as the rest of IPC, rather than depending on a separate `mkfifo` mechanism that does not exist on Windows. The observable blocking semantics SHALL be preserved: the hook CLI blocks until the GUI writes a decision/answer, then proceeds. The blocking round-trip carries an authorization decision (plan-review feeds the human approval gate on agent-spawned worktrees), so it SHALL enforce the SAME owner-only boundary as the rest of IPC: the only process permitted to write the decision/answer is one owned by the current principal — on Unix enforced structurally by the per-user `0700` IPC directory, on Windows enforced by the named-pipe owner-only security descriptor and the client-SID check.
 
-On Linux and macOS the existing FIFO implementation (`mkfifo`, POSIX), relocated into the per-user `0700` IPC directory and guarded by the timeout + RAII rules above, SHALL satisfy this contract for the macOS iteration; the migration of these round-trips onto the unified `PlatformStream` primitive is the defined target, implemented when the Windows path lands. The historical pre-change behaviour — FIFOs in world-writable `/tmp` under a guessable PID-derived name, with no peer-auth, no timeout, and no pre-seed guard — is recorded here as the known gap this requirement closes.
+The blocking rule SHALL be the **same liveness-aware model on both families**, differing only in transport. The GUI writes a `gui.pid` pid+start-time token; the hook CLI hosts the endpoint and waits with a bounded timeout tick, checking GUI liveness each tick; detected GUI death (pid gone / start-time mismatch) → safe deny; a live GUI with a pending human decision SHALL NOT be force-denied; a human-scale wall-clock backstop bounds the connect-never case. On Unix the endpoint is the existing `mkfifo` FIFO relocated into the per-user `0700` IPC directory, polled non-blocking (`O_NONBLOCK`, ignore `POLLHUP`, read on `POLLIN`). On Windows the endpoint is a CLI-hosted named-pipe server (`CreateNamedPipeW`, owner-only SD, `first_pipe_instance(true)`) accepted with overlapped `ConnectNamedPipe` + a bounded wait (the named-pipe analog of the FIFO `O_NONBLOCK`+`poll`); the GUI connects and writes the decision at submit time over a `PlatformStream` (owner-verified), not `std::fs::write` against a pipe path. The CLI SHALL create the pipe BEFORE the plan-review notification is sent, so the GUI never races a not-yet-created endpoint. The endpoint SHALL be treated as hostile if pre-existing (the Unix FIFO is unlinked-on-entry; the Windows server uses `first_pipe_instance(true)` so a pre-seeded pipe is rejected) so a stale or pre-seeded decision cannot be read as a live answer.
 
 #### Scenario: Plan-review blocks and resolves on Unix
 
 - **WHEN** an agent triggers a plan review and the user submits a decision in the GUI
 - **THEN** the hook CLI SHALL block until the decision arrives and then emit the corresponding allow/deny output, using the POSIX FIFO path inside the per-user `0700` IPC directory on Linux and macOS
 
-#### Scenario: Only a same-uid writer can resolve the gate
+#### Scenario: Only a same-principal writer can resolve the gate
 
-- **WHEN** a different-uid local process attempts to write a forged `allow` decision (or an answer) into the blocking endpoint before the GUI does
-- **THEN** it SHALL be unable to open the endpoint for writing, because the endpoint lives inside the per-user `0700` IPC directory; the approval gate SHALL only ever be resolved by a process owned by the current uid
+- **WHEN** a different-principal local process attempts to write a forged `allow` decision (or an answer) into the blocking endpoint before the GUI does
+- **THEN** it SHALL be unable to open the endpoint for writing — on Unix because the endpoint lives inside the per-user `0700` IPC directory, on Windows because the named pipe's owner-only security descriptor denies the open — so the approval gate SHALL only ever be resolved by a process owned by the current principal
+
+#### Scenario: Blocking round-trips work without mkfifo on Windows
+
+- **WHEN** plan-review or ask-user runs on Windows
+- **THEN** the round-trip SHALL be performed over a CLI-hosted named-pipe server (no dependency on `mkfifo`), preserving block-until-decision and the owner-only boundary; the GUI SHALL connect and write the decision at submit time over an owner-verified `PlatformStream`, and the CLI SHALL create the pipe before sending the plan-review notification so the GUI never races a missing endpoint
 
 #### Scenario: Dead GUI resolves to a safe deny; live deliberation does not
 
-- **WHEN** the GUI process dies while a decision is pending (the hook CLI's liveness check sees `ESRCH`, OR sees a live pid whose start-time token no longer matches — the pid was recycled to an unrelated process)
-- **THEN** the blocking round-trip SHALL resolve to a safe deny (plan rejected / no answer) rather than blocking the agent loop forever or degrading to the backstop, and the event SHALL be logged
+- **WHEN** the GUI process dies while a decision is pending (on both Unix and Windows the CLI's per-tick liveness check sees the `gui.pid` pid gone OR a start-time-token mismatch)
+- **THEN** the blocking round-trip SHALL resolve to a safe deny (plan rejected / no answer) rather than blocking the agent loop forever, and the event SHALL be logged
 - **WHEN** the GUI is still alive (pid AND start-time token both match) and the human has simply not decided yet
-- **THEN** the round-trip SHALL keep waiting (no silent deny mid-deliberation); any wall-clock backstop SHALL be human-scale and SHOULD surface a re-arm rather than auto-rejecting the plan
+- **THEN** the round-trip SHALL keep waiting (no silent deny mid-deliberation); a human-scale wall-clock backstop SHALL bound the wait (covering the case where no GUI ever connects) and SHOULD surface a re-arm rather than auto-rejecting the plan
 
-#### Scenario: Blocking round-trips work without mkfifo (deferred Windows target)
-
-- **WHEN** the Windows transport iteration is implemented
-- **THEN** plan-review and ask-user SHALL perform the same blocking request/response over the `PlatformStream` primitive (named-pipe or loopback), with no dependency on `mkfifo`, preserving the block-until-decision semantics, the owner-only boundary, and the timeout-to-deny behaviour
+---
 
 ### Requirement: IPC security observability
 
@@ -148,15 +159,6 @@ The transport SHALL emit a logged audit line for every security-relevant IPC eve
 - **WHEN** a hostile process spams a high volume of rejected connections from the same foreign uid
 - **THEN** the audit logging SHALL rate-limit or coalesce the repeated rejections rather than writing one unbounded line per attempt, so the logging cannot be used to fill the disk or drown the genuine signal
 
-### Requirement: Windows transport contract (deferred)
-
-On Windows the transport SHALL be implemented via a named pipe at `\\.\pipe\nergal-*` (using `tokio::net::windows::named_pipe`) with an owner-only security descriptor, or — only if a named-pipe edge case forces it — via TCP loopback with a per-session auth token subject to the Constrained Windows loopback fallback requirement. This requirement defines the target cross-platform contract; the macOS iteration SHALL implement only the Unix path plus the trait seam, and the Windows implementation SHALL be a follow-up iteration. The crate SHALL nonetheless compile under a Windows target (all Unix-only primitives gated), even though the Windows transport body is not yet provided.
-
-#### Scenario: Windows listener binds a named pipe or loopback (deferred)
-
-- **WHEN** the Windows transport iteration is implemented
-- **THEN** `PlatformListener` SHALL bind a named pipe under `\\.\pipe\nergal-*` (owner-ACL secured, client-SID peer identity mirroring `SO_PEERCRED`) or a loopback TCP socket (token-secured per the loopback-fallback constraints), and `PlatformStream` SHALL connect to it, satisfying the same accept/connect/frame contract and owner-only boundary as the Unix implementation
-
 ### Requirement: No Linux regression
 
 The abstraction SHALL preserve all existing Linux behaviour for the hook, MCP, and cross-session flows: the same length-framing, the same `0600` socket permissions, and the same peer-uid boundary semantics. The one intentional, security-motivated change to observable state is the endpoint LOCATION: endpoints move from `/tmp/nergal*.{sock,fifo}` (shared sticky `/tmp`) to the per-user IPC directory rooted at `$XDG_RUNTIME_DIR/nergal/` (with the home/state fallback when `$XDG_RUNTIME_DIR` is absent). Because the endpoints are ephemeral runtime artifacts recreated on each launch (not persisted state), and because a single shared resolver derives the path identically on the binding and connecting sides, this relocation is transparent to every flow and introduces no data migration. Aside from that relocation, introducing the seam SHALL NOT change any observable behaviour of the hook, MCP, or cross-session flows on Linux.
@@ -170,4 +172,52 @@ The abstraction SHALL preserve all existing Linux behaviour for the hook, MCP, a
 
 - **WHEN** the seam refactor repoints the MCP and hook flows through the abstraction
 - **THEN** an automated CI test SHALL inject a foreign uid into the peer-credential comparison (mock `peer_uid`) and assert the connection is rejected, so a refactor that silently drops the only enforced access control fails the suite rather than passing every existing check — this test covers the comparison branch ONLY and SHALL NOT be claimed to verify the OS-level `peer_cred()` extraction (which the real foreign-uid acceptance harness covers separately)
+
+### Requirement: Windows transport contract
+
+On Windows the transport SHALL be implemented via a named pipe at `\\.\pipe\nergal-<user-SID>-*` using `tokio::net::windows::named_pipe` (`ServerOptions`/`ClientOptions`; `NamedPipeServer`/`NamedPipeClient` already implement `AsyncRead + AsyncWrite`), with an owner-only security descriptor built from the SDDL `D:P(A;;GA;;;<user-SID>)` via `ConvertStringSecurityDescriptorToSecurityDescriptorW` and passed to `create_with_security_attributes_raw`. Peer identity SHALL be the client user SID (`ImpersonateNamedPipeClient` → `OpenThreadToken(openasself=true)` → `GetTokenInformation(TokenUser)` → `RevertToSelf`), mirroring `SO_PEERCRED`. The TCP-loopback + per-session-token variant remains a documented fallback (subject to the Constrained Windows loopback fallback requirement) and SHALL NOT be adopted unless a named-pipe edge case forces it. `PlatformStream` SHALL connect to the pipe and satisfy the same accept/connect/frame contract and owner-only boundary as the Unix implementation.
+
+#### Scenario: Windows listener binds an owner-only named pipe
+
+- **WHEN** the Windows transport binds the hook or MCP endpoint
+- **THEN** `PlatformListener` SHALL create a named pipe under `\\.\pipe\nergal-<user-SID>-*` with the owner-only SDDL security descriptor and `first_pipe_instance(true)`, and `PlatformStream` SHALL connect to it, satisfying the same accept/connect/frame contract and owner-only boundary as the Unix implementation
+
+#### Scenario: Crate still compiles and the Unix path is unchanged
+
+- **WHEN** the crate is compiled for `aarch64-apple-darwin` / `x86_64-unknown-linux-gnu`
+- **THEN** the Unix transport SHALL be byte-identical to before (the named-pipe body is `#[cfg(windows)]`-only), and the macOS/Linux flows SHALL be unaffected
+
+---
+
+### Requirement: Cross-platform opaque peer identity
+
+The transport SHALL expose peer identity from `PlatformListener::accept` as an opaque `PeerIdentity` value rather than a bare `u32` uid, so the accept-loop access-control check is portable. `PeerIdentity` SHALL carry the Unix peer uid on Unix and the Windows client user SID on Windows, and SHALL expose a `matches_current_process()` predicate that is true iff the peer is the same security principal as the running process (Unix: `uid == getuid()`; Windows: the client SID `EqualSid` the process owner SID). The hook server and MCP daemon accept loops SHALL gate on `matches_current_process()`, never on a raw integer comparison, so the same access-control code path compiles and enforces on both families.
+
+#### Scenario: Accept loop uses the opaque predicate on every platform
+
+- **WHEN** the hook server or MCP daemon accepts a connection on Unix or Windows
+- **THEN** it SHALL obtain a `PeerIdentity` from `accept` and reject the connection unless `matches_current_process()` is true — and on Unix the predicate SHALL evaluate `uid == getuid()`, preserving the existing uid-wall behaviour byte-for-byte
+
+#### Scenario: Peer identity never collapses to a peer PID
+
+- **WHEN** peer identity is computed on any platform
+- **THEN** it SHALL derive from the peer's security principal (uid / user SID), never from a peer process id (macOS exposes no peer PID; the boundary must not depend on one)
+
+---
+
+### Requirement: Windows per-user pipe naming and anti-squat
+
+On Windows, IPC endpoints SHALL be named `\\.\pipe\nergal-<user-SID-string>-<endpoint>`, where `<user-SID-string>` is the current user's SID rendered via `ConvertSidToStringSidW`. Embedding the per-user SID gives the cross-user isolation that the per-user `0700` directory gives on Unix (a different user's Nergal binds a different pipe name; no collision). The server SHALL create the first instance with `first_pipe_instance(true)` so that if a hostile process has pre-created a pipe of the same name, `create` fails (`PermissionDenied`) and the server SHALL refuse to start and log the condition (a squat is a security alert, not a silently-rebound endpoint). The connecting side SHALL, after opening the pipe, verify via `GetSecurityInfo(SE_KERNEL_OBJECT, OWNER_SECURITY_INFORMATION)` that the pipe's owner SID `EqualSid` the current user's SID before sending any payload, rejecting the connection otherwise (anti-impersonation — a different user on a multi-session host cannot lure the client into a same-named hostile pipe).
+
+#### Scenario: Squatted pipe name is detected, not rebound
+
+- **WHEN** a hostile process pre-creates `\\.\pipe\nergal-<sid>-hook` before Nergal's hook server binds
+- **THEN** the server's `create` (with `first_pipe_instance(true)`) SHALL fail with `PermissionDenied`, and the server SHALL refuse to start the hook surface and log the squat rather than binding a name an attacker controls
+
+#### Scenario: Client rejects a foreign-owned pipe
+
+- **WHEN** the shim or hook CLI opens a pipe whose server end is owned by a different user's SID
+- **THEN** the client SHALL detect the owner mismatch via `GetSecurityInfo` + `EqualSid` and refuse to send any request payload over it
+
+---
 

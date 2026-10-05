@@ -32,6 +32,11 @@ On Windows, IPC endpoints SHALL be named `\\.\pipe\nergal-<user-SID-string>-<end
 
 ---
 
+## RENAMED Requirements
+
+- FROM: `### Requirement: Windows transport contract (deferred)`
+- TO: `### Requirement: Windows transport contract`
+
 ## MODIFIED Requirements
 
 ### Requirement: Windows transport contract

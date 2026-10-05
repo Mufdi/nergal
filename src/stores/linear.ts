@@ -5,7 +5,13 @@ import { confirm as swalConfirm } from "@/lib/confirm";
 import { escapeHtml } from "@/lib/escapeHtml";
 import { focusZoneAtom } from "./shortcuts";
 import { toastsAtom } from "./toast";
-import { loadHiddenStates, saveHiddenStates } from "./hiddenStatesStorage";
+import {
+  COLLAPSED_GROUPS_KEY,
+  loadHiddenStates,
+  loadStringSet,
+  saveHiddenStates,
+  saveStringSet,
+} from "./hiddenStatesStorage";
 import {
   activeSessionIdAtom,
   activeWorkspaceAtom,
@@ -259,6 +265,18 @@ export const linearHiddenStatesAtom = atom(
     const next = typeof update === "function" ? update(get(hiddenStatesBaseAtom)) : update;
     set(hiddenStatesBaseAtom, next);
     saveHiddenStates(next);
+  },
+);
+
+/// Folded group and sub-group keys (`state:<id>`, `<section>|state:<name>`, ...);
+/// all derive from server ids/names so they stay valid across restarts.
+const collapsedGroupsBaseAtom = atom<ReadonlySet<string>>(loadStringSet(COLLAPSED_GROUPS_KEY));
+export const linearCollapsedGroupsAtom = atom(
+  (get) => get(collapsedGroupsBaseAtom),
+  (get, set, update: ReadonlySet<string> | ((prev: ReadonlySet<string>) => ReadonlySet<string>)) => {
+    const next = typeof update === "function" ? update(get(collapsedGroupsBaseAtom)) : update;
+    set(collapsedGroupsBaseAtom, next);
+    saveStringSet(COLLAPSED_GROUPS_KEY, next);
   },
 );
 

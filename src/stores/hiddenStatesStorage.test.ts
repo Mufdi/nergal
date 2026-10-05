@@ -5,6 +5,9 @@ import {
   serializeHiddenStates,
   loadHiddenStates,
   saveHiddenStates,
+  COLLAPSED_GROUPS_KEY,
+  loadStringSet,
+  saveStringSet,
 } from "./hiddenStatesStorage";
 
 function fakeStorage(initial: Record<string, string> = {}) {
@@ -53,5 +56,37 @@ describe("hidden states storage", () => {
     };
     expect(loadHiddenStates(boom)).toEqual(new Set());
     expect(() => saveHiddenStates(new Set(["x"]), boom)).not.toThrow();
+  });
+});
+
+describe("keyed string-set storage", () => {
+  it("round-trips under an arbitrary key", () => {
+    const st = fakeStorage();
+    saveStringSet("k", new Set(["a", "b"]), st);
+    expect(st.data["k"]).toBe('["a","b"]');
+    expect(loadStringSet("k", st)).toEqual(new Set(["a", "b"]));
+  });
+
+  it("keeps hidden states and collapsed groups apart", () => {
+    const st = fakeStorage();
+    saveHiddenStates(new Set(["done"]), st);
+    saveStringSet(COLLAPSED_GROUPS_KEY, new Set(["state:abc"]), st);
+    expect(loadHiddenStates(st)).toEqual(new Set(["done"]));
+    expect(loadStringSet(COLLAPSED_GROUPS_KEY, st)).toEqual(new Set(["state:abc"]));
+    expect(COLLAPSED_GROUPS_KEY).not.toBe(HIDDEN_STATES_KEY);
+  });
+
+  it("tolerates garbage and throwing storage", () => {
+    expect(loadStringSet("k", fakeStorage({ k: "{" }))).toEqual(new Set());
+    const boom = {
+      getItem: () => {
+        throw new Error("blocked");
+      },
+      setItem: () => {
+        throw new Error("blocked");
+      },
+    };
+    expect(loadStringSet("k", boom)).toEqual(new Set());
+    expect(() => saveStringSet("k", new Set(["x"]), boom)).not.toThrow();
   });
 });

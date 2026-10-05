@@ -55,6 +55,7 @@ import {
   linearDuplicateRequestAtom,
   linearGroupByAtom,
   linearHiddenStatesAtom,
+  linearCollapsedGroupsAtom,
   linearIssuesAtom,
   linearLabelFilterAtom,
   linearOverlayAtom,
@@ -280,7 +281,7 @@ export function LinearPanel() {
   const copyIssue = useSetAtom(copyLinearIssueAction);
   const zenOpen = useAtomValue(zenModeAtom).open;
   const rootRef = useRef<HTMLDivElement>(null);
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const [collapsed, setCollapsed] = useAtom(linearCollapsedGroupsAtom);
   // Per-issue sub-issue expansion. Default collapsed (absent = closed).
   const [expandedIssueIds, setExpandedIssueIds] = useState<ReadonlySet<string>>(new Set());
   const [labelPopoverOpen, setLabelPopoverOpen] = useState(false);

@@ -44,3 +44,16 @@ In the Project, Assignee and Cycle views, each section SHALL split its issues in
 #### Scenario: Hidden states apply to sub-groups
 - **WHEN** "Done" is hidden and the Assignee view is active
 - **THEN** no section SHALL show a "Done" sub-group
+
+### Requirement: Folded groups persist across restarts
+
+The set of folded group and sub-group keys SHALL persist locally. Group keys SHALL derive only from server ids and state names, so a stored key keeps matching the same group after a restart.
+
+#### Scenario: Folded state group survives a restart
+- **WHEN** the user folds the "Done" group in the State view and restarts the app
+- **THEN** the "Done" group SHALL still be folded
+
+#### Scenario: Folded sub-group survives a restart
+- **WHEN** the user folds the "Todo" sub-group inside project A and restarts the app
+- **THEN** that sub-group SHALL still be folded and "Todo" inside project B SHALL stay expanded
+

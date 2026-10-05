@@ -19,7 +19,13 @@
 - [x] 3.3 Extract `GroupHeader` in `LinearPanel.tsx` and render dropdown options as header-style rows with hidden states dimmed
 - [x] 3.4 Render state sub-groups in Project, Assignee and Cycle sections with collapsed keys `<sectionKey>|state:<name>` in the shared `collapsed` set
 
-## 4. Verification
+## 4. Persist folded groups
 
-- [x] 4.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check && cd .. && npx tsc --noEmit && pnpm test`
-- [ ] 4.2 Manual walk: open the Linear panel in State view and check the group order; in Project, Assignee and Cycle check the state sub-headers fold with click and Arrow Left/Right; hide Done and Backlog, close and reopen the panel, and check they stay hidden; toggle show-completed (H) and check Pending stays visible
+- [x] 4.1 Test (Red): `src/stores/hiddenStatesStorage.test.ts` covers `loadStringSet`/`saveStringSet` (round-trip under a key, hidden states and collapsed groups do not collide, garbage and throwing storage)
+- [x] 4.2 Generalize `hiddenStatesStorage.ts` to keyed `loadStringSet`/`saveStringSet` (the hidden-state helpers stay as wrappers) and add `COLLAPSED_GROUPS_KEY`
+- [x] 4.3 Add `linearCollapsedGroupsAtom` to `src/stores/linear.ts` and use it for `collapsed` in `LinearPanel.tsx`
+
+## 5. Verification
+
+- [x] 5.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check && cd .. && npx tsc --noEmit && pnpm test`
+- [ ] 5.2 Manual walk: fold groups and sub-groups, restart the app and check they stay folded; open the Linear panel in State view and check the group order; in Project, Assignee and Cycle check the state sub-headers fold with click and Arrow Left/Right; hide Done and Backlog, close and reopen the panel, and check they stay hidden; toggle show-completed (H) and check Pending stays visible

@@ -92,7 +92,7 @@ export function HooksSetupDialog() {
           <DialogTitle>Connect Nergal to Claude Code</DialogTitle>
           <DialogDescription className="break-words">
             Activities, Tasks, plan review and questions need Nergal's hooks in Claude Code's
-            settings. They are not registered yet.
+            settings. Some are missing or out of date.
           </DialogDescription>
         </DialogHeader>
 

@@ -42,7 +42,7 @@ State machine: `idle → pending_review → submitted` in `src/stores/plan.ts`.
 
 The registered entries are the `HOOKS` table in `src-tauri/src/setup.rs` (plus `STATUSLINE_COMMAND`); `OBSOLETE_HOOKS` lists the ones setup removes. There are two ways to write them:
 
-- **At launch**: when `setup_hooks_status` reports them missing, Nergal opens a dialog. "Configure" writes them; "Skip" asks again on the next launch. The app never writes the file without that click. On Unix the entries call bare `nergal`, so "Configure" stays disabled when no `nergal` outside the AppImage mount is on `PATH` (AppImage-only installs).
+- **At launch**: when `setup_hooks_status` reports them missing or out of date (for example after an update adds a hook), Nergal opens a dialog. "Configure" writes them; "Skip" asks again on the next launch. The app never writes the file without that click. On Unix the entries call bare `nergal`, so "Configure" stays disabled when no `nergal` outside the AppImage mount is on `PATH` (AppImage-only installs).
 - **From a terminal**: `nergal hook setup`.
 
 Re-run setup after editing `HOOKS` in `src-tauri/src/setup.rs` and reinstalling the binary via `pnpm tauri build && sudo dpkg -i src-tauri/target/release/bundle/deb/Nergal_*.deb` — NOT `cargo install --path src-tauri --force`, which puts a binary in `~/.cargo/bin/` that shadows `/usr/bin/nergal` for the GNOME launcher and skips the Tauri frontend bundling step.

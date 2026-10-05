@@ -1,0 +1,138 @@
+import { describe, expect, it } from "vitest";
+import {
+  compareStates,
+  filterHiddenStates,
+  isClosedState,
+  normalizeStateName,
+  stateFilterOptions,
+  stateRank,
+  type StateLike,
+} from "./linearStateOrder";
+
+const s = (stateName: string, stateType: string, statePosition = 0): StateLike => ({
+  stateName,
+  stateType,
+  statePosition,
+});
+
+const TEAM_RR: StateLike[] = [
+  s("Triage", "triage", 0),
+  s("Backlog", "backlog", 0),
+  s("Todo", "unstarted", 0),
+  s("In Progress", "started", 1),
+  s("In Review", "started", 2),
+  s("Pending", "completed", -899),
+  s("Done", "completed", 3),
+  s("Duplicate", "canceled", 5),
+  s("Canceled", "canceled", 4),
+];
+
+describe("stateRank / compareStates", () => {
+  it("orders active work first and closed states last", () => {
+    const sorted = [...TEAM_RR].sort(compareStates).map((x) => x.stateName);
+    expect(sorted).toEqual([
+      "Pending",
+      "In Review",
+      "In Progress",
+      "Todo",
+      "Backlog",
+      "Triage",
+      "Done",
+      "Duplicate",
+      "Canceled",
+    ]);
+  });
+
+  it("tells Duplicate and Canceled apart by name though both are type canceled", () => {
+    expect(stateRank(s("Duplicate", "canceled"))).toBeLessThan(stateRank(s("Canceled", "canceled")));
+  });
+
+  it("ranks Pending with In Review and treats it as open", () => {
+    expect(stateRank(s("Pending", "completed"))).toBe(stateRank(s("In Review", "started")));
+    expect(isClosedState(s("Pending", "completed"))).toBe(false);
+  });
+
+  it("matches names case-insensitively and accepts the cancelled spelling", () => {
+    expect(stateRank(s("in review", "started"))).toBe(stateRank(s("In Review", "started")));
+    expect(stateRank(s("Cancelled", "cancelled"))).toBe(stateRank(s("Canceled", "canceled")));
+  });
+
+  it("falls back to state type for unknown names", () => {
+    expect(stateRank(s("QA", "started"))).toBe(stateRank(s("In Progress", "started")));
+    expect(stateRank(s("Shipped", "completed"))).toBe(stateRank(s("Done", "completed")));
+    expect(stateRank(s("Icebox", "backlog"))).toBe(stateRank(s("Backlog", "backlog")));
+    expect(stateRank(s("Dup", "duplicate"))).toBe(stateRank(s("Duplicate", "canceled")));
+    expect(stateRank(s("Nope", "canceled"))).toBe(stateRank(s("Canceled", "canceled")));
+  });
+
+  it("ranks an unknown open type after the named open states but above closed", () => {
+    const weird = s("Mystery", "something");
+    expect(stateRank(weird)).toBeGreaterThan(stateRank(s("Triage", "triage")));
+    expect(stateRank(weird)).toBeLessThan(stateRank(s("Done", "completed")));
+    expect(isClosedState(weird)).toBe(false);
+  });
+
+  it("never interleaves a closed state between open ones, whatever the position", () => {
+    const open = s("Backlog", "backlog", 999);
+    const closed = s("Done", "completed", -999);
+    expect(compareStates(open, closed)).toBeLessThan(0);
+  });
+
+  it("breaks ties by workflow position ascending", () => {
+    expect(compareStates(s("QA", "started", 5), s("In Progress", "started", 1))).toBeGreaterThan(0);
+  });
+
+  it("sorts issues without a state last", () => {
+    const none: StateLike = {};
+    expect(compareStates(s("Canceled", "canceled"), none)).toBeLessThan(0);
+    expect(isClosedState(none)).toBe(false);
+  });
+});
+
+describe("isClosedState", () => {
+  it("classifies Done, Duplicate and Canceled as closed", () => {
+    expect(isClosedState(s("Done", "completed"))).toBe(true);
+    expect(isClosedState(s("Duplicate", "canceled"))).toBe(true);
+    expect(isClosedState(s("Canceled", "canceled"))).toBe(true);
+    expect(isClosedState(s("In Review", "started"))).toBe(false);
+    expect(isClosedState(s("Triage", "triage"))).toBe(false);
+  });
+});
+
+describe("state visibility filter", () => {
+  it("normalizes names", () => {
+    expect(normalizeStateName("  In Review ")).toBe("in review");
+    expect(normalizeStateName(undefined)).toBe("");
+  });
+
+  it("removes issues whose state is hidden and keeps the rest", () => {
+    const issues = [
+      { id: "a", ...s("Done", "completed") },
+      { id: "b", ...s("Todo", "unstarted") },
+      { id: "c", ...s("done", "completed") },
+    ];
+    const out = filterHiddenStates(issues, new Set(["done"]));
+    expect(out.map((i) => i.id)).toEqual(["b"]);
+  });
+
+  it("returns the same array when nothing is hidden", () => {
+    const issues = [{ id: "a", ...s("Done", "completed") }];
+    expect(filterHiddenStates(issues, new Set())).toBe(issues);
+  });
+
+  it("lists deduplicated options in state rank order", () => {
+    const issues = [
+      { ...s("Backlog", "backlog"), stateColor: "#aaa" },
+      { ...s("Canceled", "canceled"), stateColor: "#bbb" },
+      { ...s("In Review", "started"), stateColor: "#ccc" },
+      { ...s("backlog", "backlog"), stateColor: "#ddd" },
+    ];
+    const opts = stateFilterOptions(issues);
+    expect(opts.map((o) => o.key)).toEqual(["in review", "backlog", "canceled"]);
+    expect(opts[1]).toMatchObject({ name: "Backlog", stateType: "backlog", color: "#aaa" });
+  });
+
+  it("skips issues without a state name in the options", () => {
+    expect(stateFilterOptions([{ stateType: "started" }])).toEqual([]);
+  });
+});

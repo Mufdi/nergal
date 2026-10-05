@@ -1,0 +1,38 @@
+{
+  "tier": "S",
+  "tier_source": "heuristic",
+  "ceremony": "quick-fix",
+  "risk_tier": "low",
+  "files_estimate": 3,
+  "tags": ["improvement", "ui"],
+  "visibility": "private",
+  "spec_target": "linear-mirror, linear-task-panel",
+  "tracker": {
+    "system": "linear",
+    "id": "FRI-491",
+    "url": "https://linear.app/redribbon/issue/FRI-491/orden-y-filtro-por-estado-en-el-listado-de-issues-de-linear",
+    "pending": []
+  },
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "iprev_rounds": 0,
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": ["compile", "test", "lint", "placeholders"],
+    "per_phase_models": {
+      "design": "opus",
+      "implementation": "opus",
+      "test_authoring": "opus",
+      "review": "sonnet"
+    }
+  },
+  "validation": "validated",
+  "events": [
+    {
+      "ts": "2026-10-05T19:47:00Z",
+      "type": "revalidated",
+      "reason": "Needs validation label: issue still accurate vs codebase; group order was type-only (LinearPanel STATE_TYPE_RANK), spec'd in linear-mirror -> quick-fix with MODIFIED delta"
+    }
+  ],
+  "interview_ts": "2026-10-05T19:45:00Z"
+}

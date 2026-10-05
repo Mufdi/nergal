@@ -249,6 +249,10 @@ export const linearDetailIssueIdAtom = atom<string | null>(null);
 /// Active label filter: set of label ids. Empty set = no filter.
 export const linearLabelFilterAtom = atom<ReadonlySet<string>>(new Set<string>());
 
+/// Hidden workflow states, keyed by normalized state name so one choice spans
+/// every team that shares the name.
+export const linearHiddenStatesAtom = atom<ReadonlySet<string>>(new Set<string>());
+
 /// Active project filter — null = "Todos" (group all by project); a project id = filter + group by state.
 export const linearProjectFilterAtom = atom<string | null>(null);
 

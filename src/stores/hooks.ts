@@ -16,7 +16,7 @@ import {
   completeSubagentActivityAtom,
   closeUnclaimedSubagentRowsAtom,
 } from "./activity";
-import { notificationAttentionMessage, shouldClearOnBackgroundCompletion, shouldClearOnTurnEvent } from "@/lib/agentTelemetry";
+import { notificationAttentionMessage, shouldLogGenericActivity, shouldClearOnBackgroundCompletion, shouldClearOnTurnEvent } from "@/lib/agentTelemetry";
 import { toastsAtom } from "./toast";
 import { localhostPortsAtom } from "./browser";
 import { providerStatusAtom, type ProviderStatus } from "./statusFeed";
@@ -218,6 +218,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
           break;
         }
         default: {
+          if (!shouldLogGenericActivity(event_type)) break;
           set(addActivityAtom, { sessionId: sid, entry: createActivity("session", `Event: ${event_type}`) });
         }
       }

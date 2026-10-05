@@ -28,6 +28,11 @@ export function shouldClearOnTurnEvent(value: string | undefined): boolean {
   return value !== "agent_needs_input";
 }
 
+/// Status snapshots arrive on every CC render; they update the status bar, not the timeline.
+export function shouldLogGenericActivity(eventType: string): boolean {
+  return eventType !== "agent_status" && eventType !== "statusline";
+}
+
 /// `Agent` is not in the PostToolUse matcher, so a call that never spawned a
 /// subagent (old settings, rejected type, interrupt) has no other closing event.
 export function closeUnclaimedSubagentToolRows(list: ActivityEntry[], now: number): ActivityEntry[] {

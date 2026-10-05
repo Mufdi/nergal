@@ -38,6 +38,11 @@
 - [x] 5.3 Close unclaimed `Agent`/`Task` rows at `stop` via `closeUnclaimedSubagentRowsAtom` in `src/stores/activity.ts`
 - [x] 5.4 Null-tolerant `last_miss_causes`; `scan_transcript` reuses `assistant_effort`
 
+## 6a. Status snapshots are not activity
+
+- [x] 6a.1 Test (Red): `agentTelemetry.test.ts` covers `shouldLogGenericActivity` (`agent_status` and `statusline` skipped, unknown types logged)
+- [x] 6a.2 Skip the generic `Event: <type>` row for those types in the `default:` branch of `src/stores/hooks.ts`
+
 ## 6. Docs and Verification
 
 - [x] 6.1 Update `docs/hooks.md` (Notification types, subagent hooks) and `docs/design.md` §1.2 (sky-400 also encodes subagent activity)

@@ -11,6 +11,7 @@ import {
   promptCacheChip,
   shouldClearOnBackgroundCompletion,
   shouldClearOnTurnEvent,
+  shouldLogGenericActivity,
   type PromptCacheStatus,
 } from "./agentTelemetry";
 
@@ -421,5 +422,16 @@ describe("shouldClearOnTurnEvent", () => {
     expect(shouldClearOnTurnEvent("permission_prompt")).toBe(true);
     expect(shouldClearOnTurnEvent("input")).toBe(true);
     expect(shouldClearOnTurnEvent(undefined)).toBe(true);
+  });
+});
+
+describe("shouldLogGenericActivity", () => {
+  it("skips status snapshots that fire on every render", () => {
+    expect(shouldLogGenericActivity("agent_status")).toBe(false);
+    expect(shouldLogGenericActivity("statusline")).toBe(false);
+  });
+
+  it("keeps logging unknown event types", () => {
+    expect(shouldLogGenericActivity("config_change")).toBe(true);
   });
 });

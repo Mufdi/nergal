@@ -785,6 +785,26 @@ mod tests {
     }
 
     #[test]
+    fn kitty_flags_do_not_change_ctrl_enter_yet() {
+        let (mut s, w) = session_with_writer(80, 24);
+        s.advance_bytes(b"\x1b[>1u");
+        let mut ctrl_enter = evt("Enter", "Enter");
+        ctrl_enter.ctrl = true;
+        s.key_down(&ctrl_enter).unwrap();
+        assert_eq!(w.drain(), b"\r", "FRI-503: kitty encoding missing");
+    }
+
+    #[test]
+    fn modify_other_keys_distinguishes_ctrl_enter() {
+        let (mut s, w) = session_with_writer(80, 24);
+        s.advance_bytes(b"\x1b[>4;2m");
+        let mut ctrl_enter = evt("Enter", "Enter");
+        ctrl_enter.ctrl = true;
+        s.key_down(&ctrl_enter).unwrap();
+        assert_eq!(w.drain(), b"\x1b[27;5;13~");
+    }
+
+    #[test]
     fn primary_device_attributes_are_answered() {
         assert_eq!(answer_to(b"\x1b[c"), b"\x1b[?65;4;6;18;22c");
     }

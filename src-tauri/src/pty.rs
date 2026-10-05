@@ -21,13 +21,19 @@ impl Write for SharedWriterAdapter {
     // wezterm's writer thread calls `write` once per message and ignores a
     // short count, so a partial write would truncate a mouse report or an
     // answerback mid-sequence. `write_all` under one lock also keeps the
-    // message contiguous against the command-layer writers.
+    // message contiguous against the command-layer writers. Any error ends
+    // that thread for good, so it is logged: keys, mouse reports and
+    // answerbacks would otherwise stop reaching the PTY with no trace.
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0
+        let result = self
+            .0
             .lock()
-            .map_err(|e| std::io::Error::other(e.to_string()))?
-            .write_all(buf)?;
-        Ok(buf.len())
+            .map_err(|e| std::io::Error::other(e.to_string()))
+            .and_then(|mut w| w.write_all(buf));
+        if let Err(err) = &result {
+            tracing::warn!(error = %err, "terminal PTY write failed; wezterm writer thread stops");
+        }
+        result.map(|()| buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
@@ -2079,6 +2085,25 @@ mod tests {
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
         }
+    }
+
+    struct BrokenWriter;
+
+    impl Write for BrokenWriter {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn shared_writer_adapter_propagates_write_errors() {
+        let shared: SharedWriter = Arc::new(Mutex::new(Box::new(BrokenWriter)));
+        let mut adapter = SharedWriterAdapter(shared);
+        let err = adapter.write(b"\x1b[I").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
     }
 
     #[test]

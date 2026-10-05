@@ -10,11 +10,18 @@
 - [x] 2.3 `QuakeTerminal.tsx`: render always; phase state driven by `nextSlidePhase`; `onAnimationEnd` + 2× fallback timer; host and ResizeObserver registered once; show effect skips the already-active shell; blur focus inside the overlay and reset a stale `quake` zone when it closes
 - [x] 2.4 Remove the obsolete "Known limit" and `rendered` comments; keep WHY-only comments
 
-## 3. Verification
+## 3. Review revision
 
-- [x] 3.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check && cd .. && npx tsc --noEmit && pnpm test`
-- [ ] 3.2 Manual walk (glow on): open and close with `Ctrl+}` several times; the slide runs smooth in both directions
-- [ ] 3.3 Manual walk: close over an open spec panel with live refresh; the exit slide plays
-- [ ] 3.4 Manual walk: print output in a shell, scroll up, close, reopen; rows and scroll position are the same
-- [ ] 3.5 Manual walk: session switch with the quake open in A and closed in B; no exit slide over B, and typing goes to B's agent terminal
-- [ ] 3.6 Manual walk: new shell tab, `exit` in a shell, `Ctrl+W` in the quake, resize drag; no regressions
+- [x] 3.1 Test (Red): `quakeSlide.test.ts` covers animation-name matching on `animationEnd` (mismatch keeps the phase, match completes, fallback completes)
+- [x] 3.2 `quakeSlide.ts`: `animationEnd` carries `animationName`; `QuakeTerminal.tsx` passes `e.animationName`
+- [x] 3.3 `globals.css`: `.quake-exit, .quake-hidden { pointer-events: none }`; overlay `onMouseDown` returns when `open` is false
+- [x] 3.4 `terminalService.reportRegionUnfocused` called from the close effect in `QuakeTerminal.tsx`
+
+## 4. Verification
+
+- [x] 4.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check && cd .. && npx tsc --noEmit && pnpm test`
+- [ ] 4.2 Manual walk (glow on): open and close with `Ctrl+}` several times; the slide runs smooth in both directions
+- [ ] 4.3 Manual walk: close over an open spec panel with live refresh; the exit slide plays
+- [ ] 4.4 Manual walk: print output in a shell, scroll up, close, reopen; rows and scroll position are the same
+- [ ] 4.5 Manual walk: session switch with the quake open in A and closed in B; no exit slide over B, and typing goes to B's agent terminal
+- [ ] 4.6 Manual walk: new shell tab, `exit` in a shell, `Ctrl+W` in the quake, resize drag; no regressions

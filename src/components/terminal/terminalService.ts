@@ -585,6 +585,14 @@ function reportUnfocused(entry: Entry): void {
   sendFocus(entry, false);
 }
 
+// The quake overlay stays mounted, so closing it no longer goes through
+// setHost(null) and the textarea blur alone is not reliable under WebKitGTK.
+export function reportRegionUnfocused(region: Region): void {
+  const id = activeIds.get(region);
+  const entry = id ? entries.get(id) : undefined;
+  if (entry && !hasInputFocus(entry)) reportUnfocused(entry);
+}
+
 // ── Private: input wiring ──
 
 function wireInput(entry: Entry): void {

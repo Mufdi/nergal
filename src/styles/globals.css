@@ -1065,6 +1065,12 @@ mark[data-ws-hidden] {
 .quake-overlay {
   will-change: transform;
 }
+/* An exiting overlay is still visible for the slide; a click then would
+   refocus its textarea and strand focus on a hidden shell. */
+.quake-exit,
+.quake-hidden {
+  pointer-events: none;
+}
 .quake-hidden {
   transform: translateY(calc(-100% - 8px));
   visibility: hidden;

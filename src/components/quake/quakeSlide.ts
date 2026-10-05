@@ -5,7 +5,7 @@ export type SlidePhase = "hidden" | "entering" | "shown" | "exiting";
 export type SlideEvent =
   | { type: "open" }
   | { type: "close"; sessionSwitch: boolean }
-  | { type: "animationEnd" };
+  | { type: "animationEnd"; animationName?: string };
 
 export function initialSlidePhase(open: boolean): SlidePhase {
   return open ? "shown" : "hidden";
@@ -19,10 +19,14 @@ export function nextSlidePhase(phase: SlidePhase, event: SlideEvent): SlidePhase
       // A session switch must not slide out over the incoming session.
       if (event.sessionSwitch) return "hidden";
       return phase === "shown" || phase === "entering" ? "exiting" : phase;
-    case "animationEnd":
-      if (phase === "entering") return "shown";
-      if (phase === "exiting") return "hidden";
+    case "animationEnd": {
+      // A cancelled slide can still deliver its animationend after the next
+      // slide started; the fallback timer passes no name and always completes.
+      const name = event.animationName;
+      if (phase === "entering" && (name === undefined || name === "quake-slide-down")) return "shown";
+      if (phase === "exiting" && (name === undefined || name === "quake-slide-up")) return "hidden";
       return phase;
+    }
   }
 }
 

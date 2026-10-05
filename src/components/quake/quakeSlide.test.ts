@@ -72,3 +72,24 @@ describe("quake slide phases", () => {
     expect(SLIDE_MS).toBe(200);
   });
 });
+
+describe("quake slide animation names", () => {
+  const endNamed = (animationName: string) =>
+    ({ type: "animationEnd", animationName }) as const;
+  const fallback = { type: "animationEnd" } as const;
+
+  it("ignores a late animationend from a cancelled slide", () => {
+    expect(nextSlidePhase("entering", endNamed("quake-slide-up"))).toBe("entering");
+    expect(nextSlidePhase("exiting", endNamed("quake-slide-down"))).toBe("exiting");
+  });
+
+  it("completes the phase when the animation name matches", () => {
+    expect(nextSlidePhase("entering", endNamed("quake-slide-down"))).toBe("shown");
+    expect(nextSlidePhase("exiting", endNamed("quake-slide-up"))).toBe("hidden");
+  });
+
+  it("completes unconditionally on the fallback timer event", () => {
+    expect(nextSlidePhase("entering", fallback)).toBe("shown");
+    expect(nextSlidePhase("exiting", fallback)).toBe("hidden");
+  });
+});

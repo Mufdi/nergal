@@ -73,9 +73,9 @@ While the phase is `entering` or `exiting`, CSS sets `transition: none` on `.ner
 
 `setHost("quake")` and the ResizeObserver run once per mount. The show effect skips `showShell` when the requested shell is already the quake's active terminal (`terminalService.isActiveShell`). The grid stays painted while closed, because `applyUpdate` paints on every update and the ResizeObserver still fits on window resizes (`visibility: hidden` keeps the layout box).
 
-### D5. Release focus when the overlay leaves `shown`
+### D5. Release focus when `open` turns false
 
-`visibility: hidden` makes the overlay unclickable and unfocusable. A focused element can still keep focus in WebKit. So when `open` turns false, the component blurs `document.activeElement` if the overlay contains it. It also resets a stale `quake` focus zone to `terminal`, because raw leader keys pick their PTY from that atom (`useKeyboardShortcuts.ts:80`). `toggleQuake` already does both on close; this covers the session-switch path.
+`visibility: hidden` makes the overlay unclickable and unfocusable. A focused element can still keep focus in WebKit. Focus is released when `open` turns false, and an `exiting`/`hidden` overlay ignores pointer input. So when `open` turns false, the component blurs `document.activeElement` if the overlay contains it. It also resets a stale `quake` focus zone to `terminal`, because raw leader keys pick their PTY from that atom (`useKeyboardShortcuts.ts:80`). `toggleQuake` already does both on close; this covers the session-switch path.
 
 ## Risks / Trade-offs
 
@@ -95,3 +95,11 @@ Frontend-only. Ship in a normal release. Rollback is a revert of the change comm
 ## Open Questions
 
 None.
+
+## Revision
+
+Post-hoc plan review returned REVISE; three fixes:
+
+1. Focus leak during the exit slide: `.quake-exit` stayed clickable, so a mousedown refocused the textarea and set the zone to `quake` after the release effect had run. `.quake-exit, .quake-hidden` now have `pointer-events: none`, and the overlay `onMouseDown` returns early when `open` is false.
+2. CSI O on close: closing no longer runs `setHost(null, "quake")`, so the focus-out report depended only on the textarea `blur`, which WebKitGTK does not fire reliably when an ancestor hides. `terminalService.reportRegionUnfocused(region)` reports the region's active entry unless it has input focus, and the close effect calls it.
+3. Late `animationend`: `nextSlidePhase` now takes the `animationName` on `animationEnd` and completes `entering` only for `quake-slide-down` and `exiting` only for `quake-slide-up`. The 2x fallback timer sends no name and completes unconditionally.

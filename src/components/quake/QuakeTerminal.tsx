@@ -80,6 +80,7 @@ export function QuakeTerminal() {
       active.blur();
     }
     if (appStore.get(focusZoneAtom) === "quake") setFocusZone("terminal");
+    terminalService.reportRegionUnfocused("quake");
   }, [open, setFocusZone]);
 
   const shells = activeSessionId ? (shellsMap[activeSessionId] ?? []) : [];
@@ -179,12 +180,15 @@ export function QuakeTerminal() {
       // below dialogs/zen (z-50+).
       className={`quake-overlay ${slideClass(phase)} absolute inset-x-2 top-0 z-[45] flex flex-col overflow-hidden rounded-b-lg border-2 ${borderClass} bg-terminal-surface shadow-xl nergal-panel-focus`}
       onMouseDown={() => {
+        if (!open) return;
         setFocusZone("quake");
         terminalService.focusActive("quake");
       }}
       onAnimationEnd={(e) => {
         if (e.target !== e.currentTarget) return;
-        setPhase((p) => nextSlidePhase(p, { type: "animationEnd" }));
+        setPhase((p) =>
+          nextSlidePhase(p, { type: "animationEnd", animationName: e.animationName }),
+        );
       }}
     >
       <div className="flex h-7 shrink-0 items-center gap-1 border-b border-border/60 bg-card/60 px-2">

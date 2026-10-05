@@ -50,6 +50,13 @@
 - [x] 6b.3 Tag tool rows with `ownerAgentId` and capture the handback message in `src/stores/hooks.ts`; close tagged rows, set detail and move the row to the head in `applySubagentStop` (`src/lib/agentTelemetry.ts`)
 - [ ] 6b.4 Manual walk: background Explore subagent; its row appears at the top when it finishes with the report as detail and no pulsing `SubagentHandback` row remains
 
+## 6c. Subagent visibility, report, tokens (FRI-501 walk)
+
+- [x] 6c.1 Test (Red): `agentTelemetry.test.ts` covers pinning/settling order, owner label, `Stopped before reporting`, `tokens`, `formatTokens`, `closeRunningMainToolRows`; `subagent_transcript.rs` covers last text, token sum, missing file, malformed lines, tail cut
+- [x] 6c.2 Add `agent_transcript_path` to `HookEvent::SubagentStop` (`events.rs`), `read_subagent_summary` in `src-tauri/src/agents/claude_code/subagent_transcript.rs`, and forward `agent_message`/`agent_tokens` in `server.rs` (`attach_subagent_transcript`)
+- [x] 6c.3 Pin running subagents with `appendEntryPinned`, label tool rows via `buildToolUseEntry`, store `tokens`, close main rows at Stop (`agentTelemetry.ts`, `stores/activity.ts`, `stores/hooks.ts`); make subagent rows expandable and show owner label/tokens in `ActivityDrawer.tsx`
+- [ ] 6c.4 Manual walk: two background Explore agents show pinned at the top while working, tool rows carry the agent type, a TaskStop-ed agent expands to `Stopped before reporting` or its last text, tokens appear beside the duration, ToolSearch/TaskStop rows stop pulsing at Stop
+
 ## 6. Docs and Verification
 
 - [x] 6.1 Update `docs/hooks.md` (Notification types, subagent hooks) and `docs/design.md` §1.2 (sky-400 also encodes subagent activity)

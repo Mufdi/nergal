@@ -18,6 +18,7 @@ export interface HookEvent {
   agent_id?: string;
   agent_type?: string;
   agent_message?: string;
+  agent_tokens?: number;
   effort_level?: string;
 }
 
@@ -197,6 +198,10 @@ export interface ActivityEntry {
   agentId?: string;
   /// Subagent that issued this tool call (payload `agent_id`), so SubagentStop can close its leftovers.
   ownerAgentId?: string;
+  /// Subagent type that issued this tool call, shown beside the row.
+  ownerLabel?: string;
+  /// Context tokens of a finished subagent, from its own transcript.
+  tokens?: number;
 }
 
 export interface DiffLine {

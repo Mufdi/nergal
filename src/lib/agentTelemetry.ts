@@ -13,6 +13,8 @@ export interface PromptCacheStatus {
   last_miss_causes: string[];
 }
 
+export const SUBAGENT_NO_REPORT = "Stopped before reporting";
+
 const SUBAGENT_TOOLS = new Set(["Agent", "Task"]);
 
 export function notificationAttentionMessage(type?: string | null): string {
@@ -56,6 +58,60 @@ export function pickToolRowToComplete(list: ActivityEntry[], toolName?: string):
   return fallback;
 }
 
+function isRunningSubagent(e: ActivityEntry): boolean {
+  return e.type === "subagent" && e.status === "running";
+}
+
+/// The timeline renders newest-first, so the list tail is the head. Running subagents
+/// stay at the tail so their own tool rows never bury them while they work.
+export function appendEntryPinned(list: ActivityEntry[], entry: ActivityEntry): ActivityEntry[] {
+  const pinned = list.filter(isRunningSubagent);
+  if (pinned.length === 0) return [...list, entry];
+  return [...list.filter((e) => !isRunningSubagent(e)), entry, ...pinned];
+}
+
+export function buildToolUseEntry(p: {
+  id: string;
+  timestamp: number;
+  toolName?: string;
+  command?: string;
+  files?: string[];
+  detail?: string;
+  agentId?: string;
+  agentType?: string;
+}): ActivityEntry {
+  return {
+    id: p.id,
+    timestamp: p.timestamp,
+    type: "tool_use",
+    message: p.toolName ?? "tool",
+    status: "running",
+    toolName: p.toolName,
+    command: p.command,
+    files: p.files,
+    detail: p.detail,
+    ownerAgentId: p.agentId,
+    ownerLabel: p.agentId && p.agentType ? p.agentType : undefined,
+  };
+}
+
+export function formatTokens(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}K`;
+  return `${Math.round(n)}`;
+}
+
+/// Main-agent tools outside the PostToolUse matcher (ToolSearch, TaskStop) never get a
+/// closing event; Stop ends the turn they ran in. No duration: the real end is unknown.
+export function closeRunningMainToolRows(list: ActivityEntry[]): ActivityEntry[] {
+  let changed = false;
+  const next = list.map((e) => {
+    if (e.type !== "tool_use" || e.status !== "running" || e.ownerAgentId) return e;
+    changed = true;
+    return { ...e, status: "done" as const };
+  });
+  return changed ? next : list;
+}
+
 export function applySubagentStart(
   list: ActivityEntry[],
   p: { agentId: string; agentType: string; id: string; timestamp: number },
@@ -70,22 +126,18 @@ export function applySubagentStart(
       SUBAGENT_TOOLS.has(e.toolName) &&
       !e.agentId
     ) {
-      const next = [...list];
-      next[i] = { ...e, type: "subagent", agentId: p.agentId, message };
-      return next;
+      const claimed: ActivityEntry = { ...e, type: "subagent", agentId: p.agentId, message };
+      return appendEntryPinned([...list.slice(0, i), ...list.slice(i + 1)], claimed);
     }
   }
-  return [
-    ...list,
-    {
-      id: p.id,
-      timestamp: p.timestamp,
-      type: "subagent",
-      message,
-      status: "running",
-      agentId: p.agentId,
-    },
-  ];
+  return appendEntryPinned(list, {
+    id: p.id,
+    timestamp: p.timestamp,
+    type: "subagent",
+    message,
+    status: "running",
+    agentId: p.agentId,
+  });
 }
 
 /// SubagentHandback is how a subagent delivers its final report in auto mode;
@@ -103,6 +155,7 @@ export function applySubagentStop(
     agentType: string;
     message?: string | null;
     effort?: string | null;
+    tokens?: number | null;
     id: string;
     timestamp: number;
   },
@@ -112,6 +165,7 @@ export function applySubagentStop(
     (e) => e.ownerAgentId === p.agentId && e.toolName === "SubagentHandback" && e.detail,
   )?.detail;
   const report = handback ?? (p.message ? p.message : undefined);
+  const tokens = p.tokens ?? undefined;
 
   // No PostToolUse is guaranteed for the subagent's own tools (e.g. SubagentHandback
   // is outside the matcher), so its Stop is the only closing event for them.
@@ -121,8 +175,8 @@ export function applySubagentStop(
       : e,
   );
 
-  // A row converted in place keeps its start time and sinks below the newest-first
-  // viewport, so a finished subagent re-surfaces at the head stamped with the stop time.
+  // The running row sat pinned at the head; it settles at the stop time, still below
+  // any subagent that keeps running.
   for (let i = closed.length - 1; i >= 0; i--) {
     const e = closed[i];
     if (e.type === "subagent" && e.status === "running" && e.agentId === p.agentId) {
@@ -132,23 +186,22 @@ export function applySubagentStop(
         status: "done",
         durationMs: p.timestamp - e.timestamp,
         timestamp: p.timestamp,
-        detail: report ?? e.detail,
+        detail: report ?? e.detail ?? SUBAGENT_NO_REPORT,
+        tokens,
       };
-      return [...closed.slice(0, i), ...closed.slice(i + 1), done];
+      return appendEntryPinned([...closed.slice(0, i), ...closed.slice(i + 1)], done);
     }
   }
-  return [
-    ...closed,
-    {
-      id: p.id,
-      timestamp: p.timestamp,
-      type: "subagent",
-      message: label,
-      status: "done",
-      agentId: p.agentId,
-      detail: report,
-    },
-  ];
+  return appendEntryPinned(closed, {
+    id: p.id,
+    timestamp: p.timestamp,
+    type: "subagent",
+    message: label,
+    status: "done",
+    agentId: p.agentId,
+    detail: report ?? SUBAGENT_NO_REPORT,
+    tokens,
+  });
 }
 
 const MISS_CAUSE_LABELS: Record<string, string> = {

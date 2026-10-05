@@ -1,6 +1,13 @@
 import { atom } from "jotai";
 import type { ActivityEntry } from "@/lib/types";
-import { applySubagentStart, applySubagentStop, closeUnclaimedSubagentToolRows, pickToolRowToComplete } from "@/lib/agentTelemetry";
+import {
+  appendEntryPinned,
+  applySubagentStart,
+  applySubagentStop,
+  closeRunningMainToolRows,
+  closeUnclaimedSubagentToolRows,
+  pickToolRowToComplete,
+} from "@/lib/agentTelemetry";
 import { activeSessionIdAtom } from "./workspace";
 import { sessionScopedMapAtom } from "./sessionScope";
 
@@ -19,7 +26,7 @@ export const addActivityAtom = atom(
   (_get, set, payload: { sessionId: string; entry: ActivityEntry }) => {
     set(activityMapAtom, (prev) => {
       const existing = prev[payload.sessionId] ?? [];
-      const updated = [...existing, payload.entry].slice(-MAX_ENTRIES);
+      const updated = appendEntryPinned(existing, payload.entry).slice(-MAX_ENTRIES);
       return { ...prev, [payload.sessionId]: updated };
     });
   },
@@ -67,6 +74,13 @@ export const closeUnclaimedSubagentRowsAtom = atom(null, (get, set, sessionId: s
   if (next !== list) set(activityMapAtom, (prev) => ({ ...prev, [sessionId]: next }));
 });
 
+export const closeMainToolRowsAtom = atom(null, (get, set, sessionId: string) => {
+  const list = get(activityMapAtom)[sessionId];
+  if (!list) return;
+  const next = closeRunningMainToolRows(list);
+  if (next !== list) set(activityMapAtom, (prev) => ({ ...prev, [sessionId]: next }));
+});
+
 export const completeSubagentActivityAtom = atom(
   null,
   (
@@ -78,6 +92,7 @@ export const completeSubagentActivityAtom = atom(
       agentType: string;
       message?: string | null;
       effort?: string | null;
+      tokens?: number | null;
       id: string;
       timestamp: number;
     },

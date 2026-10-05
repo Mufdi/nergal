@@ -154,6 +154,10 @@ pub enum HookEvent {
         last_assistant_message: Option<String>,
         #[serde(default)]
         effort: serde_json::Value,
+        /// The subagent's own transcript; the hook payload reports an empty message
+        /// when the agent was stopped before it replied.
+        #[serde(default)]
+        agent_transcript_path: Option<String>,
     },
     #[serde(rename = "CwdChanged")]
     CwdChanged {
@@ -515,6 +519,18 @@ mod tests {
     }
 
     #[test]
+    fn subagent_stop_captures_agent_transcript_path() {
+        let json = r#"{"hook_event_name":"SubagentStop","session_id":"s1","agent_transcript_path":"/t/agent-a1.jsonl"}"#;
+        match serde_json::from_str::<HookEvent>(json).unwrap() {
+            HookEvent::SubagentStop {
+                agent_transcript_path,
+                ..
+            } => assert_eq!(agent_transcript_path.as_deref(), Some("/t/agent-a1.jsonl")),
+            _ => panic!("expected SubagentStop"),
+        }
+    }
+
+    #[test]
     fn subagent_stop_without_optional_fields_still_deserializes() {
         let json = r#"{"hook_event_name":"SubagentStop","session_id":"s1"}"#;
         let ev: HookEvent = serde_json::from_str(json).unwrap();
@@ -562,6 +578,7 @@ mod tests {
             agent_type: None,
             last_assistant_message: None,
             effort: serde_json::Value::Null,
+            agent_transcript_path: None,
         };
         assert_eq!(stop.session_id(), "s-stop");
     }
@@ -579,6 +596,7 @@ mod tests {
             agent_type: Some("Explore".into()),
             last_assistant_message: Some("done".into()),
             effort: serde_json::Value::Null,
+            agent_transcript_path: None,
         };
         for ev in [start, stop] {
             assert_eq!(ev.mcp_mode(), None);

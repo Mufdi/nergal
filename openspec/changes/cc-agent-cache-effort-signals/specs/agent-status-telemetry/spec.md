@@ -77,3 +77,19 @@ The effort chip next to the model SHALL show the current effort setting (`effort
 #### Scenario: Only the transcript value is known
 - **WHEN** `effort_level` is `null` and last-response effort is `"xhigh"`
 - **THEN** the chip text SHALL be `xhigh`
+
+### Requirement: Subagent transcript summary on stop
+
+On `SubagentStop` with an `agent_transcript_path`, the backend SHALL read at most the last 256 KiB of that transcript and forward on the `hook:event` frame `agent_tokens` (input + cache creation + cache read tokens of the latest assistant record's `message.usage`) and, when the payload `last_assistant_message` is empty or absent, `agent_message` as the text of the latest assistant record that has any. A missing, unreadable, empty or partially written transcript, and malformed lines, SHALL leave both fields absent without failing the event.
+
+#### Scenario: Stopped agent reports from its transcript
+- **WHEN** `SubagentStop {last_assistant_message: "", agent_transcript_path: P}` arrives and the last assistant record of `P` has text `final report` and usage `{input_tokens: 2, cache_creation_input_tokens: 238, cache_read_input_tokens: 49509}`
+- **THEN** the frame SHALL carry `agent_message: "final report"` and `agent_tokens: 49749`
+
+#### Scenario: Payload message wins
+- **WHEN** the payload `last_assistant_message` is `from payload` and the transcript has other text
+- **THEN** `agent_message` SHALL be `from payload` and `agent_tokens` SHALL still come from the transcript
+
+#### Scenario: Transcript unavailable
+- **WHEN** `agent_transcript_path` points to a missing file
+- **THEN** the frame SHALL omit `agent_tokens` and `agent_message`

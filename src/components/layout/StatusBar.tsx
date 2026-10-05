@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { activeSessionIdAtom, activeModeAtom, activeCwdAtom, activeAgentStatusAtom, activeLastResponseEffortAtom } from "@/stores/workspace";
-import { effortChipText, formatMissCauses, promptCacheChip } from "@/lib/agentTelemetry";
+import { effortChipText, formatMissCauses, formatTokens, promptCacheChip } from "@/lib/agentTelemetry";
 import { activeGitInfoAtom, refreshGitInfoAtom, renameBranchSignalAtom } from "@/stores/git";
 import { loadSessionFilesAtom } from "@/stores/files";
 import { loadPinnedNotesAtom } from "@/stores/pinnedNotes";
@@ -63,11 +63,6 @@ function rateLimitColor(pct: number | null): string {
 function asciiBar(pct: number, width = 12): string {
   const filled = Math.max(0, Math.min(width, Math.round((pct / 100) * width)));
   return "█".repeat(filled) + "░".repeat(width - filled);
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}K`;
-  return `${Math.round(n)}`;
 }
 
 function modeDotColor(mode: string): string {

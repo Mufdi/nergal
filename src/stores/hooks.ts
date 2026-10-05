@@ -15,8 +15,9 @@ import {
   startSubagentActivityAtom,
   completeSubagentActivityAtom,
   closeUnclaimedSubagentRowsAtom,
+  closeMainToolRowsAtom,
 } from "./activity";
-import { handbackReport, notificationAttentionMessage, shouldLogGenericActivity, shouldClearOnBackgroundCompletion, shouldClearOnTurnEvent } from "@/lib/agentTelemetry";
+import { buildToolUseEntry, handbackReport, notificationAttentionMessage, shouldLogGenericActivity, shouldClearOnBackgroundCompletion, shouldClearOnTurnEvent } from "@/lib/agentTelemetry";
 import { toastsAtom } from "./toast";
 import { localhostPortsAtom } from "./browser";
 import { providerStatusAtom, type ProviderStatus } from "./statusFeed";
@@ -91,15 +92,16 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
           set(modeMapAtom, (prev) => ({ ...prev, [sid]: tool_name ?? "tool" }));
           set(addActivityAtom, {
             sessionId: sid,
-            entry: {
-              ...createActivity("tool_use", tool_name ?? "tool"),
-              status: "running",
+            entry: buildToolUseEntry({
+              id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              timestamp: Date.now(),
               toolName: tool_name,
               command: commandFromToolInput(event.tool_input),
               files: filesFromToolInput(event.tool_input),
-              ownerAgentId: event.agent_id,
+              agentId: event.agent_id,
+              agentType: event.agent_type,
               detail: handbackReport(tool_name, event.tool_input),
-            },
+            }),
           });
           break;
         }
@@ -130,6 +132,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
           set(modeMapAtom, (prev) => ({ ...prev, [sid]: "idle" }));
           set(planReviewStatusMapAtom, (prev) => ({ ...prev, [sid]: "idle" }));
           set(closeUnclaimedSubagentRowsAtom, sid);
+          set(closeMainToolRowsAtom, sid);
           if (shouldClearOnTurnEvent(get(pendingAttentionAtom)[sid])) {
             set(pendingAttentionAtom, (prev) => clearKey(prev, sid));
           }
@@ -200,6 +203,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
             agentType: event.agent_type,
             message: event.agent_message,
             effort: event.effort_level,
+            tokens: event.agent_tokens,
             id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             timestamp: Date.now(),
           });

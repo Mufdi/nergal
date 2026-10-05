@@ -7,6 +7,7 @@ use tokio::io::AsyncBufReadExt;
 
 use super::events::{BACKGROUND_INPUT_WAITING_PREFIX, HookEvent, PromptCacheStatus};
 use crate::agents::AgentId;
+use crate::agents::claude_code::subagent_transcript::read_subagent_summary;
 use crate::agents::state::AgentRuntimeState;
 use crate::db::SharedDb;
 use crate::plan_state::SharedPlanState;
@@ -36,6 +37,8 @@ struct FrontendHookEvent {
     agent_message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     effort_level: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_tokens: Option<u64>,
 }
 
 impl FrontendHookEvent {
@@ -248,6 +251,24 @@ impl FrontendHookEvent {
             agent_type,
             agent_message,
             effort_level: event.effort_level(),
+            agent_tokens: None,
+        }
+    }
+
+    /// Fills what only the subagent's own transcript knows: the final text when the
+    /// hook payload carries none (agent stopped mid-run) and the token count.
+    fn attach_subagent_transcript(&mut self, event: &HookEvent) {
+        let HookEvent::SubagentStop {
+            agent_transcript_path: Some(path),
+            ..
+        } = event
+        else {
+            return;
+        };
+        let summary = read_subagent_summary(Path::new(path));
+        self.agent_tokens = summary.tokens;
+        if self.agent_message.as_deref().is_none_or(str::is_empty) {
+            self.agent_message = summary.last_text;
         }
     }
 }
@@ -902,6 +923,7 @@ fn process_event(
     }
 
     let mut frontend_event = FrontendHookEvent::from_hook(event);
+    frontend_event.attach_subagent_transcript(event);
     frontend_event.nergal_session_id = nergal_session_id.map(String::from);
     let _ = app.emit("hook:event", &frontend_event);
 
@@ -1933,6 +1955,7 @@ mod tests {
                     agent_type: Some("Explore".into()),
                     last_assistant_message: None,
                     effort: serde_json::Value::Null,
+                    agent_transcript_path: None,
                 },
                 "subagent_stop",
             ),
@@ -2013,6 +2036,7 @@ mod tests {
             agent_type: Some("Plan".into()),
             last_assistant_message: Some("plan ready".into()),
             effort: json!({"level": "high"}),
+            agent_transcript_path: None,
         };
 
         let v = serde_json::to_value(FrontendHookEvent::from_hook(&event)).unwrap();
@@ -2024,6 +2048,58 @@ mod tests {
         assert_eq!(v["effort_level"], "high");
     }
 
+    fn subagent_stop_with_transcript(message: Option<&str>, path: &str) -> HookEvent {
+        HookEvent::SubagentStop {
+            session_id: "s".into(),
+            agent_id: Some("a1".into()),
+            agent_type: Some("Explore".into()),
+            last_assistant_message: message.map(str::to_string),
+            effort: serde_json::Value::Null,
+            agent_transcript_path: Some(path.into()),
+        }
+    }
+
+    fn transcript_file(text: &str) -> tempfile::NamedTempFile {
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"assistant","message":{{"id":"m","content":[{{"type":"text","text":"{text}"}}],"usage":{{"input_tokens":2,"cache_creation_input_tokens":8,"cache_read_input_tokens":90,"output_tokens":5}}}}}}"#
+        )
+        .unwrap();
+        f
+    }
+
+    #[test]
+    fn subagent_stop_without_message_takes_transcript_text_and_tokens() {
+        let f = transcript_file("last words");
+        let event = subagent_stop_with_transcript(Some(""), f.path().to_str().unwrap());
+        let mut fe = FrontendHookEvent::from_hook(&event);
+        fe.attach_subagent_transcript(&event);
+        assert_eq!(fe.agent_message.as_deref(), Some("last words"));
+        assert_eq!(fe.agent_tokens, Some(100));
+    }
+
+    #[test]
+    fn subagent_stop_keeps_payload_message_over_transcript_text() {
+        let f = transcript_file("from transcript");
+        let event = subagent_stop_with_transcript(Some("from payload"), f.path().to_str().unwrap());
+        let mut fe = FrontendHookEvent::from_hook(&event);
+        fe.attach_subagent_transcript(&event);
+        assert_eq!(fe.agent_message.as_deref(), Some("from payload"));
+        assert_eq!(fe.agent_tokens, Some(100));
+    }
+
+    #[test]
+    fn subagent_stop_with_unreadable_transcript_leaves_fields_absent() {
+        let event = subagent_stop_with_transcript(None, "/nonexistent/agent.jsonl");
+        let mut fe = FrontendHookEvent::from_hook(&event);
+        fe.attach_subagent_transcript(&event);
+        let v = serde_json::to_value(&fe).unwrap();
+        assert!(v.get("agent_message").is_none());
+        assert!(v.get("agent_tokens").is_none());
+    }
+
     #[test]
     fn from_hook_subagent_stop_omits_absent_optionals() {
         let event = HookEvent::SubagentStop {
@@ -2032,6 +2108,7 @@ mod tests {
             agent_type: None,
             last_assistant_message: None,
             effort: serde_json::Value::Null,
+            agent_transcript_path: None,
         };
 
         let v = serde_json::to_value(FrontendHookEvent::from_hook(&event)).unwrap();
@@ -2122,6 +2199,7 @@ mod tests {
             agent_type: t.map(str::to_string),
             last_assistant_message: None,
             effort: serde_json::Value::Null,
+            agent_transcript_path: None,
         };
 
         assert!(is_droppable_subagent_event(&start(None)));

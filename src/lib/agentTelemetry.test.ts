@@ -5,6 +5,11 @@ import {
   handbackReport,
   closeUnclaimedSubagentToolRows,
   applySubagentStop,
+  appendEntryPinned,
+  buildToolUseEntry,
+  closeRunningMainToolRows,
+  formatTokens,
+  SUBAGENT_NO_REPORT,
   effortChipText,
   formatMissCauses,
   notificationAttentionMessage,
@@ -180,8 +185,8 @@ describe("applySubagentStart", () => {
     const newer = tool("taken", "Agent", { timestamp: 200, agentId: "a0" });
     const out = applySubagentStart([older, newer], p);
     expect(out).toHaveLength(2);
-    expect(out[0]).toMatchObject({ id: "free", type: "subagent", agentId: "a1" });
-    expect(out[1]).toEqual(newer);
+    expect(out[0]).toEqual(newer);
+    expect(out[1]).toMatchObject({ id: "free", type: "subagent", agentId: "a1" });
   });
 
   it("ignores a done Agent row", () => {
@@ -247,8 +252,8 @@ describe("applySubagentStop", () => {
   it("completes only the matching agent among concurrent ones", () => {
     const list = [running("r1", "a1", 1000), running("r2", "a2", 1500)];
     const out = applySubagentStop(list, { ...base, agentId: "a2", timestamp: 3500 });
-    expect(out[0]).toEqual(list[0]);
-    expect(out[1]).toMatchObject({ id: "r2", status: "done", durationMs: 2000 });
+    expect(out[0]).toMatchObject({ id: "r2", status: "done", durationMs: 2000 });
+    expect(out[1]).toEqual(list[0]);
   });
 
   it("appends a standalone done row when no running row matches", () => {
@@ -258,7 +263,7 @@ describe("applySubagentStop", () => {
       effort: "low",
     });
     expect(out).toHaveLength(2);
-    expect(out[1]).toEqual({
+    expect(out[0]).toEqual({
       id: "stop",
       timestamp: 4000,
       type: "subagent",
@@ -272,7 +277,7 @@ describe("applySubagentStop", () => {
   it("appends a standalone row without detail when no message is given", () => {
     const out = applySubagentStop([], base);
     expect(out).toHaveLength(1);
-    expect(out[0].detail).toBeUndefined();
+    expect(out[0].detail).toBe(SUBAGENT_NO_REPORT);
     expect(out[0]).toMatchObject({ status: "done", message: "Subagent: Explore" });
   });
 
@@ -348,7 +353,7 @@ describe("applySubagentStop with agent-tagged rows", () => {
       tool("hb", "SubagentHandback", { ownerAgentId: "a2", detail: "other" }),
     ];
     const out = applySubagentStop(list, { ...base, message: "" });
-    expect(out.find((e) => e.id === "s1")?.detail).toBeUndefined();
+    expect(out.find((e) => e.id === "s1")?.detail).toBe(SUBAGENT_NO_REPORT);
   });
 
   it("falls back to last_assistant_message when there is no handback", () => {
@@ -529,5 +534,134 @@ describe("shouldLogGenericActivity", () => {
 
   it("keeps logging unknown event types", () => {
     expect(shouldLogGenericActivity("config_change")).toBe(true);
+  });
+});
+
+describe("pinned running subagents", () => {
+  const subRow = (id: string, agentId: string, timestamp: number, status: "running" | "done" = "running"): ActivityEntry => ({
+    id,
+    timestamp,
+    type: "subagent",
+    message: "Subagent: Explore",
+    status,
+    agentId,
+  });
+
+  it("start moves the claimed Agent row to the head of the list", () => {
+    const list = [tool("agent", "Agent", { timestamp: 100 }), tool("r", "Read", { timestamp: 200, status: "done" })];
+    const out = applySubagentStart(list, { agentId: "a1", agentType: "Explore", id: "new", timestamp: 300 });
+    expect(out.map((e) => e.id)).toEqual(["r", "agent"]);
+    expect(out[1]).toMatchObject({ type: "subagent", timestamp: 100 });
+  });
+
+  it("newer rows land below a running subagent", () => {
+    const out = appendEntryPinned([subRow("s", "a1", 100)], tool("t", "Read", { timestamp: 200 }));
+    expect(out.map((e) => e.id)).toEqual(["t", "s"]);
+  });
+
+  it("keeps several running subagents in their relative order", () => {
+    const list = [subRow("s1", "a1", 100), subRow("s2", "a2", 110)];
+    const out = appendEntryPinned(list, tool("t", "Read"));
+    expect(out.map((e) => e.id)).toEqual(["t", "s1", "s2"]);
+  });
+
+  it("appends normally when no subagent is running", () => {
+    const list = [subRow("s", "a1", 100, "done")];
+    expect(appendEntryPinned(list, tool("t", "Read")).map((e) => e.id)).toEqual(["s", "t"]);
+  });
+
+  it("does not mutate the input list", () => {
+    const list = [subRow("s", "a1", 100)];
+    appendEntryPinned(list, tool("t", "Read"));
+    expect(list.map((e) => e.id)).toEqual(["s"]);
+  });
+
+  it("on stop the row settles at the stop time below subagents still running", () => {
+    const list = [tool("t", "Read", { status: "done" }), subRow("s2", "a2", 150), subRow("s1", "a1", 100)];
+    const out = applySubagentStop(list, { agentId: "a1", agentType: "Explore", id: "stop", timestamp: 900 });
+    expect(out.map((e) => e.id)).toEqual(["t", "s1", "s2"]);
+    expect(out[1]).toMatchObject({ status: "done", timestamp: 900, durationMs: 800 });
+  });
+});
+
+describe("buildToolUseEntry", () => {
+  const base = { id: "x", timestamp: 5, toolName: "Read" };
+
+  it("labels a subagent's tool row with its agent type", () => {
+    const e = buildToolUseEntry({ ...base, agentId: "a1", agentType: "reader-1" });
+    expect(e).toMatchObject({ type: "tool_use", status: "running", ownerAgentId: "a1", ownerLabel: "reader-1" });
+  });
+
+  it("leaves main-agent rows unlabelled", () => {
+    const e = buildToolUseEntry(base);
+    expect(e.ownerAgentId).toBeUndefined();
+    expect(e.ownerLabel).toBeUndefined();
+  });
+
+  it("falls back to no label when the agent type is empty", () => {
+    expect(buildToolUseEntry({ ...base, agentId: "a1", agentType: "" }).ownerLabel).toBeUndefined();
+  });
+});
+
+describe("applySubagentStop detail and tokens", () => {
+  const sub: ActivityEntry = {
+    id: "s",
+    timestamp: 1000,
+    type: "subagent",
+    message: "Subagent: Explore",
+    status: "running",
+    agentId: "a1",
+  };
+  const base = { agentId: "a1", agentType: "Explore", id: "stop", timestamp: 4000 };
+
+  it("uses the stopped-before-reporting fallback when nothing reported", () => {
+    expect(applySubagentStop([sub], base)[0].detail).toBe("Stopped before reporting");
+    expect(applySubagentStop([sub], { ...base, message: "" })[0].detail).toBe("Stopped before reporting");
+  });
+
+  it("prefers the message, then the handback, over the fallback", () => {
+    expect(applySubagentStop([sub], { ...base, message: "text" })[0].detail).toBe("text");
+  });
+
+  it("stores the token count on the settled row", () => {
+    expect(applySubagentStop([sub], { ...base, tokens: 48_500 })[0].tokens).toBe(48_500);
+  });
+
+  it("stores tokens on a standalone stop row too", () => {
+    expect(applySubagentStop([], { ...base, tokens: 900 })[0].tokens).toBe(900);
+  });
+
+  it("leaves tokens undefined when the backend sent none", () => {
+    expect(applySubagentStop([sub], base)[0].tokens).toBeUndefined();
+  });
+});
+
+describe("formatTokens", () => {
+  it("matches the status bar format", () => {
+    expect(formatTokens(48_500)).toBe("48.5K");
+    expect(formatTokens(950)).toBe("950");
+    expect(formatTokens(120_000)).toBe("120K");
+  });
+});
+
+describe("closeRunningMainToolRows", () => {
+  it("closes running main-agent rows without inventing a duration", () => {
+    const list = [tool("ts", "ToolSearch"), tool("stop", "TaskStop")];
+    const out = closeRunningMainToolRows(list);
+    expect(out.every((e) => e.status === "done")).toBe(true);
+    expect(out.every((e) => e.durationMs === undefined)).toBe(true);
+  });
+
+  it("leaves subagent-owned rows and already done rows alone", () => {
+    const owned = tool("o", "Bash", { ownerAgentId: "a1" });
+    const done = tool("d", "Read", { status: "done", durationMs: 12 });
+    const out = closeRunningMainToolRows([owned, done]);
+    expect(out[0]).toEqual(owned);
+    expect(out[1]).toEqual(done);
+  });
+
+  it("ignores non tool rows and returns the same list when nothing changes", () => {
+    const list: ActivityEntry[] = [{ id: "s", timestamp: 1, type: "session", message: "x" }];
+    expect(closeRunningMainToolRows(list)).toBe(list);
   });
 });

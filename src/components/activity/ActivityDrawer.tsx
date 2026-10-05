@@ -5,6 +5,7 @@ import { openTabAction, expandRightPanelAtom } from "@/stores/rightPanel";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import type { ActivityEntry } from "@/lib/types";
 import * as terminalService from "@/components/terminal/terminalService";
+import { formatTokens } from "@/lib/agentTelemetry";
 import { PulseDots } from "@/components/ui/PulseDots";
 import {
   Tooltip,
@@ -310,7 +311,8 @@ export function ActivityDrawer() {
   }
 
   function entryRow(entry: ActivityEntry, indented = false) {
-    const hasThinking = !!entry.detail && entry.detail.length > 50;
+    const isSubagent = entry.type === "subagent";
+    const hasThinking = !!entry.detail && (isSubagent || entry.detail.length > 50);
     const isExpanded = expandedIds.has(entry.id);
     const hasFiles = !!entry.files && entry.files.length > 0;
     return (
@@ -328,10 +330,18 @@ export function ActivityDrawer() {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
               <p className="text-xs text-foreground">{entry.message}</p>
+              {entry.ownerLabel && (
+                <span className="shrink-0 text-[9px] text-muted-foreground/60">{entry.ownerLabel}</span>
+              )}
               {entry.status === "running" && <PulseDots count={3} className="text-primary" />}
               {entry.durationMs != null && (
                 <span className="shrink-0 text-[9px] tabular-nums text-muted-foreground/60">
                   {formatDuration(entry.durationMs)}
+                </span>
+              )}
+              {entry.tokens != null && (
+                <span className="shrink-0 text-[9px] tabular-nums text-muted-foreground/60">
+                  {formatTokens(entry.tokens)} tokens
                 </span>
               )}
             </div>
@@ -375,7 +385,7 @@ export function ActivityDrawer() {
                 className="mt-0.5 flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-foreground"
               >
                 {isExpanded ? <ChevronDown className="size-2.5" /> : <ChevronRight className="size-2.5" />}
-                thinking
+                {isSubagent ? "report" : "thinking"}
               </button>
             )}
           </div>

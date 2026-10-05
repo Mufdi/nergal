@@ -11,6 +11,7 @@ pub mod adapter;
 pub mod cost;
 pub mod plan;
 pub mod plans_path;
+pub mod subagent_transcript;
 pub mod tasks_parser;
 pub mod transcript;
 

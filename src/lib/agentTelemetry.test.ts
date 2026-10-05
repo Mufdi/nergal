@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ActivityEntry } from "./types";
 import {
   applySubagentStart,
+  handbackReport,
   closeUnclaimedSubagentToolRows,
   applySubagentStop,
   effortChipText,
@@ -287,6 +288,101 @@ describe("applySubagentStop", () => {
     const snapshot = structuredClone(list);
     applySubagentStop(list, base);
     expect(list).toEqual(snapshot);
+  });
+});
+
+describe("applySubagentStop with agent-tagged rows", () => {
+  const sub = (id: string, agentId: string, timestamp: number): ActivityEntry => ({
+    id,
+    timestamp,
+    type: "subagent",
+    message: "Subagent: Explore",
+    status: "running",
+    agentId,
+  });
+  const base = { agentId: "a1", agentType: "Explore", id: "stop", timestamp: 9000 };
+
+  it("closes running rows owned by the stopping agent only", () => {
+    const list = [
+      sub("s1", "a1", 1000),
+      sub("s2", "a2", 1100),
+      tool("t1", "Bash", { timestamp: 2000, ownerAgentId: "a1" }),
+      tool("t2", "Bash", { timestamp: 2100, ownerAgentId: "a2" }),
+      tool("t3", "Bash", { timestamp: 2200 }),
+    ];
+    const out = applySubagentStop(list, base);
+    const byId = Object.fromEntries(out.map((e) => [e.id, e]));
+    expect(byId.t1).toMatchObject({ status: "done", durationMs: 7000 });
+    expect(byId.t2.status).toBe("running");
+    expect(byId.t3.status).toBe("running");
+    expect(byId.s2.status).toBe("running");
+  });
+
+  it("leaves already done owned rows untouched", () => {
+    const done = tool("t1", "Bash", { ownerAgentId: "a1", status: "done", durationMs: 5 });
+    const out = applySubagentStop([sub("s1", "a1", 1000), done], base);
+    expect(out.find((e) => e.id === "t1")).toEqual(done);
+  });
+
+  it("uses the handback message as the subagent detail", () => {
+    const list = [
+      sub("s1", "a1", 1000),
+      tool("hb", "SubagentHandback", { ownerAgentId: "a1", detail: "final report" }),
+    ];
+    const out = applySubagentStop(list, { ...base, message: "" });
+    expect(out.find((e) => e.id === "s1")?.detail).toBe("final report");
+  });
+
+  it("prefers the handback report over last_assistant_message", () => {
+    const list = [
+      sub("s1", "a1", 1000),
+      tool("hb", "SubagentHandback", { ownerAgentId: "a1", detail: "report" }),
+    ];
+    const out = applySubagentStop(list, { ...base, message: "chatter" });
+    expect(out.find((e) => e.id === "s1")?.detail).toBe("report");
+  });
+
+  it("ignores another agent's handback and an empty last message", () => {
+    const list = [
+      sub("s1", "a1", 1000),
+      tool("hb", "SubagentHandback", { ownerAgentId: "a2", detail: "other" }),
+    ];
+    const out = applySubagentStop(list, { ...base, message: "" });
+    expect(out.find((e) => e.id === "s1")?.detail).toBeUndefined();
+  });
+
+  it("falls back to last_assistant_message when there is no handback", () => {
+    const out = applySubagentStop([sub("s1", "a1", 1000)], { ...base, message: "found it" });
+    expect(out[0].detail).toBe("found it");
+  });
+
+  it("moves the stopped row to the head with the stop time and keeps the duration", () => {
+    const list = [
+      sub("s1", "a1", 1000),
+      tool("t1", "Bash", { timestamp: 2000, status: "done" }),
+      tool("t2", "Read", { timestamp: 3000, status: "done" }),
+    ];
+    const out = applySubagentStop(list, base);
+    expect(out.map((e) => e.id)).toEqual(["t1", "t2", "s1"]);
+    expect(out[2]).toMatchObject({ timestamp: 9000, durationMs: 8000, status: "done" });
+  });
+
+  it("still closes unclaimed Agent/Task rows regardless of owner", () => {
+    const list = [sub("s1", "a1", 1000), tool("n", "Agent", { ownerAgentId: "a1" })];
+    expect(closeUnclaimedSubagentToolRows(list, 5000)[1].status).toBe("done");
+  });
+});
+
+describe("handbackReport", () => {
+  it("reads tool_input.message from a SubagentHandback call", () => {
+    expect(handbackReport("SubagentHandback", { message: "done" })).toBe("done");
+  });
+
+  it("returns undefined for other tools, missing or blank messages", () => {
+    expect(handbackReport("Bash", { message: "x" })).toBeUndefined();
+    expect(handbackReport("SubagentHandback", {})).toBeUndefined();
+    expect(handbackReport("SubagentHandback", { message: "  " })).toBeUndefined();
+    expect(handbackReport("SubagentHandback", null)).toBeUndefined();
   });
 });
 

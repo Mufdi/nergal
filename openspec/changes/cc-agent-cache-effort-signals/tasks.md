@@ -43,6 +43,13 @@
 - [x] 6a.1 Test (Red): `agentTelemetry.test.ts` covers `shouldLogGenericActivity` (`agent_status` and `statusline` skipped, unknown types logged)
 - [x] 6a.2 Skip the generic `Event: <type>` row for those types in the `default:` branch of `src/stores/hooks.ts`
 
+## 6b. Subagent stop closes its own rows (FRI-501)
+
+- [x] 6b.1 Test (Red): `server.rs` forwards `agent_id`/`agent_type` on pre/post tool events only when present; `agentTelemetry.test.ts` covers tagged-row close per agent, handback detail, head move with stop time and duration
+- [x] 6b.2 Add `agent_id`/`agent_type` to `HookEvent::PreToolUse`/`PostToolUse` (`events.rs`) and forward them in `FrontendHookEvent::from_hook` (`server.rs`)
+- [x] 6b.3 Tag tool rows with `ownerAgentId` and capture the handback message in `src/stores/hooks.ts`; close tagged rows, set detail and move the row to the head in `applySubagentStop` (`src/lib/agentTelemetry.ts`)
+- [ ] 6b.4 Manual walk: background Explore subagent; its row appears at the top when it finishes with the report as detail and no pulsing `SubagentHandback` row remains
+
 ## 6. Docs and Verification
 
 - [x] 6.1 Update `docs/hooks.md` (Notification types, subagent hooks) and `docs/design.md` §1.2 (sky-400 also encodes subagent activity)

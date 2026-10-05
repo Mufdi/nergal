@@ -88,6 +88,14 @@ export function applySubagentStart(
   ];
 }
 
+/// SubagentHandback is how a subagent delivers its final report in auto mode;
+/// its Stop payload then carries an empty last_assistant_message.
+export function handbackReport(toolName: string | undefined, toolInput: unknown): string | undefined {
+  if (toolName !== "SubagentHandback" || typeof toolInput !== "object" || toolInput === null) return undefined;
+  const message = (toolInput as { message?: unknown }).message;
+  return typeof message === "string" && message.trim() !== "" ? message : undefined;
+}
+
 export function applySubagentStop(
   list: ActivityEntry[],
   p: {
@@ -100,22 +108,37 @@ export function applySubagentStop(
   },
 ): ActivityEntry[] {
   const label = `Subagent: ${p.agentType}${p.effort ? ` · ${p.effort}` : ""}`;
-  for (let i = list.length - 1; i >= 0; i--) {
-    const e = list[i];
+  const handback = list.find(
+    (e) => e.ownerAgentId === p.agentId && e.toolName === "SubagentHandback" && e.detail,
+  )?.detail;
+  const report = handback ?? (p.message ? p.message : undefined);
+
+  // No PostToolUse is guaranteed for the subagent's own tools (e.g. SubagentHandback
+  // is outside the matcher), so its Stop is the only closing event for them.
+  const closed = list.map((e) =>
+    e.type === "tool_use" && e.status === "running" && e.ownerAgentId === p.agentId
+      ? { ...e, status: "done" as const, durationMs: p.timestamp - e.timestamp }
+      : e,
+  );
+
+  // A row converted in place keeps its start time and sinks below the newest-first
+  // viewport, so a finished subagent re-surfaces at the head stamped with the stop time.
+  for (let i = closed.length - 1; i >= 0; i--) {
+    const e = closed[i];
     if (e.type === "subagent" && e.status === "running" && e.agentId === p.agentId) {
-      const next = [...list];
-      next[i] = {
+      const done: ActivityEntry = {
         ...e,
         message: label,
         status: "done",
         durationMs: p.timestamp - e.timestamp,
-        detail: p.message ?? e.detail,
+        timestamp: p.timestamp,
+        detail: report ?? e.detail,
       };
-      return next;
+      return [...closed.slice(0, i), ...closed.slice(i + 1), done];
     }
   }
   return [
-    ...list,
+    ...closed,
     {
       id: p.id,
       timestamp: p.timestamp,
@@ -123,7 +146,7 @@ export function applySubagentStop(
       message: label,
       status: "done",
       agentId: p.agentId,
-      detail: p.message ?? undefined,
+      detail: report,
     },
   ];
 }

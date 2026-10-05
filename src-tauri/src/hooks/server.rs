@@ -52,6 +52,7 @@ impl FrontendHookEvent {
                     session_id,
                     tool_name,
                     tool_input,
+                    ..
                 } => (
                     session_id.clone(),
                     "pre_tool_use",
@@ -221,6 +222,16 @@ impl FrontendHookEvent {
                 agent_type.clone(),
                 last_assistant_message.clone(),
             ),
+            HookEvent::PreToolUse {
+                agent_id,
+                agent_type,
+                ..
+            }
+            | HookEvent::PostToolUse {
+                agent_id,
+                agent_type,
+                ..
+            } => (agent_id.clone(), agent_type.clone(), None),
             _ => (None, None, None),
         };
         Self {
@@ -956,6 +967,7 @@ fn process_event(
             tool_name,
             tool_input,
             session_id,
+            ..
         } => {
             tracing::debug!("PreToolUse: tool_name={tool_name}");
 
@@ -1770,6 +1782,8 @@ mod tests {
                     session_id: "s".into(),
                     tool_name: "Read".into(),
                     tool_input: json!({"a": 1}),
+                    agent_id: None,
+                    agent_type: None,
                 },
                 "pre_tool_use",
             ),
@@ -1779,6 +1793,8 @@ mod tests {
                     tool_name: "Read".into(),
                     tool_input: json!({}),
                     tool_result: None,
+                    agent_id: None,
+                    agent_type: None,
                 },
                 "post_tool_use",
             ),
@@ -2026,17 +2042,70 @@ mod tests {
     }
 
     #[test]
-    fn from_hook_pre_tool_use_has_no_subagent_keys() {
-        let event = HookEvent::PreToolUse {
+    fn from_hook_tool_events_omit_agent_keys_when_absent() {
+        let pre = HookEvent::PreToolUse {
             session_id: "s".into(),
             tool_name: "Read".into(),
             tool_input: json!({}),
+            agent_id: None,
+            agent_type: None,
+        };
+        let post = HookEvent::PostToolUse {
+            session_id: "s".into(),
+            tool_name: "Read".into(),
+            tool_input: json!({}),
+            tool_result: None,
+            agent_id: None,
+            agent_type: None,
         };
 
-        let v = serde_json::to_value(FrontendHookEvent::from_hook(&event)).unwrap();
+        for event in [pre, post] {
+            let v = serde_json::to_value(FrontendHookEvent::from_hook(&event)).unwrap();
+            for key in ["agent_id", "agent_type", "agent_message", "effort_level"] {
+                assert!(v.get(key).is_none(), "{key} must be absent");
+            }
+        }
+    }
 
-        for key in ["agent_id", "agent_type", "agent_message", "effort_level"] {
-            assert!(v.get(key).is_none(), "{key} must be absent");
+    #[test]
+    fn from_hook_tool_events_forward_agent_keys_when_present() {
+        let pre = HookEvent::PreToolUse {
+            session_id: "s".into(),
+            tool_name: "SubagentHandback".into(),
+            tool_input: json!({"message": "report"}),
+            agent_id: Some("a1".into()),
+            agent_type: Some("Explore".into()),
+        };
+        let post = HookEvent::PostToolUse {
+            session_id: "s".into(),
+            tool_name: "Bash".into(),
+            tool_input: json!({}),
+            tool_result: None,
+            agent_id: Some("a1".into()),
+            agent_type: None,
+        };
+
+        let v = serde_json::to_value(FrontendHookEvent::from_hook(&pre)).unwrap();
+        assert_eq!(v["agent_id"], "a1");
+        assert_eq!(v["agent_type"], "Explore");
+        let v = serde_json::to_value(FrontendHookEvent::from_hook(&post)).unwrap();
+        assert_eq!(v["agent_id"], "a1");
+        assert!(v.get("agent_type").is_none());
+    }
+
+    #[test]
+    fn pre_tool_use_payload_deserializes_agent_fields() {
+        let json = r#"{"hook_event_name":"PreToolUse","session_id":"s","tool_name":"Bash","agent_id":"a1","agent_type":"Explore"}"#;
+        match serde_json::from_str::<HookEvent>(json).unwrap() {
+            HookEvent::PreToolUse {
+                agent_id,
+                agent_type,
+                ..
+            } => {
+                assert_eq!(agent_id.as_deref(), Some("a1"));
+                assert_eq!(agent_type.as_deref(), Some("Explore"));
+            }
+            _ => panic!("expected PreToolUse"),
         }
     }
 
@@ -2073,6 +2142,8 @@ mod tests {
                 session_id: "s".into(),
                 tool_name: "Agent".into(),
                 tool_input: json!({}),
+                agent_id: None,
+                agent_type: None,
             },
             HookEvent::Notification {
                 session_id: "s".into(),
@@ -2137,6 +2208,8 @@ mod tests {
             session_id: "s".into(),
             tool_name: "Edit".into(),
             tool_input: json!({ "file_path": "src/main.rs" }),
+            agent_id: None,
+            agent_type: None,
         };
 
         assert_eq!(
@@ -2151,6 +2224,8 @@ mod tests {
             session_id: "s".into(),
             tool_name: "Read".into(),
             tool_input: json!({}),
+            agent_id: None,
+            agent_type: None,
         };
 
         assert_eq!(session_log_line(&event).as_deref(), Some("Read"));
@@ -2162,6 +2237,8 @@ mod tests {
             session_id: "s".into(),
             tool_name: "Bash".into(),
             tool_input: json!({}),
+            agent_id: None,
+            agent_type: None,
         };
 
         assert_eq!(session_log_line(&event).as_deref(), Some("Tool Bash"));
@@ -2235,6 +2312,8 @@ mod tests {
             session_id: "s".into(),
             tool_name: "Read".into(),
             tool_input: json!({}),
+            agent_id: None,
+            agent_type: None,
         };
         let stop = HookEvent::Stop {
             session_id: "s".into(),
@@ -2273,6 +2352,8 @@ mod tests {
             session_id: "s".into(),
             tool_name: "Read".into(),
             tool_input: json!({}),
+            agent_id: None,
+            agent_type: None,
         };
         assert!(!preserves_background_wait(
             "needs_attention",

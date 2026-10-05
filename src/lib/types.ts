@@ -191,6 +191,8 @@ export interface ActivityEntry {
   command?: string;
   /// Pairs SubagentStart with SubagentStop and marks the Agent tool row it claimed.
   agentId?: string;
+  /// Subagent that issued this tool call (payload `agent_id`), so SubagentStop can close its leftovers.
+  ownerAgentId?: string;
 }
 
 export interface DiffLine {

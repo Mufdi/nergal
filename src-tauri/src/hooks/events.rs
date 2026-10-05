@@ -49,6 +49,10 @@ pub enum HookEvent {
         tool_name: String,
         #[serde(default)]
         tool_input: serde_json::Value,
+        #[serde(default)]
+        agent_id: Option<String>,
+        #[serde(default)]
+        agent_type: Option<String>,
     },
     #[serde(rename = "PostToolUse")]
     PostToolUse {
@@ -58,6 +62,10 @@ pub enum HookEvent {
         tool_input: serde_json::Value,
         #[serde(default)]
         tool_result: Option<String>,
+        #[serde(default)]
+        agent_id: Option<String>,
+        #[serde(default)]
+        agent_type: Option<String>,
     },
     #[serde(rename = "Stop")]
     Stop {
@@ -364,6 +372,8 @@ mod tests {
             session_id: "s".into(),
             tool_name: "Read".into(),
             tool_input: serde_json::Value::Null,
+            agent_id: None,
+            agent_type: None,
         };
         assert_eq!(running.mcp_mode(), Some("running"));
 
@@ -412,6 +422,8 @@ mod tests {
             session_id: "s".into(),
             tool_name: "Read".into(),
             tool_input: serde_json::Value::Null,
+            agent_id: None,
+            agent_type: None,
         };
         assert!(running.waiting_for().is_none());
     }

@@ -198,6 +198,8 @@ fn wrap(session_id: &str, cwd: &Path, ev: TranscriptEvent) -> Option<HookEvent> 
                 tool_name: name,
                 tool_input: input,
                 tool_result: None,
+                agent_id: None,
+                agent_type: None,
             })
         }
         TranscriptEvent::ToolResult { .. } => None,

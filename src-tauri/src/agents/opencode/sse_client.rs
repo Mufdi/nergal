@@ -212,6 +212,8 @@ fn translate_event(nergal_session_id: &str, raw: &str) -> Option<HookEvent> {
                 tool_name: "Edit".into(),
                 tool_input: serde_json::json!({ "file_path": path }),
                 tool_result: None,
+                agent_id: None,
+                agent_type: None,
             })
         }
         // Tool lifecycle — fires for every tool, including non-file ones
@@ -237,6 +239,8 @@ fn translate_event(nergal_session_id: &str, raw: &str) -> Option<HookEvent> {
                 tool_name,
                 tool_input: input,
                 tool_result: None,
+                agent_id: None,
+                agent_type: None,
             })
         }
         "message.updated" => {

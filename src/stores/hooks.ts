@@ -16,7 +16,7 @@ import {
   completeSubagentActivityAtom,
   closeUnclaimedSubagentRowsAtom,
 } from "./activity";
-import { notificationAttentionMessage, shouldLogGenericActivity, shouldClearOnBackgroundCompletion, shouldClearOnTurnEvent } from "@/lib/agentTelemetry";
+import { handbackReport, notificationAttentionMessage, shouldLogGenericActivity, shouldClearOnBackgroundCompletion, shouldClearOnTurnEvent } from "@/lib/agentTelemetry";
 import { toastsAtom } from "./toast";
 import { localhostPortsAtom } from "./browser";
 import { providerStatusAtom, type ProviderStatus } from "./statusFeed";
@@ -97,6 +97,8 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
               toolName: tool_name,
               command: commandFromToolInput(event.tool_input),
               files: filesFromToolInput(event.tool_input),
+              ownerAgentId: event.agent_id,
+              detail: handbackReport(tool_name, event.tool_input),
             },
           });
           break;

@@ -71,13 +71,14 @@ impl Drop for PtyInstance {
         if let Some(pid) = self.child_pid
             && pid > 1
         {
+            crate::platform_proc::hangup_group(pid);
             crate::platform_proc::kill_tree(pid);
         }
         // Reap AFTER the signal above, so we wait on a process that has
         // already been asked to exit rather than blocking on one still
         // running.
         if let Some(child) = self.child.take() {
-            reap_child(child);
+            reap_child(child, self.child_pid);
         }
     }
 }
@@ -88,7 +89,7 @@ impl Drop for PtyInstance {
 /// past the cap, ownership moves to a detached thread that blocks on
 /// `wait()`, so the process is still reaped eventually without stalling
 /// whoever dropped the instance.
-fn reap_child(mut child: Box<dyn portable_pty::Child + Send + Sync>) {
+fn reap_child(mut child: Box<dyn portable_pty::Child + Send + Sync>, pid: Option<u32>) {
     const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
     const MAX_POLLS: u32 = 40; // ~2s cap
     for _ in 0..MAX_POLLS {
@@ -97,9 +98,19 @@ fn reap_child(mut child: Box<dyn portable_pty::Child + Send + Sync>) {
             Ok(None) => std::thread::sleep(POLL_INTERVAL),
         }
     }
+    if let Some(pid) = pid {
+        crate::platform_proc::force_kill(pid);
+    }
     std::thread::spawn(move || {
         let _ = child.wait();
     });
+}
+
+/// Sync `#[tauri::command]`s run on the main thread; dropping a `PtyInstance`
+/// signals and polls its child, so the drop runs on a detached thread to keep
+/// the UI responsive.
+fn drop_off_main_thread<T: Send + 'static>(value: T) {
+    std::thread::spawn(move || drop(value));
 }
 
 pub struct PtyManager {
@@ -1139,7 +1150,7 @@ pub fn kill_aux_shell(
             let mut instances = state.instances.lock().map_err(|e| e.to_string())?;
             instances.remove(&id)
         };
-        drop(removed);
+        drop_off_main_thread(removed);
     }
     if let Ok(mut trackers) = state.aux_line_trackers.lock() {
         trackers.remove(&term_id);
@@ -1198,7 +1209,7 @@ fn kill_session_aux_shells(state: &PtyManager, session_id: &str) -> Result<(), S
     // is the lock every session's terminal_input/write/resize/paste/scroll
     // path takes; reaping under it would let one stuck child freeze
     // terminal I/O for every other live session.
-    drop(removed);
+    drop_off_main_thread(removed);
     Ok(())
 }
 
@@ -1425,7 +1436,7 @@ pub fn kill_session_pty(state: State<'_, PtyManager>, session_id: String) -> Res
             let mut instances = state.instances.lock().map_err(|e| e.to_string())?;
             instances.remove(&id)
         };
-        drop(removed);
+        drop_off_main_thread(removed);
     }
 
     // Drop the ephemeral system-prompt file written for AppendSystemPromptFile
@@ -2523,6 +2534,24 @@ mod tests {
 
     // ── Zombie reaping ──
 
+    #[cfg(unix)]
+    #[test]
+    fn dropping_instance_hangs_up_a_shell_that_ignores_sigterm() {
+        let (instance, pid) = build_test_pty_instance(r#"trap "" TERM; while :; do sleep 1; done"#);
+        // Let the shell install its trap before teardown races it.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+
+        let started = std::time::Instant::now();
+        drop(instance);
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "teardown took {elapsed:?}"
+        );
+        assert_reaped(pid);
+    }
+
     #[test]
     fn reap_child_leaves_no_zombie() {
         let pty_system = NativePtySystem::default();
@@ -2546,7 +2575,7 @@ mod tests {
         // returns — unlike `drop(child)`, which (per portable-pty's Unix
         // impl wrapping `std::process::Child`) never waits and leaves a
         // defunct entry until the whole app exits.
-        reap_child(child);
+        reap_child(child, Some(pid));
 
         assert_reaped(pid);
     }

@@ -113,6 +113,37 @@ pub fn kill_tree(root: u32) {
     }
 }
 
+/// SIGHUP the shell's process group — what a real terminal delivers to the
+/// session when it closes. Interactive shells ignore SIGTERM but exit on SIGHUP.
+#[cfg(unix)]
+pub fn hangup_group(root: u32) {
+    if root <= 1 {
+        return;
+    }
+    unsafe {
+        libc::kill(-(root as libc::pid_t), libc::SIGHUP);
+    }
+}
+
+#[cfg(not(unix))]
+pub fn hangup_group(_root: u32) {}
+
+/// SIGKILL the shell and its process group, for a child that survived the
+/// graceful signals.
+#[cfg(unix)]
+pub fn force_kill(root: u32) {
+    if root <= 1 {
+        return;
+    }
+    unsafe {
+        libc::kill(-(root as libc::pid_t), libc::SIGKILL);
+        libc::kill(root as libc::pid_t, libc::SIGKILL);
+    }
+}
+
+#[cfg(not(unix))]
+pub fn force_kill(_root: u32) {}
+
 /// SIGTERM a single pid. Maps a non-zero libc return code to `io::Error` the
 /// same way the original `kill_port` did (preserving the `last_os_error` path).
 #[cfg(unix)]

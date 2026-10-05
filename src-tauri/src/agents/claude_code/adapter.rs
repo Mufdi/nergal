@@ -228,6 +228,9 @@ impl AgentAdapter for ClaudeCodeAdapter {
         }
         let mut env = HashMap::new();
         env.insert("NERGAL_SESSION_ID".into(), ctx.session_id.to_string());
+        // CC v2.1.233+ drops TodoWrite and the Task* tools on newer models
+        // (Opus 5, Sonnet 5, Fable); the Tasks panel is fed by exactly those calls.
+        env.insert("CLAUDE_CODE_ENABLE_TODO_TOOLS".into(), "1".into());
         Ok(SpawnSpec { binary, args, env })
     }
 
@@ -370,6 +373,27 @@ mod tests {
             assert_eq!(
                 spec.env.get("NERGAL_SESSION_ID").map(String::as_str),
                 Some("abc-123")
+            );
+        }
+    }
+
+    #[test]
+    fn spawn_reenables_todo_tools_for_newer_models() {
+        let a = ClaudeCodeAdapter::new();
+        let ctx = SpawnContext {
+            session_id: "abc-123",
+            cwd: Path::new("/tmp"),
+            resume_from: None,
+            initial_prompt: None,
+            injected_context: None,
+            launch_options: None,
+        };
+        if let Ok(spec) = a.spawn(&ctx) {
+            assert_eq!(
+                spec.env
+                    .get("CLAUDE_CODE_ENABLE_TODO_TOOLS")
+                    .map(String::as_str),
+                Some("1")
             );
         }
     }

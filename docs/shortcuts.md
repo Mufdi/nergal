@@ -56,10 +56,12 @@ Provenance below).
 
 ## Deliberate shadows + mitigations
 
-Nergal's default (`keyboard_ownership: "nergal"`) claims `Ctrl+B/W/S/L` and
-`Alt+↑/↓` globally, shadowing native agent bindings (background-command,
-delete-word, save-session, clear-line, scroll-history — whatever the active
-CLI does with them). Two mitigations, layered:
+Nergal's default (`keyboard_ownership: "nergal"`) claims `Ctrl+B/W/S/L`,
+`Alt+↑/↓` and `Ctrl+Enter` (fullscreen terminal) globally, shadowing native
+agent bindings (background-command, delete-word, save-session, clear-line,
+scroll-history, and Claude Code's send-now since v2.1.275 — whatever the active
+CLI does with them). Send-now stays reachable through `leader .` then
+`Ctrl+Enter`, or CC's own `Ctrl+X Ctrl+S`. Two mitigations, layered:
 
 1. **`leader .` passthrough** — the next keystroke after `leader .` forwards
    verbatim to the active PTY, so a shadowed agent shortcut is always at most

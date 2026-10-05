@@ -61,6 +61,10 @@ The adversarial and frontend reviews found four defects in the first build. The 
 - **D7 scope**: checking every key under `hooks` broke `nergal hook setup` for users with a malformed event owned by another tool. The check now covers only the events Nergal writes or removes (`HOOKS` and `OBSOLETE_HOOKS`). Other keys are left untouched, as before.
 - **Docs**: `docs/hooks.md` and `README.md` documented a non-existent `nergal setup` and an obsolete snippet. They now point to `nergal hook setup` and the launch dialog.
 
+## Revision 2: initial focus (2026-10-05, user walk)
+
+In the live walk, Enter closed the dialog without configuring. Base UI focuses the first tabbable element (Skip) on open, after the requestAnimationFrame focus, so Revision 1's "Enter on a focused button activates that button" turned Enter into Skip. The popup now declares `initialFocus={contentRef}` (Base UI Popup API), so focus starts on the dialog itself; the rAF focus is removed.
+
 ## Flow
 
 ```mermaid

@@ -39,12 +39,6 @@ export function HooksSetupDialog() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!open) return;
-    const raf = requestAnimationFrame(() => contentRef.current?.focus());
-    return () => cancelAnimationFrame(raf);
-  }, [open]);
-
   function handleSkip() {
     if (busy) return;
     setOpen(false);
@@ -76,6 +70,9 @@ export function HooksSetupDialog() {
     <Dialog open={open} onOpenChange={(o) => !o && handleSkip()}>
       <DialogContent
         ref={contentRef}
+        // Base UI otherwise focuses the first button (Skip) on open, so a bare
+        // Enter would skip instead of configure.
+        initialFocus={contentRef}
         showCloseButton={false}
         tabIndex={-1}
         className="sm:max-w-xl overflow-hidden"

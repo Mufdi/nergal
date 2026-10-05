@@ -34,11 +34,15 @@
 - [x] 5.4 Dialog: leave Enter on a focused `<button>` to the button; show the `enter` chip only when Configure is enabled; `role="alert"` on the inline error; "would be added" copy when not configurable.
 - [x] 5.5 Docs: `docs/hooks.md` and `README.md` point to `nergal hook setup` and the launch dialog; replace the obsolete snippet with a pointer to `src-tauri/src/setup.rs` `HOOKS`.
 
-## 6. Verification
+## 6. Revision 2: initial focus
 
-- [x] 6.1 Full check: `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check && cd .. && npx tsc --noEmit && pnpm test`.
-- [ ] 6.2 Manual walk, fresh state (temp `HOME` without `.claude/`, `nergal` on `PATH`): the dialog opens and shows the path; no file or dir exists before Configure; Enter configures (not Skip); Tab to Skip + Enter skips; the dialog closes with a toast; a new Claude Code session reports to Activities.
-- [ ] 6.3 Manual walk, Skip: Esc closes, no file is written; the next launch shows the dialog again.
-- [ ] 6.4 Manual walk, configured install (the dev machine's real `~/.claude/settings.json`): no dialog at launch.
-- [ ] 6.5 Manual walk, Configure error (temp `HOME` with an empty `.claude/` set to `chmod 555`, no `settings.json`): the dialog stays open showing the permission error; the directory stays empty.
-- [ ] 6.6 Manual walk, AppImage (launch the real `.AppImage` with hooks absent and no other `nergal` on `PATH`): Configure is disabled and the `PATH` note shows; with the `.deb` also installed, Configure is enabled.
+- [x] 6.0 Replace the rAF focus with `initialFocus={contentRef}` on `DialogContent` (`src/components/setup/HooksSetupDialog.tsx`).
+
+## 7. Verification
+
+- [x] 7.1 Full check: `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check && cd .. && npx tsc --noEmit && pnpm test`.
+- [ ] 7.2 Manual walk, fresh state (temp `HOME` without `.claude/`, `nergal` on `PATH`): the dialog opens and shows the path; no file or dir exists before Configure; Enter configures (not Skip); Tab to Skip + Enter skips; the dialog closes with a toast; a new Claude Code session reports to Activities.
+- [ ] 7.3 Manual walk, Skip: Esc closes, no file is written; the next launch shows the dialog again.
+- [ ] 7.4 Manual walk, configured install (the dev machine's real `~/.claude/settings.json`): no dialog at launch.
+- [ ] 7.5 Manual walk, Configure error (temp `HOME` with an empty `.claude/` set to `chmod 555`, no `settings.json`): the dialog stays open showing the permission error; the directory stays empty.
+- [ ] 7.6 Manual walk, AppImage (launch the real `.AppImage` with hooks absent and no other `nergal` on `PATH`): Configure is disabled and the `PATH` note shows; with the `.deb` also installed, Configure is enabled.

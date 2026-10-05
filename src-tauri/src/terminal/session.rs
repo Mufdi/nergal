@@ -748,19 +748,8 @@ mod tests {
     }
 
     #[test]
-    fn kitty_keyboard_query_is_answered_when_opted_in() {
-        let w = CapturedWriter::new();
-        let cfg = NergalTerminalConfig::new().with_kitty_keyboard(true);
-        let mut s = TerminalSession::with_config(80, 24, Box::new(w.clone()), cfg);
-        s.advance_bytes(b"\x1b[?u");
-        assert_eq!(w.drain(), b"\x1b[?0u");
-    }
-
-    #[test]
-    fn kitty_flags_do_not_change_ctrl_enter_even_when_opted_in() {
-        let w = CapturedWriter::new();
-        let cfg = NergalTerminalConfig::new().with_kitty_keyboard(true);
-        let mut s = TerminalSession::with_config(80, 24, Box::new(w.clone()), cfg);
+    fn kitty_flags_push_does_not_change_ctrl_enter() {
+        let (mut s, w) = session_with_writer(80, 24);
         s.advance_bytes(b"\x1b[>1u");
         let mut ctrl_enter = evt("Enter", "Enter");
         ctrl_enter.ctrl = true;

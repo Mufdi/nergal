@@ -45,7 +45,6 @@ export interface Config {
   default_shell: string;
   theme_mode: string;
   preferred_editor: string;
-  terminal_kitty_keyboard: boolean;
   sidebar_dot_grid: boolean;
   panel_focus_pulse: boolean;
   panel_glow: boolean;

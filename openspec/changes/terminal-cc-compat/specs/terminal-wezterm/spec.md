@@ -94,7 +94,7 @@ The PTY writer that wezterm-term uses SHALL write each message completely, retry
 ## MODIFIED Requirements
 
 ### Requirement: Input encoding via wezterm
-User key events SHALL be encoded to terminal bytes using `wezterm-term`'s input encoder in the backend. The frontend SHALL NOT encode key events locally. The encoder SHALL produce legacy xterm bytes, switching to modifyOtherKeys bytes when the app requests them with `CSI > 4;2 m`. CSI-u key encoding SHALL stay off. Kitty-protocol key encoding is NOT provided, which is why Kitty is not advertised by default. Two keys are remapped before the encoder: Ctrl+Backspace becomes Ctrl+W, and unmodified Shift+Enter becomes LF.
+User key events SHALL be encoded to terminal bytes using `wezterm-term`'s input encoder in the backend. The frontend SHALL NOT encode key events locally. The encoder SHALL produce legacy xterm bytes, switching to modifyOtherKeys bytes when the app requests them with `CSI > 4;2 m`. CSI-u key encoding SHALL stay off. Kitty-protocol key encoding is NOT provided, which is why Kitty is never advertised. Two keys are remapped before the encoder: Ctrl+Backspace becomes Ctrl+W, and unmodified Shift+Enter becomes LF.
 
 #### Scenario: Key event sent to backend
 - **WHEN** the user presses a key while the terminal has focus
@@ -116,7 +116,7 @@ User key events SHALL be encoded to terminal bytes using `wezterm-term`'s input 
 - **THEN** the PTY SHALL receive `0x0a` (LF), not `0x0d`
 
 #### Scenario: Ctrl+Enter is legacy until modifyOtherKeys is requested
-- **GIVEN** the default config and no modifyOtherKeys request
+- **GIVEN** no modifyOtherKeys request
 - **WHEN** the user presses Ctrl+Enter
 - **THEN** the PTY SHALL receive `0x0d`
 
@@ -125,25 +125,27 @@ User key events SHALL be encoded to terminal bytes using `wezterm-term`'s input 
 - **WHEN** the user presses Ctrl+Enter
 - **THEN** the PTY SHALL receive `ESC[27;5;13~`
 
-#### Scenario: Opted-in Kitty flags still do not change key encoding
-- **GIVEN** `terminal_kitty_keyboard = true` and the app wrote `ESC[>1u`
+#### Scenario: Kitty flags do not change key encoding
+- **GIVEN** the app wrote `ESC[>1u`
 - **WHEN** the user presses Ctrl+Enter
 - **THEN** the PTY SHALL receive `0x0d`
 
 ## RENAMED Requirements
 
 - FROM: `### Requirement: Kitty keyboard protocol enabled by default`
-- TO: `### Requirement: Kitty keyboard protocol not advertised by default`
+- TO: `### Requirement: Kitty keyboard protocol not advertised`
 
 ## MODIFIED Requirements
 
-### Requirement: Kitty keyboard protocol not advertised by default
-The terminal SHALL NOT answer the Kitty keyboard query by default, because the key encoder cannot produce Kitty sequences. Advertising Kitty makes apps skip their modifyOtherKeys request. The terminal SHALL answer the query only when `terminal_kitty_keyboard = true`.
+### Requirement: Kitty keyboard protocol not advertised
+The terminal SHALL NOT answer the Kitty keyboard query, because the key encoder cannot produce Kitty sequences and advertising Kitty makes apps skip their modifyOtherKeys request. There SHALL be no user-facing setting to enable it: a config file that still carries the removed `terminal_kitty_keyboard` key SHALL be loaded with that key ignored. Kitty advertising returns only together with a real Kitty key encoder (FRI-503, option A).
 
-#### Scenario: Default does not answer the Kitty query
-- **WHEN** a session with no config override receives `ESC[?u`
+#### Scenario: Session does not answer the Kitty query
+- **WHEN** a session created through the normal app path receives `ESC[?u`
 - **THEN** the terminal SHALL write nothing to the PTY
 
-#### Scenario: Opt-in answers the Kitty query
-- **WHEN** a session with `terminal_kitty_keyboard = true` receives `ESC[?u`
-- **THEN** the terminal SHALL write `ESC[?0u` to the PTY
+#### Scenario: Legacy config key is ignored
+- **GIVEN** a saved config containing `"terminal_kitty_keyboard": true`
+- **WHEN** the config is loaded and a session is created through the normal app path
+- **THEN** the load SHALL succeed
+- **AND** the session SHALL NOT answer `ESC[?u`

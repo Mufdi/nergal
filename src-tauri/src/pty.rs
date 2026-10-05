@@ -119,20 +119,27 @@ pub struct PtyManager {
     /// session_id -> prompt to submit at spawn (deep link `session/new`).
     /// Consumed once by `start_claude_session` when it builds the spawn command.
     pending_prompts: Mutex<HashMap<String, String>>,
-    /// Value of `config.terminal_kitty_keyboard` at startup. Applied to every
-    /// new `TerminalSession`; runtime toggling would require restarting PTYs.
-    kitty_keyboard: bool,
+}
+
+/// Single construction point for app sessions. Kitty keyboard stays
+/// unadvertised until the encoder implements it (FRI-503); advertising it
+/// without an encoder makes Claude Code skip modifyOtherKeys.
+fn build_terminal_session(
+    cols: u16,
+    rows: u16,
+    writer: Box<dyn std::io::Write + Send>,
+) -> TerminalSession {
+    TerminalSession::with_config(cols, rows, writer, NergalTerminalConfig::new())
 }
 
 impl PtyManager {
-    pub fn new(kitty_keyboard: bool) -> Self {
+    pub fn new() -> Self {
         Self {
             instances: Mutex::new(HashMap::new()),
             session_ptys: Mutex::new(HashMap::new()),
             aux_shells: Mutex::new(HashMap::new()),
             aux_line_trackers: Mutex::new(HashMap::new()),
             pending_prompts: Mutex::new(HashMap::new()),
-            kitty_keyboard,
         }
     }
 
@@ -448,12 +455,10 @@ fn spawn_pty(
     let raw_writer = pair.master.take_writer().map_err(|e| e.to_string())?;
     let writer: SharedWriter = Arc::new(Mutex::new(raw_writer));
 
-    let config = NergalTerminalConfig::new().with_kitty_keyboard(state.kitty_keyboard);
-    let session = TerminalSession::with_config(
+    let session = build_terminal_session(
         cols,
         rows,
         Box::new(SharedWriterAdapter(Arc::clone(&writer))),
-        config,
     );
     let mut terminal = TerminalHandle::new(session);
     terminal.spawn_emitter(session_id.to_owned());
@@ -2138,16 +2143,40 @@ mod tests {
 
     #[test]
     fn paste_to_session_rejects_aux_shells() {
-        let mgr = PtyManager::new(false);
+        let mgr = PtyManager::new();
         let err = paste_to_session(&mgr, "sess::shell", "x", false).unwrap_err();
         assert!(err.contains("agent sessions only"));
+    }
+
+    #[test]
+    fn app_session_ignores_legacy_kitty_keyboard_config_key() {
+        #[derive(Clone)]
+        struct Sink(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Sink {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut json = serde_json::to_value(crate::config::Config::default()).unwrap();
+        json["terminal_kitty_keyboard"] = serde_json::Value::Bool(true);
+        let _cfg: crate::config::Config = serde_json::from_value(json).unwrap();
+
+        let sink = Sink(Arc::new(Mutex::new(Vec::new())));
+        let mut session = build_terminal_session(80, 24, Box::new(sink.clone()));
+        session.advance_bytes(b"\x1b[?u");
+        assert!(sink.0.lock().unwrap().is_empty());
     }
 
     // ── session_ptys reserve/release (fix-pty-double-spawn) ──
 
     #[test]
     fn reserve_session_pty_second_caller_gets_first_callers_id_without_spawning() {
-        let mgr = PtyManager::new(false);
+        let mgr = PtyManager::new();
         let first = reserve_session_pty(&mgr, "sess-1", "pty-a").unwrap();
         assert_eq!(first, None, "first caller reserves the slot");
 
@@ -2166,7 +2195,7 @@ mod tests {
 
     #[test]
     fn release_session_pty_clears_reservation_so_next_call_succeeds_cleanly() {
-        let mgr = PtyManager::new(false);
+        let mgr = PtyManager::new();
         reserve_session_pty(&mgr, "sess-2", "pty-a").unwrap();
 
         release_session_pty(&mgr, "sess-2");
@@ -2210,13 +2239,8 @@ mod tests {
 
         let raw_writer = pair.master.take_writer().unwrap();
         let writer: SharedWriter = Arc::new(Mutex::new(raw_writer));
-        let config = NergalTerminalConfig::new().with_kitty_keyboard(false);
-        let session = TerminalSession::with_config(
-            80,
-            24,
-            Box::new(SharedWriterAdapter(Arc::clone(&writer))),
-            config,
-        );
+        let session =
+            build_terminal_session(80, 24, Box::new(SharedWriterAdapter(Arc::clone(&writer))));
         let terminal = TerminalHandle::new(session);
 
         let instance = PtyInstance {
@@ -2231,7 +2255,7 @@ mod tests {
 
     #[test]
     fn confirm_reservation_returns_intact_when_reservation_holds() {
-        let mgr = PtyManager::new(false);
+        let mgr = PtyManager::new();
         reserve_session_pty(&mgr, "sess-4", "pty-y").unwrap();
 
         let result = confirm_reservation_or_extract(&mgr, "sess-4", "pty-y").unwrap();
@@ -2243,7 +2267,7 @@ mod tests {
 
     #[test]
     fn confirm_reservation_reports_gone_even_when_kill_already_extracted() {
-        let mgr = PtyManager::new(false);
+        let mgr = PtyManager::new();
         reserve_session_pty(&mgr, "sess-6", "pty-w").unwrap();
 
         // Kill arrived AFTER spawn_pty's insert: the normal kill path removed
@@ -2261,7 +2285,7 @@ mod tests {
 
     #[test]
     fn confirm_reservation_extracts_and_reaps_orphan_when_killed_mid_spawn() {
-        let mgr = PtyManager::new(false);
+        let mgr = PtyManager::new();
         reserve_session_pty(&mgr, "sess-5", "pty-z").unwrap();
 
         // Simulate spawn_pty's own insert landing after a concurrent

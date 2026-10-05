@@ -119,10 +119,6 @@ pub struct Config {
     pub default_shell: String,
     pub theme_mode: String,
     pub preferred_editor: String,
-    /// Answer the Kitty keyboard query. Default off: the encoder has no kitty
-    /// support, so advertising it stops Claude Code from using modifyOtherKeys.
-    #[serde(default)]
-    pub terminal_kitty_keyboard: bool,
     /// Render the radial dot-grid texture behind the left sidebar islands.
     /// Disable for plainer surfaces in mono / brutalist themes.
     #[serde(default)]
@@ -401,7 +397,6 @@ impl Default for Config {
             default_shell: default_shell(),
             theme_mode: "v1-dark".into(),
             preferred_editor: String::new(),
-            terminal_kitty_keyboard: false,
             sidebar_dot_grid: false,
             panel_focus_pulse: false,
             panel_glow: false,
@@ -547,6 +542,18 @@ mod tests {
         let cfg = Config::load_from(&path);
         assert_eq!(cfg.default_agent.as_deref(), Some("codex"));
         assert!(!path.with_extension("json.corrupt").exists());
+    }
+
+    #[test]
+    fn legacy_terminal_kitty_keyboard_key_is_ignored() {
+        let mut json = serde_json::to_value(Config::default()).unwrap();
+        json["terminal_kitty_keyboard"] = serde_json::Value::Bool(true);
+        let cfg: Config = serde_json::from_value(json).unwrap();
+        assert!(
+            !serde_json::to_string(&cfg)
+                .unwrap()
+                .contains("terminal_kitty_keyboard")
+        );
     }
 
     #[test]

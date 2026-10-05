@@ -1,8 +1,10 @@
 ## 1. Characterize wezterm-term answers (FRI-502 matrix evidence)
 
-- [x] 1.1 Test: kitty query `CSI ? u` answered with `CSI ? 0 u`, silent when kitty is off (`src-tauri/src/terminal/session.rs`)
+- [x] 1.1 Test: kitty query `CSI ? u` is never answered (`src-tauri/src/terminal/session.rs`)
 - [x] 1.2 Test: DA1, XTVERSION, OSC 11 and DECRQM 2026 answers (`src-tauri/src/terminal/session.rs`)
-- [x] 1.3 Test: current key encoding truth for the MODIFIED "Input encoding via wezterm" requirement (`kitty_flags_do_not_change_ctrl_enter_yet`, `modify_other_keys_distinguishes_ctrl_enter`)
+- [x] 1.3 Test: current key encoding truth for the MODIFIED "Input encoding via wezterm" requirement (`kitty_flags_push_does_not_change_ctrl_enter`, `modify_other_keys_distinguishes_ctrl_enter`)
+- [x] 1.4 Test (Red): a session built through `build_terminal_session` does not answer `CSI ? u` and a config JSON with `terminal_kitty_keyboard: true` still deserializes (`app_session_ignores_legacy_kitty_keyboard_config_key`, `legacy_terminal_kitty_keyboard_key_is_ignored`)
+- [x] 1.5 Remove `terminal_kitty_keyboard` from `Config`, `PtyManager`, `NergalTerminalConfig::with_kitty_keyboard`, the frontend config type/defaults and the Settings Terminal section (`src-tauri/src/config.rs`, `src-tauri/src/pty.rs`, `src-tauri/src/terminal/config.rs`, `src/components/settings/SettingsPanel.tsx`)
 
 ## 2. Focus reporting
 

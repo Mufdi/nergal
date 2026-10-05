@@ -402,7 +402,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_deep_link::init())
-        .manage(PtyManager::new(config.terminal_kitty_keyboard))
+        .manage(PtyManager::new())
         .manage(db.clone())
         .manage(plan_state.clone())
         .manage(agent_state.clone())

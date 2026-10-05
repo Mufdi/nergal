@@ -8,17 +8,16 @@ use wezterm_term::color::ColorPalette;
 /// - **CSI-u key encoding off** (same as wezterm default). Turning it on
 ///   wraps Ctrl+Backspace in `\x1b[8;5u`, which breaks the shells' default
 ///   `^H -> backward-kill-word` binding.
-/// - **Kitty keyboard protocol off by default**. termwiz never encodes
+/// - **Kitty keyboard protocol always off**. termwiz never encodes
 ///   kitty keys, so answering `CSI ? u` makes apps believe kitty is active
 ///   and skip their modifyOtherKeys request, leaving Ctrl+Enter as `\r`.
 ///   Staying silent makes Claude Code fall back to modifyOtherKeys, which
-///   termwiz does encode (`CSI 27;5;13~`). Opt-in via config.
+///   termwiz does encode (`CSI 27;5;13~`).
 /// - Scrollback defaults to 10_000 rows (wezterm default is 3_500; nergal
 ///   sessions tend to produce longer tool-output transcripts).
 #[derive(Debug)]
 pub struct NergalTerminalConfig {
     generation: AtomicUsize,
-    kitty_keyboard: bool,
     scrollback_size: usize,
     color_palette: ColorPalette,
 }
@@ -27,16 +26,9 @@ impl NergalTerminalConfig {
     pub fn new() -> Self {
         Self {
             generation: AtomicUsize::new(0),
-            kitty_keyboard: false,
             scrollback_size: 10_000,
             color_palette: ColorPalette::default(),
         }
-    }
-
-    pub fn with_kitty_keyboard(mut self, enabled: bool) -> Self {
-        self.kitty_keyboard = enabled;
-        self.generation.fetch_add(1, Ordering::Relaxed);
-        self
     }
 
     pub fn with_scrollback(mut self, rows: usize) -> Self {
@@ -66,7 +58,7 @@ impl TerminalConfiguration for NergalTerminalConfig {
     }
 
     fn enable_kitty_keyboard(&self) -> bool {
-        self.kitty_keyboard
+        false
     }
 
     fn color_palette(&self) -> ColorPalette {

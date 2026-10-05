@@ -220,6 +220,15 @@ pub struct Config {
     /// it on every write from Settings → Keymap.
     #[serde(default = "default_keyboard_ownership")]
     pub keyboard_ownership: String,
+    /// Linear panel: workflow state names hidden by the state filter.
+    /// Frontend-owned. Lives here and not in localStorage because WebKitGTK
+    /// flushes localStorage lazily, so a quit right after a change lost it.
+    #[serde(default)]
+    pub linear_hidden_states: Vec<String>,
+    /// Linear panel: folded group and sub-group keys. Frontend-owned, same
+    /// reason as `linear_hidden_states`.
+    #[serde(default)]
+    pub linear_collapsed_groups: Vec<String>,
 }
 
 /// Tuning + kill-switch for agent-spawned worktree sessions. All fields have
@@ -415,6 +424,8 @@ impl Default for Config {
             cross_session: CrossSessionConfig::default(),
             agent_spawned_worktrees: AgentWorktreesConfig::default(),
             keyboard_ownership: default_keyboard_ownership(),
+            linear_hidden_states: Vec::new(),
+            linear_collapsed_groups: Vec::new(),
         }
     }
 }
@@ -518,6 +529,29 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn linear_panel_prefs_round_trip() {
+        let base = Config {
+            linear_hidden_states: vec!["done".into(), "canceled".into()],
+            linear_collapsed_groups: vec!["state:abc".into(), "p1|state:todo".into()],
+            ..Config::default()
+        };
+        let back: Config = serde_json::from_str(&serde_json::to_string(&base).unwrap()).unwrap();
+        assert_eq!(back.linear_hidden_states, base.linear_hidden_states);
+        assert_eq!(back.linear_collapsed_groups, base.linear_collapsed_groups);
+    }
+
+    #[test]
+    fn config_without_linear_panel_prefs_defaults_to_empty() {
+        let mut v = serde_json::to_value(Config::default()).unwrap();
+        let obj = v.as_object_mut().unwrap();
+        obj.remove("linear_hidden_states");
+        obj.remove("linear_collapsed_groups");
+        let back: Config = serde_json::from_value(v).unwrap();
+        assert!(back.linear_hidden_states.is_empty());
+        assert!(back.linear_collapsed_groups.is_empty());
+    }
 
     #[test]
     fn defaults_have_no_agent_preferences() {

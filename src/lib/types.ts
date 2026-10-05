@@ -68,6 +68,10 @@ export interface Config {
   /// the dispatcher's read defaults to "nergal" before Phase 5 lands the
   /// Rust-side default.
   keyboard_ownership?: "nergal" | "agent";
+  /// Linear panel state filter and folded groups (frontend-owned; written
+  /// per-key by the panel, not through the Settings Save button).
+  linear_hidden_states?: string[];
+  linear_collapsed_groups?: string[];
 }
 
 export interface CrossSessionConfig {

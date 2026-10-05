@@ -21,9 +21,10 @@
 
 ## 4. Persist folded groups
 
-- [x] 4.1 Test (Red): `src/stores/hiddenStatesStorage.test.ts` covers `loadStringSet`/`saveStringSet` (round-trip under a key, hidden states and collapsed groups do not collide, garbage and throwing storage)
-- [x] 4.2 Generalize `hiddenStatesStorage.ts` to keyed `loadStringSet`/`saveStringSet` (the hidden-state helpers stay as wrappers) and add `COLLAPSED_GROUPS_KEY`
-- [x] 4.3 Add `linearCollapsedGroupsAtom` to `src/stores/linear.ts` and use it for `collapsed` in `LinearPanel.tsx`
+- [x] 4.1 Test (Red): `src/stores/linearPrefs.test.ts` (`boundRecent`) and `src/stores/linearPrefsAtoms.test.ts` (atoms read config, write only the changed key through `save_config`, bound collapsed groups); Rust `config.rs` round-trip and legacy-config tests, `config_misc.rs` partial-overlay merge test
+- [x] 4.2 Add `linear_hidden_states` and `linear_collapsed_groups` to `Config` (`src-tauri/src/config.rs`, `#[serde(default)]`, frontend-owned) and to the frontend `Config` type and `configAtom` defaults
+- [x] 4.3 Back `linearHiddenStatesAtom` and `linearCollapsedGroupsAtom` in `src/stores/linear.ts` with `configAtom`, persisting per key via `save_config`; remove the localStorage helpers (`hiddenStatesStorage.ts`) because WebKitGTK flushes localStorage lazily and lost writes on quit
+- [x] 4.4 Bound the collapsed set to 500 keys with `boundRecent` in `src/stores/linearPrefs.ts`
 
 ## 5. Verification
 

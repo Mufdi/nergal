@@ -5,13 +5,8 @@ import { confirm as swalConfirm } from "@/lib/confirm";
 import { escapeHtml } from "@/lib/escapeHtml";
 import { focusZoneAtom } from "./shortcuts";
 import { toastsAtom } from "./toast";
-import {
-  COLLAPSED_GROUPS_KEY,
-  loadHiddenStates,
-  loadStringSet,
-  saveHiddenStates,
-  saveStringSet,
-} from "./hiddenStatesStorage";
+import { configAtom } from "./config";
+import { MAX_COLLAPSED_GROUPS, boundRecent } from "./linearPrefs";
 import {
   activeSessionIdAtom,
   activeWorkspaceAtom,
@@ -256,28 +251,36 @@ export const linearDetailIssueIdAtom = atom<string | null>(null);
 /// Active label filter: set of label ids. Empty set = no filter.
 export const linearLabelFilterAtom = atom<ReadonlySet<string>>(new Set<string>());
 
+type SetUpdate = ReadonlySet<string> | ((prev: ReadonlySet<string>) => ReadonlySet<string>);
+type LinearPrefKey = "linear_hidden_states" | "linear_collapsed_groups";
+
+// Only the changed key goes to `save_config` (merged over the on-disk config):
+// sending the whole configAtom would also persist unsaved Settings drafts.
+function linearPrefAtom(key: LinearPrefKey, max?: number) {
+  return atom(
+    (get) => new Set(get(configAtom)[key] ?? []),
+    (get, set, update: SetUpdate) => {
+      const prev = new Set(get(configAtom)[key] ?? []);
+      const resolved = typeof update === "function" ? update(prev) : update;
+      const next = max === undefined ? resolved : boundRecent(resolved, max);
+      const values = [...next];
+      set(configAtom, (cfg) => ({ ...cfg, [key]: values }));
+      invoke("save_config", { config: { [key]: values } }).catch((err) =>
+        console.error(`[linear] persisting ${key} failed:`, err),
+      );
+    },
+  );
+}
+
 /// Hidden workflow states, keyed by normalized state name so one choice spans
 /// every team that shares the name.
-const hiddenStatesBaseAtom = atom<ReadonlySet<string>>(loadHiddenStates());
-export const linearHiddenStatesAtom = atom(
-  (get) => get(hiddenStatesBaseAtom),
-  (get, set, update: ReadonlySet<string> | ((prev: ReadonlySet<string>) => ReadonlySet<string>)) => {
-    const next = typeof update === "function" ? update(get(hiddenStatesBaseAtom)) : update;
-    set(hiddenStatesBaseAtom, next);
-    saveHiddenStates(next);
-  },
-);
+export const linearHiddenStatesAtom = linearPrefAtom("linear_hidden_states");
 
 /// Folded group and sub-group keys (`state:<id>`, `<section>|state:<name>`, ...);
 /// all derive from server ids/names so they stay valid across restarts.
-const collapsedGroupsBaseAtom = atom<ReadonlySet<string>>(loadStringSet(COLLAPSED_GROUPS_KEY));
-export const linearCollapsedGroupsAtom = atom(
-  (get) => get(collapsedGroupsBaseAtom),
-  (get, set, update: ReadonlySet<string> | ((prev: ReadonlySet<string>) => ReadonlySet<string>)) => {
-    const next = typeof update === "function" ? update(get(collapsedGroupsBaseAtom)) : update;
-    set(collapsedGroupsBaseAtom, next);
-    saveStringSet(COLLAPSED_GROUPS_KEY, next);
-  },
+export const linearCollapsedGroupsAtom = linearPrefAtom(
+  "linear_collapsed_groups",
+  MAX_COLLAPSED_GROUPS,
 );
 
 /// Active project filter — null = "Todos" (group all by project); a project id = filter + group by state.

@@ -2,7 +2,7 @@
 
 ### Requirement: State visibility dropdown
 
-The panel header SHALL offer a multi-select dropdown that shows or hides issues by workflow state name. The dropdown SHALL list the state names present in the current pool (team scope, assigned-to-me and show-completed applied), deduplicated case-insensitively and ordered by the name-first state rank. Hiding a state SHALL remove its issues from the list and from sub-issue trees; the filter SHALL be computed locally over the mirror without a Linear call. The selection SHALL be keyed by state name, so one choice applies to every team that has a state with that name. The selection SHALL persist in the shared store and in local storage, so it survives closing the panel and restarting the app. Each option SHALL render as a full-width row that matches a State-tab group header: the state glyph followed by the state name, with no trailing check mark. A hidden state SHALL render dimmed. The dropdown SHALL follow the keyboard mechanics of the label filter popover: Arrow Down on the trigger opens it and focuses the first option, Arrow Up and Arrow Down move between options, Space and Enter toggle the focused option without closing, and Escape closes it and returns focus to the trigger.
+The panel header SHALL offer a multi-select dropdown that shows or hides issues by workflow state name. The dropdown SHALL list the state names present in the current pool (team scope, assigned-to-me and show-completed applied), deduplicated case-insensitively and ordered by the name-first state rank. Hiding a state SHALL remove its issues from the list and from sub-issue trees; the filter SHALL be computed locally over the mirror without a Linear call. The selection SHALL be keyed by state name, so one choice applies to every team that has a state with that name. The selection SHALL persist in Nergal's config (`linear_hidden_states`), not in browser storage, so it survives closing the panel and restarting the app even when the app quits right after the change. Each option SHALL render as a full-width row that matches a State-tab group header: the state glyph followed by the state name, with no trailing check mark. A hidden state SHALL render dimmed. The dropdown SHALL follow the keyboard mechanics of the label filter popover: Arrow Down on the trigger opens it and focuses the first option, Arrow Up and Arrow Down move between options, Space and Enter toggle the focused option without closing, and Escape closes it and returns focus to the trigger.
 
 #### Scenario: Hiding a state removes its issues
 - **WHEN** the user hides "Done" in the dropdown
@@ -47,7 +47,15 @@ In the Project, Assignee and Cycle views, each section SHALL split its issues in
 
 ### Requirement: Folded groups persist across restarts
 
-The set of folded group and sub-group keys SHALL persist locally. Group keys SHALL derive only from server ids and state names, so a stored key keeps matching the same group after a restart.
+The set of folded group and sub-group keys SHALL persist in Nergal's config (`linear_collapsed_groups`), not in browser storage, and SHALL be bounded to the 500 most recently folded keys. A config written before these fields existed SHALL load with both sets empty. Group keys SHALL derive only from server ids and state names, so a stored key keeps matching the same group after a restart.
+
+#### Scenario: Quitting right after folding keeps the fold
+- **WHEN** the user folds a group and quits the app immediately
+- **THEN** `linear_collapsed_groups` in the config file SHALL contain that group key
+
+#### Scenario: Collapsed set is bounded
+- **WHEN** 520 distinct group keys have been folded
+- **THEN** only the 500 most recently folded keys SHALL be persisted
 
 #### Scenario: Folded state group survives a restart
 - **WHEN** the user folds the "Done" group in the State view and restarts the app

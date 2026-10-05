@@ -26,4 +26,6 @@ export const configAtom = atom<Config>({
   keymap_overrides: {},
   mcp_server_enabled: false,
   keyboard_ownership: "nergal",
+  linear_hidden_states: [],
+  linear_collapsed_groups: [],
 });

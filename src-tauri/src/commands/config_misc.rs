@@ -136,6 +136,23 @@ mod config_merge_tests {
     }
 
     #[test]
+    fn partial_linear_prefs_payload_keeps_other_keys() {
+        let on_disk = Config {
+            theme_mode: "v1-light".into(),
+            linear_hidden_states: vec!["done".into()],
+            ..Config::default()
+        };
+        let frontend = serde_json::json!({ "linear_collapsed_groups": ["state:abc"] });
+        let merged = merge_config_over(on_disk, &frontend).unwrap();
+        assert_eq!(
+            merged.linear_collapsed_groups,
+            vec!["state:abc".to_string()]
+        );
+        assert_eq!(merged.linear_hidden_states, vec!["done".to_string()]);
+        assert_eq!(merged.theme_mode, "v1-light");
+    }
+
+    #[test]
     fn non_object_payload_is_rejected() {
         assert!(merge_config_over(Config::default(), &serde_json::json!("nope")).is_err());
     }

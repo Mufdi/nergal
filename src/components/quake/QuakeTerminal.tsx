@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { Plus, X } from "lucide-react";
 import {
@@ -19,9 +19,9 @@ import { configAtom } from "@/stores/config";
 import { useFocusPulse } from "@/hooks/useFocusPulse";
 import { appStore } from "@/stores/jotaiStore";
 import * as terminalService from "@/components/terminal/terminalService";
+import { SLIDE_MS, initialSlidePhase, isSliding, nextSlidePhase, slideClass } from "./quakeSlide";
 
 const MIN_HEIGHT = 150;
-const SLIDE_MS = 200;
 
 /// Full-width drop-down overlay holding the active session's auxiliary
 /// shells. Toggled with Ctrl+}; stays visible when focus leaves so logs
@@ -39,36 +39,48 @@ export function QuakeTerminal() {
   const setFocusZone = useSetAtom(focusZoneAtom);
   const focusPulseEnabled = useAtomValue(configAtom).panel_focus_pulse;
   const hostRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
 
   const isFocused = focusZone === "quake";
   const pulsing = useFocusPulse(isFocused);
   const showAccent = focusPulseEnabled ? pulsing : isFocused;
   const borderClass = showAccent ? "border-primary" : "border-border";
 
-  // Slide via CSS keyframes (globals.css): enter runs on mount, `closing`
-  // swaps to the exit keyframe and `rendered` outlives `open` by SLIDE_MS
-  // so it can play. Session switches snap (no exit over the new session).
-  // Known limit: WebKitGTK's compositor skips the exit when the overlay
-  // sits over a repainting subtree (an open spec panel with a live-refresh
-  // watcher); the enter always plays. Accepted — every transform/layout
-  // path hits the same compositor quirk.
-  const [rendered, setRendered] = useState(open);
-  const closing = rendered && !open;
-  const prevSidRef = useRef(activeSessionId);
+  const [phase, setPhase] = useState(() => initialSlidePhase(open));
+  const [prev, setPrev] = useState({ open, sessionId: activeSessionId });
+  if (prev.open !== open || prev.sessionId !== activeSessionId) {
+    setPrev({ open, sessionId: activeSessionId });
+    setPhase(
+      nextSlidePhase(
+        phase,
+        open
+          ? { type: "open" }
+          : { type: "close", sessionSwitch: prev.sessionId !== activeSessionId },
+      ),
+    );
+  }
+
+  // WebKitGTK may never fire animationend for a slide it skipped.
   useEffect(() => {
-    const switched = prevSidRef.current !== activeSessionId;
-    prevSidRef.current = activeSessionId;
-    if (open) {
-      setRendered(true);
-      return;
-    }
-    if (switched) {
-      setRendered(false);
-      return;
-    }
-    const t = setTimeout(() => setRendered(false), SLIDE_MS);
+    if (!isSliding(phase)) return;
+    const t = setTimeout(
+      () => setPhase((p) => nextSlidePhase(p, { type: "animationEnd" })),
+      SLIDE_MS * 2,
+    );
     return () => clearTimeout(t);
-  }, [open, activeSessionId]);
+  }, [phase]);
+
+  // visibility:hidden does not blur an already-focused element, and a stale
+  // "quake" zone routes raw leader keys to the hidden shell
+  // (useKeyboardShortcuts picks the region from the atom).
+  useEffect(() => {
+    if (open) return;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && overlayRef.current?.contains(active)) {
+      active.blur();
+    }
+    if (appStore.get(focusZoneAtom) === "quake") setFocusZone("terminal");
+  }, [open, setFocusZone]);
 
   const shells = activeSessionId ? (shellsMap[activeSessionId] ?? []) : [];
   const activeShellId = activeSessionId
@@ -76,25 +88,27 @@ export function QuakeTerminal() {
     : null;
   const cwd = activeSession?.worktree_path ?? activeWorkspace?.repo_path ?? null;
 
-  // Keyed on `rendered`, not `open`: when `open` flips the component is
-  // still returning null (rendered trails by one render), so hostRef would
-  // be captured as null and every shell spawn would no-op against a missing
-  // host. activeSessionId is a dep because the component also renders null
-  // without one — the host div detaches and must re-register on restore.
-  useEffect(() => {
-    if (!rendered) return;
+  // Layout effects so the host exists before the show effect on mount, and
+  // the shell containers' display swap lands before the slide's first frame.
+  useLayoutEffect(() => {
     terminalService.setHost(hostRef.current, "quake");
     return () => terminalService.setHost(null, "quake");
-  }, [rendered, activeSessionId]);
+  }, []);
 
-  useEffect(() => {
-    if (!open || !rendered || !activeSessionId || !cwd) return;
+  useLayoutEffect(() => {
+    if (!open || !activeSessionId || !cwd) return;
     if (!activeShellId) {
       terminalService.hideAll("quake");
       return;
     }
     const shell = shells.find((sh) => sh.shellId === activeShellId);
     if (!shell) return;
+    // Reopening onto the shell that is already active: its grid stayed
+    // painted while hidden, so re-fit + repaint would only cost slide frames.
+    if (terminalService.isActiveShell(activeSessionId, shell.shellId)) {
+      if (appStore.get(focusZoneAtom) === "quake") terminalService.focusActive("quake");
+      return;
+    }
     // The component never auto-runs: environment shells auto-run from the
     // session-creation flow; everything spawned here (re-open, ad-hoc) is
     // pre-fill-only. spawn_aux_shell is idempotent for already-live shells.
@@ -113,10 +127,9 @@ export function QuakeTerminal() {
           terminalService.focusActive("quake");
         }
       });
-  }, [open, rendered, activeSessionId, activeShellId, shells, cwd]);
+  }, [open, activeSessionId, activeShellId, shells, cwd]);
 
   useEffect(() => {
-    if (!rendered) return;
     const host = hostRef.current;
     if (!host) return;
     const observer = new ResizeObserver(() => {
@@ -124,14 +137,20 @@ export function QuakeTerminal() {
     });
     observer.observe(host);
     return () => observer.disconnect();
-  }, [rendered]);
-
-  if (!rendered || !activeSessionId) return null;
+  }, []);
 
   function selectShell(shellId: string) {
     if (!activeSessionId) return;
     setActiveShellMap((prev) => ({ ...prev, [activeSessionId]: shellId }));
     setFocusZone("quake");
+  }
+
+  function closeShell(shellId: string) {
+    if (activeSessionId) removeShell(activeSessionId, shellId, true);
+  }
+
+  function newShell() {
+    if (activeSessionId) addAdHocShell(activeSessionId);
   }
 
   function startResize(e: React.MouseEvent) {
@@ -153,14 +172,19 @@ export function QuakeTerminal() {
 
   return (
     <div
+      ref={overlayRef}
       data-focus-zone="quake"
       style={{ height }}
       // z-[45]: above the BrowserHost iframe (portaled to body at z-40),
       // below dialogs/zen (z-50+).
-      className={`${closing ? "quake-exit" : "quake-enter"} absolute inset-x-2 top-0 z-[45] flex flex-col overflow-hidden rounded-b-lg border-2 ${borderClass} bg-terminal-surface shadow-xl nergal-panel-focus`}
+      className={`quake-overlay ${slideClass(phase)} absolute inset-x-2 top-0 z-[45] flex flex-col overflow-hidden rounded-b-lg border-2 ${borderClass} bg-terminal-surface shadow-xl nergal-panel-focus`}
       onMouseDown={() => {
         setFocusZone("quake");
         terminalService.focusActive("quake");
+      }}
+      onAnimationEnd={(e) => {
+        if (e.target !== e.currentTarget) return;
+        setPhase((p) => nextSlidePhase(p, { type: "animationEnd" }));
       }}
     >
       <div className="flex h-7 shrink-0 items-center gap-1 border-b border-border/60 bg-card/60 px-2">
@@ -180,7 +204,7 @@ export function QuakeTerminal() {
                 aria-label={`Close ${sh.label}`}
                 onClick={(e) => {
                   e.stopPropagation();
-                  removeShell(activeSessionId, sh.shellId, true);
+                  closeShell(sh.shellId);
                 }}
                 className="opacity-0 transition-opacity group-hover:opacity-100"
               >
@@ -191,7 +215,7 @@ export function QuakeTerminal() {
         })}
         <button
           aria-label="New shell"
-          onClick={() => addAdHocShell(activeSessionId)}
+          onClick={newShell}
           className="flex size-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground"
         >
           <Plus className="size-3.5" />
@@ -206,7 +230,7 @@ export function QuakeTerminal() {
           <div className="flex h-full flex-col items-center justify-center gap-2 select-none">
             <span className="text-[11px] text-muted-foreground/60">No shells</span>
             <button
-              onClick={() => addAdHocShell(activeSessionId)}
+              onClick={newShell}
               className="rounded border border-border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             >
               New shell

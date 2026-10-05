@@ -1,0 +1,74 @@
+import { describe, expect, it } from "vitest";
+import {
+  SLIDE_MS,
+  initialSlidePhase,
+  isSliding,
+  nextSlidePhase,
+  slideClass,
+  type SlidePhase,
+} from "./quakeSlide";
+
+const open = { type: "open" } as const;
+const close = { type: "close", sessionSwitch: false } as const;
+const switchClose = { type: "close", sessionSwitch: true } as const;
+const end = { type: "animationEnd" } as const;
+
+describe("quake slide phases", () => {
+  it("starts hidden when closed and shown when already open", () => {
+    expect(initialSlidePhase(false)).toBe("hidden");
+    expect(initialSlidePhase(true)).toBe("shown");
+  });
+
+  it("slides in on open and settles on animation end", () => {
+    const entering = nextSlidePhase("hidden", open);
+    expect(entering).toBe("entering");
+    expect(nextSlidePhase(entering, end)).toBe("shown");
+  });
+
+  it("slides out on close and hides only on animation end", () => {
+    const exiting = nextSlidePhase("shown", close);
+    expect(exiting).toBe("exiting");
+    expect(nextSlidePhase(exiting, end)).toBe("hidden");
+  });
+
+  it("closing mid-enter switches to the exit slide", () => {
+    expect(nextSlidePhase("entering", close)).toBe("exiting");
+  });
+
+  it("reopening mid-exit slides back in", () => {
+    expect(nextSlidePhase("exiting", open)).toBe("entering");
+  });
+
+  it("a session switch snaps to hidden from every phase", () => {
+    const phases: SlidePhase[] = ["hidden", "entering", "shown", "exiting"];
+    for (const phase of phases) {
+      expect(nextSlidePhase(phase, switchClose)).toBe("hidden");
+    }
+  });
+
+  it("ignores events that do not apply to the current phase", () => {
+    expect(nextSlidePhase("shown", open)).toBe("shown");
+    expect(nextSlidePhase("entering", open)).toBe("entering");
+    expect(nextSlidePhase("hidden", close)).toBe("hidden");
+    expect(nextSlidePhase("hidden", end)).toBe("hidden");
+    expect(nextSlidePhase("shown", end)).toBe("shown");
+  });
+
+  it("maps each phase to its CSS class", () => {
+    expect(slideClass("hidden")).toBe("quake-hidden");
+    expect(slideClass("entering")).toBe("quake-enter");
+    expect(slideClass("shown")).toBe("quake-shown");
+    expect(slideClass("exiting")).toBe("quake-exit");
+  });
+
+  it("flags only the animated phases as sliding", () => {
+    expect(isSliding("entering")).toBe(true);
+    expect(isSliding("exiting")).toBe(true);
+    expect(isSliding("hidden")).toBe(false);
+    expect(isSliding("shown")).toBe(false);
+  });
+
+  it("keeps the slide duration in sync with the CSS keyframes", () => {
+    expect(SLIDE_MS).toBe(200);
+  });
+});

@@ -472,6 +472,11 @@ export function focusActive(region: Region = "center"): void {
   if (entry) focusCanvas(entry);
 }
 
+export function isActiveShell(sessionId: string, shellId: string): boolean {
+  const key = `${sessionId}::${shellId}`;
+  return activeIds.get("quake") === key && entries.has(key);
+}
+
 export async function writeToSession(sessionId: string, text: string): Promise<void> {
   await invoke("write_to_session_pty", { sessionId, data: text });
 }

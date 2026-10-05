@@ -1,0 +1,47 @@
+{
+  "tier": "M",
+  "tier_source": "user-stated",
+  "ceremony": "standard",
+  "risk_tier": "low",
+  "files_estimate": 5,
+  "tags": ["improvement", "tech-debt", "ui"],
+  "visibility": "private",
+  "spec_target": "quake-terminal",
+  "tracker": {
+    "system": "linear",
+    "id": "FRI-475",
+    "url": "https://linear.app/redribbon/issue/FRI-475/quake-terminal-como-overlay-siempre-montado",
+    "pending": []
+  },
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "iprev_rounds": 0,
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": ["compile", "test", "lint", "placeholders"],
+    "per_phase_models": {
+      "design": "opus",
+      "implementation": "opus",
+      "test_authoring": "opus",
+      "adversarial": "opus"
+    }
+  },
+  "interview_answers": {
+    "source": "delegated run, no user interview; the caller supplied the jank evidence and constraints"
+  },
+  "validation": "validated",
+  "events": [
+    {
+      "ts": "2026-10-05",
+      "type": "validated",
+      "note": "openspec validate --strict passed. iprev not run (files_estimate=5 trigger); the opus adversarial review covered the plan and the diff instead.",
+      "proposal_hash": "3f8703a5a51af425bacfa19b3ec24c58199513189c5c5595c98f43afa7544121"
+    },
+    {
+      "ts": "2026-10-05",
+      "type": "adversarial-review",
+      "note": "5 Important, 5 Nit. Important 1, 2, 5 fixed in code/docs; 3 and 4 recorded as design risks."
+    }
+  ],
+  "interview_ts": "2026-10-05"
+}

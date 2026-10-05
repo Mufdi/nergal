@@ -432,6 +432,7 @@ pub fn run() {
             pty::terminal_scroll,
             pty::terminal_scroll_to_bottom,
             pty::terminal_mouse_button,
+            pty::terminal_focus,
             pty::terminal_paste,
             pty::terminal_clipboard_write,
             // Config commands

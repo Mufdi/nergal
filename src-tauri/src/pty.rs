@@ -18,11 +18,22 @@ type SharedWriter = Arc<Mutex<Box<dyn Write + Send>>>;
 struct SharedWriterAdapter(SharedWriter);
 
 impl Write for SharedWriterAdapter {
+    // wezterm's writer thread calls `write` once per message and ignores a
+    // short count, so a partial write would truncate a mouse report or an
+    // answerback mid-sequence. `write_all` under one lock also keeps the
+    // message contiguous against the command-layer writers. Any error ends
+    // that thread for good, so it is logged: keys, mouse reports and
+    // answerbacks would otherwise stop reaching the PTY with no trace.
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0
+        let result = self
+            .0
             .lock()
-            .map_err(|e| std::io::Error::other(e.to_string()))?
-            .write(buf)
+            .map_err(|e| std::io::Error::other(e.to_string()))
+            .and_then(|mut w| w.write_all(buf));
+        if let Err(err) = &result {
+            tracing::warn!(error = %err, "terminal PTY write failed; wezterm writer thread stops");
+        }
+        result.map(|()| buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
@@ -1508,12 +1519,26 @@ pub fn terminal_paste(
 /// not a submit.
 fn write_bracketed(w: &mut dyn Write, text: &str, submit: bool) -> std::io::Result<()> {
     w.write_all(b"\x1b[200~")?;
-    w.write_all(text.as_bytes())?;
+    w.write_all(strip_paste_markers(text).as_bytes())?;
     w.write_all(b"\x1b[201~")?;
     if submit {
         w.write_all(b"\r")?;
     }
     w.flush()
+}
+
+/// A body carrying its own `ESC[201~` would end the paste early and let the
+/// rest run as typed input. Repeats until stable because removing one marker
+/// can join its neighbours into a new one (`ESC[20` + marker + `1~`).
+fn strip_paste_markers(text: &str) -> String {
+    const MARKERS: [&str; 4] = ["\x1b[200~", "\x1b[201~", "\u{9b}200~", "\u{9b}201~"];
+    let mut out = text.to_owned();
+    while MARKERS.iter().any(|m| out.contains(m)) {
+        for marker in MARKERS {
+            out = out.replace(marker, "");
+        }
+    }
+    out
 }
 
 /// Paste `text` into an AGENT session's PTY wrapped in bracketed-paste
@@ -1798,6 +1823,31 @@ pub fn terminal_mouse_button(
     Ok(())
 }
 
+#[tauri::command]
+pub fn terminal_focus(
+    state: State<'_, PtyManager>,
+    session_id: String,
+    focused: bool,
+) -> Result<(), String> {
+    let pty_id = {
+        let session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
+        session_ptys
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| "no PTY for session".to_string())?
+    };
+
+    let instances = state.instances.lock().map_err(|e| e.to_string())?;
+    let instance = instances.get(&pty_id).ok_or("PTY instance not found")?;
+    instance
+        .terminal
+        .session
+        .lock()
+        .map_err(|e| e.to_string())?
+        .focus_changed(focused);
+    Ok(())
+}
+
 /// Snap the scrollback viewport back to the live bottom. Idempotent.
 #[tauri::command]
 pub fn terminal_scroll_to_bottom(
@@ -1991,6 +2041,82 @@ mod tests {
         let block = build_reinject_block("note", "a\u{009b}201~b");
         assert!(!block.contains('\u{009b}'));
         assert!(block.contains("a201~b"));
+    }
+
+    #[test]
+    fn bracketed_paste_strips_embedded_markers_from_the_body() {
+        let mut out: Vec<u8> = Vec::new();
+        write_bracketed(&mut out, "safe\x1b[201~rm -rf ~\r", false).unwrap();
+        assert_eq!(out, b"\x1b[200~saferm -rf ~\r\x1b[201~");
+    }
+
+    #[test]
+    fn bracketed_paste_strips_markers_rebuilt_by_a_first_pass() {
+        let mut out: Vec<u8> = Vec::new();
+        write_bracketed(&mut out, "a\x1b[20\x1b[201~1~b", false).unwrap();
+        assert_eq!(out, b"\x1b[200~ab\x1b[201~");
+    }
+
+    #[test]
+    fn bracketed_paste_strips_c1_marker_forms() {
+        let mut out: Vec<u8> = Vec::new();
+        write_bracketed(&mut out, "a\u{9b}201~b\u{9b}200~c", false).unwrap();
+        assert_eq!(out, "\x1b[200~abc\x1b[201~".as_bytes());
+    }
+
+    #[test]
+    fn bracketed_paste_keeps_other_escape_sequences() {
+        let mut out: Vec<u8> = Vec::new();
+        write_bracketed(&mut out, "\x1b[31mred\x1b[0m", false).unwrap();
+        assert_eq!(out, b"\x1b[200~\x1b[31mred\x1b[0m\x1b[201~");
+    }
+
+    struct ShortWriter {
+        max: usize,
+        out: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Write for ShortWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            let n = buf.len().min(self.max);
+            self.out.lock().unwrap().extend_from_slice(&buf[..n]);
+            Ok(n)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct BrokenWriter;
+
+    impl Write for BrokenWriter {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn shared_writer_adapter_propagates_write_errors() {
+        let shared: SharedWriter = Arc::new(Mutex::new(Box::new(BrokenWriter)));
+        let mut adapter = SharedWriterAdapter(shared);
+        let err = adapter.write(b"\x1b[I").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn shared_writer_adapter_never_splits_a_report_on_short_writes() {
+        let out = Arc::new(Mutex::new(Vec::new()));
+        let shared: SharedWriter = Arc::new(Mutex::new(Box::new(ShortWriter {
+            max: 3,
+            out: Arc::clone(&out),
+        })));
+        let mut adapter = SharedWriterAdapter(shared);
+        let report = b"\x1b[<2;5;3m";
+        assert_eq!(adapter.write(report).unwrap(), report.len());
+        assert_eq!(*out.lock().unwrap(), report);
     }
 
     #[test]

@@ -1,0 +1,64 @@
+{
+  "tier": "M",
+  "tier_source": "user-stated",
+  "ceremony": "standard",
+  "risk_tier": "low",
+  "files_estimate": 5,
+  "tags": [
+    "bugfix",
+    "terminal",
+    "research"
+  ],
+  "visibility": "public",
+  "spec_target": "terminal-wezterm",
+  "tracker": {
+    "system": "linear",
+    "id": "FRI-502",
+    "url": "https://linear.app/redribbon/issue/FRI-502/verificar-el-terminal-canvas-contra-los-cambios-de-terminal-de-claude",
+    "pending": []
+  },
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "iprev_rounds": 1,
+    "reviewer_mode": "single-sequential",
+    "reviewer_escalation": null,
+    "gates_phases_run": [
+      "compile",
+      "test",
+      "lint",
+      "placeholders"
+    ],
+    "per_phase_models": {
+      "design": "opus",
+      "implementation": "opus",
+      "validation": "opus",
+      "exploration": "opus",
+      "test_authoring": "opus",
+      "review": "opus",
+      "adversarial": "opus"
+    }
+  },
+  "interview_answers": {
+    "source": "Delegated agent run; no user interview possible. Linear estimate M used as tier. Discovery skipped: the issue lists the 7 points and acceptance criteria."
+  },
+  "validation": "validated",
+  "events": [
+    {
+      "ts": "2026-10-05T19:37:00Z",
+      "type": "linear-state",
+      "reason": "FRI-502 moved to In Progress"
+    },
+    {
+      "ts": "2026-10-05T19:46:00Z",
+      "type": "scope-split",
+      "reason": "Kitty encoding (FRI-503), OSC colors (FRI-504), DEC 2026 emitter (FRI-505) split out: contract change or >20% scope"
+    },
+    {
+      "ts": "2026-10-05T20:05:00Z",
+      "type": "post-hoc-iprev",
+      "verdict": "APPROVED",
+      "note": "plan review ran after build at orchestrator request; findings fixed in follow-up commit"
+    }
+  ],
+  "interview_ts": "2026-10-05T19:35:00Z"
+}

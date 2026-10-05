@@ -21,6 +21,7 @@ import { appStore } from "@/stores/jotaiStore";
 import { toastsAtom } from "@/stores/toast";
 
 import { FontAtlas, isWideCell, measureFont, type FontMetrics } from "./fontAtlas";
+import { auxButtonToForward, auxPress, auxRelease, type AuxHeld } from "./mouseButtons";
 import { TERM_FONT, TERM_THEME, refreshTermTheme, rgbaToCss } from "./theme";
 
 const ATTACH_ATTEMPTS = 20;
@@ -98,6 +99,7 @@ interface Entry {
   /// sub-line deltas; without accumulation each one rounds to 0 and the
   /// scroll loses most of its travel.
   wheelAccum: number;
+  auxHeld: AuxHeld | null;
 }
 
 // ── Module state ──
@@ -111,6 +113,24 @@ const activeIds = new Map<Region, string | null>();
 // The atlas keys glyphs by `(ch, fg, …)` so a later color flip lazily
 // rasterizes new variants — no manual cache invalidation needed.
 refreshTermTheme();
+
+// Window-level so a middle/right release off the pane still reaches the app
+// (CC pastes on release); one listener for all terminals instead of one per
+// press, which leaked when a release never arrived.
+if (typeof window !== "undefined") {
+  window.addEventListener("mouseup", (e) => {
+    for (const entry of entries.values()) {
+      const { held, release } = auxRelease(entry.auxHeld, e.button);
+      entry.auxHeld = held;
+      if (!release) continue;
+      const cell = mouseToCell(entry, e) ?? release;
+      sendMouseButton(entry, release.aux, "release", cell.col, cell.row, e);
+    }
+  });
+  window.addEventListener("blur", () => {
+    for (const entry of entries.values()) entry.auxHeld = null;
+  });
+}
 
 if (typeof document !== "undefined") {
   // Re-theme every live terminal: repoint the surface color and, when the
@@ -175,6 +195,11 @@ if (typeof document !== "undefined") {
 
 export function setHost(el: HTMLDivElement | null, region: Region = "center"): void {
   hosts.set(region, el);
+  if (!el) {
+    for (const entry of entries.values()) {
+      if (entry.region === region) reportUnfocused(entry);
+    }
+  }
   // React can re-mount the host (e.g. after a layout swap). Existing
   // session containers were attached to the previous host — re-parent them
   // to the new one so the terminal remains visible.
@@ -192,7 +217,9 @@ export function setHost(el: HTMLDivElement | null, region: Region = "center"): v
 export function hideAll(region: Region = "center"): void {
   activeIds.set(region, null);
   for (const [, entry] of entries) {
-    if (entry.region === region) entry.container.style.display = "none";
+    if (entry.region !== region) continue;
+    if (entry.container.style.display !== "none") reportUnfocused(entry);
+    entry.container.style.display = "none";
   }
 }
 
@@ -263,6 +290,7 @@ async function showTerminal(opts: {
 
   for (const [id, entry] of entries) {
     if (entry.region !== region) continue;
+    if (id !== key && entry.container.style.display !== "none") reportUnfocused(entry);
     entry.container.style.display = id === key ? "flex" : "none";
   }
 
@@ -381,6 +409,7 @@ async function showTerminal(opts: {
       composing: false,
       lastComposed: null,
       wheelAccum: 0,
+      auxHeld: null,
     };
 
     wireInput(entry);
@@ -418,6 +447,9 @@ async function showTerminal(opts: {
     paintAll(entry);
     entries.set(key, entry);
     if (focus) focusCanvas(entry);
+    // wezterm starts out "focused"; align it so an app enabling DECSET 1004
+    // later in an unfocused terminal gets `CSI I` on the first real focus.
+    sendFocus(entry, hasInputFocus(entry));
 
     if (activeIds.get(region) !== key) {
       container.style.display = "none";
@@ -525,6 +557,29 @@ function sendMouseButton(
   }).catch((err: unknown) => console.error("terminal_mouse_button failed", err));
 }
 
+const FOCUS_SETTLE_MS = 100;
+
+// A window-level blur leaves the textarea as document.activeElement, so
+// activeElement alone would miss it.
+function hasInputFocus(entry: Entry): boolean {
+  return document.hasFocus() && document.activeElement === entry.textarea;
+}
+
+// wezterm synthesizes a release for every held button on focus loss, so the
+// held slot must be dropped with it or the real release would act twice.
+function sendFocus(entry: Entry, focused: boolean): void {
+  if (!focused) entry.auxHeld = null;
+  invoke("terminal_focus", { sessionId: entry.sessionId, focused }).catch(
+    (err: unknown) => console.error("terminal_focus failed", err),
+  );
+}
+
+// WebKitGTK does not reliably fire `blur` when a focused element's container
+// goes display:none, so hiding a terminal reports the focus loss itself.
+function reportUnfocused(entry: Entry): void {
+  sendFocus(entry, false);
+}
+
 // ── Private: input wiring ──
 
 function wireInput(entry: Entry): void {
@@ -608,9 +663,32 @@ function wireInput(entry: Entry): void {
     }
   });
 
+  // The app only receives these when it enabled DECSET 1004; wezterm drops
+  // them otherwise. The blur is re-checked after a beat because the auto-copy
+  // toast steals focus for a frame and the textarea takes it back, which
+  // would otherwise flap `CSI O`/`CSI I` to the app on every copy.
+  entry.textarea.addEventListener("focus", () => sendFocus(entry, true));
+  entry.textarea.addEventListener("blur", () => {
+    setTimeout(() => {
+      if (entries.get(entry.sessionId) !== entry) return;
+      if (!hasInputFocus(entry)) sendFocus(entry, false);
+    }, FOCUS_SETTLE_MS);
+  });
+
   // ── Mouse: lives on the visible canvas ──
 
   entry.canvas.addEventListener("mousedown", (e) => {
+    const aux = auxButtonToForward(e.button, entry.isAltScreen);
+    if (aux) {
+      e.preventDefault();
+      focusCanvas(entry);
+      const cell = mouseToCell(entry, e);
+      if (!cell) return;
+      const { held, sendPress } = auxPress(entry.auxHeld, { button: e.button, aux, ...cell });
+      entry.auxHeld = held;
+      if (sendPress) sendMouseButton(entry, aux, "press", cell.col, cell.row, e);
+      return;
+    }
     if (e.button !== 0) return;
     e.preventDefault();
     focusCanvas(entry);
@@ -706,6 +784,7 @@ function wireInput(entry: Entry): void {
   }
 
   entry.canvas.addEventListener("mouseup", (e) => {
+    if (e.button !== 0) return;
     if (!entry.isDragging) {
       if (entry.isAltScreen && e.button === 0) {
         const cell = mouseToCell(entry, e);
@@ -715,6 +794,12 @@ function wireInput(entry: Entry): void {
     }
     entry.isDragging = false;
     finishSelectionDrag(e);
+  });
+
+  // A right click forwarded to the TUI (paste on release) must not also open
+  // the webview's native context menu over it.
+  entry.canvas.addEventListener("contextmenu", (e) => {
+    if (entry.isAltScreen) e.preventDefault();
   });
 
   // A drag can end with the pointer off the canvas (selecting to the bottom/right

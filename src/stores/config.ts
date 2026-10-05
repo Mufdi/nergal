@@ -16,7 +16,7 @@ export const configAtom = atom<Config>({
   default_shell: "/bin/bash",
   theme_mode: DEFAULT_THEME_ID,
   preferred_editor: "",
-  terminal_kitty_keyboard: true,
+  terminal_kitty_keyboard: false,
   sidebar_dot_grid: false,
   panel_focus_pulse: false,
   panel_glow: false,

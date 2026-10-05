@@ -623,29 +623,6 @@ mod tests {
     }
 
     #[test]
-    fn shift_enter_distinguishes_when_csi_u_fallback_active() {
-        // With Kitty disabled, CSI-u kicks in as the fallback and now
-        // Shift+Enter encodes as a distinct CSI-u sequence.
-        let w = CapturedWriter::new();
-        let cfg = NergalTerminalConfig::new().with_kitty_keyboard(false);
-        let mut s = TerminalSession::with_config(80, 24, Box::new(w.clone()), cfg);
-
-        s.key_down(&evt("Enter", "Enter")).unwrap();
-        let plain = w.drain();
-        w.clear();
-
-        let mut shift_enter = evt("Enter", "Enter");
-        shift_enter.shift = true;
-        s.key_down(&shift_enter).unwrap();
-        let with_shift = w.drain();
-
-        assert_ne!(
-            plain, with_shift,
-            "csi_u fallback: Shift+Enter distinct from Enter"
-        );
-    }
-
-    #[test]
     fn plain_printable_is_written_verbatim() {
         let (mut s, w) = session_with_writer(80, 24);
         s.key_down(&evt("KeyA", "a")).unwrap();
@@ -664,11 +641,6 @@ mod tests {
         assert_ne!(bytes, b"a");
         assert!(!bytes.is_empty());
     }
-
-    // Note: the old `kitty_disabled_falls_back_to_csi_u` test became
-    // redundant once Ctrl+Backspace started remapping unconditionally to
-    // Ctrl+W. The CSI-u fallback is now exercised by
-    // `shift_enter_distinguishes_when_csi_u_fallback_active`.
 
     #[test]
     fn scroll_offset_clamped_when_no_history_available() {
@@ -771,27 +743,29 @@ mod tests {
     }
 
     #[test]
-    fn kitty_keyboard_query_is_answered() {
-        assert_eq!(answer_to(b"\x1b[?u"), b"\x1b[?0u");
+    fn kitty_keyboard_query_is_not_answered_by_default() {
+        assert!(answer_to(b"\x1b[?u").is_empty());
     }
 
     #[test]
-    fn kitty_keyboard_query_is_silent_when_kitty_disabled() {
+    fn kitty_keyboard_query_is_answered_when_opted_in() {
         let w = CapturedWriter::new();
-        let cfg = NergalTerminalConfig::new().with_kitty_keyboard(false);
+        let cfg = NergalTerminalConfig::new().with_kitty_keyboard(true);
         let mut s = TerminalSession::with_config(80, 24, Box::new(w.clone()), cfg);
         s.advance_bytes(b"\x1b[?u");
-        assert!(w.drain().is_empty());
+        assert_eq!(w.drain(), b"\x1b[?0u");
     }
 
     #[test]
-    fn kitty_flags_do_not_change_ctrl_enter_yet() {
-        let (mut s, w) = session_with_writer(80, 24);
+    fn kitty_flags_do_not_change_ctrl_enter_even_when_opted_in() {
+        let w = CapturedWriter::new();
+        let cfg = NergalTerminalConfig::new().with_kitty_keyboard(true);
+        let mut s = TerminalSession::with_config(80, 24, Box::new(w.clone()), cfg);
         s.advance_bytes(b"\x1b[>1u");
         let mut ctrl_enter = evt("Enter", "Enter");
         ctrl_enter.ctrl = true;
         s.key_down(&ctrl_enter).unwrap();
-        assert_eq!(w.drain(), b"\r", "FRI-503: kitty encoding missing");
+        assert_eq!(w.drain(), b"\r", "termwiz has no kitty encoder");
     }
 
     #[test]
@@ -802,6 +776,15 @@ mod tests {
         ctrl_enter.ctrl = true;
         s.key_down(&ctrl_enter).unwrap();
         assert_eq!(w.drain(), b"\x1b[27;5;13~");
+    }
+
+    #[test]
+    fn default_mode_keeps_ctrl_enter_legacy_until_modify_other_keys() {
+        let (mut s, w) = session_with_writer(80, 24);
+        let mut ctrl_enter = evt("Enter", "Enter");
+        ctrl_enter.ctrl = true;
+        s.key_down(&ctrl_enter).unwrap();
+        assert_eq!(w.drain(), b"\r");
     }
 
     #[test]

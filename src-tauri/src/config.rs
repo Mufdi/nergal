@@ -3,10 +3,6 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-fn default_true() -> bool {
-    true
-}
-
 fn default_keyboard_ownership() -> String {
     "nergal".to_string()
 }
@@ -123,10 +119,9 @@ pub struct Config {
     pub default_shell: String,
     pub theme_mode: String,
     pub preferred_editor: String,
-    /// Enable Kitty keyboard protocol on the wezterm-term emulator. When
-    /// enabled (default), Ctrl+Backspace, Shift+Enter, Alt+letter, etc.
-    /// encode unambiguously so shells can bind them distinctively.
-    #[serde(default = "default_true")]
+    /// Answer the Kitty keyboard query. Default off: the encoder has no kitty
+    /// support, so advertising it stops Claude Code from using modifyOtherKeys.
+    #[serde(default)]
     pub terminal_kitty_keyboard: bool,
     /// Render the radial dot-grid texture behind the left sidebar islands.
     /// Disable for plainer surfaces in mono / brutalist themes.
@@ -406,7 +401,7 @@ impl Default for Config {
             default_shell: default_shell(),
             theme_mode: "v1-dark".into(),
             preferred_editor: String::new(),
-            terminal_kitty_keyboard: true,
+            terminal_kitty_keyboard: false,
             sidebar_dot_grid: false,
             panel_focus_pulse: false,
             panel_glow: false,

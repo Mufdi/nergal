@@ -1368,7 +1368,7 @@ const TOGGLE_FIELDS: { key: BooleanConfigKey; label: string; help: string }[] = 
   {
     key: "terminal_kitty_keyboard",
     label: "Kitty keyboard protocol",
-    help: "Distinct encoding for Ctrl+Backspace, Shift+Enter, Alt+letter.",
+    help: "Advertise kitty keyboard support. Off lets Claude Code use modifyOtherKeys, which the terminal encodes (Ctrl+Enter).",
   },
 ];
 

@@ -5,16 +5,14 @@ use wezterm_term::color::ColorPalette;
 /// nergal's [`TerminalConfiguration`] implementation.
 ///
 /// Differences from the wezterm-term defaults:
-/// - **CSI-u key encoding off** (same as wezterm default). We previously
-///   turned it on globally hoping to disambiguate Ctrl+Backspace, but that
-///   wraps the byte in `\x1b[8;5u` which breaks the shells' default
-///   `^H → backward-kill-word` binding. Leaving CSI-u off means
-///   Ctrl+Backspace emits plain `\x08` (BS) and Backspace emits `\x7f`
-///   (DEL) — same as Ghostty, and every mainstream shell already binds
-///   them correctly.
-/// - **Kitty keyboard protocol on by default**. Applications can still
-///   opt into the richer protocol via `CSI > 1 u`; Kitty supersedes CSI-u
-///   when the running app enables it.
+/// - **CSI-u key encoding off** (same as wezterm default). Turning it on
+///   wraps Ctrl+Backspace in `\x1b[8;5u`, which breaks the shells' default
+///   `^H -> backward-kill-word` binding.
+/// - **Kitty keyboard protocol off by default**. termwiz never encodes
+///   kitty keys, so answering `CSI ? u` makes apps believe kitty is active
+///   and skip their modifyOtherKeys request, leaving Ctrl+Enter as `\r`.
+///   Staying silent makes Claude Code fall back to modifyOtherKeys, which
+///   termwiz does encode (`CSI 27;5;13~`). Opt-in via config.
 /// - Scrollback defaults to 10_000 rows (wezterm default is 3_500; nergal
 ///   sessions tend to produce longer tool-output transcripts).
 #[derive(Debug)]
@@ -29,7 +27,7 @@ impl NergalTerminalConfig {
     pub fn new() -> Self {
         Self {
             generation: AtomicUsize::new(0),
-            kitty_keyboard: true,
+            kitty_keyboard: false,
             scrollback_size: 10_000,
             color_palette: ColorPalette::default(),
         }
@@ -64,11 +62,7 @@ impl TerminalConfiguration for NergalTerminalConfig {
     }
 
     fn enable_csi_u_key_encoding(&self) -> bool {
-        // Default off so Ctrl+Backspace emits plain `\x08` (BS) and shells
-        // with the default `^H → backward-kill-word` binding Just Work.
-        // When the user disables Kitty, we flip CSI-u on instead so keys
-        // stay disambiguated via the CSI-u fallback.
-        !self.kitty_keyboard
+        false
     }
 
     fn enable_kitty_keyboard(&self) -> bool {

@@ -94,7 +94,7 @@ The PTY writer that wezterm-term uses SHALL write each message completely, retry
 ## MODIFIED Requirements
 
 ### Requirement: Input encoding via wezterm
-User key events SHALL be encoded to terminal bytes using `wezterm-term`'s input encoder in the backend. The frontend SHALL NOT encode key events locally. The encoder SHALL produce legacy xterm bytes, or CSI-u bytes when Kitty is disabled in config. Kitty-protocol key encoding is NOT provided today, even after the app pushes Kitty flags; FRI-503 owns that gap. Two keys are remapped before the encoder: Ctrl+Backspace becomes Ctrl+W, and unmodified Shift+Enter becomes LF.
+User key events SHALL be encoded to terminal bytes using `wezterm-term`'s input encoder in the backend. The frontend SHALL NOT encode key events locally. The encoder SHALL produce legacy xterm bytes, switching to modifyOtherKeys bytes when the app requests them with `CSI > 4;2 m`. CSI-u key encoding SHALL stay off. Kitty-protocol key encoding is NOT provided, which is why Kitty is not advertised by default. Two keys are remapped before the encoder: Ctrl+Backspace becomes Ctrl+W, and unmodified Shift+Enter becomes LF.
 
 #### Scenario: Key event sent to backend
 - **WHEN** the user presses a key while the terminal has focus
@@ -115,7 +115,35 @@ User key events SHALL be encoded to terminal bytes using `wezterm-term`'s input 
 - **WHEN** the user presses Shift+Enter with no other modifier
 - **THEN** the PTY SHALL receive `0x0a` (LF), not `0x0d`
 
-#### Scenario: Kitty flags do not change key encoding yet
-- **GIVEN** Kitty is enabled in config and the app wrote `ESC[>1u`
+#### Scenario: Ctrl+Enter is legacy until modifyOtherKeys is requested
+- **GIVEN** the default config and no modifyOtherKeys request
 - **WHEN** the user presses Ctrl+Enter
-- **THEN** the PTY SHALL receive `0x0d`, the same byte as Enter (gap tracked in FRI-503)
+- **THEN** the PTY SHALL receive `0x0d`
+
+#### Scenario: modifyOtherKeys distinguishes Ctrl+Enter
+- **GIVEN** the app wrote `ESC[>4;2m`
+- **WHEN** the user presses Ctrl+Enter
+- **THEN** the PTY SHALL receive `ESC[27;5;13~`
+
+#### Scenario: Opted-in Kitty flags still do not change key encoding
+- **GIVEN** `terminal_kitty_keyboard = true` and the app wrote `ESC[>1u`
+- **WHEN** the user presses Ctrl+Enter
+- **THEN** the PTY SHALL receive `0x0d`
+
+## RENAMED Requirements
+
+- FROM: `### Requirement: Kitty keyboard protocol enabled by default`
+- TO: `### Requirement: Kitty keyboard protocol not advertised by default`
+
+## MODIFIED Requirements
+
+### Requirement: Kitty keyboard protocol not advertised by default
+The terminal SHALL NOT answer the Kitty keyboard query by default, because the key encoder cannot produce Kitty sequences. Advertising Kitty makes apps skip their modifyOtherKeys request. The terminal SHALL answer the query only when `terminal_kitty_keyboard = true`.
+
+#### Scenario: Default does not answer the Kitty query
+- **WHEN** a session with no config override receives `ESC[?u`
+- **THEN** the terminal SHALL write nothing to the PTY
+
+#### Scenario: Opt-in answers the Kitty query
+- **WHEN** a session with `terminal_kitty_keyboard = true` receives `ESC[?u`
+- **THEN** the terminal SHALL write `ESC[?0u` to the PTY

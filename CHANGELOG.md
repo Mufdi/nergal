@@ -1,5 +1,62 @@
 # Changelog
 
+## v0.5.0 — 2026-10-04
+
+**macOS and Windows builds are experimental and won't be updated.** This release attaches macOS (Apple Silicon, `.dmg`) and Windows (`.msi` / `-setup.exe`) bundles for the first time. They build and pass CI, but they were never validated on a real machine, ship unsigned (Gatekeeper / SmartScreen will warn), and won't receive fixes: Nergal's development stays focused on Linux and Claude Code.
+
+### Breaking
+
+* Changed the keyboard model to a leader key: `Ctrl+Space` (rebindable) opens a which-key overlay that lists every continuation, and most app shortcuts moved behind it. `leader .` forwards the next keystroke straight to the agent, so any combo Nergal shadows (for example Claude Code's `Ctrl+Enter` send-now) stays reachable. A new `keyboard_ownership` setting lets the agent keep its native bindings while the terminal has focus
+
+### Added
+
+* Added per-workspace default pinned notes: pick Obsidian notes once and every new session in that workspace starts with them pinned, shown with a pin badge in the sidebar
+* Added a vault-note chip picker with workspace-scoped search for pinning notes
+* Added keyboard navigation across Settings: `Alt+←/→` between the menu and the form, `↑/↓` through sections, collapsible categories with search, and scroll that follows the cursor
+* Added a redesigned cross-session panel: a two-sided chat with a color per sender and delivered/seen states
+* Added background tasks and scheduled crons to the Activities drawer
+* Added four read-only tools to the `nergal` MCP server (list and read ClickUp/Linear tasks, a session's PR status, its git status), and exposed each session's bound task or issue and pinned notes in the session directory
+* Added a per-workspace plans directory override
+* Added a native provider-status popover for Claude and OpenAI incidents instead of opening an external browser
+* Added the real Bash command to Activities entries, instead of just "Bash"
+* Added auto-loading of images in Linear issue descriptions
+* Added a confirmation before a `nergal://` deep link spawns an agent session
+
+### Changed
+
+* Changed the `nergal` MCP server to say plainly that it only works in sessions launched by Nergal, instead of reporting itself as down when Claude Code runs in a plain terminal
+* Changed status popovers to be mutually exclusive and to close when another surface takes over
+
+### Fixed
+
+* Fixed the app freezing after many hours of use with several active sessions: terminal output now reaches each terminal over its own channel instead of an app-wide event
+* Fixed the Tasks panel staying empty on newer Claude models (Opus 5, Sonnet 5, Fable), where Claude Code stopped offering its todo tools by default
+* Fixed `Alt+F4` not closing the window when the interface was frozen
+* Fixed relaunching Nergal while it was already open silently turning off the Claude Code hooks (plan review, ask-user, activity)
+* Fixed zombie processes piling up from desktop notifications and other background commands
+* Fixed deleting a session or workspace silently leaving its worktree on disk when it contained files owned by another user (for example from Docker); Nergal now shows the path and how to remove it
+* Fixed pending deletions being lost when Nergal closed during the undo window
+* Fixed deleting a workspace leaving its session branches behind
+* Fixed slow memory growth from event listeners that outlived their panels and caches without a size limit
+* Fixed focus not returning to the terminal prompt after closing modals, popovers, the status mini-panels, or a send-as-prompt from a task or issue detail
+* Fixed confirm dialogs highlighting Cancel while Enter confirmed
+* Fixed the leader key not closing an open popover or status panel first
+* Fixed the first open of a ClickUp task from the panel not focusing the detail
+* Fixed keyboard focus getting trapped in the ClickUp/Linear panel after switching sessions
+* Fixed binding a task or issue from the panel sending only the current prompt, and a closed-out task or issue staying pinned
+* Fixed the plan panel reopening when switching sessions
+* Fixed Claude Code tasks not being marked done, and added force-delete and delete-all for leftover tasks
+* Fixed an idle session not picking up incoming cross-session messages, and the unread icon persisting while the thread was open
+* Fixed Linear issues not syncing when no team was selected, and the Linear list in the MCP server coming back empty
+* Fixed not being able to set a Linear issue to "Duplicate"
+* Fixed the status bar collapsing the model name across rows and truncating the wrong element
+* Fixed keyboard scroll in the ports popover, the scratchpad covering the shortcuts popover, and the "Provider status: Claude" palette entry doing nothing
+* Fixed library styles being blocked after adding a Content-Security-Policy to the main window
+* Fixed missing tooltips on long task/issue names and on the delete-all-tasks button, and a stale merge icon in the top bar
+* Fixed Obsidian finder search inside subdirectories, file-picker names overflowing, and pinned-note and session-close toasts missing from the notification history
+* Fixed an unreadable config being silently replaced with defaults; it's now backed up first
+* Improved robustness under the hood: database migrations apply transactionally, session data is cleaned up on delete, PTY children are reaped, concurrent squash-merges no longer collide, and the database lock is never held during git, network or file I/O
+
 ## v0.4.1 — 2026-06-25
 
 * Added a "done" badge and a "Mark undone" toggle to the ClickUp task view

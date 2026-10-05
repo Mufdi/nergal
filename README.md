@@ -147,11 +147,11 @@ pnpm tauri build
 # Bundles in src-tauri/target/release/bundle/{deb,rpm,appimage}/
 ```
 
-The agent CLI's hook entries point at the `nergal` binary (the internal name — see *Status* below). After the production build above, install the bundled `.deb` and let Nergal write the hook config — do NOT `cargo install --path src-tauri`, which shadows `/usr/bin/nergal` for the GNOME launcher and skips frontend bundling:
+The agent CLI's hook entries point at the `nergal` binary (the internal name — see *Status* below). After the production build above, install the bundled `.deb`; on first launch Nergal offers to write the hook config (or run `nergal hook setup`) — do NOT `cargo install --path src-tauri`, which shadows `/usr/bin/nergal` for the GNOME launcher and skips frontend bundling:
 
 ```bash
 sudo dpkg -i src-tauri/target/release/bundle/deb/Nergal_*.deb
-nergal setup
+nergal hook setup
 ```
 
 ## Scope

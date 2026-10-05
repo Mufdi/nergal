@@ -483,6 +483,7 @@ pub fn run() {
             // Setup command
             commands::send_notification,
             commands::setup_hooks,
+            commands::setup_hooks_status,
             // Cost command
             commands::get_cost,
             // Workspace commands

@@ -1,51 +1,44 @@
 # Tasks — setup-wizard
 
-> **DOC-ONLY for now** (user constraint 2026-06-29): these tasks are specified but NOT to be implemented until the Windows port walk closes. Walk findings related to onboarding may be folded in before implementation starts. Read `implementation.md` first — it carries the verified line-refs + execution order.
+> Read `implementation.md` first: it carries the verified line refs, both analog components and the execution order. Scope re-validated 2026-10-05 (minimal hooks dialog only).
 
-## 1. Backend — config flag
+## 1. Backend — hooks status probe
 
-- [ ] 1.1 Add `onboarding_completed: bool` (`#[serde(default)]`) to `Config` after `mcp_server_enabled` (`src-tauri/src/config.rs:115` struct) + default `false` in the `Default` impl.
-- [ ] 1.2 Confirm it round-trips through `get_config` (`commands.rs:94`) and `save_config` (`commands.rs:118`), and is **NOT** added to `BACKEND_OWNED_CONFIG_KEYS` (`commands.rs:105-112`) — the wizard must be able to write it.
+- [x] 1.1 Test (Red): in `src-tauri/src/setup.rs` tests, write the characterization tests for `apply_setup` (empty map, idempotent second run, `SessionStart` removed, outdated `tool-done` matcher, obsolete hook, `statusLine` absent, user-owned `statusLine`, wrapper form), the new-behavior tests (`"SessionStart": {}` errors naming the event; `hooks_status_at` on a missing dir creates nothing, proven red once against a stub calling `load_settings`), invalid JSON (error, bytes unchanged) and `run_at` idempotency on a temp dir.
+- [x] 1.2 Extract `apply_setup(&mut Map) -> Result<SetupChanges>` and `run_at(&Path)` from `setup::run()` (`setup.rs:155`); `run()` keeps its current output and early-return.
+- [x] 1.3 Make `apply_setup` error on a non-array value under any `hooks` event key, naming the event.
+- [x] 1.4 Share the settings parse step between `load_settings` and the probe; add a side-effect-free read for the probe (no `create_dir_all`).
+- [x] 1.5 Add `HooksStatus { registered, settings_path, binary_on_path }`, `hooks_status_at(&Path)` (`binary_on_path` = no `APPIMAGE` env var and `which::which("nergal")` resolves) and `pub fn hooks_status()`.
 
-## 2. Backend — `setup_status` probe
+## 2. Backend — Tauri commands
 
-- [ ] 2.1 Define `#[derive(Serialize)] struct SetupStatus { hooks_registered: bool, hooks_path: String, agents: Vec<AgentReadiness>, default_agent: Option<String>, shell: String, transcripts_dir: String }` (+ `AgentReadiness { id, installed }`).
-- [ ] 2.2 Extract/locate a `hooks_registered(&settings) -> bool` check shared with `setup::run()` so the wizard and the registrar agree on "registered".
-- [ ] 2.3 `#[tauri::command] pub fn setup_status(...)` assembling: hooks check, `AgentRegistry::scan` (the scan behind `list_available_agents`), `config::resolve_pty_shell`, configured transcripts dir, `default_agent` from config.
-- [ ] 2.4 Register `commands::setup_status,` at `lib.rs:433` under the `// Setup command` comment.
+- [x] 2.1 Add `setup_hooks_status` next to `setup_hooks` in `src-tauri/src/commands/workspaces_sessions.rs:87`, errors as `format!("{e:#}")`.
+- [x] 2.2 Change `setup_hooks` to map errors with `format!("{e:#}")`.
+- [x] 2.3 Register `commands::setup_hooks_status` after `commands::setup_hooks` at `src-tauri/src/lib.rs:485`.
 
-## 3. Frontend — config + setup store
+## 3. Frontend — probe helpers
 
-- [ ] 3.1 Add `onboarding_completed?: boolean` to the `Config` type (`src/lib/types.ts:33-59`) + a `SetupStatus` type mirroring the Rust struct (`types.ts`).
-- [ ] 3.2 Add `onboarding_completed: false` to the `configAtom` default (`src/stores/config.ts:12-29`).
-- [ ] 3.3 Add `wizardOpenAtom`, `setupStatusAtom`, and a derived `setupCriticalMissingAtom` (true only when `onboarding_completed` AND a critical check is false) in `stores/config.ts` or a new `stores/setup.ts`.
-- [ ] 3.4 Add `refreshSetupStatus()` invoking `setup_status` + `list_available_agents`, writing `setupStatusAtom`; subscribe to `agents:detected` for live agent updates.
+- [x] 3.1 Test (Red): `src/lib/hooksSetup.test.ts` for `shouldOpenHooksDialog` (registered true → false, false → true, null → false) and `canConfigure` (`binary_on_path` true/false).
+- [x] 3.2 Add the `HooksStatus` interface to `src/lib/types.ts` and implement `src/lib/hooksSetup.ts`.
 
-## 4. Frontend — wizard overlay
+## 4. Frontend — hooks setup dialog
 
-- [ ] 4.1 `components/setup/SetupWizard.tsx` using `Dialog`/`DialogContent` (match `SettingsPanel` conventions + design tokens + focus zones).
-- [ ] 4.2 Step: hooks — show state; when missing, prominent "Configure" button → `invoke("setup_hooks")` → `refreshSetupStatus()`; show the `~/.claude/settings.json` path being touched.
-- [ ] 4.3 Step: agent presence — reuse `list_available_agents`/`availableAgentsAtom`; if none `installed`, show install guidance (no auto-install).
-- [ ] 4.4 Step: suggestions — default-agent pick (when >1 installed), resolved shell, transcripts dir; non-critical, never gate completion.
-- [ ] 4.5 Step: keyboard ownership — present the `keyboard_ownership` choice (`nergal` default vs `agent`) with a one-line explanation per mode; write via `save_config` (frontend-owned key, defined by the `shortcuts-restructure` change). If that change hasn't landed the config key yet, omit the step at runtime.
-- [ ] 4.6 Step: platform note — render per-OS card from `installSource` (reuse the `AboutSection` fetch pattern, `SettingsPanel.tsx:2042-2058`).
-- [ ] 4.7 Skippable: closing the wizard sets `onboarding_completed=true` via `save_config` (frontend-writable path) and re-reads config.
+- [x] 4.1 Create `src/components/setup/HooksSetupDialog.tsx`: layout from `ProjectBootstrapPrompt`, keyboard from `ConfirmHost` (rAF focus via a `ref` on its own `DialogContent`, capture-phase Enter always consumed, `showCloseButton={false}`, BUG-25 button classes); probe once with a `cancelled` guard; Configure disabled with a `PATH` note when `!canConfigure`; success closes + toast; error stays open with the message inline.
+- [x] 4.2 Mount `<HooksSetupDialog />` after `<WorktreeGate />` in `src/App.tsx:231`.
 
-## 5. Frontend — first-run trigger + mount + re-entry
+## 5. Revision 1: post-review fixes
 
-- [ ] 5.1 First-run: chain off the config-load effect (`App.tsx:81-85`) — after `setConfig(cfg)`, if `cfg.onboarding_completed === false` open the wizard; D8 nicety — if hooks already registered, set the flag true instead of opening.
-- [ ] 5.2 Mount `<SetupWizard/>` as a sibling in `App.tsx:163` (between `<AskUserModal/>` and `<WorktreeGate/>`).
-- [ ] 5.3 Settings re-entry: "Run setup again" button after `DetectedAgentsList` in the `agents` section (~`SettingsPanel.tsx:3115`) → set `wizardOpenAtom=true` + close Settings.
+- [x] 5.1 Test (Red): in `setup_status_tests.rs`, add: `"MyEvent": null` with no Nergal hooks → `apply_setup` Ok, `MyEvent` still null; `run_at` on a file with `"SessionStart": {}` → Err and bytes unchanged; `binary_usable` cases (None → false; `/usr/bin/nergal` with appdir `/tmp/.mount_x` → true; `/tmp/.mount_x/usr/bin/nergal` with that appdir → false; any path with no appdir → true).
+- [x] 5.2 Scope the D7 check to the events in `HOOKS` and `OBSOLETE_HOOKS`.
+- [x] 5.3 Add `binary_usable` and use it in `hooks_status_at`; `#[cfg(windows)]` → `true`.
+- [x] 5.4 Dialog: leave Enter on a focused `<button>` to the button; show the `enter` chip only when Configure is enabled; `role="alert"` on the inline error; "would be added" copy when not configurable.
+- [x] 5.5 Docs: `docs/hooks.md` and `README.md` point to `nergal hook setup` and the launch dialog; replace the obsolete snippet with a pointer to `src-tauri/src/setup.rs` `HOOKS`.
 
-## 6. Frontend — health-gate chip
+## 6. Verification
 
-- [ ] 6.1 New chip (modeled on `IncidentChips`, `StatusBar.tsx:555-609`) rendered in the center cluster (`StatusBar.tsx:204`), driven by `setupCriticalMissingAtom`; click re-opens the wizard; returns `null` when both critical checks pass.
-- [ ] 6.2 Debounce re-probe so the chip only shows on a *confirmed* critical-false, not during in-flight probes.
-
-## 7. Verification
-
-- [ ] 7.1 Full check: `cd src-tauri && cargo clippy -- -D warnings && cargo test && cargo fmt --check && cd .. && npx tsc --noEmit`.
-- [ ] 7.2 Manual walk — fresh state: wizard opens; "Configure" registers hooks; re-probe flips `hooks_registered`; panels receive events.
-- [ ] 7.3 Manual walk — skip with a critical missing: app usable; health chip visible; click re-opens wizard.
-- [ ] 7.4 Manual walk — both critical pass: no chip; wizard does not auto-open next launch (flag persisted); D8 existing-install seeding does not pop the wizard.
-- [ ] 7.5 Manual walk — Settings "Run setup again" re-opens; per-OS note matches `installSource`.
+- [x] 6.1 Full check: `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check && cd .. && npx tsc --noEmit && pnpm test`.
+- [ ] 6.2 Manual walk, fresh state (temp `HOME` without `.claude/`, `nergal` on `PATH`): the dialog opens and shows the path; no file or dir exists before Configure; Enter configures (not Skip); Tab to Skip + Enter skips; the dialog closes with a toast; a new Claude Code session reports to Activities.
+- [ ] 6.3 Manual walk, Skip: Esc closes, no file is written; the next launch shows the dialog again.
+- [ ] 6.4 Manual walk, configured install (the dev machine's real `~/.claude/settings.json`): no dialog at launch.
+- [ ] 6.5 Manual walk, Configure error (temp `HOME` with an empty `.claude/` set to `chmod 555`, no `settings.json`): the dialog stays open showing the permission error; the directory stays empty.
+- [ ] 6.6 Manual walk, AppImage (launch the real `.AppImage` with hooks absent and no other `nergal` on `PATH`): Configure is disabled and the `PATH` note shows; with the `.deb` also installed, Configure is enabled.

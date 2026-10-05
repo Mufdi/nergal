@@ -1,113 +1,147 @@
 ## ADDED Requirements
 
-### Requirement: Readiness status probe
-The system SHALL expose a single backend command that reports Nergal's runtime readiness in one call, so the wizard and the health-gate render from one source of truth.
+### Requirement: Hooks status probe
+The system SHALL expose a read-only backend command that reports the hooks setup state. The response MUST contain:
+- `registered` (bool): `true` exactly when running the hooks setup would leave the settings unchanged. That means every Nergal hook present with its current matcher, no obsolete Nergal hook left, and a `statusLine` key present.
+- `settings_path` (string): absolute path of `~/.claude/settings.json`.
+- `binary_on_path` (bool): on Unix, whether a `nergal` binary resolves on the app's `PATH` outside the running AppImage mount (`$APPDIR`). Unix hooks call bare `nergal hook …`, so they only run when this is `true`. On Windows it is always `true`, because the hooks pin the absolute executable path.
 
-The reported status MUST include, at minimum:
-- `hooks_registered` (bool): whether the `nergal hook …` commands are present in `~/.claude/settings.json`.
-- `agent_detected` (bool) + `agents` (list of `{ id, installed }`): whether at least one agent CLI is on PATH, and the per-agent detection result.
-- `default_agent` (optional id): the configured/resolved default agent when more than one is installed.
-- `shell` (string): the resolved interactive shell path.
-- `transcripts_dir` (string): the configured transcripts directory.
+The probe MUST NOT create, modify or delete any file or directory.
 
-The two **critical** checks are `hooks_registered` and `agent_detected`; the rest are informational.
+#### Scenario: Settings file absent
+- **GIVEN** neither `~/.claude/` nor `~/.claude/settings.json` exists
+- **WHEN** the frontend invokes the probe
+- **THEN** `registered` is `false` and `settings_path` is `"<home>/.claude/settings.json"`
+- **AND** neither the directory nor the file exists afterward
 
-#### Scenario: Probe reports all readiness fields
-- **WHEN** the frontend invokes the readiness command
-- **THEN** the response contains `hooks_registered`, `agent_detected`, the per-agent `agents` list, the resolved `shell`, and `transcripts_dir`
+#### Scenario: All hooks present
+- **GIVEN** the settings file is the output of a completed hooks setup
+- **WHEN** the frontend invokes the probe
+- **THEN** `registered` is `true`
 
-#### Scenario: Hooks present is detected as registered
-- **WHEN** `~/.claude/settings.json` already contains the `nergal hook …` commands
-- **THEN** `hooks_registered` is `true`
+#### Scenario: One hook missing
+- **GIVEN** the settings file is the output of a completed hooks setup with the `SessionStart` entry removed
+- **WHEN** the frontend invokes the probe
+- **THEN** `registered` is `false`
 
-#### Scenario: No agent on PATH is detected as not-ready
-- **WHEN** no supported agent CLI (`claude`/`codex`/…) is resolvable on PATH
-- **THEN** `agent_detected` is `false` and every entry in `agents` has `installed: false`
+#### Scenario: Outdated matcher
+- **GIVEN** the settings file is the output of a completed hooks setup with the `nergal hook send tool-done` entry's matcher set to `"Write|Edit"`
+- **WHEN** the frontend invokes the probe
+- **THEN** `registered` is `false`
 
-### Requirement: First-run wizard trigger
-The system SHALL open the setup wizard automatically on the first launch after install, tracked by a persisted `onboarding_completed` flag in the application config (default `false`). The wizard MUST NOT auto-open again once `onboarding_completed` is `true`.
+#### Scenario: Obsolete hook present
+- **GIVEN** the settings file has every current hook plus one entry listed as obsolete by the setup
+- **WHEN** the frontend invokes the probe
+- **THEN** `registered` is `false`
 
-#### Scenario: Wizard opens on a fresh install
-- **WHEN** the app mounts and `onboarding_completed` is `false`
-- **THEN** the setup wizard overlay opens after the initial config load
+#### Scenario: statusLine key absent
+- **GIVEN** every Nergal hook is present and the root has no `statusLine` key
+- **WHEN** the frontend invokes the probe
+- **THEN** `registered` is `false`
 
-#### Scenario: Wizard does not reopen after completion
-- **WHEN** the app mounts and `onboarding_completed` is `true`
-- **THEN** the setup wizard does not auto-open
+#### Scenario: User-owned statusLine kept
+- **GIVEN** every Nergal hook is present and `statusLine` holds a user command that is not Nergal's
+- **WHEN** the frontend invokes the probe
+- **THEN** `registered` is `true`
 
-#### Scenario: Completing or skipping the wizard persists the flag
-- **WHEN** the user completes or skips the wizard
-- **THEN** `onboarding_completed` is set to `true` and persists across restarts
+#### Scenario: Wrapper-form hooks count as present
+- **GIVEN** every Nergal hook is present in the `nergal-conditional.sh` wrapper form
+- **WHEN** the frontend invokes the probe
+- **THEN** `registered` is `true`
 
-### Requirement: One-click consented hooks configuration
-The wizard SHALL detect the hook registration state and, when hooks are missing, offer a visible action that registers them by invoking the existing idempotent hooks-setup command. The system MUST NOT modify `~/.claude/settings.json` without an explicit user action.
+#### Scenario: Unreadable settings file
+- **GIVEN** the settings file contains invalid JSON
+- **WHEN** the frontend invokes the probe
+- **THEN** the command returns an error and the file bytes are unchanged
 
-#### Scenario: Configure hooks from the wizard
-- **WHEN** `hooks_registered` is `false` and the user activates the "Configure" action
-- **THEN** the system runs the hooks-setup command and re-probes, and `hooks_registered` becomes `true`
+#### Scenario: Malformed Nergal hook event value
+- **GIVEN** the settings file has `"hooks": { "SessionStart": {} }`
+- **WHEN** the frontend invokes the probe or the hooks setup runs
+- **THEN** both return an error naming `SessionStart`, and the file bytes are unchanged
 
-#### Scenario: No silent settings mutation
-- **WHEN** the wizard opens with hooks missing
-- **THEN** `~/.claude/settings.json` is not modified until the user activates the "Configure" action
+#### Scenario: Malformed unrelated hook event value
+- **GIVEN** the settings file has `"hooks": { "MyEvent": null }` and no Nergal hooks
+- **WHEN** the hooks setup runs
+- **THEN** it succeeds, every Nergal hook is added, and `hooks.MyEvent` is still `null`
 
-#### Scenario: Idempotent re-run
-- **WHEN** the user activates "Configure" and hooks are already present
-- **THEN** the command completes without error and does not duplicate hook entries
+#### Scenario: Binary inside the AppImage mount does not count
+- **GIVEN** `APPDIR` is `/tmp/.mount_nergalX` and the only `nergal` on `PATH` is `/tmp/.mount_nergalX/usr/bin/nergal`
+- **WHEN** the probe runs on Unix
+- **THEN** `binary_on_path` is `false`
 
-### Requirement: Non-blocking skippable flow
-The wizard SHALL be dismissible at any time and MUST NOT block use of the application. Pending checks MUST remain reachable after dismissal.
+#### Scenario: Installed binary counts under an AppImage
+- **GIVEN** `APPDIR` is `/tmp/.mount_nergalX` and `nergal` on `PATH` resolves to `/usr/bin/nergal`
+- **WHEN** the probe runs on Unix
+- **THEN** `binary_on_path` is `true`
 
-#### Scenario: User skips with critical checks unresolved
-- **WHEN** the user dismisses the wizard while `hooks_registered` or `agent_detected` is `false`
-- **THEN** the app is fully usable and the pending state remains visible via the health-gate indicator
+### Requirement: Hooks setup dialog at launch
+At app launch the system SHALL invoke the hooks status probe. When the probe returns `registered: false`, the system SHALL open a dialog that names `settings_path` and offers a "Configure" action and a "Skip" action. When the probe returns `registered: true` or an error, the dialog MUST NOT open. Pressing Enter while focus is on the dialog itself SHALL activate "Configure" when it is enabled. Pressing Enter while focus is on a button SHALL activate that button only. Pressing Escape SHALL activate "Skip".
 
-### Requirement: Health-gate regression banner
-After first run, the system SHALL show a non-blocking indicator in the status-bar surface when a **critical** check (`hooks_registered` or `agent_detected`) is `false`, with a one-click path that re-opens the wizard. The indicator MUST NOT appear when both critical checks pass.
+#### Scenario: Fresh install opens the dialog
+- **GIVEN** the probe returns `{ registered: false, settings_path: "/home/u/.claude/settings.json", binary_on_path: true }`
+- **WHEN** the app mounts
+- **THEN** the dialog is open and shows the text `/home/u/.claude/settings.json`
 
-#### Scenario: Banner appears when hooks regress
-- **WHEN** `onboarding_completed` is `true` and a re-probe reports `hooks_registered: false`
-- **THEN** the health-gate indicator is shown and activating it re-opens the wizard
+#### Scenario: Configured install sees no dialog
+- **GIVEN** the probe returns `registered: true`
+- **WHEN** the app mounts
+- **THEN** the dialog is not rendered
 
-#### Scenario: Banner hidden when all critical checks pass
-- **WHEN** both `hooks_registered` and `agent_detected` are `true`
-- **THEN** the health-gate indicator is not shown
+#### Scenario: Probe error sees no dialog
+- **GIVEN** the probe rejects with an error
+- **WHEN** the app mounts
+- **THEN** the dialog is not rendered
 
-### Requirement: Settings re-entry
-The system SHALL provide an entry in the Settings panel that re-opens the setup wizard on demand, regardless of `onboarding_completed`.
+#### Scenario: Enter configures
+- **GIVEN** the dialog is open, "Configure" is enabled and focus is on the dialog
+- **WHEN** the user presses Enter
+- **THEN** `setup_hooks` is invoked once and "Skip" is not activated
 
-#### Scenario: Reopen wizard from Settings
-- **WHEN** the user activates the "Run setup again" entry in Settings
-- **THEN** the setup wizard overlay opens
+#### Scenario: Enter on a focused Skip skips
+- **GIVEN** the dialog is open and the user moved focus to "Skip" with Tab
+- **WHEN** the user presses Enter
+- **THEN** the dialog closes and `setup_hooks` has been invoked 0 times
 
-### Requirement: Agent, shell and transcripts review
-The wizard SHALL surface the detected agents (allowing selection of a default when more than one is installed), the resolved shell, and the transcripts directory as informational/suggested settings. These non-critical checks MUST NOT gate the "all set" state.
+### Requirement: Binary must be on PATH before configuring
+When the probe returns `binary_on_path: false`, the dialog SHALL disable "Configure" and show that `nergal` is not on `PATH`. The system MUST NOT write hooks that cannot run.
 
-#### Scenario: Default agent selectable when multiple installed
-- **WHEN** more than one agent reports `installed: true`
-- **THEN** the wizard lets the user pick the default agent and persists the choice
+#### Scenario: AppImage without nergal on PATH
+- **GIVEN** the probe returns `{ registered: false, binary_on_path: false }`
+- **WHEN** the dialog opens
+- **THEN** "Configure" is disabled, the dialog shows that `nergal` is not on `PATH`, and pressing Enter invokes `setup_hooks` 0 times
 
-#### Scenario: Non-critical checks do not block completion
-- **WHEN** the shell or transcripts suggestion is left at its default
-- **THEN** the wizard still reaches the "all set" state provided both critical checks pass
+### Requirement: Consented hooks configuration
+The system MUST NOT write `~/.claude/settings.json` from the GUI without the user activating "Configure". Activating "Configure" SHALL invoke the existing `setup_hooks` command. On success the dialog closes. On failure the dialog stays open and shows the rejection message.
 
-### Requirement: Platform-aware guidance
-The wizard SHALL render a platform-specific note derived from the install source (SmartScreen on Windows, Gatekeeper on macOS, launcher-PATH guidance on Linux).
+#### Scenario: No write before consent
+- **GIVEN** the dialog is open
+- **WHEN** no action is activated
+- **THEN** `setup_hooks` has been invoked 0 times
 
-#### Scenario: Windows install shows SmartScreen note
-- **WHEN** the install source resolves to Windows
-- **THEN** the wizard shows the SmartScreen guidance note
+#### Scenario: Configure succeeds
+- **GIVEN** the dialog is open
+- **WHEN** the user activates "Configure" and `setup_hooks` resolves
+- **THEN** `setup_hooks` has been invoked exactly 1 time and the dialog is closed
 
-#### Scenario: Note matches the install source
-- **WHEN** the install source resolves to a given OS
-- **THEN** only that OS's note is shown
+#### Scenario: Configure fails
+- **GIVEN** the dialog is open
+- **WHEN** the user activates "Configure" and `setup_hooks` rejects with a message
+- **THEN** the dialog stays open and shows that message
 
-### Requirement: Keyboard ownership preference step
-The wizard SHALL present the `keyboard_ownership` choice (`nergal` default vs `agent`) with a one-line explanation per mode and persist the selection to config. The step is informational and MUST NOT gate the "all set" state. The switch semantics are owned by the `keyboard-shortcuts` capability (see the `shortcuts-restructure` change); if the config key does not exist at runtime, the wizard SHALL omit the step.
+#### Scenario: Setup is idempotent
+- **GIVEN** the settings file is the output of a completed hooks setup
+- **WHEN** `setup_hooks` runs again
+- **THEN** the settings file content is unchanged and no hook entry is duplicated
 
-#### Scenario: Default preselected
-- **WHEN** the ownership step renders
-- **THEN** `nergal` is preselected and completing the step without changes persists `keyboard_ownership: "nergal"`
+### Requirement: Skip lasts one launch
+Activating "Skip" SHALL close the dialog without invoking `setup_hooks`. The system MUST NOT persist the skip. The next app launch SHALL probe again and open the dialog if the hooks are still not registered.
 
-#### Scenario: Step omitted when the key is not available
-- **WHEN** the running build predates the shortcuts restructure (no `keyboard_ownership` in config)
-- **THEN** the wizard skips the ownership step entirely
+#### Scenario: Skip closes without writing
+- **GIVEN** the dialog is open
+- **WHEN** the user activates "Skip"
+- **THEN** the dialog is closed and `setup_hooks` has been invoked 0 times
+
+#### Scenario: Next launch asks again
+- **GIVEN** the user skipped on the previous launch and the hooks are still not registered
+- **WHEN** the app mounts again
+- **THEN** the dialog is open

@@ -85,8 +85,13 @@ pub(crate) fn extend_plan_watcher_for_session(
 
 #[tauri::command]
 pub fn setup_hooks() -> Result<String, String> {
-    crate::setup::run().map_err(|e| e.to_string())?;
+    crate::setup::run().map_err(|e| format!("{e:#}"))?;
     Ok("Hooks configured successfully".into())
+}
+
+#[tauri::command]
+pub fn setup_hooks_status() -> Result<crate::setup::HooksStatus, String> {
+    crate::setup::hooks_status().map_err(|e| format!("{e:#}"))
 }
 
 // -- Workspace commands --

@@ -1,19 +1,18 @@
 {
-  "tier": "L",
-  "tier_source": "user-stated",
-  "ceremony": "deep",
+  "tier": "M",
+  "tier_source": "heuristic",
+  "ceremony": "standard",
   "risk_tier": "medium",
-  "files_estimate": 9,
+  "files_estimate": 7,
   "tags": [
     "feature",
-    "onboarding",
-    "ux"
+    "onboarding"
   ],
   "visibility": "public",
   "spec_target": "setup-wizard",
   "rigor_applied": {
     "discovery_invoked": true,
-    "iprev_rounds": 0,
+    "iprev_rounds": 2,
     "reviewer_mode": "single-sequential",
     "reviewer_escalation": null,
     "gates_phases_run": [],
@@ -22,20 +21,34 @@
       "implementation": "sonnet",
       "implementation_mechanical": "haiku",
       "validation": "opus",
-      "exploration": "sonnet"
+      "exploration": "haiku",
+      "test_authoring": "sonnet",
+      "review": "sonnet",
+      "adversarial": "opus"
     }
   },
   "interview_answers": {
     "trigger_model": "first-run + non-blocking health-gate banner on regression + manual re-open from Settings",
     "hooks_autoconfig": "one-click consented (detect + Configure button applies setup_hooks)",
-    "blocking": "skippable, non-blocking; pending checks reachable from a status indicator"
+    "blocking": "skippable, non-blocking; pending checks reachable from a status indicator",
+    "slice_1": "minimal wizard (dialog with hooks step only)",
+    "freeze_trim": "user: configure on first launch and nothing more; simplify so everything just works"
   },
-  "events": [],
-  "notes": "DOC-ONLY for now (user constraint): produce proposal + specs + design + implementation + tasks, then park. Windows port frozen 2026-10-04 (Linux + Claude Code focus), so implementation no longer waits for the Windows walk.",
+  "events": [
+    {
+      "ts": "2026-10-05",
+      "type": "revalidated",
+      "summary": "anchors drifted (commands split into modules, AskUserModal gone, Settings CATEGORIES); scope cut per user; re-triaged L->M",
+      "iprev": "round1 REVISE (10 findings, all accepted), round2 APPROVED (5 folded in)",
+      "proposal_hash": "ba211a11c9b7fd1d95bb59e93458d69594c74ed2d00dbe1652aaea0e8a5512b3"
+    }
+  ],
+  "notes": "Re-validated 2026-10-05: scope cut to a launch-time hooks dialog (no flag, no chip, no wizard steps). Old L/deep plan superseded.",
   "tracker": {
     "system": "linear",
     "id": "FRI-498",
     "url": "https://linear.app/redribbon/issue/FRI-498",
     "pending": []
-  }
+  },
+  "validation": "validated"
 }

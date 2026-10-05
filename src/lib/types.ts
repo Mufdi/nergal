@@ -253,3 +253,9 @@ export interface ObsidianConfig {
 }
 
 export type ResolvedObsidianConfig = ObsidianConfig;
+
+export interface HooksStatus {
+  registered: boolean;
+  settings_path: string;
+  binary_on_path: boolean;
+}

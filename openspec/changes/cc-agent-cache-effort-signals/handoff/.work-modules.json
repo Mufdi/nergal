@@ -1,0 +1,65 @@
+{
+  "tier": "L",
+  "tier_source": "user-stated",
+  "ceremony": "deep",
+  "risk_tier": "medium",
+  "files_estimate": 14,
+  "tags": [
+    "feature",
+    "hooks",
+    "status-bar"
+  ],
+  "visibility": "public",
+  "spec_target": "agent-status-telemetry, session-state-indicators, activity-timeline, cc-adapter",
+  "tracker": {
+    "system": "linear",
+    "id": "FRI-501",
+    "url": "https://linear.app/redribbon/issue/FRI-501/mostrar-los-nuevos-datos-de-claude-code-subagentes-en-background",
+    "pending": []
+  },
+  "rigor_applied": {
+    "discovery_invoked": false,
+    "iprev_rounds": 3,
+    "reviewer_mode": "spec+frontend (sonnet) + adversarial (opus), once per change",
+    "reviewer_escalation": null,
+    "gates_phases_run": [
+      "compile",
+      "test",
+      "lint",
+      "fmt",
+      "placeholders"
+    ],
+    "per_phase_models": {
+      "design": "opus",
+      "implementation": "sonnet",
+      "implementation_mechanical": "haiku",
+      "validation": "opus",
+      "exploration": "haiku",
+      "test_authoring": "sonnet",
+      "review": "sonnet",
+      "adversarial": "opus"
+    }
+  },
+  "interview_answers": {
+    "note": "Non-interactive run delegated by the main session: no user questions possible. Discovery Phase 3 skipped (issue carries acceptance criteria); Phases 1/2/4 done inline (spec dedup, triage, native artifact flow). Single change, no sub-issues: tier L is not an XL split."
+  },
+  "validation": "validated",
+  "events": [
+    {
+      "ts": "2026-10-05T19:40:00Z",
+      "type": "payload-verification",
+      "reason": "CC docs hooks.md/statusline.md + CHANGELOG + local transcripts: agent_needs_input/agent_completed are agent-view background-session signals; no parent agent id in hook payloads"
+    },
+    {
+      "ts": "2026-10-05T20:30:00Z",
+      "type": "validated",
+      "reason": "iprev claude evaluator (opus) APPROVED round 3; proposal sha256 5160963958e4392799adf5fa0509420f3823469b7af81ed34275c4b732d1ba0c"
+    },
+    {
+      "ts": "2026-10-05T21:20:00Z",
+      "type": "reviews",
+      "reason": "spec PASS; frontend 3 warn fixed; adversarial PASS_WITH_NOTES, 2 Important fixed (design Revisions 1-2)"
+    }
+  ],
+  "interview_ts": "2026-10-05T19:40:00Z"
+}

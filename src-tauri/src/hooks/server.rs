@@ -5,7 +5,7 @@ use anyhow::Result;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::AsyncBufReadExt;
 
-use super::events::HookEvent;
+use super::events::{BACKGROUND_INPUT_WAITING_PREFIX, HookEvent, PromptCacheStatus};
 use crate::agents::AgentId;
 use crate::agents::state::AgentRuntimeState;
 use crate::db::SharedDb;
@@ -28,6 +28,14 @@ struct FrontendHookEvent {
     background_tasks: Vec<serde_json::Value>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     session_crons: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effort_level: Option<String>,
 }
 
 impl FrontendHookEvent {
@@ -148,6 +156,12 @@ impl FrontendHookEvent {
                     None,
                     None,
                 ),
+                HookEvent::SubagentStart { session_id, .. } => {
+                    (session_id.clone(), "subagent_start", None, None, None, None)
+                }
+                HookEvent::SubagentStop { session_id, .. } => {
+                    (session_id.clone(), "subagent_stop", None, None, None, None)
+                }
                 HookEvent::CwdChanged { session_id, .. } => {
                     (session_id.clone(), "cwd_changed", None, None, None, None)
                 }
@@ -191,6 +205,24 @@ impl FrontendHookEvent {
             } => (background_tasks.clone(), session_crons.clone()),
             _ => (Vec::new(), Vec::new()),
         };
+        let (agent_id, agent_type, agent_message) = match event {
+            HookEvent::SubagentStart {
+                agent_id,
+                agent_type,
+                ..
+            } => (agent_id.clone(), agent_type.clone(), None),
+            HookEvent::SubagentStop {
+                agent_id,
+                agent_type,
+                last_assistant_message,
+                ..
+            } => (
+                agent_id.clone(),
+                agent_type.clone(),
+                last_assistant_message.clone(),
+            ),
+            _ => (None, None, None),
+        };
         Self {
             session_id,
             nergal_session_id: None,
@@ -201,8 +233,48 @@ impl FrontendHookEvent {
             transcript_path,
             background_tasks,
             session_crons,
+            agent_id,
+            agent_type,
+            agent_message,
+            effort_level: event.effort_level(),
         }
     }
+}
+
+/// CC fires subagent hooks for internal agents too; without an `agent_type`
+/// they would surface as unlabelled rows, so they are dropped before any side effect.
+fn is_droppable_subagent_event(event: &HookEvent) -> bool {
+    match event {
+        HookEvent::SubagentStart { agent_type, .. }
+        | HookEvent::SubagentStop { agent_type, .. } => {
+            agent_type.as_deref().is_none_or(str::is_empty)
+        }
+        _ => false,
+    }
+}
+
+/// A background agent that asked for input marked the session `needs_attention`;
+/// its completion is the only signal that the wait is over, since no Stop follows.
+fn mcp_activity_after_completion(mode: &str, waiting_for: Option<&str>) -> Option<&'static str> {
+    if mode == "needs_attention"
+        && waiting_for.is_some_and(|w| w.starts_with(BACKGROUND_INPUT_WAITING_PREFIX))
+    {
+        Some("idle")
+    } else {
+        None
+    }
+}
+
+/// A background agent is answered in agent view, outside this session, so the
+/// foreground session's own tool calls and stops must not erase its wait.
+fn preserves_background_wait(mode: &str, waiting_for: Option<&str>, event: &HookEvent) -> bool {
+    mcp_activity_after_completion(mode, waiting_for).is_some()
+        && !matches!(
+            event,
+            HookEvent::UserPromptSubmit { .. }
+                | HookEvent::SessionEnd { .. }
+                | HookEvent::Notification { .. }
+        )
 }
 
 /// Starts the IPC server that receives hook events from the agent CLI. Bound
@@ -684,6 +756,9 @@ fn process_event(
     agent_state: &AgentRuntimeState,
     nergal_session_id: Option<&str>,
 ) {
+    if is_droppable_subagent_event(event) {
+        return;
+    }
     if nergal_session_id.is_none() {
         tracing::warn!(
             event_type = ?std::any::type_name_of_val(event),
@@ -754,7 +829,12 @@ fn process_event(
     // row. Telemetry-only events (`mcp_mode` → None) leave the prior state.
     if let Some(csid) = nergal_session_id {
         if let Some(mode) = event.mcp_mode() {
-            agent_state.record_activity(csid, mode, event.waiting_for().as_deref());
+            let keep_wait = agent_state.session_activity(csid).is_some_and(|prev| {
+                preserves_background_wait(&prev.mode, prev.waiting_for.as_deref(), event)
+            });
+            if !keep_wait {
+                agent_state.record_activity(csid, mode, event.waiting_for().as_deref());
+            }
         }
         // Touched files come from PreToolUse: it is registered unmatched so it
         // fires for every tool (Read included), whereas the PostToolUse hook is
@@ -940,9 +1020,9 @@ fn process_event(
             transcript_path: Some(path),
             ..
         } => {
-            let cost = crate::agents::claude_code::cost::parse_cost_from_transcript(
-                &std::path::PathBuf::from(path),
-            );
+            let scan =
+                crate::agents::claude_code::cost::scan_transcript(&std::path::PathBuf::from(path));
+            let cost = scan.cost;
 
             let csid = nergal_session_id.unwrap_or(session_id);
             if let Ok(db_guard) = db.lock()
@@ -971,6 +1051,21 @@ fn process_event(
                     total_usd: cost.total_usd,
                 },
             );
+
+            if let Some(effort) = scan.last_effort {
+                #[derive(Clone, serde::Serialize)]
+                struct EffortLastResponse {
+                    session_id: String,
+                    effort: String,
+                }
+                let _ = app.emit(
+                    "effort:last-response",
+                    EffortLastResponse {
+                        session_id: csid.to_string(),
+                        effort,
+                    },
+                );
+            }
         }
 
         HookEvent::Stop {
@@ -1146,6 +1241,7 @@ fn process_event(
                     rate_7d_pct: *rate_7d_pct,
                     rate_7d_resets_at: *rate_7d_resets_at,
                     effort_level: None,
+                    prompt_cache: None,
                 },
             );
         }
@@ -1163,6 +1259,7 @@ fn process_event(
             rate_7d_pct,
             rate_7d_resets_at,
             effort_level,
+            prompt_cache,
         } => {
             cache_model(nergal_session_id, model_name);
             emit_agent_status(
@@ -1180,6 +1277,7 @@ fn process_event(
                     rate_7d_pct: *rate_7d_pct,
                     rate_7d_resets_at: *rate_7d_resets_at,
                     effort_level: effort_level.clone(),
+                    prompt_cache: prompt_cache.clone(),
                 },
             );
         }
@@ -1207,21 +1305,47 @@ fn process_event(
             message,
         } => {
             tracing::debug!("Notification: type={notification_type:?} message={message:?}");
-            #[derive(Clone, serde::Serialize)]
-            struct AttentionPendingPayload {
-                session_id: String,
-                notification_type: Option<String>,
-                message: Option<String>,
+            let csid = nergal_session_id.unwrap_or(session_id);
+            if notification_type.as_deref() == Some("agent_completed") {
+                #[derive(Clone, serde::Serialize)]
+                struct BackgroundCompletedPayload {
+                    session_id: String,
+                    message: Option<String>,
+                }
+                let _ = app.emit(
+                    "agent:background-completed",
+                    BackgroundCompletedPayload {
+                        session_id: csid.to_string(),
+                        message: message.clone(),
+                    },
+                );
+                if let Some(activity) = agent_state.session_activity(csid)
+                    && let Some(mode) = mcp_activity_after_completion(
+                        &activity.mode,
+                        activity.waiting_for.as_deref(),
+                    )
+                {
+                    agent_state.record_activity(csid, mode, None);
+                }
+            } else {
+                #[derive(Clone, serde::Serialize)]
+                struct AttentionPendingPayload {
+                    session_id: String,
+                    notification_type: Option<String>,
+                    message: Option<String>,
+                }
+                let _ = app.emit(
+                    "attention:pending",
+                    AttentionPendingPayload {
+                        session_id: csid.to_string(),
+                        notification_type: notification_type.clone(),
+                        message: message.clone(),
+                    },
+                );
             }
-            let _ = app.emit(
-                "attention:pending",
-                AttentionPendingPayload {
-                    session_id: nergal_session_id.unwrap_or(session_id).to_string(),
-                    notification_type: notification_type.clone(),
-                    message: message.clone(),
-                },
-            );
         }
+
+        HookEvent::SubagentStart { .. } | HookEvent::SubagentStop { .. } => {}
     }
 }
 
@@ -1240,6 +1364,7 @@ pub(crate) struct AgentStatusEmit<'a> {
     pub rate_7d_pct: Option<f64>,
     pub rate_7d_resets_at: Option<u64>,
     pub effort_level: Option<String>,
+    pub prompt_cache: Option<PromptCacheStatus>,
 }
 
 /// Emit `agent:status-update` to the frontend. Single emit path so every
@@ -1260,6 +1385,7 @@ pub(crate) fn emit_agent_status(app: &AppHandle, status: AgentStatusEmit<'_>) {
         rate_7d_pct: Option<f64>,
         rate_7d_resets_at: Option<u64>,
         effort_level: Option<String>,
+        prompt_cache: Option<PromptCacheStatus>,
     }
     let _ = app.emit(
         "agent:status-update",
@@ -1276,6 +1402,7 @@ pub(crate) fn emit_agent_status(app: &AppHandle, status: AgentStatusEmit<'_>) {
             rate_7d_pct: status.rate_7d_pct,
             rate_7d_resets_at: status.rate_7d_resets_at,
             effort_level: status.effort_level,
+            prompt_cache: status.prompt_cache,
         },
     );
 }
@@ -1771,14 +1898,33 @@ mod tests {
                     rate_7d_pct: None,
                     rate_7d_resets_at: None,
                     effort_level: None,
+                    prompt_cache: None,
                 },
                 "agent_status",
+            ),
+            (
+                HookEvent::SubagentStart {
+                    session_id: "s".into(),
+                    agent_id: Some("a1".into()),
+                    agent_type: Some("Explore".into()),
+                },
+                "subagent_start",
+            ),
+            (
+                HookEvent::SubagentStop {
+                    session_id: "s".into(),
+                    agent_id: Some("a1".into()),
+                    agent_type: Some("Explore".into()),
+                    last_assistant_message: None,
+                    effort: serde_json::Value::Null,
+                },
+                "subagent_stop",
             ),
         ];
 
         assert_eq!(
             cases.len(),
-            16,
+            18,
             "every HookEvent variant must appear exactly once above"
         );
 
@@ -1824,6 +1970,163 @@ mod tests {
         assert_eq!(fe.tool_name.as_deref(), Some("Bash"));
         assert_eq!(fe.stop_reason.as_deref(), Some("destructive command"));
         assert_eq!(fe.tool_input, Some(json!({"command": "rm -rf /"})));
+    }
+
+    #[test]
+    fn from_hook_subagent_start_serializes_agent_identity() {
+        let event = HookEvent::SubagentStart {
+            session_id: "s".into(),
+            agent_id: Some("a1".into()),
+            agent_type: Some("Explore".into()),
+        };
+
+        let v = serde_json::to_value(FrontendHookEvent::from_hook(&event)).unwrap();
+
+        assert_eq!(v["event_type"], "subagent_start");
+        assert_eq!(v["agent_id"], "a1");
+        assert_eq!(v["agent_type"], "Explore");
+        assert!(v.get("agent_message").is_none());
+        assert!(v.get("effort_level").is_none());
+    }
+
+    #[test]
+    fn from_hook_subagent_stop_serializes_message_and_effort() {
+        let event = HookEvent::SubagentStop {
+            session_id: "s".into(),
+            agent_id: Some("a1".into()),
+            agent_type: Some("Plan".into()),
+            last_assistant_message: Some("plan ready".into()),
+            effort: json!({"level": "high"}),
+        };
+
+        let v = serde_json::to_value(FrontendHookEvent::from_hook(&event)).unwrap();
+
+        assert_eq!(v["event_type"], "subagent_stop");
+        assert_eq!(v["agent_id"], "a1");
+        assert_eq!(v["agent_type"], "Plan");
+        assert_eq!(v["agent_message"], "plan ready");
+        assert_eq!(v["effort_level"], "high");
+    }
+
+    #[test]
+    fn from_hook_subagent_stop_omits_absent_optionals() {
+        let event = HookEvent::SubagentStop {
+            session_id: "s".into(),
+            agent_id: None,
+            agent_type: None,
+            last_assistant_message: None,
+            effort: serde_json::Value::Null,
+        };
+
+        let v = serde_json::to_value(FrontendHookEvent::from_hook(&event)).unwrap();
+
+        for key in ["agent_id", "agent_type", "agent_message", "effort_level"] {
+            assert!(v.get(key).is_none(), "{key} must be absent");
+        }
+    }
+
+    #[test]
+    fn from_hook_pre_tool_use_has_no_subagent_keys() {
+        let event = HookEvent::PreToolUse {
+            session_id: "s".into(),
+            tool_name: "Read".into(),
+            tool_input: json!({}),
+        };
+
+        let v = serde_json::to_value(FrontendHookEvent::from_hook(&event)).unwrap();
+
+        for key in ["agent_id", "agent_type", "agent_message", "effort_level"] {
+            assert!(v.get(key).is_none(), "{key} must be absent");
+        }
+    }
+
+    #[test]
+    fn subagent_events_without_agent_type_are_droppable() {
+        let start = |t: Option<&str>| HookEvent::SubagentStart {
+            session_id: "s".into(),
+            agent_id: Some("a1".into()),
+            agent_type: t.map(str::to_string),
+        };
+        let stop = |t: Option<&str>| HookEvent::SubagentStop {
+            session_id: "s".into(),
+            agent_id: Some("a1".into()),
+            agent_type: t.map(str::to_string),
+            last_assistant_message: None,
+            effort: serde_json::Value::Null,
+        };
+
+        assert!(is_droppable_subagent_event(&start(None)));
+        assert!(is_droppable_subagent_event(&start(Some(""))));
+        assert!(is_droppable_subagent_event(&stop(None)));
+        assert!(is_droppable_subagent_event(&stop(Some(""))));
+        assert!(!is_droppable_subagent_event(&start(Some("Explore"))));
+        assert!(!is_droppable_subagent_event(&stop(Some("Explore"))));
+    }
+
+    #[test]
+    fn non_subagent_events_are_never_droppable() {
+        let events = vec![
+            HookEvent::SessionStart {
+                session_id: "s".into(),
+            },
+            HookEvent::PreToolUse {
+                session_id: "s".into(),
+                tool_name: "Agent".into(),
+                tool_input: json!({}),
+            },
+            HookEvent::Notification {
+                session_id: "s".into(),
+                notification_type: None,
+                message: None,
+            },
+        ];
+        for ev in events {
+            assert!(!is_droppable_subagent_event(&ev));
+        }
+    }
+
+    #[test]
+    fn background_input_wait_resets_to_idle_on_completion() {
+        assert_eq!(
+            mcp_activity_after_completion(
+                "needs_attention",
+                Some("background agent: Pick a branch")
+            ),
+            Some("idle")
+        );
+        assert_eq!(
+            mcp_activity_after_completion("needs_attention", Some("background agent")),
+            Some("idle")
+        );
+    }
+
+    #[test]
+    fn other_waits_survive_background_completion() {
+        assert_eq!(
+            mcp_activity_after_completion("needs_attention", Some("permission for Bash")),
+            None
+        );
+        assert_eq!(
+            mcp_activity_after_completion("needs_attention", Some("plan review")),
+            None
+        );
+        assert_eq!(
+            mcp_activity_after_completion("needs_attention", Some("answering a question")),
+            None
+        );
+        assert_eq!(mcp_activity_after_completion("needs_attention", None), None);
+    }
+
+    #[test]
+    fn background_completion_leaves_non_attention_modes_alone() {
+        assert_eq!(
+            mcp_activity_after_completion("running", Some("background agent: x")),
+            None
+        );
+        assert_eq!(
+            mcp_activity_after_completion("idle", Some("background agent")),
+            None
+        );
     }
 
     // -- session_log_line: the #2 log line per event --
@@ -1923,5 +2226,59 @@ mod tests {
             Some("c.rs")
         );
         assert_eq!(file_path_from_tool_input(&json!({})), None);
+    }
+
+    #[test]
+    fn background_wait_survives_turn_events_of_the_foreground_session() {
+        let wait = Some("background agent: Pick a branch");
+        let pre = HookEvent::PreToolUse {
+            session_id: "s".into(),
+            tool_name: "Read".into(),
+            tool_input: json!({}),
+        };
+        let stop = HookEvent::Stop {
+            session_id: "s".into(),
+            stop_reason: None,
+            transcript_path: None,
+            background_tasks: vec![],
+            session_crons: vec![],
+            last_assistant_message: None,
+        };
+        assert!(preserves_background_wait("needs_attention", wait, &pre));
+        assert!(preserves_background_wait("needs_attention", wait, &stop));
+    }
+
+    #[test]
+    fn background_wait_yields_to_prompt_submit_session_end_and_notifications() {
+        let wait = Some("background agent");
+        let submit = HookEvent::UserPromptSubmit {
+            session_id: "s".into(),
+        };
+        let end = HookEvent::SessionEnd {
+            session_id: "s".into(),
+        };
+        let notif = HookEvent::Notification {
+            session_id: "s".into(),
+            notification_type: Some("permission_prompt".into()),
+            message: None,
+        };
+        assert!(!preserves_background_wait("needs_attention", wait, &submit));
+        assert!(!preserves_background_wait("needs_attention", wait, &end));
+        assert!(!preserves_background_wait("needs_attention", wait, &notif));
+    }
+
+    #[test]
+    fn non_background_waits_are_never_preserved() {
+        let pre = HookEvent::PreToolUse {
+            session_id: "s".into(),
+            tool_name: "Read".into(),
+            tool_input: json!({}),
+        };
+        assert!(!preserves_background_wait(
+            "needs_attention",
+            Some("permission for Bash"),
+            &pre
+        ));
+        assert!(!preserves_background_wait("running", None, &pre));
     }
 }

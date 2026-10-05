@@ -16,6 +16,7 @@ const TYPE_DOT_COLORS: Record<ActivityEntry["type"], string> = {
   plan: "bg-blue-500",
   error: "bg-destructive",
   file_modified: "bg-yellow-500",
+  subagent: "bg-sky-400",
 };
 
 function formatRelativeTime(ts: number): string {

@@ -57,8 +57,24 @@ const HOOKS: &[HookDef] = &[
     },
     HookDef {
         event: "Notification",
-        matcher: Some("permission_prompt"),
+        matcher: Some("permission_prompt|agent_needs_input|agent_completed"),
         command: "nergal hook notification",
+        is_async: true,
+        timeout: None,
+        if_condition: None,
+    },
+    HookDef {
+        event: "SubagentStart",
+        matcher: Some(".+"),
+        command: "nergal hook send subagent-start",
+        is_async: true,
+        timeout: None,
+        if_condition: None,
+    },
+    HookDef {
+        event: "SubagentStop",
+        matcher: Some(".+"),
+        command: "nergal hook send subagent-stop",
         is_async: true,
         timeout: None,
         if_condition: None,
@@ -719,6 +735,98 @@ mod tests {
         assert!(
             cmd.contains("/nergal-conditional.sh "),
             "wrapper command must be preserved through matcher upgrade"
+        );
+    }
+
+    fn hook_row(event: &str, command: &str) -> &'static HookDef {
+        HOOKS
+            .iter()
+            .find(|h| h.event == event && h.command == command)
+            .unwrap_or_else(|| panic!("no HOOKS row for {event} / {command}"))
+    }
+
+    #[test]
+    fn notification_row_matches_permission_and_background_agent_types() {
+        let row = hook_row("Notification", "nergal hook notification");
+        assert_eq!(
+            row.matcher,
+            Some("permission_prompt|agent_needs_input|agent_completed")
+        );
+        assert!(row.is_async);
+        assert_eq!(row.timeout, None);
+    }
+
+    #[test]
+    fn subagent_start_row_is_async_with_wildcard_matcher() {
+        let row = hook_row("SubagentStart", "nergal hook send subagent-start");
+        assert_eq!(row.matcher, Some(".+"));
+        assert!(row.is_async);
+        assert_eq!(row.timeout, None);
+    }
+
+    #[test]
+    fn subagent_stop_row_is_async_with_wildcard_matcher() {
+        let row = hook_row("SubagentStop", "nergal hook send subagent-stop");
+        assert_eq!(row.matcher, Some(".+"));
+        assert!(row.is_async);
+        assert_eq!(row.timeout, None);
+    }
+
+    #[test]
+    fn merge_hook_upgrades_notification_matcher_in_place_for_wrapper_entry() {
+        let mut hooks_map = Map::new();
+        hooks_map.insert(
+            "Notification".into(),
+            json!([{
+                "hooks": [{
+                    "type": "command",
+                    "command": "/home/felipe/.claude/hooks/nergal-conditional.sh notification",
+                    "async": true,
+                }],
+                "matcher": "permission_prompt"
+            }]),
+        );
+
+        let def = hook_row("Notification", "nergal hook notification");
+
+        assert!(merge_hook(&mut hooks_map, def, None));
+        let arr = hooks_map["Notification"].as_array().unwrap();
+        assert_eq!(arr.len(), 1, "matcher upgrade must not duplicate");
+        assert_eq!(
+            arr[0].get("matcher").and_then(|m| m.as_str()),
+            Some("permission_prompt|agent_needs_input|agent_completed")
+        );
+        let cmd = arr[0]["hooks"][0]["command"].as_str().unwrap();
+        assert!(cmd.contains("/nergal-conditional.sh "));
+    }
+
+    #[test]
+    fn merge_hook_upgrades_notification_matcher_in_place_for_bare_entry() {
+        let mut hooks_map = Map::new();
+        hooks_map.insert(
+            "Notification".into(),
+            json!([{
+                "hooks": [{
+                    "type": "command",
+                    "command": "nergal hook notification",
+                    "async": true,
+                }],
+                "matcher": "permission_prompt"
+            }]),
+        );
+
+        let def = hook_row("Notification", "nergal hook notification");
+
+        assert!(merge_hook(&mut hooks_map, def, None));
+        let arr = hooks_map["Notification"].as_array().unwrap();
+        assert_eq!(arr.len(), 1, "matcher upgrade must not duplicate");
+        assert_eq!(
+            arr[0].get("matcher").and_then(|m| m.as_str()),
+            Some("permission_prompt|agent_needs_input|agent_completed")
+        );
+        assert_eq!(
+            arr[0]["hooks"][0]["command"].as_str(),
+            Some("nergal hook notification")
         );
     }
 

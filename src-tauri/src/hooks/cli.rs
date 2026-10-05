@@ -650,6 +650,30 @@ pub fn statusline(socket_path: &Path) {
 /// unit-tested against the schema. Every field is optional: CC omits
 /// `rate_limits` for non-Pro/Max plans, `effort` for models without reasoning
 /// effort, and the `context_window` percentages early in a session.
+fn prompt_cache_status(cc: &serde_json::Value) -> serde_json::Value {
+    let Some(pc) = cc.get("prompt_cache").and_then(|v| v.as_object()) else {
+        return serde_json::Value::Null;
+    };
+    let causes: Vec<&str> = pc
+        .get("last_miss_cause")
+        .and_then(|c| c.get("causes"))
+        .and_then(|c| c.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    serde_json::json!({
+        "warm": pc.get("warm").and_then(serde_json::Value::as_bool),
+        "caching_observed": pc.get("caching_observed").and_then(serde_json::Value::as_bool),
+        "ttl": pc.get("ttl").and_then(|v| v.as_str()),
+        "expires_at": pc.get("expires_at").and_then(serde_json::Value::as_u64),
+        "requests": pc.get("requests").and_then(serde_json::Value::as_u64),
+        "misses": pc.get("misses").and_then(serde_json::Value::as_u64),
+        "hit_ratio": pc.get("hit_ratio").and_then(serde_json::Value::as_f64),
+        "miss_recache_tokens": pc.get("miss_recache_tokens").and_then(serde_json::Value::as_u64),
+        "last_miss_at": pc.get("last_miss_at").and_then(serde_json::Value::as_u64),
+        "last_miss_causes": causes,
+    })
+}
+
 fn statusline_to_agent_status(cc: &serde_json::Value, nergal_id: &str) -> serde_json::Value {
     let model = cc.get("model");
     let ctx = cc.get("context_window");
@@ -682,6 +706,7 @@ fn statusline_to_agent_status(cc: &serde_json::Value, nergal_id: &str) -> serde_
             .and_then(|s| s.get("resets_at"))
             .and_then(serde_json::Value::as_u64),
         "effort_level": cc.get("effort").and_then(|e| e.get("level")).and_then(|v| v.as_str()),
+        "prompt_cache": prompt_cache_status(cc),
         "nergal_session_id": nergal_id,
     })
 }
@@ -808,6 +833,119 @@ mod tests {
         assert!(out["model_id"].is_null());
         assert!(out["context_used_pct"].is_null());
         assert_eq!(out["nergal_session_id"], "n");
+    }
+
+    fn full_prompt_cache() -> serde_json::Value {
+        serde_json::json!({
+            "warm": true,
+            "caching_observed": true,
+            "ttl": "1h",
+            "expires_at": 1738429200u64,
+            "requests": 14,
+            "misses": 2,
+            "hit_ratio": 0.91,
+            "miss_recache_tokens": 310200,
+            "last_miss_at": 1738425230u64,
+            "last_miss_cause": { "causes": ["tools_changed"], "tools_added": 2 }
+        })
+    }
+
+    #[test]
+    fn prompt_cache_status_maps_full_object_field_by_field() {
+        let cc = serde_json::json!({ "prompt_cache": full_prompt_cache() });
+        assert_eq!(
+            prompt_cache_status(&cc),
+            serde_json::json!({
+                "warm": true,
+                "caching_observed": true,
+                "ttl": "1h",
+                "expires_at": 1738429200u64,
+                "requests": 14,
+                "misses": 2,
+                "hit_ratio": 0.91,
+                "miss_recache_tokens": 310200,
+                "last_miss_at": 1738425230u64,
+                "last_miss_causes": ["tools_changed"]
+            })
+        );
+    }
+
+    #[test]
+    fn prompt_cache_status_is_null_when_absent_or_not_an_object() {
+        assert!(prompt_cache_status(&serde_json::json!({})).is_null());
+        assert!(prompt_cache_status(&serde_json::json!({ "prompt_cache": null })).is_null());
+        assert!(prompt_cache_status(&serde_json::json!({ "prompt_cache": "warm" })).is_null());
+    }
+
+    #[test]
+    fn prompt_cache_status_keeps_every_key_with_nulls_for_missing_fields() {
+        let cc = serde_json::json!({
+            "prompt_cache": { "warm": false, "hit_ratio": null, "last_miss_cause": null }
+        });
+        assert_eq!(
+            prompt_cache_status(&cc),
+            serde_json::json!({
+                "warm": false,
+                "caching_observed": null,
+                "ttl": null,
+                "expires_at": null,
+                "requests": null,
+                "misses": null,
+                "hit_ratio": null,
+                "miss_recache_tokens": null,
+                "last_miss_at": null,
+                "last_miss_causes": []
+            })
+        );
+    }
+
+    #[test]
+    fn prompt_cache_status_nulls_mistyped_fields_and_joins_several_causes() {
+        let cc = serde_json::json!({
+            "prompt_cache": {
+                "warm": "yes",
+                "requests": "14",
+                "last_miss_cause": { "causes": ["tools_changed", "system_prompt_changed"] }
+            }
+        });
+        let out = prompt_cache_status(&cc);
+        assert!(out["warm"].is_null());
+        assert!(out["requests"].is_null());
+        assert_eq!(
+            out["last_miss_causes"],
+            serde_json::json!(["tools_changed", "system_prompt_changed"])
+        );
+    }
+
+    #[test]
+    fn prompt_cache_status_ignores_non_array_causes() {
+        let cc = serde_json::json!({
+            "prompt_cache": { "last_miss_cause": { "causes": "tools_changed" } }
+        });
+        assert_eq!(
+            prompt_cache_status(&cc)["last_miss_causes"],
+            serde_json::json!([])
+        );
+    }
+
+    #[test]
+    fn agent_status_payload_carries_prompt_cache_object() {
+        let mut snapshot = full_cc_snapshot();
+        snapshot["prompt_cache"] = full_prompt_cache();
+        let out = statusline_to_agent_status(&snapshot, "n");
+        assert_eq!(out["prompt_cache"]["hit_ratio"], 0.91);
+        assert_eq!(out["prompt_cache"]["warm"], true);
+        assert_eq!(
+            out["prompt_cache"]["last_miss_causes"],
+            serde_json::json!(["tools_changed"])
+        );
+    }
+
+    #[test]
+    fn agent_status_payload_prompt_cache_is_null_for_older_cc() {
+        let out = statusline_to_agent_status(&full_cc_snapshot(), "n");
+        assert!(out.get("prompt_cache").is_some_and(|v| v.is_null()));
+        assert_eq!(out["effort_level"], "high");
     }
 
     #[test]

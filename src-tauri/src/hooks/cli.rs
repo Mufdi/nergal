@@ -810,6 +810,116 @@ mod tests {
         assert_eq!(out["nergal_session_id"], "n");
     }
 
+    fn full_prompt_cache() -> serde_json::Value {
+        serde_json::json!({
+            "warm": true,
+            "caching_observed": true,
+            "ttl": "1h",
+            "expires_at": 1738429200u64,
+            "requests": 14,
+            "misses": 2,
+            "hit_ratio": 0.91,
+            "miss_recache_tokens": 310200,
+            "last_miss_at": 1738425230u64,
+            "last_miss_cause": { "causes": ["tools_changed"], "tools_added": 2 }
+        })
+    }
+
+    #[test]
+    fn prompt_cache_status_maps_full_object_field_by_field() {
+        let cc = serde_json::json!({ "prompt_cache": full_prompt_cache() });
+        assert_eq!(
+            prompt_cache_status(&cc),
+            serde_json::json!({
+                "warm": true,
+                "caching_observed": true,
+                "ttl": "1h",
+                "expires_at": 1738429200u64,
+                "requests": 14,
+                "misses": 2,
+                "hit_ratio": 0.91,
+                "miss_recache_tokens": 310200,
+                "last_miss_at": 1738425230u64,
+                "last_miss_causes": ["tools_changed"]
+            })
+        );
+    }
+
+    #[test]
+    fn prompt_cache_status_is_null_when_absent_or_not_an_object() {
+        assert!(prompt_cache_status(&serde_json::json!({})).is_null());
+        assert!(prompt_cache_status(&serde_json::json!({ "prompt_cache": null })).is_null());
+        assert!(prompt_cache_status(&serde_json::json!({ "prompt_cache": "warm" })).is_null());
+    }
+
+    #[test]
+    fn prompt_cache_status_keeps_every_key_with_nulls_for_missing_fields() {
+        let cc = serde_json::json!({
+            "prompt_cache": { "warm": false, "hit_ratio": null, "last_miss_cause": null }
+        });
+        assert_eq!(
+            prompt_cache_status(&cc),
+            serde_json::json!({
+                "warm": false,
+                "caching_observed": null,
+                "ttl": null,
+                "expires_at": null,
+                "requests": null,
+                "misses": null,
+                "hit_ratio": null,
+                "miss_recache_tokens": null,
+                "last_miss_at": null,
+                "last_miss_causes": []
+            })
+        );
+    }
+
+    #[test]
+    fn prompt_cache_status_nulls_mistyped_fields_and_joins_several_causes() {
+        let cc = serde_json::json!({
+            "prompt_cache": {
+                "warm": "yes",
+                "requests": "14",
+                "last_miss_cause": { "causes": ["tools_changed", "system_prompt_changed"] }
+            }
+        });
+        let out = prompt_cache_status(&cc);
+        assert!(out["warm"].is_null());
+        assert!(out["requests"].is_null());
+        assert_eq!(
+            out["last_miss_causes"],
+            serde_json::json!(["tools_changed", "system_prompt_changed"])
+        );
+    }
+
+    #[test]
+    fn prompt_cache_status_ignores_non_array_causes() {
+        let cc = serde_json::json!({
+            "prompt_cache": { "last_miss_cause": { "causes": "tools_changed" } }
+        });
+        assert_eq!(prompt_cache_status(&cc)["last_miss_causes"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn agent_status_payload_carries_prompt_cache_object() {
+        let mut snapshot = full_cc_snapshot();
+        snapshot["prompt_cache"] = full_prompt_cache();
+        let out = statusline_to_agent_status(&snapshot, "n");
+        assert_eq!(out["prompt_cache"]["hit_ratio"], 0.91);
+        assert_eq!(out["prompt_cache"]["warm"], true);
+        assert_eq!(
+            out["prompt_cache"]["last_miss_causes"],
+            serde_json::json!(["tools_changed"])
+        );
+    }
+
+    #[test]
+    fn agent_status_payload_prompt_cache_is_null_for_older_cc() {
+        let out = statusline_to_agent_status(&full_cc_snapshot(), "n");
+        assert!(out.get("prompt_cache").is_some_and(|v| v.is_null()));
+        assert_eq!(out["effort_level"], "high");
+    }
+
     #[test]
     fn tui_text_combines_model_and_context() {
         assert_eq!(statusline_tui_text(&full_cc_snapshot()), "Opus · 8% ctx");

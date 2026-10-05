@@ -365,4 +365,259 @@ mod tests {
             _ => panic!("expected Stop"),
         }
     }
+
+    #[test]
+    fn subagent_start_deserializes_with_all_fields() {
+        let json = r#"{"hook_event_name":"SubagentStart","session_id":"s1","agent_id":"a1","agent_type":"Explore"}"#;
+        let ev: HookEvent = serde_json::from_str(json).unwrap();
+        match ev {
+            HookEvent::SubagentStart {
+                session_id,
+                agent_id,
+                agent_type,
+            } => {
+                assert_eq!(session_id, "s1");
+                assert_eq!(agent_id.as_deref(), Some("a1"));
+                assert_eq!(agent_type.as_deref(), Some("Explore"));
+            }
+            _ => panic!("expected SubagentStart"),
+        }
+    }
+
+    #[test]
+    fn subagent_start_without_optional_fields_still_deserializes() {
+        let json = r#"{"hook_event_name":"SubagentStart","session_id":"s1"}"#;
+        let ev: HookEvent = serde_json::from_str(json).unwrap();
+        match ev {
+            HookEvent::SubagentStart {
+                agent_id,
+                agent_type,
+                ..
+            } => {
+                assert!(agent_id.is_none());
+                assert!(agent_type.is_none());
+            }
+            _ => panic!("expected SubagentStart"),
+        }
+    }
+
+    #[test]
+    fn subagent_stop_deserializes_with_effort_and_last_message() {
+        let json = r#"{"hook_event_name":"SubagentStop","session_id":"s1","agent_id":"a1","agent_type":"Plan","last_assistant_message":"plan ready","effort":{"level":"high"}}"#;
+        let ev: HookEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(ev.effort_level().as_deref(), Some("high"));
+        match ev {
+            HookEvent::SubagentStop {
+                agent_id,
+                agent_type,
+                last_assistant_message,
+                ..
+            } => {
+                assert_eq!(agent_id.as_deref(), Some("a1"));
+                assert_eq!(agent_type.as_deref(), Some("Plan"));
+                assert_eq!(last_assistant_message.as_deref(), Some("plan ready"));
+            }
+            _ => panic!("expected SubagentStop"),
+        }
+    }
+
+    #[test]
+    fn subagent_stop_without_optional_fields_still_deserializes() {
+        let json = r#"{"hook_event_name":"SubagentStop","session_id":"s1"}"#;
+        let ev: HookEvent = serde_json::from_str(json).unwrap();
+        assert!(ev.effort_level().is_none());
+        match ev {
+            HookEvent::SubagentStop {
+                agent_id,
+                agent_type,
+                last_assistant_message,
+                effort,
+                ..
+            } => {
+                assert!(agent_id.is_none());
+                assert!(agent_type.is_none());
+                assert!(last_assistant_message.is_none());
+                assert!(effort.is_null());
+            }
+            _ => panic!("expected SubagentStop"),
+        }
+    }
+
+    #[test]
+    fn effort_level_is_none_for_non_string_level_and_other_events() {
+        let json = r#"{"hook_event_name":"SubagentStop","session_id":"s1","effort":{"level":3}}"#;
+        let ev: HookEvent = serde_json::from_str(json).unwrap();
+        assert!(ev.effort_level().is_none());
+
+        let stop = HookEvent::SessionEnd {
+            session_id: "s".into(),
+        };
+        assert!(stop.effort_level().is_none());
+    }
+
+    #[test]
+    fn subagent_session_id_is_exposed() {
+        let start = HookEvent::SubagentStart {
+            session_id: "s-start".into(),
+            agent_id: None,
+            agent_type: None,
+        };
+        assert_eq!(start.session_id(), "s-start");
+        let stop = HookEvent::SubagentStop {
+            session_id: "s-stop".into(),
+            agent_id: None,
+            agent_type: None,
+            last_assistant_message: None,
+            effort: serde_json::Value::Null,
+        };
+        assert_eq!(stop.session_id(), "s-stop");
+    }
+
+    #[test]
+    fn subagent_events_carry_no_mcp_mode_or_waiting_reason() {
+        let start = HookEvent::SubagentStart {
+            session_id: "s".into(),
+            agent_id: Some("a1".into()),
+            agent_type: Some("Explore".into()),
+        };
+        let stop = HookEvent::SubagentStop {
+            session_id: "s".into(),
+            agent_id: Some("a1".into()),
+            agent_type: Some("Explore".into()),
+            last_assistant_message: Some("done".into()),
+            effort: serde_json::Value::Null,
+        };
+        for ev in [start, stop] {
+            assert_eq!(ev.mcp_mode(), None);
+            assert!(ev.waiting_for().is_none());
+        }
+    }
+
+    #[test]
+    fn notification_mcp_mode_covers_attention_types_and_background_completion() {
+        let notif = |t: Option<&str>| HookEvent::Notification {
+            session_id: "s".into(),
+            notification_type: t.map(str::to_string),
+            message: None,
+        };
+        assert_eq!(
+            notif(Some("agent_needs_input")).mcp_mode(),
+            Some("needs_attention")
+        );
+        assert_eq!(
+            notif(Some("permission_prompt")).mcp_mode(),
+            Some("needs_attention")
+        );
+        assert_eq!(notif(Some("agent_completed")).mcp_mode(), None);
+    }
+
+    #[test]
+    fn waiting_for_prefixes_background_agent_input_requests() {
+        assert_eq!(BACKGROUND_INPUT_WAITING_PREFIX, "background agent");
+
+        let with_message = HookEvent::Notification {
+            session_id: "s".into(),
+            notification_type: Some("agent_needs_input".into()),
+            message: Some("Pick a branch".into()),
+        };
+        assert_eq!(
+            with_message.waiting_for().as_deref(),
+            Some("background agent: Pick a branch")
+        );
+
+        let without_message = HookEvent::Notification {
+            session_id: "s".into(),
+            notification_type: Some("agent_needs_input".into()),
+            message: None,
+        };
+        assert_eq!(
+            without_message.waiting_for().as_deref(),
+            Some("background agent")
+        );
+    }
+
+    #[test]
+    fn waiting_for_is_none_for_agent_completed_and_unchanged_for_other_types() {
+        let completed = HookEvent::Notification {
+            session_id: "s".into(),
+            notification_type: Some("agent_completed".into()),
+            message: Some("finished".into()),
+        };
+        assert!(completed.waiting_for().is_none());
+
+        let by_type = HookEvent::Notification {
+            session_id: "s".into(),
+            notification_type: Some("idle_prompt".into()),
+            message: None,
+        };
+        assert_eq!(by_type.waiting_for().as_deref(), Some("idle_prompt"));
+
+        let bare = HookEvent::Notification {
+            session_id: "s".into(),
+            notification_type: None,
+            message: None,
+        };
+        assert_eq!(bare.waiting_for().as_deref(), Some("notification"));
+    }
+
+    #[test]
+    fn agent_status_deserializes_full_prompt_cache() {
+        let json = r#"{"hook_event_name":"AgentStatus","session_id":"s1","prompt_cache":{"warm":true,"caching_observed":true,"ttl":"1h","expires_at":1738429200,"requests":14,"misses":2,"hit_ratio":0.91,"miss_recache_tokens":310200,"last_miss_at":1738425230,"last_miss_causes":["tools_changed"]}}"#;
+        let ev: HookEvent = serde_json::from_str(json).unwrap();
+        match ev {
+            HookEvent::AgentStatus { prompt_cache, .. } => {
+                assert_eq!(
+                    prompt_cache,
+                    Some(PromptCacheStatus {
+                        warm: Some(true),
+                        caching_observed: Some(true),
+                        ttl: Some("1h".into()),
+                        expires_at: Some(1738429200),
+                        requests: Some(14),
+                        misses: Some(2),
+                        hit_ratio: Some(0.91),
+                        miss_recache_tokens: Some(310200),
+                        last_miss_at: Some(1738425230),
+                        last_miss_causes: vec!["tools_changed".into()],
+                    })
+                );
+            }
+            _ => panic!("expected AgentStatus"),
+        }
+    }
+
+    #[test]
+    fn agent_status_without_prompt_cache_deserializes_to_none() {
+        let json = r#"{"hook_event_name":"AgentStatus","session_id":"s1","model_id":"m"}"#;
+        let ev: HookEvent = serde_json::from_str(json).unwrap();
+        match ev {
+            HookEvent::AgentStatus { prompt_cache, .. } => assert!(prompt_cache.is_none()),
+            _ => panic!("expected AgentStatus"),
+        }
+    }
+
+    #[test]
+    fn agent_status_accepts_null_prompt_cache() {
+        let json = r#"{"hook_event_name":"AgentStatus","session_id":"s1","prompt_cache":null}"#;
+        let ev: HookEvent = serde_json::from_str(json).unwrap();
+        match ev {
+            HookEvent::AgentStatus { prompt_cache, .. } => assert!(prompt_cache.is_none()),
+            _ => panic!("expected AgentStatus"),
+        }
+    }
+
+    #[test]
+    fn prompt_cache_with_null_ratio_and_causes_deserializes_to_defaults() {
+        let json = r#"{"hook_event_name":"AgentStatus","session_id":"s1","prompt_cache":{"warm":false,"hit_ratio":null}}"#;
+        let ev: HookEvent = serde_json::from_str(json).unwrap();
+        match ev {
+            HookEvent::AgentStatus { prompt_cache, .. } => {
+                let pc = prompt_cache.unwrap();
+                assert_eq!(pc.warm, Some(false));
+                assert!(pc.hit_ratio.is_none());
+                assert!(pc.last_miss_causes.is_empty());
+            }
+            _ => panic!("expected AgentStatus"),
+        }
+    }
 }

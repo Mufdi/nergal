@@ -1771,14 +1771,33 @@ mod tests {
                     rate_7d_pct: None,
                     rate_7d_resets_at: None,
                     effort_level: None,
+                    prompt_cache: None,
                 },
                 "agent_status",
+            ),
+            (
+                HookEvent::SubagentStart {
+                    session_id: "s".into(),
+                    agent_id: Some("a1".into()),
+                    agent_type: Some("Explore".into()),
+                },
+                "subagent_start",
+            ),
+            (
+                HookEvent::SubagentStop {
+                    session_id: "s".into(),
+                    agent_id: Some("a1".into()),
+                    agent_type: Some("Explore".into()),
+                    last_assistant_message: None,
+                    effort: serde_json::Value::Null,
+                },
+                "subagent_stop",
             ),
         ];
 
         assert_eq!(
             cases.len(),
-            16,
+            18,
             "every HookEvent variant must appear exactly once above"
         );
 
@@ -1824,6 +1843,162 @@ mod tests {
         assert_eq!(fe.tool_name.as_deref(), Some("Bash"));
         assert_eq!(fe.stop_reason.as_deref(), Some("destructive command"));
         assert_eq!(fe.tool_input, Some(json!({"command": "rm -rf /"})));
+    }
+
+    #[test]
+    fn from_hook_subagent_start_serializes_agent_identity() {
+        let event = HookEvent::SubagentStart {
+            session_id: "s".into(),
+            agent_id: Some("a1".into()),
+            agent_type: Some("Explore".into()),
+        };
+
+        let v = serde_json::to_value(FrontendHookEvent::from_hook(&event)).unwrap();
+
+        assert_eq!(v["event_type"], "subagent_start");
+        assert_eq!(v["agent_id"], "a1");
+        assert_eq!(v["agent_type"], "Explore");
+        assert!(v.get("agent_message").is_none());
+        assert!(v.get("effort_level").is_none());
+    }
+
+    #[test]
+    fn from_hook_subagent_stop_serializes_message_and_effort() {
+        let event = HookEvent::SubagentStop {
+            session_id: "s".into(),
+            agent_id: Some("a1".into()),
+            agent_type: Some("Plan".into()),
+            last_assistant_message: Some("plan ready".into()),
+            effort: json!({"level": "high"}),
+        };
+
+        let v = serde_json::to_value(FrontendHookEvent::from_hook(&event)).unwrap();
+
+        assert_eq!(v["event_type"], "subagent_stop");
+        assert_eq!(v["agent_id"], "a1");
+        assert_eq!(v["agent_type"], "Plan");
+        assert_eq!(v["agent_message"], "plan ready");
+        assert_eq!(v["effort_level"], "high");
+    }
+
+    #[test]
+    fn from_hook_subagent_stop_omits_absent_optionals() {
+        let event = HookEvent::SubagentStop {
+            session_id: "s".into(),
+            agent_id: None,
+            agent_type: None,
+            last_assistant_message: None,
+            effort: serde_json::Value::Null,
+        };
+
+        let v = serde_json::to_value(FrontendHookEvent::from_hook(&event)).unwrap();
+
+        for key in ["agent_id", "agent_type", "agent_message", "effort_level"] {
+            assert!(v.get(key).is_none(), "{key} must be absent");
+        }
+    }
+
+    #[test]
+    fn from_hook_pre_tool_use_has_no_subagent_keys() {
+        let event = HookEvent::PreToolUse {
+            session_id: "s".into(),
+            tool_name: "Read".into(),
+            tool_input: json!({}),
+        };
+
+        let v = serde_json::to_value(FrontendHookEvent::from_hook(&event)).unwrap();
+
+        for key in ["agent_id", "agent_type", "agent_message", "effort_level"] {
+            assert!(v.get(key).is_none(), "{key} must be absent");
+        }
+    }
+
+
+    #[test]
+    fn subagent_events_without_agent_type_are_droppable() {
+        let start = |t: Option<&str>| HookEvent::SubagentStart {
+            session_id: "s".into(),
+            agent_id: Some("a1".into()),
+            agent_type: t.map(str::to_string),
+        };
+        let stop = |t: Option<&str>| HookEvent::SubagentStop {
+            session_id: "s".into(),
+            agent_id: Some("a1".into()),
+            agent_type: t.map(str::to_string),
+            last_assistant_message: None,
+            effort: serde_json::Value::Null,
+        };
+
+        assert!(is_droppable_subagent_event(&start(None)));
+        assert!(is_droppable_subagent_event(&start(Some(""))));
+        assert!(is_droppable_subagent_event(&stop(None)));
+        assert!(is_droppable_subagent_event(&stop(Some(""))));
+        assert!(!is_droppable_subagent_event(&start(Some("Explore"))));
+        assert!(!is_droppable_subagent_event(&stop(Some("Explore"))));
+    }
+
+    #[test]
+    fn non_subagent_events_are_never_droppable() {
+        let events = vec![
+            HookEvent::SessionStart {
+                session_id: "s".into(),
+            },
+            HookEvent::PreToolUse {
+                session_id: "s".into(),
+                tool_name: "Agent".into(),
+                tool_input: json!({}),
+            },
+            HookEvent::Notification {
+                session_id: "s".into(),
+                notification_type: None,
+                message: None,
+            },
+        ];
+        for ev in events {
+            assert!(!is_droppable_subagent_event(&ev));
+        }
+    }
+
+
+    #[test]
+    fn background_input_wait_resets_to_idle_on_completion() {
+        assert_eq!(
+            mcp_activity_after_completion("needs_attention", Some("background agent: Pick a branch")),
+            Some("idle")
+        );
+        assert_eq!(
+            mcp_activity_after_completion("needs_attention", Some("background agent")),
+            Some("idle")
+        );
+    }
+
+    #[test]
+    fn other_waits_survive_background_completion() {
+        assert_eq!(
+            mcp_activity_after_completion("needs_attention", Some("permission for Bash")),
+            None
+        );
+        assert_eq!(
+            mcp_activity_after_completion("needs_attention", Some("plan review")),
+            None
+        );
+        assert_eq!(
+            mcp_activity_after_completion("needs_attention", Some("answering a question")),
+            None
+        );
+        assert_eq!(mcp_activity_after_completion("needs_attention", None), None);
+    }
+
+    #[test]
+    fn background_completion_leaves_non_attention_modes_alone() {
+        assert_eq!(
+            mcp_activity_after_completion("running", Some("background agent: x")),
+            None
+        );
+        assert_eq!(
+            mcp_activity_after_completion("idle", Some("background agent")),
+            None
+        );
     }
 
     // -- session_log_line: the #2 log line per event --

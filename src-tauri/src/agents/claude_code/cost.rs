@@ -180,4 +180,114 @@ mod tests {
         // 3 + 15 + 0.30 + 3.75 = 22.05 USD per million across all four buckets
         assert!((usd - 22.05).abs() < 1e-9);
     }
+
+    #[test]
+    fn assistant_effort_in_line_reads_top_level_effort() {
+        let line = r#"{"type":"assistant","effort":"high","message":{"role":"assistant"}}"#;
+        assert_eq!(assistant_effort_in_line(line).as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn assistant_effort_in_line_ignores_user_records() {
+        let line = r#"{"type":"user","effort":"high","message":{"role":"user"}}"#;
+        assert_eq!(assistant_effort_in_line(line), None);
+    }
+
+    #[test]
+    fn assistant_effort_in_line_none_without_effort() {
+        let line = r#"{"type":"assistant","message":{"role":"assistant"}}"#;
+        assert_eq!(assistant_effort_in_line(line), None);
+    }
+
+    #[test]
+    fn assistant_effort_in_line_none_for_non_string_effort() {
+        let line = r#"{"type":"assistant","effort":{"level":"high"}}"#;
+        assert_eq!(assistant_effort_in_line(line), None);
+        let line = r#"{"type":"assistant","effort":3}"#;
+        assert_eq!(assistant_effort_in_line(line), None);
+    }
+
+    #[test]
+    fn assistant_effort_in_line_none_for_invalid_json() {
+        assert_eq!(assistant_effort_in_line("not json"), None);
+    }
+
+    #[test]
+    fn assistant_effort_in_line_ignores_effort_nested_in_message() {
+        let line = r#"{"type":"assistant","message":{"effort":"high"}}"#;
+        assert_eq!(assistant_effort_in_line(line), None);
+    }
+
+    fn write_transcript(lines: &[&str]) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("transcript.jsonl");
+        std::fs::write(&path, lines.join("\n")).unwrap();
+        (dir, path)
+    }
+
+    const USAGE_LINE: &str = r#"{"type":"assistant","effort":"high","message":{"usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":10,"cache_creation_input_tokens":5}}}"#;
+
+    #[test]
+    fn scan_transcript_last_assistant_effort_wins() {
+        let (_dir, path) = write_transcript(&[
+            r#"{"type":"assistant","effort":"high"}"#,
+            r#"{"type":"assistant","effort":"medium"}"#,
+            r#"{"type":"user","message":{"role":"user"}}"#,
+        ]);
+        assert_eq!(scan_transcript(&path).last_effort.as_deref(), Some("medium"));
+    }
+
+    #[test]
+    fn scan_transcript_none_for_transcript_without_effort() {
+        let (_dir, path) = write_transcript(&[
+            r#"{"type":"assistant","message":{"role":"assistant"}}"#,
+            r#"{"type":"user","message":{"role":"user"}}"#,
+        ]);
+        assert_eq!(scan_transcript(&path).last_effort, None);
+    }
+
+    #[test]
+    fn scan_transcript_skips_malformed_trailing_line() {
+        let (_dir, path) = write_transcript(&[
+            r#"{"type":"assistant","effort":"low"}"#,
+            "{not valid json",
+        ]);
+        assert_eq!(scan_transcript(&path).last_effort.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn scan_transcript_ignores_effort_on_user_records() {
+        let (_dir, path) = write_transcript(&[
+            r#"{"type":"assistant","effort":"low"}"#,
+            r#"{"type":"user","effort":"xhigh"}"#,
+        ]);
+        assert_eq!(scan_transcript(&path).last_effort.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn scan_transcript_cost_equals_parse_cost_from_transcript() {
+        let (_dir, path) = write_transcript(&[
+            USAGE_LINE,
+            "garbage",
+            r#"{"type":"assistant","effort":"low","message":{"usage":{"input_tokens":7,"output_tokens":3}}}"#,
+        ]);
+        let scan = scan_transcript(&path);
+        let expected = parse_cost_from_transcript(&path);
+        assert_eq!(scan.cost.input_tokens, expected.input_tokens);
+        assert_eq!(scan.cost.output_tokens, expected.output_tokens);
+        assert_eq!(scan.cost.cache_read_tokens, expected.cache_read_tokens);
+        assert_eq!(scan.cost.cache_write_tokens, expected.cache_write_tokens);
+        assert!((scan.cost.total_usd - expected.total_usd).abs() < 1e-12);
+        assert_eq!(scan.cost.input_tokens, 107);
+        assert_eq!(scan.last_effort.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn scan_transcript_missing_file_yields_default_cost_and_no_effort() {
+        let dir = tempfile::tempdir().unwrap();
+        let scan = scan_transcript(&dir.path().join("absent.jsonl"));
+        assert_eq!(scan.cost.input_tokens, 0);
+        assert_eq!(scan.cost.total_usd, 0.0);
+        assert_eq!(scan.last_effort, None);
+    }
 }

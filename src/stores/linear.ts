@@ -5,6 +5,7 @@ import { confirm as swalConfirm } from "@/lib/confirm";
 import { escapeHtml } from "@/lib/escapeHtml";
 import { focusZoneAtom } from "./shortcuts";
 import { toastsAtom } from "./toast";
+import { loadHiddenStates, saveHiddenStates } from "./hiddenStatesStorage";
 import {
   activeSessionIdAtom,
   activeWorkspaceAtom,
@@ -251,7 +252,15 @@ export const linearLabelFilterAtom = atom<ReadonlySet<string>>(new Set<string>()
 
 /// Hidden workflow states, keyed by normalized state name so one choice spans
 /// every team that shares the name.
-export const linearHiddenStatesAtom = atom<ReadonlySet<string>>(new Set<string>());
+const hiddenStatesBaseAtom = atom<ReadonlySet<string>>(loadHiddenStates());
+export const linearHiddenStatesAtom = atom(
+  (get) => get(hiddenStatesBaseAtom),
+  (get, set, update: ReadonlySet<string> | ((prev: ReadonlySet<string>) => ReadonlySet<string>)) => {
+    const next = typeof update === "function" ? update(get(hiddenStatesBaseAtom)) : update;
+    set(hiddenStatesBaseAtom, next);
+    saveHiddenStates(next);
+  },
+);
 
 /// Active project filter — null = "Todos" (group all by project); a project id = filter + group by state.
 export const linearProjectFilterAtom = atom<string | null>(null);

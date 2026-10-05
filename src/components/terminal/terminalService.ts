@@ -21,6 +21,7 @@ import { appStore } from "@/stores/jotaiStore";
 import { toastsAtom } from "@/stores/toast";
 
 import { FontAtlas, isWideCell, measureFont, type FontMetrics } from "./fontAtlas";
+import { auxButtonToForward } from "./mouseButtons";
 import { TERM_FONT, TERM_THEME, refreshTermTheme, rgbaToCss } from "./theme";
 
 const ATTACH_ATTEMPTS = 20;
@@ -418,6 +419,9 @@ async function showTerminal(opts: {
     paintAll(entry);
     entries.set(key, entry);
     if (focus) focusCanvas(entry);
+    // wezterm starts out "focused"; align it so an app enabling DECSET 1004
+    // later in an unfocused terminal gets `CSI I` on the first real focus.
+    sendFocus(entry, hasInputFocus(entry));
 
     if (activeIds.get(region) !== key) {
       container.style.display = "none";
@@ -525,6 +529,20 @@ function sendMouseButton(
   }).catch((err: unknown) => console.error("terminal_mouse_button failed", err));
 }
 
+const FOCUS_SETTLE_MS = 100;
+
+// A window-level blur leaves the textarea as document.activeElement, so
+// activeElement alone would miss it.
+function hasInputFocus(entry: Entry): boolean {
+  return document.hasFocus() && document.activeElement === entry.textarea;
+}
+
+function sendFocus(entry: Entry, focused: boolean): void {
+  invoke("terminal_focus", { sessionId: entry.sessionId, focused }).catch(
+    (err: unknown) => console.error("terminal_focus failed", err),
+  );
+}
+
 // ── Private: input wiring ──
 
 function wireInput(entry: Entry): void {
@@ -608,9 +626,40 @@ function wireInput(entry: Entry): void {
     }
   });
 
+  // The app only receives these when it enabled DECSET 1004; wezterm drops
+  // them otherwise. The blur is re-checked after a beat because the auto-copy
+  // toast steals focus for a frame and the textarea takes it back, which
+  // would otherwise flap `CSI O`/`CSI I` to the app on every copy.
+  entry.textarea.addEventListener("focus", () => sendFocus(entry, true));
+  entry.textarea.addEventListener("blur", () => {
+    setTimeout(() => {
+      if (!hasInputFocus(entry)) sendFocus(entry, false);
+    }, FOCUS_SETTLE_MS);
+  });
+
   // ── Mouse: lives on the visible canvas ──
 
   entry.canvas.addEventListener("mousedown", (e) => {
+    const aux = auxButtonToForward(e.button, entry.isAltScreen);
+    if (aux) {
+      e.preventDefault();
+      focusCanvas(entry);
+      const pressCell = mouseToCell(entry, e);
+      if (!pressCell) return;
+      sendMouseButton(entry, aux, "press", pressCell.col, pressCell.row, e);
+      // Listening on window, not the canvas: a release off the pane must
+      // still reach the app, or wezterm keeps the button held and the app
+      // never sees the release it acts on (CC pastes on release).
+      const button = e.button;
+      const onUp = (up: MouseEvent) => {
+        if (up.button !== button) return;
+        window.removeEventListener("mouseup", onUp);
+        const cell = mouseToCell(entry, up) ?? pressCell;
+        sendMouseButton(entry, aux, "release", cell.col, cell.row, up);
+      };
+      window.addEventListener("mouseup", onUp);
+      return;
+    }
     if (e.button !== 0) return;
     e.preventDefault();
     focusCanvas(entry);
@@ -706,6 +755,7 @@ function wireInput(entry: Entry): void {
   }
 
   entry.canvas.addEventListener("mouseup", (e) => {
+    if (auxButtonToForward(e.button, entry.isAltScreen)) return;
     if (!entry.isDragging) {
       if (entry.isAltScreen && e.button === 0) {
         const cell = mouseToCell(entry, e);
@@ -715,6 +765,12 @@ function wireInput(entry: Entry): void {
     }
     entry.isDragging = false;
     finishSelectionDrag(e);
+  });
+
+  // A right click forwarded to the TUI (paste on release) must not also open
+  // the webview's native context menu over it.
+  entry.canvas.addEventListener("contextmenu", (e) => {
+    if (entry.isAltScreen) e.preventDefault();
   });
 
   // A drag can end with the pointer off the canvas (selecting to the bottom/right

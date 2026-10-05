@@ -12,7 +12,14 @@
 - [x] 2.3 Add `linearHiddenStatesAtom` to `src/stores/linear.ts`
 - [x] 2.4 Add the header dropdown to `LinearPanel.tsx`, copying the label filter popover mechanics with `e.key` navigation, and apply the filter to the list pool and the sub-issue pool
 
-## 3. Verification
+## 3. Dropdown rows and state sub-groups
 
-- [x] 3.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check && cd .. && npx tsc --noEmit && pnpm test`
-- [ ] 3.2 Manual walk: open the Linear panel in State view and check the group order; hide Done and Backlog, close and reopen the panel, and check they stay hidden; toggle show-completed (H) and check Pending stays visible
+- [x] 3.1 Test (Red): `src/lib/linearStateOrder.test.ts` covers `groupByState` (rank order with closed last, same-name merge, No state last, empty input)
+- [x] 3.2 Add `groupByState` to `src/lib/linearStateOrder.ts`
+- [x] 3.3 Extract `GroupHeader` in `LinearPanel.tsx` and render dropdown options as header-style rows with hidden states dimmed
+- [x] 3.4 Render state sub-groups in Project, Assignee and Cycle sections with collapsed keys `<sectionKey>|state:<name>` in the shared `collapsed` set
+
+## 4. Verification
+
+- [x] 4.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check && cd .. && npx tsc --noEmit && pnpm test`
+- [ ] 4.2 Manual walk: open the Linear panel in State view and check the group order; in Project, Assignee and Cycle check the state sub-headers fold with click and Arrow Left/Right; hide Done and Backlog, close and reopen the panel, and check they stay hidden; toggle show-completed (H) and check Pending stays visible

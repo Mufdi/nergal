@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   compareStates,
   filterHiddenStates,
+  groupByState,
   isClosedState,
   normalizeStateName,
   stateFilterOptions,
@@ -134,5 +135,56 @@ describe("state visibility filter", () => {
 
   it("skips issues without a state name in the options", () => {
     expect(stateFilterOptions([{ stateType: "started" }])).toEqual([]);
+  });
+});
+
+describe("groupByState", () => {
+  const issue = (id: string, name: string | undefined, type: string | undefined, pos = 0) => ({
+    id,
+    stateName: name,
+    stateType: type,
+    statePosition: pos,
+    stateColor: `#${id}`,
+  });
+
+  it("orders sub-groups by state rank, closed last", () => {
+    const groups = groupByState([
+      issue("1", "Done", "completed"),
+      issue("2", "Triage", "triage"),
+      issue("3", "In Review", "started", 2),
+      issue("4", "In Progress", "started", 1),
+      issue("5", "Todo", "unstarted"),
+      issue("6", "Backlog", "backlog"),
+    ]);
+    expect(groups.map((g) => g.label)).toEqual([
+      "In Review",
+      "In Progress",
+      "Todo",
+      "Backlog",
+      "Triage",
+      "Done",
+    ]);
+  });
+
+  it("merges same-named states and keeps issue order inside a sub-group", () => {
+    const groups = groupByState([
+      issue("a", "Todo", "unstarted"),
+      issue("b", "todo", "unstarted"),
+      issue("c", "Todo", "unstarted"),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].key).toBe("todo");
+    expect(groups[0].issues.map((i) => i.id)).toEqual(["a", "b", "c"]);
+    expect(groups[0]).toMatchObject({ label: "Todo", stateType: "unstarted", color: "#a" });
+  });
+
+  it("puts issues without a state in a trailing No state group", () => {
+    const groups = groupByState([issue("1", undefined, undefined), issue("2", "Done", "completed")]);
+    expect(groups.map((g) => g.label)).toEqual(["Done", "No state"]);
+    expect(groups[1]).toMatchObject({ key: "", stateType: null });
+  });
+
+  it("returns no groups for no issues", () => {
+    expect(groupByState([])).toEqual([]);
   });
 });

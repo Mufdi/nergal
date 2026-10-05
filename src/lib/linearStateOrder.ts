@@ -93,3 +93,35 @@ export function stateFilterOptions(
     .sort((a, b) => compareStates(a.sample, b.sample))
     .map((e) => e.option);
 }
+
+export interface StateSubGroup<T> {
+  key: string;
+  label: string;
+  stateType: string | null;
+  color: string | null;
+  issues: T[];
+  state: StateLike;
+}
+
+export function groupByState<T extends StateLike & { stateColor?: string }>(
+  issues: readonly T[],
+): StateSubGroup<T>[] {
+  const groups = new Map<string, StateSubGroup<T>>();
+  for (const i of issues) {
+    const key = normalizeStateName(i.stateName);
+    let g = groups.get(key);
+    if (!g) {
+      g = {
+        key,
+        label: key ? (i.stateName ?? "").trim() : "No state",
+        stateType: i.stateType ?? null,
+        color: i.stateColor ?? null,
+        issues: [],
+        state: i,
+      };
+      groups.set(key, g);
+    }
+    g.issues.push(i);
+  }
+  return [...groups.values()].sort((a, b) => compareStates(a.state, b.state));
+}

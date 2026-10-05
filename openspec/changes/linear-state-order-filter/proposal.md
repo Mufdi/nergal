@@ -14,7 +14,9 @@ The Linear panel orders state groups by Linear's native state type: triage first
 - The same order applies to issues inside project, assignee and cycle groups.
 - The show-completed control hides closed states by the same name-first rule, so it no longer hides `Pending`.
 - A new multi-select dropdown in the panel header shows or hides individual states by name.
-- The hidden-state selection persists in the shared Jotai store, like the other Linear panel filters. It survives closing and reopening the panel, but not an app restart.
+- The hidden-state selection persists in the shared Jotai store and in local storage. It survives closing the panel and restarting the app.
+- Dropdown options render as full-width rows like the State-tab group headers: glyph plus name, hidden states dimmed, no trailing check mark.
+- Project, Assignee and Cycle sections split their issues into collapsible state sub-groups that reuse the State-tab group header and the shared collapsed set.
 
 ## Capabilities
 
@@ -29,7 +31,8 @@ None.
 
 ## Impact
 
-- `src/lib/linearStateOrder.ts` (new): pure rank, closed-state and filter helpers with vitest coverage.
-- `src/components/linear/LinearPanel.tsx`: group sort, in-group sort, show-completed filter and the new dropdown.
+- `src/lib/linearStateOrder.ts` (new): pure rank, closed-state, filter and state sub-grouping helpers with vitest coverage.
+- `src/stores/hiddenStatesStorage.ts` (new): local-storage persistence for the hidden states.
+- `src/components/linear/LinearPanel.tsx`: group sort, in-group sort, show-completed filter, the new dropdown and the state sub-headers.
 - `src/stores/linear.ts`: new `linearHiddenStatesAtom`.
 - No backend, schema, config or Linear API change.

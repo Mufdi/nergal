@@ -79,9 +79,11 @@ import { invoke } from "@/lib/tauri";
 import {
   compareStates,
   filterHiddenStates,
+  groupByState,
   isClosedState,
   stateFilterOptions,
   type StateLike,
+  type StateSubGroup,
 } from "@/lib/linearStateOrder";
 import { toastsAtom } from "@/stores/toast";
 
@@ -179,6 +181,7 @@ interface IssueGroup {
   color: string | null;
   issues: IssueView[];
   state?: StateLike;
+  stateSubGroups?: StateSubGroup<IssueView>[];
 }
 
 function groupIssues(issues: IssueView[], groupBy: LinearGroupBy): IssueGroup[] {
@@ -251,6 +254,10 @@ function groupIssues(issues: IssueView[], groupBy: LinearGroupBy): IssueGroup[] 
       if (na !== nb) return nb - na;
       return a.label.localeCompare(b.label);
     });
+  }
+
+  if (groupBy !== "state") {
+    for (const g of result) g.stateSubGroups = groupByState(g.issues);
   }
 
   return result;
@@ -1016,7 +1023,7 @@ export function LinearPanel() {
                 aria-multiselectable
                 tabIndex={-1}
                 onKeyDown={onStateListKeyDown}
-                className="absolute right-0 top-full z-50 mt-1 min-w-40 max-w-56 rounded-md border border-border bg-popover shadow-md outline-none"
+                className="absolute right-0 top-full z-50 mt-1 min-w-48 max-w-64 overflow-hidden rounded-md border border-border bg-popover shadow-md outline-none"
               >
                 <div className="flex items-center justify-between border-b border-border/50 px-2 py-1">
                   <span className="text-[10px] font-medium text-muted-foreground">States</span>
@@ -1031,7 +1038,7 @@ export function LinearPanel() {
                     </button>
                   )}
                 </div>
-                <div className="max-h-48 overflow-y-auto py-0.5">
+                <div className="max-h-64 overflow-y-auto">
                   {stateOptions.map((opt) => {
                     const shown = !hiddenStates.has(opt.key);
                     return (
@@ -1042,11 +1049,10 @@ export function LinearPanel() {
                         aria-selected={shown}
                         tabIndex={-1}
                         onClick={() => toggleStateHidden(opt.key)}
-                        className={`flex w-full items-center gap-2 px-2 py-1 text-left text-[11px] outline-none transition-colors hover:bg-secondary/50 focus:bg-accent focus:text-accent-foreground ${shown ? "text-foreground" : "text-muted-foreground"}`}
+                        className={`flex w-full items-center gap-1.5 bg-secondary/40 px-3 py-1.5 text-left text-[11px] font-medium text-foreground/70 outline-none transition-colors hover:bg-secondary/60 focus:bg-accent focus:text-accent-foreground ${shown ? "" : "opacity-40"}`}
                       >
-                        <LinearStatusIcon stateType={opt.stateType} color={opt.color} size={12} className="shrink-0" />
-                        <span className="flex-1 truncate">{opt.name}</span>
-                        {shown && <span className="shrink-0 text-[9px] text-primary">✓</span>}
+                        <LinearStatusIcon stateType={opt.stateType} color={opt.color} size={13} className="shrink-0" />
+                        <span className="truncate">{opt.name}</span>
                       </button>
                     );
                   })}
@@ -1231,6 +1237,8 @@ export function LinearPanel() {
                 group={group}
                 expanded={!collapsed.has(group.key)}
                 onToggle={() => toggleGroup(group.key)}
+                collapsed={collapsed}
+                onToggleGroup={toggleGroup}
                 expandedIssueIds={expandedIssueIds}
                 onToggleIssue={toggleIssueExpand}
                 childMap={childMap}
@@ -1250,6 +1258,8 @@ function LinearGroupSection({
   group,
   expanded,
   onToggle,
+  collapsed,
+  onToggleGroup,
   expandedIssueIds,
   onToggleIssue,
   childMap,
@@ -1260,6 +1270,8 @@ function LinearGroupSection({
   group: IssueGroup;
   expanded: boolean;
   onToggle: () => void;
+  collapsed: ReadonlySet<string>;
+  onToggleGroup: (key: string) => void;
   expandedIssueIds: ReadonlySet<string>;
   onToggleIssue: (issueId: string) => void;
   childMap: ReadonlyMap<string, IssueView[]>;
@@ -1294,28 +1306,79 @@ function LinearGroupSection({
 
   return (
     <div>
-      <button
-        type="button"
-        data-nav-item
-        data-nav-expanded={expanded}
-        data-group-key={group.key}
-        onClick={onToggle}
-        className="flex w-full items-center gap-1.5 bg-secondary/40 px-3 py-1.5 text-left text-[11px] font-medium text-foreground/70 transition-colors hover:bg-secondary/60"
-      >
-        {expanded
-          ? <ChevronDown size={11} className="shrink-0 text-muted-foreground" />
-          : <ChevronRight size={11} className="shrink-0 text-muted-foreground" />
-        }
-        {group.stateType ? (
-          <LinearStatusIcon stateType={group.stateType} color={group.color} size={13} className="shrink-0" title={group.label} />
-        ) : group.color ? (
-          <span className="size-1.5 shrink-0 rounded-full" style={{ background: group.color }} />
-        ) : null}
-        <span className="truncate">{group.label}</span>
-        <span className="tabular-nums text-muted-foreground/50">{group.issues.length}</span>
-      </button>
-      {expanded && group.issues.map((issue) => renderNode(issue, 0, new Set<string>()))}
+      <GroupHeader
+        groupKey={group.key}
+        label={group.label}
+        stateType={group.stateType}
+        color={group.color}
+        count={group.issues.length}
+        expanded={expanded}
+        onToggle={onToggle}
+      />
+      {expanded && !group.stateSubGroups && group.issues.map((issue) => renderNode(issue, 0, new Set<string>()))}
+      {expanded && group.stateSubGroups?.map((sub) => {
+        const subKey = `${group.key}|state:${sub.key || "none"}`;
+        const subExpanded = !collapsed.has(subKey);
+        return (
+          <div key={subKey}>
+            <GroupHeader
+              groupKey={subKey}
+              label={sub.label}
+              stateType={sub.stateType}
+              color={sub.color}
+              count={sub.issues.length}
+              expanded={subExpanded}
+              onToggle={() => onToggleGroup(subKey)}
+              nested
+            />
+            {subExpanded && sub.issues.map((issue) => renderNode(issue, 0, new Set<string>()))}
+          </div>
+        );
+      })}
     </div>
+  );
+}
+
+function GroupHeader({
+  groupKey,
+  label,
+  stateType,
+  color,
+  count,
+  expanded,
+  onToggle,
+  nested = false,
+}: {
+  groupKey: string;
+  label: string;
+  stateType: string | null;
+  color: string | null;
+  count: number;
+  expanded: boolean;
+  onToggle: () => void;
+  nested?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      data-nav-item
+      data-nav-expanded={expanded}
+      data-group-key={groupKey}
+      onClick={onToggle}
+      className={`flex w-full items-center gap-1.5 bg-secondary/40 py-1.5 text-left text-[11px] font-medium text-foreground/70 transition-colors hover:bg-secondary/60 ${nested ? "pl-5 pr-3" : "px-3"}`}
+    >
+      {expanded
+        ? <ChevronDown size={11} className="shrink-0 text-muted-foreground" />
+        : <ChevronRight size={11} className="shrink-0 text-muted-foreground" />
+      }
+      {stateType ? (
+        <LinearStatusIcon stateType={stateType} color={color} size={13} className="shrink-0" title={label} />
+      ) : color ? (
+        <span className="size-1.5 shrink-0 rounded-full" style={{ background: color }} />
+      ) : null}
+      <span className="truncate">{label}</span>
+      <span className="tabular-nums text-muted-foreground/50">{count}</span>
+    </button>
   );
 }
 

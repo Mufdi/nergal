@@ -3,6 +3,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+fn default_true() -> bool {
+    true
+}
+
 fn default_keyboard_ownership() -> String {
     "nergal".to_string()
 }
@@ -229,6 +233,11 @@ pub struct Config {
     /// reason as `linear_hidden_states`.
     #[serde(default)]
     pub linear_collapsed_groups: Vec<String>,
+    /// Linear panel: whether completed/canceled issues show. Frontend-owned,
+    /// same reason as `linear_hidden_states`; defaults on so configs written
+    /// before this field existed keep showing them.
+    #[serde(default = "default_true")]
+    pub linear_show_completed: bool,
 }
 
 /// Tuning + kill-switch for agent-spawned worktree sessions. All fields have
@@ -426,6 +435,7 @@ impl Default for Config {
             keyboard_ownership: default_keyboard_ownership(),
             linear_hidden_states: Vec::new(),
             linear_collapsed_groups: Vec::new(),
+            linear_show_completed: true,
         }
     }
 }
@@ -551,6 +561,21 @@ mod tests {
         let back: Config = serde_json::from_value(v).unwrap();
         assert!(back.linear_hidden_states.is_empty());
         assert!(back.linear_collapsed_groups.is_empty());
+    }
+
+    #[test]
+    fn linear_show_completed_defaults_true_when_absent_and_round_trips() {
+        let mut v = serde_json::to_value(Config::default()).unwrap();
+        v.as_object_mut().unwrap().remove("linear_show_completed");
+        let back: Config = serde_json::from_value(v).unwrap();
+        assert!(back.linear_show_completed);
+
+        let hidden = Config {
+            linear_show_completed: false,
+            ..Config::default()
+        };
+        let back: Config = serde_json::from_str(&serde_json::to_string(&hidden).unwrap()).unwrap();
+        assert!(!back.linear_show_completed);
     }
 
     #[test]

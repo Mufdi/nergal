@@ -73,6 +73,7 @@ export interface Config {
   /// per-key by the panel, not through the Settings Save button).
   linear_hidden_states?: string[];
   linear_collapsed_groups?: string[];
+  linear_show_completed?: boolean;
 }
 
 export interface CrossSessionConfig {

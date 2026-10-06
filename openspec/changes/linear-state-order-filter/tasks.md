@@ -26,6 +26,11 @@
 - [x] 4.3 Back `linearHiddenStatesAtom` and `linearCollapsedGroupsAtom` in `src/stores/linear.ts` with `configAtom`, persisting per key via `save_config`; remove the localStorage helpers (`hiddenStatesStorage.ts`) because WebKitGTK flushes localStorage lazily and lost writes on quit
 - [x] 4.4 Bound the collapsed set to 500 keys with `boundRecent` in `src/stores/linearPrefs.ts`
 
+## 4b. Persist show-completed
+
+- [x] 4b.1 Test (Red): `linearPrefsAtoms.test.ts` (show-completed defaults true, reads config, writes only `linear_show_completed`); Rust `config.rs` default-true-when-absent and round-trip
+- [x] 4b.2 Add frontend-owned `linear_show_completed` (`#[serde(default = "default_true")]`) to `Config`, the frontend `Config` type and `configAtom` defaults; back `linearShowCompletedAtom` in `src/stores/linear.ts` with `configAtom`, persisting only that key via `save_config`
+
 ## 5. Verification
 
 - [x] 5.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check && cd .. && npx tsc --noEmit && pnpm test`

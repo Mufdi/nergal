@@ -28,4 +28,5 @@ export const configAtom = atom<Config>({
   keyboard_ownership: "nergal",
   linear_hidden_states: [],
   linear_collapsed_groups: [],
+  linear_show_completed: true,
 });

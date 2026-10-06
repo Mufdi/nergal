@@ -65,3 +65,15 @@ The set of folded group and sub-group keys SHALL persist in Nergal's config (`li
 - **WHEN** the user folds the "Todo" sub-group inside project A and restarts the app
 - **THEN** that sub-group SHALL still be folded and "Todo" inside project B SHALL stay expanded
 
+
+### Requirement: Show-completed choice persists across restarts
+
+The show-completed control (H) SHALL persist in Nergal's config (`linear_show_completed`), not in memory or browser storage, so hiding closed issues survives restarting the app. A config written before the field existed SHALL read as true, so closed issues keep showing by default.
+
+#### Scenario: Hidden closed issues stay hidden after restart
+- **WHEN** the user turns show-completed off and restarts the app
+- **THEN** the panel SHALL open with closed issues hidden
+
+#### Scenario: Config without the field shows closed issues
+- **WHEN** the config on disk has no `linear_show_completed`
+- **THEN** the panel SHALL show closed issues

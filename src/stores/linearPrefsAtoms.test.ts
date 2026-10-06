@@ -5,7 +5,11 @@ const invoke = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 vi.mock("@/lib/tauri", () => ({ invoke, listen: vi.fn() }));
 
 import { configAtom } from "./config";
-import { linearCollapsedGroupsAtom, linearHiddenStatesAtom } from "./linear";
+import {
+  linearCollapsedGroupsAtom,
+  linearHiddenStatesAtom,
+  linearShowCompletedAtom,
+} from "./linear";
 
 describe("linear panel prefs persist through Nergal config", () => {
   beforeEach(() => invoke.mockClear());
@@ -31,5 +35,21 @@ describe("linear panel prefs persist through Nergal config", () => {
     const saved = store.get(configAtom).linear_collapsed_groups ?? [];
     expect(saved).toHaveLength(500);
     expect(saved[499]).toBe("k519");
+  });
+
+  it("show-completed defaults to true and reads from config", () => {
+    const store = createStore();
+    expect(store.get(linearShowCompletedAtom)).toBe(true);
+    store.set(configAtom, { ...store.get(configAtom), linear_show_completed: false });
+    expect(store.get(linearShowCompletedAtom)).toBe(false);
+  });
+
+  it("show-completed writes only its key to save_config", () => {
+    const store = createStore();
+    store.set(linearShowCompletedAtom, false);
+    expect(invoke).toHaveBeenCalledWith("save_config", {
+      config: { linear_show_completed: false },
+    });
+    expect(store.get(configAtom).linear_show_completed).toBe(false);
   });
 });

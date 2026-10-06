@@ -241,9 +241,6 @@ export const linearTeamFilterAtom = atom<string | null>(null);
 export const linearGroupByAtom = atom<LinearGroupBy>("state");
 /// Default true: show only issues assigned to the viewer.
 export const linearAssignedToMeAtom = atom(true);
-/// When true, completed/canceled/duplicate issues show (local filter, no fetch).
-/// Default on — the user wants terminal issues visible (they ARE mirrored).
-export const linearShowCompletedAtom = atom(true);
 
 /// Issue currently open in the floating detail module (null = closed).
 export const linearDetailIssueIdAtom = atom<string | null>(null);
@@ -281,6 +278,20 @@ export const linearHiddenStatesAtom = linearPrefAtom("linear_hidden_states");
 export const linearCollapsedGroupsAtom = linearPrefAtom(
   "linear_collapsed_groups",
   MAX_COLLAPSED_GROUPS,
+);
+
+/// When true, completed/canceled/duplicate issues show (local filter, no fetch).
+/// Default on — the user wants terminal issues visible (they ARE mirrored).
+export const linearShowCompletedAtom = atom(
+  (get) => get(configAtom).linear_show_completed ?? true,
+  (get, set, update: boolean | ((prev: boolean) => boolean)) => {
+    const prev = get(configAtom).linear_show_completed ?? true;
+    const next = typeof update === "function" ? update(prev) : update;
+    set(configAtom, (cfg) => ({ ...cfg, linear_show_completed: next }));
+    invoke("save_config", { config: { linear_show_completed: next } }).catch((err) =>
+      console.error("[linear] persisting linear_show_completed failed:", err),
+    );
+  },
 );
 
 /// Active project filter — null = "Todos" (group all by project); a project id = filter + group by state.

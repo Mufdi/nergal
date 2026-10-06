@@ -48,7 +48,7 @@
 - [x] 6b.1 Test (Red): `server.rs` forwards `agent_id`/`agent_type` on pre/post tool events only when present; `agentTelemetry.test.ts` covers tagged-row close per agent, handback detail, head move with stop time and duration
 - [x] 6b.2 Add `agent_id`/`agent_type` to `HookEvent::PreToolUse`/`PostToolUse` (`events.rs`) and forward them in `FrontendHookEvent::from_hook` (`server.rs`)
 - [x] 6b.3 Tag tool rows with `ownerAgentId` and capture the handback message in `src/stores/hooks.ts`; close tagged rows, set detail and move the row to the head in `applySubagentStop` (`src/lib/agentTelemetry.ts`)
-- [ ] 6b.4 Manual walk: background Explore subagent; its row appears at the top when it finishes with the report as detail and no pulsing `SubagentHandback` row remains
+- [x] 6b.4 Manual walk: background Explore subagent; its row appears at the top when it finishes with the report as detail and no pulsing `SubagentHandback` row remains
 
 ## 6c. Subagent visibility, report, tokens (FRI-501 walk)
 
@@ -57,15 +57,15 @@
 - [x] 6c.3 Pin running subagents with `appendEntryPinned`, label tool rows via `buildToolUseEntry`, store `tokens`, close main rows at Stop (`agentTelemetry.ts`, `stores/activity.ts`, `stores/hooks.ts`); make subagent rows expandable and show owner label/tokens in `ActivityDrawer.tsx`
 - [x] 6c.5 Test (Red): `rowKeyAction.test.ts` covers detail row (Enter/Space toggle), file row (Enter opens, Space nothing), group row (toggle), plain row (nothing)
 - [x] 6c.6 Keyboard-expand detail rows in `ActivityDrawer.tsx` through the pure `rowKeyAction` (`components/activity/rowKeyAction.ts`), reusing `expandedIds` (the mouse toggle's state) via `data-detail-id`. Precedence: group header toggles the group (Enter/Space); Enter on a file row opens the file even if it also has a detail; Space on it, and Enter/Space on a detail row without a file, toggles the detail; plain row does nothing
-- [ ] 6c.4 Manual walk: two background Explore agents show pinned at the top while working, tool rows carry the agent type, a TaskStop-ed agent expands to `Stopped before reporting` or its last text, tokens appear beside the duration, ToolSearch/TaskStop rows stop pulsing at Stop
+- [x] 6c.4 Manual walk: two background Explore agents show pinned at the top while working, tool rows carry the agent type, a TaskStop-ed agent expands to `Stopped before reporting` or its last text, tokens appear beside the duration, ToolSearch/TaskStop rows stop pulsing at Stop
 
 ## 6. Docs and Verification
 
 - [x] 6.1 Update `docs/hooks.md` (Notification types, subagent hooks) and `docs/design.md` §1.2 (sky-400 also encodes subagent activity)
 - [x] 6.2 Run `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check && cd .. && npx tsc --noEmit && pnpm test`
 - [x] 6.3 Audit added comments (WHY only) and run the placeholder scan on the diff
-- [ ] 6.4 Manual walk (installed app, after `nergal setup`): `~/.claude/settings.json` shows the widened Notification matcher and the two subagent entries
-- [ ] 6.5 Manual walk: ask Claude to run two background Explore subagents; Activities shows exactly two `Subagent: Explore` rows (no extra `Agent` tool rows) that turn done with duration and last message
-- [ ] 6.6 Manual walk: after a few turns the status bar shows the cache chip; idle past the TTL then send a prompt; the chip shows `cold` or a miss with its cause in the tooltip
-- [ ] 6.7 Manual walk: run `/effort low`, send a prompt; the effort chip reads `low`; the tooltip lists the last response effort
+- [x] 6.4 Manual walk (installed app, after `nergal setup`): `~/.claude/settings.json` shows the widened Notification matcher and the two subagent entries
+- [x] 6.5 Manual walk: ask Claude to run two background Explore subagents; Activities shows exactly two `Subagent: Explore` rows (no extra `Agent` tool rows) that turn done with duration and last message
+- [x] 6.6 Manual walk: after a few turns the status bar shows the cache chip; idle past the TTL then send a prompt; the chip shows `cold` or a miss with its cause in the tooltip
+- [x] 6.7 Manual walk: run `/effort low`, send a prompt; the effort chip reads `low`; the tooltip lists the last response effort
 - [ ] 6.8 Manual walk: run `claude agents` inside a Nergal session with a background session that asks for input; the session tab gets the attention tint; when the background session finishes (`agent_completed`) the tint clears and Activities shows `Background agent finished` (or record that the signal does not reach Nergal)

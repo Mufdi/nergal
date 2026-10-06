@@ -41,8 +41,8 @@
 ## 7. Verification
 
 - [x] 7.1 Full check: `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check && cd .. && npx tsc --noEmit && pnpm test`.
-- [ ] 7.2 Manual walk, fresh state (temp `HOME` without `.claude/`, `nergal` on `PATH`): the dialog opens and shows the path; no file or dir exists before Configure; Enter configures (not Skip); Tab to Skip + Enter skips; the dialog closes with a toast; a new Claude Code session reports to Activities.
-- [ ] 7.3 Manual walk, Skip: Esc closes, no file is written; the next launch shows the dialog again.
-- [ ] 7.4 Manual walk, configured install (the dev machine's real `~/.claude/settings.json`): no dialog at launch.
-- [ ] 7.5 Manual walk, Configure error (temp `HOME` with an empty `.claude/` set to `chmod 555`, no `settings.json`): the dialog stays open showing the permission error; the directory stays empty.
+- [x] 7.2 Manual walk, fresh state (temp `HOME` without `.claude/`, `nergal` on `PATH`): the dialog opens and shows the path; no file or dir exists before Configure; Enter configures (not Skip); Tab to Skip + Enter skips; the dialog closes with a toast; a new Claude Code session reports to Activities.
+- [x] 7.3 Manual walk, Skip: Esc closes, no file is written; the next launch shows the dialog again.
+- [x] 7.4 Manual walk, configured install (the dev machine's real `~/.claude/settings.json`): no dialog at launch.
+- [x] 7.5 Manual walk, Configure error (temp `HOME` with an empty `.claude/` set to `chmod 555`, no `settings.json`): the dialog stays open showing the permission error; the directory stays empty.
 - [ ] 7.6 Manual walk, AppImage (launch the real `.AppImage` with hooks absent and no other `nergal` on `PATH`): Configure is disabled and the `PATH` note shows; with the `.deb` also installed, Configure is enabled.

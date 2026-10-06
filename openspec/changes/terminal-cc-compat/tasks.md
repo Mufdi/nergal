@@ -40,6 +40,6 @@
 ## 6. Verification
 
 - [x] 6.1 (re-run after review fixes) `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check && cd .. && npx tsc --noEmit && pnpm test`
-- [x] 6.2 Manual (live CC ≥ v2.1.289 in the installed app): focus reports — steps in `handoff/terminal-matrix.md` § Manual checks
-- [x] 6.3 Manual: right/middle click paste over CC fullscreen — steps in `handoff/terminal-matrix.md`
+- [ ] 6.2 Manual (live CC ≥ v2.1.289 in the installed app): focus reports — steps in `handoff/terminal-matrix.md` § Manual checks
+- [ ] 6.3 Manual: right/middle click paste over CC fullscreen — steps in `handoff/terminal-matrix.md`
 - [ ] 6.4 Manual: Ctrl+V paste of a body containing `ESC[201~` in an aux shell — steps in `handoff/terminal-matrix.md`

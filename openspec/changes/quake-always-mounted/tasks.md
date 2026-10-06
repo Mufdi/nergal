@@ -20,8 +20,8 @@
 ## 4. Verification
 
 - [x] 4.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check && cd .. && npx tsc --noEmit && pnpm test`
-- [x] 4.2 Manual walk (glow on): open and close with `Ctrl+}` several times; the slide runs smooth in both directions
-- [x] 4.3 Manual walk: close over an open spec panel with live refresh; the exit slide plays
-- [x] 4.4 Manual walk: print output in a shell, scroll up, close, reopen; rows and scroll position are the same
+- [ ] 4.2 Manual walk (glow on): open and close with `Ctrl+}` several times; the slide runs smooth in both directions
+- [ ] 4.3 Manual walk: close over an open spec panel with live refresh; the exit slide plays
+- [ ] 4.4 Manual walk: print output in a shell, scroll up, close, reopen; rows and scroll position are the same
 - [ ] 4.5 Manual walk: session switch with the quake open in A and closed in B; no exit slide over B, and typing goes to B's agent terminal
-- [x] 4.6 Manual walk: new shell tab, `exit` in a shell, `Ctrl+W` in the quake, resize drag; no regressions
+- [ ] 4.6 Manual walk: new shell tab, `exit` in a shell, `Ctrl+W` in the quake, resize drag; no regressions

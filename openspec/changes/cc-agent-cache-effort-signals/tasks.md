@@ -55,6 +55,8 @@
 - [x] 6c.1 Test (Red): `agentTelemetry.test.ts` covers pinning/settling order, owner label, `Stopped before reporting`, `tokens`, `formatTokens`, `closeRunningMainToolRows`; `subagent_transcript.rs` covers last text, token sum, missing file, malformed lines, tail cut
 - [x] 6c.2 Add `agent_transcript_path` to `HookEvent::SubagentStop` (`events.rs`), `read_subagent_summary` in `src-tauri/src/agents/claude_code/subagent_transcript.rs`, and forward `agent_message`/`agent_tokens` in `server.rs` (`attach_subagent_transcript`)
 - [x] 6c.3 Pin running subagents with `appendEntryPinned`, label tool rows via `buildToolUseEntry`, store `tokens`, close main rows at Stop (`agentTelemetry.ts`, `stores/activity.ts`, `stores/hooks.ts`); make subagent rows expandable and show owner label/tokens in `ActivityDrawer.tsx`
+- [x] 6c.5 Test (Red): `rowKeyAction.test.ts` covers detail row (Enter/Space toggle), file row (Enter opens, Space nothing), group row (toggle), plain row (nothing)
+- [x] 6c.6 Keyboard-expand detail rows in `ActivityDrawer.tsx` through the pure `rowKeyAction` (`components/activity/rowKeyAction.ts`), reusing `expandedIds` (the mouse toggle's state) via `data-detail-id`. Precedence: group header toggles the group (Enter/Space); Enter on a file row opens the file even if it also has a detail; Space on it, and Enter/Space on a detail row without a file, toggles the detail; plain row does nothing
 - [ ] 6c.4 Manual walk: two background Explore agents show pinned at the top while working, tool rows carry the agent type, a TaskStop-ed agent expands to `Stopped before reporting` or its last text, tokens appear beside the duration, ToolSearch/TaskStop rows stop pulsing at Stop
 
 ## 6. Docs and Verification

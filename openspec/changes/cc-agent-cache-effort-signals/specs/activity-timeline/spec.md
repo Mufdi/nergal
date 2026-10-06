@@ -77,3 +77,15 @@ The system SHALL add a `subagent` activity entry and a desktop notification for 
 #### Scenario: Background session waits for input
 - **WHEN** `Notification {notification_type: "agent_needs_input", message: "Agent X is waiting"}` arrives for session 2
 - **THEN** session 2 Activities SHALL gain the entry `Background agent needs input` with detail `Agent X is waiting`
+
+### Requirement: Keyboard expansion of detail rows
+
+In the Activities drawer, Enter and Space on the cursor row SHALL expand or collapse that row's detail (the subagent report or long thinking text) when the row has one, using the same expanded state as the mouse toggle. Precedence per row kind: a group header toggles its group on Enter and Space; Enter on a row with a file opens the file even when the row also has a detail; Space on such a row, and Enter or Space on a detail row without a file, toggles the detail; a plain row does nothing.
+
+#### Scenario: Enter expands a finished subagent report
+- **WHEN** the cursor is on a `Subagent: …` row with a report and the user presses Enter
+- **THEN** the report SHALL expand, and pressing Enter again SHALL collapse it
+
+#### Scenario: Enter on a file row still opens the file
+- **WHEN** the cursor is on a row with a file and the user presses Enter
+- **THEN** the file SHALL open in a tab

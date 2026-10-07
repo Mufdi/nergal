@@ -45,4 +45,4 @@
 - [x] 7.3 Manual walk, Skip: Esc closes, no file is written; the next launch shows the dialog again.
 - [x] 7.4 Manual walk, configured install (the dev machine's real `~/.claude/settings.json`): no dialog at launch.
 - [x] 7.5 Manual walk, Configure error (temp `HOME` with an empty `.claude/` set to `chmod 555`, no `settings.json`): the dialog stays open showing the permission error; the directory stays empty.
-- [ ] 7.6 Manual walk, AppImage (launch the real `.AppImage` with hooks absent and no other `nergal` on `PATH`): Configure is disabled and the `PATH` note shows; with the `.deb` also installed, Configure is enabled.
+- [x] 7.6 AppImage binary rule: the unit tests `binary_usable_*` in `src-tauri/src/setup_status_tests.rs` pass (no binary, binary inside `$APPDIR`, installed binary under an AppImage, no AppImage). The live AppImage walk is frozen (design Revision 3).

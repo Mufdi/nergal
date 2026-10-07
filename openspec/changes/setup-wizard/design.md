@@ -65,6 +65,10 @@ The adversarial and frontend reviews found four defects in the first build. The 
 
 In the live walk, Enter closed the dialog without configuring. Base UI focuses the first tabbable element (Skip) on open, after the requestAnimationFrame focus, so Revision 1's "Enter on a focused button activates that button" turned Enter into Skip. The popup now declares `initialFocus={contentRef}` (Base UI Popup API), so focus starts on the dialog itself; the rAF focus is removed.
 
+## Revision 3: AppImage walk frozen (2026-10-06, user decision)
+
+The user froze AppImage validation and setup: local work targets the `.deb` only (see the focus freeze in `CLAUDE.md`). The AppImage branch of D6 stays in the code and keeps its unit coverage (`binary_usable_*` in `src-tauri/src/setup_status_tests.rs`). The live AppImage walk (former task 7.6) is dropped, not deferred.
+
 ## Flow
 
 ```mermaid

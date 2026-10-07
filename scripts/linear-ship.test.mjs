@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractIssueIds, planTransitions, shippedComment } from './linear-ship.mjs';
+import {
+  extractIssueIds,
+  extractTrackerIds,
+  mergeIds,
+  planTransitions,
+  shippedComment,
+} from './linear-ship.mjs';
 
 test('extractIssueIds finds ids in subjects, bodies and branch names, deduped and sorted', () => {
   const log = [
@@ -36,4 +42,35 @@ test('shippedComment links the release', () => {
     shippedComment('v0.6.0', 'https://github.com/Mufdi/nergal/releases/tag/v0.6.0'),
     'Shipped in [v0.6.0](https://github.com/Mufdi/nergal/releases/tag/v0.6.0).',
   );
+});
+
+test('extractTrackerIds reads tracker.id out of archived handoff files', () => {
+  const files = [
+    JSON.stringify({ tier: 'M', tracker: { system: 'linear', id: 'FRI-368' } }),
+    JSON.stringify({ tier: 'S', tracker: { system: 'linear', id: 'FRI-12' } }),
+  ];
+  assert.deepEqual(extractTrackerIds(files, 'FRI'), ['FRI-12', 'FRI-368']);
+});
+
+test('extractTrackerIds skips files without a tracker and other team keys', () => {
+  const files = [
+    JSON.stringify({ tier: 'M' }),
+    JSON.stringify({ tracker: { system: 'linear', id: 'ENG-4' } }),
+    JSON.stringify({ tracker: { system: 'linear', pending: [] } }),
+  ];
+  assert.deepEqual(extractTrackerIds(files, 'FRI'), []);
+});
+
+test('extractTrackerIds survives a malformed handoff file', () => {
+  // A half-written JSON must not cost the rest of the release its transitions.
+  const files = ['{ not json', JSON.stringify({ tracker: { id: 'FRI-9' } })];
+  assert.deepEqual(extractTrackerIds(files, 'FRI'), ['FRI-9']);
+});
+
+test('mergeIds unions both sources without duplicating the overlap', () => {
+  assert.deepEqual(mergeIds(['FRI-8', 'FRI-100'], ['FRI-100', 'FRI-2']), [
+    'FRI-2',
+    'FRI-8',
+    'FRI-100',
+  ]);
 });

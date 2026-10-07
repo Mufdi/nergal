@@ -11,12 +11,51 @@ import { fileURLToPath } from 'node:url';
 const API = 'https://api.linear.app/graphql';
 const FROM_STATE = 'Done';
 const TO_STATE = 'Shipped';
+const ARCHIVE_DIR = 'openspec/changes/archive';
+const TRACKER_FILE = /\/handoff\/\.work-modules\.json$/;
+
+function byNumber(ids) {
+  return [...ids].sort((a, b) => Number(a.split('-')[1]) - Number(b.split('-')[1]));
+}
 
 export function extractIssueIds(text, teamKey) {
   const re = new RegExp(`\\b${teamKey}-(\\d+)\\b`, 'gi');
   const ids = new Set();
   for (const m of text.matchAll(re)) ids.add(`${teamKey.toUpperCase()}-${m[1]}`);
-  return [...ids].sort((a, b) => Number(a.split('-')[1]) - Number(b.split('-')[1]));
+  return byNumber(ids);
+}
+
+/**
+ * The second id source, for repos where the commits do not carry the id: in
+ * XD001 only 8 of the last 200 did, so reading the log alone would have left
+ * most of a release's issues sitting in Done. What does carry the id reliably
+ * is the openspec change — `handoff/.work-modules.json` records `tracker.id` —
+ * and archiving that change is the last thing a piece of work does before it
+ * ships, so an archive that appears inside the release range is a shipped
+ * issue.
+ *
+ * Returns nothing when the repo has no such directory, which is why both
+ * sources are always read instead of configured per project.
+ */
+export function extractTrackerIds(contents, teamKey) {
+  const re = new RegExp(`^${teamKey}-\\d+$`, 'i');
+  const ids = new Set();
+  for (const raw of contents) {
+    let id;
+    try {
+      id = JSON.parse(raw)?.tracker?.id;
+    } catch {
+      // A malformed or half-written handoff file is not a reason to abandon the
+      // release: the other changes in the range still have to be moved.
+      continue;
+    }
+    if (typeof id === 'string' && re.test(id)) ids.add(id.toUpperCase());
+  }
+  return byNumber(ids);
+}
+
+export function mergeIds(...lists) {
+  return byNumber(new Set(lists.flat()));
 }
 
 export function planTransitions(issues) {
@@ -37,6 +76,17 @@ function git(args) {
   const r = spawnSync('git', args, { encoding: 'utf8' });
   if (r.status !== 0) throw new Error(`[git ${args.join(' ')}] ${r.stderr || r.stdout}`);
   return r.stdout.trim();
+}
+
+/** The `.work-modules.json` of every change archived inside the range, as it
+ *  stood at the release ref. */
+function archivedTrackerFiles(range, ref) {
+  const added = git(['log', '--diff-filter=A', '--name-only', '--format=', range, '--', ARCHIVE_DIR]);
+  const paths = [...new Set(added.split('\n').map((l) => l.trim()).filter((l) => TRACKER_FILE.test(l)))];
+  return paths.map((file) => {
+    const r = spawnSync('git', ['show', `${ref}:${file}`], { encoding: 'utf8' });
+    return r.status === 0 ? r.stdout : '';
+  });
 }
 
 function previousTag(tag) {
@@ -108,8 +158,17 @@ async function main() {
 
   const base = from ?? previousTag(tag);
   const range = base ? `${base}..${tag}` : tag;
-  const ids = extractIssueIds(git(['log', '--format=%B', range]), teamKey);
-  process.stdout.write(`${range}: ${ids.length ? ids.join(', ') : 'no issue references'}\n`);
+  const fromCommits = extractIssueIds(git(['log', '--format=%B', range]), teamKey);
+  const handoffs = archivedTrackerFiles(range, tag);
+  const fromArchive = extractTrackerIds(handoffs, teamKey);
+  const ids = mergeIds(fromCommits, fromArchive);
+  // The two counts are not decoration: "0 ids out of 4 handoff files" is a
+  // missing `tracker` field, and "0 out of 0" is a release that archived
+  // nothing. Without them a quiet run cannot be told from a broken one.
+  process.stdout.write(
+    `${range}: ${ids.length ? ids.join(', ') : 'no issue references'}` +
+      ` (${fromCommits.length} from commits, ${fromArchive.length} from ${handoffs.length} archived changes)\n`,
+  );
   if (ids.length === 0) return;
 
   if (!apiKey) {

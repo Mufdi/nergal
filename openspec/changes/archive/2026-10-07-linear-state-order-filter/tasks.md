@@ -34,7 +34,7 @@
 ## 5. Verification
 
 - [x] 5.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check && cd .. && npx tsc --noEmit && pnpm test`
-- [ ] 5.2 Manual walk: hide Done and Backlog in the dropdown; their groups (State view) and sub-groups (Project, Assignee, Cycle) stay visible folded with counts; Arrow Right or click on a folded header peeks into it, and after a restart they are folded again; turn H off and check Done, Duplicate and Canceled fold while Pending stays unfolded; expand a parent with a Done child and check the child is listed; fold an open-state group, restart and check it stays folded
+- [x] 5.2 Manual walk: hide Done and Backlog in the dropdown; their groups (State view) and sub-groups (Project, Assignee, Cycle) stay visible folded with counts; Arrow Right or click on a folded header peeks into it, and after a restart they are folded again; turn H off and check Done, Duplicate and Canceled fold while Pending stays unfolded; expand a parent with a Done child and check the child is listed; fold an open-state group, restart and check it stays folded
 
 ## 6. Walk fix: hide folds
 

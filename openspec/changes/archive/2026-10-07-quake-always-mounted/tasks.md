@@ -28,5 +28,5 @@
 - [x] 5.2 Manual walk (glow on): open and close with `Ctrl+}` several times; the slide runs smooth in both directions
 - [x] 5.3 Manual walk: close over an open spec panel with live refresh; the exit slide plays
 - [x] 5.4 Manual walk: print output in a shell, scroll up, close, reopen; rows and scroll position are the same
-- [ ] 5.5 Manual walk: session switch with the quake open in A and closed in B; the exit slide plays and typing goes to B's agent terminal
+- [x] 5.5 Manual walk: session switch with the quake open in A and closed in B; the exit slide plays and typing goes to B's agent terminal
 - [x] 5.6 Manual walk: new shell tab, `exit` in a shell, `Ctrl+W` in the quake, resize drag; no regressions

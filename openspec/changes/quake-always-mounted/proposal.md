@@ -8,7 +8,7 @@ The quake slide looks stuck and jerky on open and close (user walk, 2026-10-05).
 
 - The quake overlay stays mounted for the app lifetime. A closed overlay is translated above the content area and hidden with `visibility: hidden`.
 - The overlay keeps one pinned compositing layer (`will-change: transform`). The slide animates only `transform`.
-- The slide is a four-phase state machine (hidden, entering, shown, exiting). `animationend` ends a slide, with a timer fallback. A session switch still snaps.
+- The slide is a four-phase state machine (hidden, entering, shown, exiting). `animationend` ends a slide, with a timer fallback. A session switch that closes the overlay plays the same exit slide.
 - During a slide, `.nergal-panel-focus` border and glow transitions are off on the overlay and on the panels below it. The glow change happens in one frame, not over 200 ms.
 - Host registration and the ResizeObserver run once per mount, not once per open. Reopening the already-active shell does not re-fit or repaint it.
 - Focus inside a hidden overlay is released, and a stale `quake` focus zone resets to `terminal`. Keystrokes never reach a hidden shell.

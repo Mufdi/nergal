@@ -9,8 +9,7 @@ import {
 } from "./quakeSlide";
 
 const open = { type: "open" } as const;
-const close = { type: "close", sessionSwitch: false } as const;
-const switchClose = { type: "close", sessionSwitch: true } as const;
+const close = { type: "close" } as const;
 const end = { type: "animationEnd" } as const;
 
 describe("quake slide phases", () => {
@@ -39,10 +38,15 @@ describe("quake slide phases", () => {
     expect(nextSlidePhase("exiting", open)).toBe("entering");
   });
 
-  it("a session switch snaps to hidden from every phase", () => {
-    const phases: SlidePhase[] = ["hidden", "entering", "shown", "exiting"];
-    for (const phase of phases) {
-      expect(nextSlidePhase(phase, switchClose)).toBe("hidden");
+  it("every close plays the exit slide, session switches included", () => {
+    const expected: Record<SlidePhase, SlidePhase> = {
+      hidden: "hidden",
+      entering: "exiting",
+      shown: "exiting",
+      exiting: "exiting",
+    };
+    for (const phase of Object.keys(expected) as SlidePhase[]) {
+      expect(nextSlidePhase(phase, close)).toBe(expected[phase]);
     }
   });
 

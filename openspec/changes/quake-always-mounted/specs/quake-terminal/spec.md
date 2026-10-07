@@ -33,15 +33,15 @@ The system SHALL provide a full-width Quake terminal overlay that drops below th
 - **GIVEN** the overlay is in phase `hidden`
 - **WHEN** it opens
 - **THEN** it SHALL enter phase `entering`, and SHALL reach phase `shown` when the slide-down animation ends
-- **WHEN** it closes from phase `shown` in the same session
+- **WHEN** it closes from phase `shown`
 - **THEN** it SHALL enter phase `exiting`, and SHALL reach phase `hidden` only when the slide-up animation ends (or a fallback timer of twice the slide duration fires)
 
-#### Scenario: Session switch snaps without a slide
+#### Scenario: Session switch closes with the exit slide
 
 - **GIVEN** the overlay is open in session A and closed in session B
 - **WHEN** the user switches from A to B
-- **THEN** the overlay SHALL go straight to phase `hidden` with no exit slide over session B
-- **AND** if the quake held focus, the focus zone SHALL reset to `terminal`
+- **THEN** the overlay SHALL enter phase `exiting` and play the same exit slide as a close in one session, reaching `hidden` when the slide-up animation ends
+- **AND** if the quake held focus, the focus zone SHALL reset to `terminal`, so typing goes to B's agent terminal
 - **WHEN** the user switches back from B to A
 - **THEN** the overlay SHALL play the enter slide
 

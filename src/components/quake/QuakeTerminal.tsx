@@ -47,17 +47,10 @@ export function QuakeTerminal() {
   const borderClass = showAccent ? "border-primary" : "border-border";
 
   const [phase, setPhase] = useState(() => initialSlidePhase(open));
-  const [prev, setPrev] = useState({ open, sessionId: activeSessionId });
-  if (prev.open !== open || prev.sessionId !== activeSessionId) {
-    setPrev({ open, sessionId: activeSessionId });
-    setPhase(
-      nextSlidePhase(
-        phase,
-        open
-          ? { type: "open" }
-          : { type: "close", sessionSwitch: prev.sessionId !== activeSessionId },
-      ),
-    );
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (prevOpen !== open) {
+    setPrevOpen(open);
+    setPhase(nextSlidePhase(phase, open ? { type: "open" } : { type: "close" }));
   }
 
   // WebKitGTK may never fire animationend for a slide it skipped.

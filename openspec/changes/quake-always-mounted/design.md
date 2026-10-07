@@ -48,13 +48,10 @@ stateDiagram-v2
     [*] --> shown: mount open
     hidden --> entering: open (incl. switch to a session where it is open)
     entering --> shown: animationend / fallback
-    shown --> exiting: close (same session)
-    entering --> exiting: close (same session)
+    shown --> exiting: close (incl. switch to a session where it is closed)
+    entering --> exiting: close
     exiting --> entering: reopen
     exiting --> hidden: animationend / fallback
-    shown --> hidden: close by session switch
-    entering --> hidden: close by session switch
-    exiting --> hidden: session switch
 ```
 
 `animationend` ends a slide. A timer at twice the slide duration is the fallback, in case WebKitGTK never fires the event. The old fixed timer equalled the slide duration, which caused the cut exit.
@@ -96,10 +93,14 @@ Frontend-only. Ship in a normal release. Rollback is a revert of the change comm
 
 None.
 
-## Revision
+## Revision 1
 
 Post-hoc plan review returned REVISE; three fixes:
 
 1. Focus leak during the exit slide: `.quake-exit` stayed clickable, so a mousedown refocused the textarea and set the zone to `quake` after the release effect had run. `.quake-exit, .quake-hidden` now have `pointer-events: none`, and the overlay `onMouseDown` returns early when `open` is false.
 2. CSI O on close: closing no longer runs `setHost(null, "quake")`, so the focus-out report depended only on the textarea `blur`, which WebKitGTK does not fire reliably when an ancestor hides. `terminalService.reportRegionUnfocused(region)` reports the region's active entry unless it has input focus, and the close effect calls it.
 3. Late `animationend`: `nextSlidePhase` now takes the `animationName` on `animationEnd` and completes `entering` only for `quake-slide-down` and `exiting` only for `quake-slide-up`. The 2x fallback timer sends no name and completes unconditionally.
+
+## Revision 2: session switch slides out
+
+The 2026-10-06 walk saw an exit slide when switching from a session with the quake open to one with it closed, and the user judged the slide correct: the quake closes because the incoming session has none open. The `sessionSwitch` snap is removed. `nextSlidePhase` takes `{ type: "close" }` with no flag, and `QuakeTerminal.tsx` tracks only the previous `open` value. The focus-zone reset and the blur on close (D5) stay, so typing goes to the incoming session's agent terminal during the slide.

@@ -68,4 +68,4 @@
 - [x] 6.5 Manual walk: ask Claude to run two background Explore subagents; Activities shows exactly two `Subagent: Explore` rows (no extra `Agent` tool rows) that turn done with duration and last message
 - [x] 6.6 Manual walk: after a few turns the status bar shows the cache chip; idle past the TTL then send a prompt; the chip shows `cold` or a miss with its cause in the tooltip
 - [x] 6.7 Manual walk: run `/effort low`, send a prompt; the effort chip reads `low`; the tooltip lists the last response effort
-- [ ] 6.8 Manual walk: run `claude agents` inside a Nergal session with a background session that asks for input; the session tab gets the attention tint; when the background session finishes (`agent_completed`) the tint clears and Activities shows `Background agent finished` (or record that the signal does not reach Nergal)
+- [x] 6.8 Manual walk: `claude --bg` with a prompt that asks for input, started from a quake shell; the tab does not tint and the question only shows in `claude logs <id>`, the event does not reach the Nergal session (recorded in design Revision 3, accepted by the user)

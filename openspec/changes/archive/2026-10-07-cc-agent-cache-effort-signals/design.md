@@ -144,3 +144,7 @@ No data migration. Users run `nergal setup` (or the app runs it) to upgrade the 
 ## Revision 2: close unclaimed Agent rows at Stop
 
 Excluding `Agent`/`Task` from the any-name fallback left rows running forever when no SubagentStart claimed them (old settings, rejected type, interrupt). At `stop`, React now marks every running, unclaimed `Agent`/`Task` tool row `done` (`closeUnclaimedSubagentToolRows`). A foreground `Agent` call returns before Stop, and a background one is already claimed by its SubagentStart.
+
+## Revision 3: background sessions launched outside a Nergal session (2026-10-07, user walk)
+
+In the walk, `claude --bg "<prompt>"` started from a quake shell ran under Claude Code's background service and printed its session id; a prompt that asked for input through AskUserQuestion showed the question only in `claude logs <id>`. The session tab never tinted: the event did not reach the Nergal session. The likely cause, not traced further, is that the background service runs the session outside the Nergal PTY, so its hooks carry no `NERGAL_SESSION_ID` and the backend drops them like any external session. The user accepted the outcome (the quake shell is not meant to run Claude Code). The attention, completion and Activities scenarios still hold for `agent_needs_input` / `agent_completed` events that carry a Nergal session id; that mapping is covered by `src/lib/agentTelemetry.test.ts` and the hook event tests. No code change.

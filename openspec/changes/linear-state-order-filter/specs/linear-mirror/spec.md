@@ -35,13 +35,13 @@ The panel SHALL render each Linear workflow state with a glyph faithful to Linea
 
 ### Requirement: Completed, canceled, and duplicate issues visible by default
 
-The panel SHALL show closed issues (Done, Duplicate, Canceled, and any state that the name-first rank classifies as closed) by default; the existing "show completed" control SHALL still hide them on demand and SHALL govern duplicate consistently with completed and canceled. The control SHALL use the name-first closed classification, so it SHALL NOT hide the legacy `Pending` state.
+The panel SHALL show closed issues (Done, Duplicate, Canceled, and any state that the name-first rank classifies as closed) by default. Turning the existing "show completed" control (H) off SHALL fold the closed states, not remove them: each closed state group or sub-group keeps its header with glyph, name and issue count, and lists no issues. The control SHALL govern duplicate consistently with completed and canceled. The control SHALL use the name-first closed classification, so it SHALL NOT fold the legacy `Pending` state.
 
 #### Scenario: Terminal issues shown by default
 - **WHEN** the panel first loads with mirrored completed/canceled/duplicate issues
 - **THEN** those issues SHALL be visible without toggling any control
 
-#### Scenario: Show-completed off keeps Pending visible
-- **WHEN** the show-completed control is off
-- **THEN** issues in Done, Duplicate and Canceled SHALL be hidden
-- **AND** issues in the `Pending` state SHALL stay visible
+#### Scenario: Show-completed off folds closed states and keeps Pending open
+- **WHEN** the show-completed control is off and the State view holds issues in Done, Duplicate, Canceled and Pending
+- **THEN** the Done, Duplicate and Canceled group headers SHALL stay visible with their issue counts and list no issues
+- **AND** the `Pending` group SHALL stay unfolded and list its issues

@@ -64,14 +64,6 @@ export function compareStates(a: StateLike, b: StateLike): number {
   return (a.statePosition ?? 0) - (b.statePosition ?? 0);
 }
 
-export function filterHiddenStates<T extends StateLike>(
-  issues: T[],
-  hidden: ReadonlySet<string>,
-): T[] {
-  if (hidden.size === 0) return issues;
-  return issues.filter((i) => !hidden.has(normalizeStateName(i.stateName)));
-}
-
 export function stateFilterOptions(
   issues: readonly (StateLike & { stateColor?: string })[],
 ): StateFilterOption[] {

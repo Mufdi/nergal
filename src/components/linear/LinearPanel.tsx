@@ -79,13 +79,14 @@ import {
 import { invoke } from "@/lib/tauri";
 import {
   compareStates,
-  filterHiddenStates,
   groupByState,
   isClosedState,
+  normalizeStateName,
   stateFilterOptions,
   type StateLike,
   type StateSubGroup,
 } from "@/lib/linearStateOrder";
+import { foldedByStateFilter, isGroupFolded, withoutPeeks, type FoldContext } from "@/lib/linearFold";
 import { toastsAtom } from "@/stores/toast";
 
 // ── Priority mapping: Linear int → PriorityIcon string ──
@@ -282,6 +283,7 @@ export function LinearPanel() {
   const zenOpen = useAtomValue(zenModeAtom).open;
   const rootRef = useRef<HTMLDivElement>(null);
   const [collapsed, setCollapsed] = useAtom(linearCollapsedGroupsAtom);
+  const [peeked, setPeeked] = useState<ReadonlyMap<string, StateLike>>(new Map());
   // Per-issue sub-issue expansion. Default collapsed (absent = closed).
   const [expandedIssueIds, setExpandedIssueIds] = useState<ReadonlySet<string>>(new Set());
   const [labelPopoverOpen, setLabelPopoverOpen] = useState(false);
@@ -381,18 +383,13 @@ export function LinearPanel() {
         ? teamScoped.filter((i) => i.assigneeId === syncStatus.viewerId)
         : teamScoped;
 
-    const withCompleted = showCompleted
-      ? viewerFiltered
-      : viewerFiltered.filter((i) => !isClosedState(i));
-
-    const stateOptions = stateFilterOptions(withCompleted);
-    const stateFiltered = filterHiddenStates(withCompleted, hiddenStates);
+    const stateOptions = stateFilterOptions(viewerFiltered);
 
     // Apply label filter: keep issues that have at least one selected label.
     const labelFiltered =
       labelFilter.size > 0
-        ? stateFiltered.filter((i) => i.labels.some((l) => labelFilter.has(l.id)))
-        : stateFiltered;
+        ? viewerFiltered.filter((i) => i.labels.some((l) => labelFilter.has(l.id)))
+        : viewerFiltered;
 
     // Apply project filter: when a specific project is selected in the project view,
     // narrow to that project and re-group by state (like the "mine" view).
@@ -405,14 +402,10 @@ export function LinearPanel() {
       projectFilter !== null && groupBy === "project" ? "state" : groupBy;
 
     // A visible parent shows all its sub-issues regardless of the assignee,
-    // label and project filters (§9 canon); state visibility still applies so a
-    // hidden state never leaks back in through a sub-issue tree.
-    const fullPool = filterHiddenStates(
-      showCompleted ? teamScoped : teamScoped.filter((i) => !isClosedState(i)),
-      hiddenStates,
-    );
+    // label, project and state-fold filters (§9 canon): expanding the parent
+    // is the fold for its tree.
     const childMap = new Map<string, IssueView[]>();
-    for (const i of fullPool) {
+    for (const i of teamScoped) {
       if (i.parentId) {
         const arr = childMap.get(i.parentId);
         if (arr) arr.push(i);
@@ -436,7 +429,7 @@ export function LinearPanel() {
     // Collect all unique labels present in the team-scoped+completed-scoped pool
     // (not the label-filtered one) so the filter popover always shows all options.
     const labelsMap = new Map<string, { id: string; name: string; color?: string }>();
-    for (const i of withCompleted) {
+    for (const i of viewerFiltered) {
       for (const l of i.labels) {
         if (!labelsMap.has(l.id)) labelsMap.set(l.id, l);
       }
@@ -450,7 +443,22 @@ export function LinearPanel() {
       allLabels,
       stateOptions,
     };
-  }, [issues, teamFilter, assignedToMe, showCompleted, groupBy, syncStatus?.viewerId, sort, labelFilter, projectFilter, hiddenStates]);
+  }, [issues, teamFilter, assignedToMe, groupBy, syncStatus?.viewerId, sort, labelFilter, projectFilter]);
+
+  const foldCtx: FoldContext = { collapsed, peeked, hidden: hiddenStates, showCompleted };
+  // The window keydown listener outlives renders, so toggles read the latest
+  // fold inputs and group states through refs.
+  const foldCtxRef = useRef(foldCtx);
+  foldCtxRef.current = foldCtx;
+  const groupStatesRef = useRef<ReadonlyMap<string, StateLike>>(new Map());
+  groupStatesRef.current = useMemo(() => {
+    const map = new Map<string, StateLike>();
+    for (const g of groups) {
+      if (g.state) map.set(g.key, g.state);
+      for (const sub of g.stateSubGroups ?? []) map.set(subGroupKey(g.key, sub.key), sub.state);
+    }
+    return map;
+  }, [groups]);
 
   allParentIdsRef.current = new Set(childMap.keys());
   const hiddenStateCount = stateOptions.filter((o) => hiddenStates.has(o.key)).length;
@@ -464,6 +472,17 @@ export function LinearPanel() {
   }
 
   function toggleGroup(key: string) {
+    const state = groupStatesRef.current.get(key);
+    const { hidden, showCompleted: completedShown } = foldCtxRef.current;
+    if (state && foldedByStateFilter(state, hidden, completedShown)) {
+      setPeeked((prev) => {
+        const next = new Map(prev);
+        if (next.has(key)) next.delete(key);
+        else next.set(key, state);
+        return next;
+      });
+      return;
+    }
     setCollapsed((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -490,7 +509,17 @@ export function LinearPanel() {
     });
   }
 
+  function toggleShowCompleted() {
+    setShowCompleted((prev) => !prev);
+    setPeeked((prev) => withoutPeeks(prev, isClosedState));
+  }
+
+  function clearStatePeeks(names: ReadonlySet<string>) {
+    setPeeked((prev) => withoutPeeks(prev, (st) => names.has(normalizeStateName(st.stateName))));
+  }
+
   function toggleStateHidden(key: string) {
+    clearStatePeeks(new Set([key]));
     setHiddenStates((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -642,7 +671,7 @@ export function LinearPanel() {
           setAssignedToMe((prev) => !prev);
         } else if (e.code === "KeyH") {
           e.preventDefault();
-          setShowCompleted((prev) => !prev);
+          toggleShowCompleted();
         } else {
           e.preventDefault();
           setExpandedIssueIds((prev) =>
@@ -963,8 +992,8 @@ export function LinearPanel() {
                 <button
                   type="button"
                   data-header-action
-                  onClick={() => setShowCompleted((prev) => !prev)}
-                  aria-label="Show completed / canceled"
+                  onClick={toggleShowCompleted}
+                  aria-label="Expand completed / canceled"
                   aria-pressed={showCompleted}
                   className={`flex size-6 shrink-0 items-center justify-center rounded text-[10px] font-medium transition-colors ${
                     showCompleted
@@ -976,7 +1005,7 @@ export function LinearPanel() {
             >
               <AlignLeft size={13} />
             </TooltipTrigger>
-            <TooltipContent side="bottom">Show completed / canceled (H)</TooltipContent>
+            <TooltipContent side="bottom">Expand completed / canceled (H)</TooltipContent>
           </Tooltip>
 
           <div className="relative" ref={statePopoverRef}>
@@ -1011,7 +1040,7 @@ export function LinearPanel() {
               </TooltipTrigger>
               <TooltipContent side="bottom">
                 {hiddenStateCount > 0
-                  ? `States: ${hiddenStateCount} hidden`
+                  ? `States: ${hiddenStateCount} folded`
                   : "Filter by state"}
               </TooltipContent>
             </Tooltip>
@@ -1032,10 +1061,13 @@ export function LinearPanel() {
                     <button
                       type="button"
                       tabIndex={-1}
-                      onClick={() => setHiddenStates(new Set())}
+                      onClick={() => {
+                        clearStatePeeks(hiddenStates);
+                        setHiddenStates(new Set());
+                      }}
                       className="text-[10px] text-muted-foreground hover:text-foreground"
                     >
-                      Show all
+                      Unfold all
                     </button>
                   )}
                 </div>
@@ -1236,9 +1268,9 @@ export function LinearPanel() {
               <LinearGroupSection
                 key={group.key}
                 group={group}
-                expanded={!collapsed.has(group.key)}
+                expanded={!isGroupFolded(group.key, group.state, foldCtx)}
                 onToggle={() => toggleGroup(group.key)}
-                collapsed={collapsed}
+                foldCtx={foldCtx}
                 onToggleGroup={toggleGroup}
                 expandedIssueIds={expandedIssueIds}
                 onToggleIssue={toggleIssueExpand}
@@ -1255,11 +1287,15 @@ export function LinearPanel() {
   );
 }
 
+function subGroupKey(groupKey: string, stateKey: string): string {
+  return `${groupKey}|state:${stateKey || "none"}`;
+}
+
 function LinearGroupSection({
   group,
   expanded,
   onToggle,
-  collapsed,
+  foldCtx,
   onToggleGroup,
   expandedIssueIds,
   onToggleIssue,
@@ -1271,7 +1307,7 @@ function LinearGroupSection({
   group: IssueGroup;
   expanded: boolean;
   onToggle: () => void;
-  collapsed: ReadonlySet<string>;
+  foldCtx: FoldContext;
   onToggleGroup: (key: string) => void;
   expandedIssueIds: ReadonlySet<string>;
   onToggleIssue: (issueId: string) => void;
@@ -1318,8 +1354,8 @@ function LinearGroupSection({
       />
       {expanded && !group.stateSubGroups && group.issues.map((issue) => renderNode(issue, 0, new Set<string>()))}
       {expanded && group.stateSubGroups?.map((sub) => {
-        const subKey = `${group.key}|state:${sub.key || "none"}`;
-        const subExpanded = !collapsed.has(subKey);
+        const subKey = subGroupKey(group.key, sub.key);
+        const subExpanded = !isGroupFolded(subKey, sub.state, foldCtx);
         return (
           <div key={subKey}>
             <GroupHeader

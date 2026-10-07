@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   compareStates,
-  filterHiddenStates,
   groupByState,
   isClosedState,
   normalizeStateName,
@@ -104,21 +103,6 @@ describe("state visibility filter", () => {
   it("normalizes names", () => {
     expect(normalizeStateName("  In Review ")).toBe("in review");
     expect(normalizeStateName(undefined)).toBe("");
-  });
-
-  it("removes issues whose state is hidden and keeps the rest", () => {
-    const issues = [
-      { id: "a", ...s("Done", "completed") },
-      { id: "b", ...s("Todo", "unstarted") },
-      { id: "c", ...s("done", "completed") },
-    ];
-    const out = filterHiddenStates(issues, new Set(["done"]));
-    expect(out.map((i) => i.id)).toEqual(["b"]);
-  });
-
-  it("returns the same array when nothing is hidden", () => {
-    const issues = [{ id: "a", ...s("Done", "completed") }];
-    expect(filterHiddenStates(issues, new Set())).toBe(issues);
   });
 
   it("lists deduplicated options in state rank order", () => {

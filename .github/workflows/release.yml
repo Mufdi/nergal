@@ -370,3 +370,28 @@ jobs:
           if [[ "$GITHUB_REF_NAME" != *-* ]]; then
             node scripts/update-previous-banner.mjs "$GITHUB_REF_NAME"
           fi
+
+  linear-ship:
+    # A separate job so a Linear outage marks only this job red: the release is
+    # already published, and re-running it is safe because only Done issues move.
+    needs: [publish]
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Move released issues to Shipped
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          LINEAR_TEAM_KEY: FRI
+        run: node scripts/linear-ship.mjs "$GITHUB_REF_NAME"

@@ -41,6 +41,10 @@ pub fn send_hook_event(socket_path: &Path) -> Result<()> {
         );
     }
 
+    if wants_agent_chain(&json) {
+        attach_agent_chain(&mut json, &crate::platform_proc::agent_chain());
+    }
+
     let payload = serde_json::to_string(&json).context("serializing JSON")?;
 
     let mut stream = crate::platform::sync_connect(socket_path)
@@ -53,6 +57,36 @@ pub fn send_hook_event(socket_path: &Path) -> Result<()> {
     stream.flush().context("flushing socket")?;
 
     Ok(())
+}
+
+fn wants_agent_chain(payload: &serde_json::Value) -> bool {
+    matches!(
+        payload.get("hook_event_name").and_then(|v| v.as_str()),
+        Some("SessionStart" | "Stop")
+    )
+}
+
+fn attach_agent_chain(payload: &mut serde_json::Value, chain: &crate::platform_proc::AgentChain) {
+    if !wants_agent_chain(payload) {
+        return;
+    }
+    let Some(obj) = payload.as_object_mut() else {
+        return;
+    };
+    obj.insert(
+        "agent_chain".to_string(),
+        serde_json::Value::Array(
+            chain
+                .entries
+                .iter()
+                .map(|(pid, claude)| serde_json::json!({ "pid": pid, "claude": claude }))
+                .collect(),
+        ),
+    );
+    obj.insert(
+        "agent_chain_complete".to_string(),
+        serde_json::Value::Bool(chain.complete),
+    );
 }
 
 /// Checks for pending plan edits and/or annotation feedback and injects
@@ -772,6 +806,10 @@ fn output_deny(message: &str) -> Result<()> {
         .context("writing deny decision to stdout")?;
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "cli_chain_tests.rs"]
+mod chain_tests;
 
 #[cfg(test)]
 mod tests {

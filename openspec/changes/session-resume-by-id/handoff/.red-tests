@@ -1,0 +1,13 @@
+a849ebcf802169f0f454fda6a9640963462837a7  src-tauri/src/agents/claude_code/conversation_tests.rs
+37ce00bf4344984f3de04760613ff8e818dd32c3  src-tauri/src/platform_proc_claude_tests.rs
+e0f8b1f578227c3d98d0e27463499ec95526c02c  src-tauri/src/hooks/server_identity_tests.rs
+3d463a6a2dd6e861781777e682877b7061712497  src-tauri/src/pty_resume_tests.rs
+a5df391cce9ab1ddd68b80a2f356f7ec077d6ca9  src-tauri/src/lib_reconcile_tests.rs
+9ca381ba20eb3a79613ca6da340f967a171a65a5  src-tauri/src/db/sessions_root_tests.rs
+4d9039a8314a1e49eb659c87981a32a8463e5fb6  src/lib/sessionDelete.test.ts
+c2b97e9c944a0f87e45b2cbaa2b0abd00c8ff53f  src-tauri/src/agents/claude_code/adapter_args_tests.rs
+748e2a2eb79474bc541995160e33ca1919f47503  src-tauri/src/hooks/cli_chain_tests.rs
+a2733fbd9aa818e5e9406e6fba33c6353e52e8a6  src-tauri/src/commands/workspaces_sessions_guard_tests.rs
+68a6498651746f309a1bad456d78e635ff695b71  src-tauri/src/lib_take_tests.rs
+1940350450a84dc28d898af902d6f402fcd3feef  src-tauri/src/platform_proc_chain_tests.rs
+e4778a0359261228a80da3604970907fd64f162c  src/stores/pendingDeletes.test.ts

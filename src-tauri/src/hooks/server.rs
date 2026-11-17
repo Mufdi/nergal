@@ -12,6 +12,7 @@ use crate::agents::state::AgentRuntimeState;
 use crate::db::SharedDb;
 use crate::plan_state::SharedPlanState;
 use crate::platform::RejectionRateLimit;
+use crate::platform_proc::AgentChain;
 
 /// Flat event structure the frontend expects.
 #[derive(Clone, serde::Serialize)]
@@ -398,6 +399,24 @@ pub async fn start_hook_server(
                         .map(String::from)
                 });
 
+                let top_level = match (parsed.as_ref(), nergal_sid.as_deref()) {
+                    (Some(raw), Some(sid)) => {
+                        let chain = parse_agent_chain(raw);
+                        let shell_pid = app.state::<crate::pty::PtyManager>().agent_shell_pid(sid);
+                        if let (Some(c), Some(shell)) = (chain.as_ref(), shell_pid)
+                            && !c.complete
+                            && !c.entries.iter().any(|(pid, _)| *pid == shell)
+                        {
+                            tracing::warn!(
+                                session_id = %sid,
+                                "agent chain lacks the PTY shell pid; treating the event as top-level"
+                            );
+                        }
+                        is_top_level_chain(chain.as_ref(), shell_pid)
+                    }
+                    _ => true,
+                };
+
                 match serde_json::from_str::<HookEvent>(&line) {
                     Ok(event) => {
                         process_event(
@@ -407,6 +426,7 @@ pub async fn start_hook_server(
                             &plan_state,
                             &agent_state,
                             nergal_sid.as_deref(),
+                            top_level,
                         );
                     }
                     Err(e) => {
@@ -477,7 +497,15 @@ pub fn spawn_adapter_event_consumer(
     tauri::async_runtime::spawn(async move {
         while let Some(event) = rx.recv().await {
             let csid = event.session_id().to_string();
-            process_event(&app, &event, &db, &plan_state, &agent_state, Some(&csid));
+            process_event(
+                &app,
+                &event,
+                &db,
+                &plan_state,
+                &agent_state,
+                Some(&csid),
+                true,
+            );
         }
     });
 }
@@ -780,6 +808,100 @@ fn resolve_active_plan(
     Some((path, content))
 }
 
+pub(crate) fn parse_agent_chain(raw: &serde_json::Value) -> Option<AgentChain> {
+    let entries = raw
+        .get("agent_chain")?
+        .as_array()?
+        .iter()
+        .map(|item| {
+            let pid = u32::try_from(item.get("pid")?.as_u64()?).ok()?;
+            let claude = item.get("claude")?.as_bool()?;
+            Some((pid, claude))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let complete = raw
+        .get("agent_chain_complete")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    Some(AgentChain { entries, complete })
+}
+
+/// Pull-based summaries: `Stop` only writes the cheap, LLM-free pull-marker.
+/// Written regardless of the summary opt-in since it is just a pointer; only a
+/// top-level Stop moves it. The path is guarded because the marker feeds an
+/// on-demand file read to an LLM backend, and a crafted same-uid hook payload
+/// must not steer the summarizer at an arbitrary file (e.g. a secret).
+fn record_stop_marker(
+    db: &crate::db::Database,
+    session_id: &str,
+    transcript_path: Option<&str>,
+    top_level: bool,
+) {
+    if !top_level {
+        return;
+    }
+    let Some(path) = transcript_path.filter(|p| p.ends_with(".jsonl")) else {
+        return;
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    if let Err(e) = db.set_session_transcript(session_id, path, now) {
+        tracing::warn!(session_id = %session_id, "persisting pull-marker failed: {e:#}");
+    }
+}
+
+/// A hook fired by a `claude` nested under the session's own `claude` (e.g. a
+/// `claude -p` run from a tool shell) inherits `NERGAL_SESSION_ID` and must not
+/// write the session's identity.
+pub(crate) fn is_top_level_chain(chain: Option<&AgentChain>, shell_pid: Option<u32>) -> bool {
+    let (Some(chain), Some(shell_pid)) = (chain, shell_pid) else {
+        return true;
+    };
+    let Some(shell_idx) = chain.entries.iter().position(|(pid, _)| *pid == shell_pid) else {
+        return !chain.complete;
+    };
+    let mut runs = 0;
+    let mut in_run = false;
+    for (_, claude) in &chain.entries[..shell_idx] {
+        if *claude && !in_run {
+            runs += 1;
+        }
+        in_run = *claude;
+    }
+    runs < 2
+}
+
+pub(crate) fn record_cc_conversation_id(
+    db: &crate::db::Database,
+    nergal_session_id: &str,
+    event: &HookEvent,
+) {
+    let HookEvent::SessionStart { session_id } = event else {
+        return;
+    };
+    if !crate::agents::claude_code::conversation::is_valid_conversation_id(session_id) {
+        return;
+    }
+    let row = match db.find_session(nergal_session_id) {
+        Ok(Some(row)) => row,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::warn!(session_id = %nergal_session_id, "reading session for conversation id failed: {e:#}");
+            return;
+        }
+    };
+    if row.agent_id != AgentId::claude_code().as_str()
+        || row.agent_internal_session_id.as_deref() == Some(session_id.as_str())
+    {
+        return;
+    }
+    if let Err(e) = db.update_agent_internal_session_id(nergal_session_id, session_id) {
+        tracing::warn!(session_id = %nergal_session_id, "persisting conversation id failed: {e:#}");
+    }
+}
+
 fn process_event(
     app: &AppHandle,
     event: &HookEvent,
@@ -787,6 +909,7 @@ fn process_event(
     plan_state: &SharedPlanState,
     agent_state: &AgentRuntimeState,
     nergal_session_id: Option<&str>,
+    top_level: bool,
 ) {
     if is_droppable_subagent_event(event) {
         return;
@@ -803,42 +926,29 @@ fn process_event(
     // the MCP descriptor can surface them. Every Stop overwrites: empty arrays
     // must clear a prior snapshot (a finished/killed bg task has to stop showing
     // as running), so there is deliberately no "skip empty payloads" gate.
-    if let HookEvent::Stop {
-        session_id,
-        background_tasks,
-        session_crons,
-        last_assistant_message,
-        transcript_path,
-        ..
-    } = event
+    if top_level
+        && let HookEvent::Stop {
+            session_id,
+            background_tasks,
+            session_crons,
+            last_assistant_message,
+            transcript_path,
+            ..
+        } = event
     {
         let csid = nergal_session_id.unwrap_or(session_id);
         agent_state.set_session_background(csid, background_tasks.clone(), session_crons.clone());
         agent_state.set_session_last_message(csid, last_assistant_message.clone());
-        // Pull-based summaries (Revision 1): `Stop` only writes the cheap,
-        // LLM-free pull-marker (transcript path + activity timestamp). Actual
-        // generation is triggered lazily by `get_session` on the read path.
-        // Written unconditionally (independent of the summary opt-in) since the
-        // marker is just a pointer; `get_session` gates on the backend.
-        //
-        // Guard the path: the marker drives an on-demand file read fed to an LLM
-        // backend, so reject anything that is not a `.jsonl` transcript. All four
-        // adapters write `.jsonl` transcripts, so this never rejects a real one;
-        // it blocks a crafted same-uid hook payload from steering the summarizer
-        // at an arbitrary file (e.g. a secret) for exfiltration.
-        if let Some(path) = transcript_path.as_deref()
-            && path.ends_with(".jsonl")
-        {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            if let Ok(guard) = db.lock()
-                && let Err(e) = guard.set_session_transcript(csid, path, now)
-            {
-                tracing::warn!(session_id = %csid, "persisting pull-marker failed: {e:#}");
-            }
+        if let Ok(guard) = db.lock() {
+            record_stop_marker(&guard, csid, transcript_path.as_deref(), true);
         }
+    }
+
+    if top_level
+        && let Some(csid) = nergal_session_id
+        && let Ok(guard) = db.lock()
+    {
+        record_cc_conversation_id(&guard, csid, event);
     }
 
     // Resolve the owning adapter for this session (cache → DB-fallback path
@@ -904,7 +1014,8 @@ fn process_event(
     // pending queue is non-empty, so this is a no-op when the feature is off or
     // nothing queued. Gated to `Stop` (not `SessionEnd`) so a teardown never
     // wakes a dying PTY.
-    if let Some(csid) = nergal_session_id
+    if top_level
+        && let Some(csid) = nergal_session_id
         && matches!(event, HookEvent::Stop { .. })
     {
         let bridge = crate::mcp::delivery::AppBridge::new(app.clone());
@@ -1688,6 +1799,10 @@ fn process_task_event(
 // `route_event(event, ctx) -> Vec<Action>` extraction (design D2), which is a
 // substantially larger, non-behavior-preserving restructuring of a ~400-line
 // effect-per-branch function and was judged out of scope for this pass.
+#[cfg(test)]
+#[path = "server_identity_tests.rs"]
+mod identity_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;

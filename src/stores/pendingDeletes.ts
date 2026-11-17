@@ -133,10 +133,33 @@ export const deleteSessionWithGraceAction = atom(null, (get, set, session: Sessi
     terminalService.destroy(session.id);
     appStore.set(pruneSessionStateAction, session.id);
     appStore.set(pruneConflictSessionAction, session.id);
-    const errors = await invoke<string[]>("delete_session", { sessionId: session.id }).catch(
-      () => undefined,
-    );
-    reportCleanupErrors(errors);
+    try {
+      const errors = await invoke<string[]>("delete_session", { sessionId: session.id });
+      reportCleanupErrors(errors);
+    } catch (e) {
+      const restored = await invoke<Workspace[]>("get_workspaces").catch(() => undefined);
+      if (restored) {
+        appStore.set(workspacesAtom, restored);
+      } else {
+        appStore.set(workspacesAtom, (prev) =>
+          prev.map((w) => {
+            if (w.id !== wsId || w.sessions.some((s) => s.id === session.id)) return w;
+            return { ...w, sessions: insertAt(w.sessions, session, sessionIndex) };
+          }),
+        );
+      }
+      if (tabIndex !== -1) {
+        appStore.set(sessionTabIdsAtom, (prev) =>
+          prev.includes(session.id) ? prev : insertAt(prev, session.id, tabIndex),
+        );
+      }
+      if (wasActive) appStore.set(activeSessionIdAtom, session.id);
+      appStore.set(toastsAtom, {
+        message: "Could not delete session",
+        description: e instanceof Error ? e.message : String(e),
+        type: "error",
+      });
+    }
   };
 
   cancelTimer(session.id);

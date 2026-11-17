@@ -14,6 +14,7 @@ import {
   TooltipProvider,
 } from "@/components/ui/tooltip";
 import type { Session, Workspace } from "@/stores/workspace";
+import { canDeleteSession } from "@/lib/sessionDelete";
 import { gitInfoMapAtom } from "@/stores/git";
 import { pendingAsksAtom, pendingAttentionAtom } from "@/stores/askUser";
 import { crossSessionUnreadMapAtom, crossSessionActiveParticipantsAtom } from "@/stores/crossSession";
@@ -42,7 +43,7 @@ interface SessionRowProps {
 
 export function SessionRow({
   session,
-  workspace: _workspace,
+  workspace,
   isActive,
   shortcutNumber,
   onSelect,
@@ -190,9 +191,7 @@ export function SessionRow({
           </TooltipTrigger>
           <TooltipContent side="top" className="text-[10px]">Rename</TooltipContent>
         </Tooltip>
-        {/* Delete only for worktree sessions — the main session is the repo root,
-            not a disposable worktree, so deleting it from the sidebar is wrong. */}
-        {session.worktree_path !== null && (
+        {canDeleteSession(session, workspace) && (
           <Tooltip>
             <TooltipTrigger>
               <span

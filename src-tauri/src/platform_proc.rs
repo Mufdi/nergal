@@ -14,6 +14,7 @@ use listeners::Protocol;
 // SocketState only filters the listeners-backed list, which is the non-Linux path.
 #[cfg(not(target_os = "linux"))]
 use listeners::SocketState;
+use std::path::Path;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 /// Lower bound for the user-port filter (inclusive). Mirrors the constant in
@@ -476,7 +477,71 @@ pub fn ancestor_env(keys: &[&str], max_depth: usize) -> Option<String> {
     None
 }
 
+pub fn is_claude_process(name: &str, exe: Option<&Path>, cmd: &[String]) -> bool {
+    if name == "claude" {
+        return true;
+    }
+    if exe.is_some_and(|p| p.components().any(|c| c.as_os_str() == "claude")) {
+        return true;
+    }
+    cmd.iter()
+        .take(2)
+        .any(|a| a == "claude" || a.ends_with("/claude") || a.contains("claude-code"))
+}
+
+pub struct AgentChain {
+    pub entries: Vec<(u32, bool)>,
+    pub complete: bool,
+}
+
+const AGENT_CHAIN_MAX_DEPTH: usize = 16;
+
+/// Ancestors of the current process from its parent upward. Refreshes one pid
+/// per step to keep each hook process cheap: a full process table scan on every
+/// `Stop` is not acceptable.
+pub fn agent_chain() -> AgentChain {
+    let mut sys = System::new();
+    let kind = ProcessRefreshKind::nothing()
+        .with_exe(UpdateKind::OnlyIfNotSet)
+        .with_cmd(UpdateKind::OnlyIfNotSet);
+    let mut entries = Vec::new();
+    let mut pid = Pid::from_u32(std::process::id());
+    let mut complete = false;
+
+    for _ in 0..=AGENT_CHAIN_MAX_DEPTH {
+        sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), false, kind);
+        let Some(proc) = sys.process(pid) else {
+            break;
+        };
+        if pid.as_u32() != std::process::id() {
+            let name = proc.name().to_string_lossy();
+            let cmd: Vec<String> = proc
+                .cmd()
+                .iter()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect();
+            entries.push((pid.as_u32(), is_claude_process(&name, proc.exe(), &cmd)));
+        }
+        match proc.parent() {
+            Some(parent) if parent.as_u32() > 0 && pid.as_u32() != 1 => pid = parent,
+            _ => {
+                complete = true;
+                break;
+            }
+        }
+        if entries.len() >= AGENT_CHAIN_MAX_DEPTH {
+            break;
+        }
+    }
+
+    AgentChain { entries, complete }
+}
+
 // ── Unit tests ───────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+#[path = "platform_proc_claude_tests.rs"]
+mod claude_tests;
 
 #[cfg(test)]
 mod tests {
@@ -533,3 +598,7 @@ mod tests {
         assert_eq!(ports, vec![3000, 5432]);
     }
 }
+
+#[cfg(test)]
+#[path = "platform_proc_chain_tests.rs"]
+mod chain_tests;

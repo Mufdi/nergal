@@ -438,12 +438,32 @@ pub fn create_session(
     Ok(session)
 }
 
+const LAST_ROOT_SESSION_ERROR: &str = "The last repo-root session of a workspace cannot be deleted";
+
+pub(crate) fn refuse_last_root_session(
+    db: &crate::db::Database,
+    session_id: &str,
+) -> Result<(), String> {
+    if db
+        .is_last_root_session(session_id)
+        .map_err(|e| e.to_string())?
+    {
+        return Err(LAST_ROOT_SESSION_ERROR.into());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn delete_session(
     db: State<'_, SharedDb>,
     agents: State<'_, AgentRuntimeState>,
     session_id: String,
 ) -> Result<Vec<String>, String> {
+    {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        refuse_last_root_session(&db, &session_id)?;
+    }
+
     // Resolve adapter for stop_event_pump before tearing down the cache /
     // worktree / DB row, since stop_event_pump may need the adapter's per-
     // session state to be still intact (e.g. OpenCode supervisor stop kills
@@ -465,6 +485,7 @@ pub async fn delete_session(
     // so all of it runs with the DB unlocked for every other caller.
     let (worktree_cleanup, footer_job, moc_job) = {
         let db = db.lock().map_err(|e| e.to_string())?;
+        refuse_last_root_session(&db, &session_id)?;
 
         // Get session + workspace for worktree cleanup
         let session = db.find_session(&session_id).map_err(|e| e.to_string())?;
@@ -537,6 +558,7 @@ pub async fn delete_session(
     {
         return Ok(cleanup_errors);
     }
+    refuse_last_root_session(&db, &session_id)?;
     agents.forget_session(&session_id);
     db.delete_session(&session_id).map_err(|e| e.to_string())?;
     Ok(cleanup_errors)
@@ -646,6 +668,7 @@ pub fn cleanup_merged_session(
     // archive/remove_worktree/delete_branch I/O below.
     let (session, repo_path) = {
         let db = db.lock().map_err(|e| e.to_string())?;
+        refuse_last_root_session(&db, &session_id)?;
         let Some(session) = db.find_session(&session_id).map_err(|e| e.to_string())? else {
             return Err("session not found".into());
         };
@@ -696,6 +719,7 @@ pub fn cleanup_merged_session(
     // Step 4: delete the DB row. Re-acquire and re-validate — the row may
     // have been removed by a concurrent delete while this one was unlocked.
     let db = db.lock().map_err(|e| e.to_string())?;
+    refuse_last_root_session(&db, &session_id)?;
     if db
         .find_session(&session_id)
         .map_err(|e| e.to_string())?
@@ -916,3 +940,7 @@ pub fn resolve_default_agent(project_path: String) -> Result<String, String> {
         .resolve_agent_for_project(std::path::Path::new(&project_path))
         .unwrap_or_else(|| AgentId::claude_code().as_str().to_string()))
 }
+
+#[cfg(test)]
+#[path = "workspaces_sessions_guard_tests.rs"]
+mod guard_tests;

@@ -76,6 +76,17 @@ impl ClaudeCodeAdapter {
     }
 }
 
+/// "continue" adds no flag: `--continue` picks the newest conversation of the
+/// cwd, which can belong to another session sharing it. Callers resolve their
+/// own conversation id and pass it as `--resume <id>`.
+fn cc_resume_args(resume_from: Option<&str>) -> Vec<String> {
+    match resume_from {
+        None | Some("continue") => Vec::new(),
+        Some("resume_pick") => vec!["--resume".into()],
+        Some(id) => vec!["--resume".into(), id.to_string()],
+    }
+}
+
 #[async_trait]
 impl AgentAdapter for ClaudeCodeAdapter {
     fn id(&self) -> AgentId {
@@ -158,26 +169,12 @@ impl AgentAdapter for ClaudeCodeAdapter {
     fn spawn(&self, ctx: &SpawnContext<'_>) -> Result<SpawnSpec, AdapterError> {
         let binary = which::which("claude")
             .map_err(|e| AdapterError::Transport(anyhow::anyhow!("claude not on PATH: {e}")))?;
-        let mut args: Vec<String> = Vec::new();
-        // Three resume modes — the caller chooses which by what it puts in
-        // `resume_from`:
-        //   - "continue"    → `claude --continue`     (latest session)
-        //   - "resume_pick" → `claude --resume`       (Claude prompts to pick)
-        //   - "<any other>" → `claude --resume <id>`  (specific CC session id)
-        match ctx.resume_from {
-            None => {}
-            Some("continue") => args.push("--continue".into()),
-            Some("resume_pick") => args.push("--resume".into()),
-            Some(id) => {
-                args.push("--resume".into());
-                args.push(id.to_string());
-            }
-        }
+        let mut args = cc_resume_args(ctx.resume_from);
         // Permission preset → native CC flags. One mode per session:
         // `--dangerously-skip-permissions` is the documented equivalent of
         // `--permission-mode bypassPermissions`, so it is NOT combinable
         // with plan/acceptEdits (bypass silently wins — verified 2026-06-06
-        // against the CLI reference). Valid alongside --resume/--continue;
+        // against the CLI reference). Valid alongside --resume;
         // must precede the positional prompt below.
         if let Some(opts) = ctx.launch_options {
             match opts.permission_preset {
@@ -294,6 +291,10 @@ impl AgentAdapter for ClaudeCodeAdapter {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "adapter_args_tests.rs"]
+mod args_tests;
 
 #[cfg(test)]
 mod tests {
@@ -414,9 +415,10 @@ mod tests {
         if let Ok(spec) = a.spawn(&mk(None)) {
             assert!(spec.args.is_empty());
         }
-        // "continue" → --continue
+        // `--continue` resumes the newest conversation of the cwd, which can
+        // belong to another session sharing that cwd.
         if let Ok(spec) = a.spawn(&mk(Some("continue"))) {
-            assert_eq!(spec.args, vec!["--continue".to_string()]);
+            assert!(spec.args.is_empty(), "got {:?}", spec.args);
         }
         // "resume_pick" → bare --resume (CC then prompts)
         if let Ok(spec) = a.spawn(&mk(Some("resume_pick"))) {

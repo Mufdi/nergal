@@ -470,5 +470,16 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
   // Initial gate load (covers requests enqueued before this boot).
   void loadWorktreeRequests(store);
 
+  try {
+    const demoted = await invoke<string[]>("take_reconciled_worktrees");
+    if (demoted.length > 0) {
+      set(toastsAtom, {
+        message: "Worktree no longer exists",
+        description: `Moved to the repo root, each keeping its conversation: ${demoted.join(", ")}.`,
+        type: "info",
+      });
+    }
+  } catch {}
+
   return unlisteners;
 }

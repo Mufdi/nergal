@@ -9,6 +9,13 @@ use crate::agents::claude_code::cost::CostSummary;
 use crate::models::{Session, SessionStatus, Workspace};
 use crate::tasks::{Task, TaskStatus};
 
+pub struct ResumePeer {
+    pub id: String,
+    pub created_at: u64,
+    pub internal_id: Option<String>,
+    pub transcript_path: Option<String>,
+}
+
 /// Persisted AI session summary (phase 6). A row exists only when summaries
 /// are enabled for the session's project; absence means never-summarized.
 ///

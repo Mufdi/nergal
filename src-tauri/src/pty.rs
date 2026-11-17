@@ -154,6 +154,11 @@ impl PtyManager {
         }
     }
 
+    pub fn agent_shell_pid(&self, session_id: &str) -> Option<u32> {
+        let pty_id = self.session_ptys.lock().ok()?.get(session_id).cloned()?;
+        self.instances.lock().ok()?.get(&pty_id)?.child_pid
+    }
+
     /// Tear down every live PTY (main + aux shells) on app exit. Takes the
     /// instance map out from under the lock, signals every process tree
     /// synchronously (the BUG-06 guarantee: shells get their SIGTERM even if
@@ -757,22 +762,38 @@ pub async fn start_claude_session(
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
-        // For "continue" intent, prefer the agent-internal session id (e.g. Pi
-        // UUID, Codex rollout id) the adapter previously harvested and the
-        // runtime persisted to the DB. Some agents' generic `--continue` flag
-        // doesn't reliably resolve a session by cwd alone, so passing the
-        // exact id avoids "No conversation found" surprises after a nergal
-        // restart.
-        let resume_owned: Option<String> = match resume.as_deref() {
-            Some("continue") => {
-                let stored = db
-                    .lock()
-                    .ok()
-                    .and_then(|g| g.find_session(&session_id).ok().flatten())
-                    .and_then(|s| s.agent_internal_session_id);
-                Some(stored.unwrap_or_else(|| "continue".to_string()))
+        // `--continue` can't tell sessions apart: several share one cwd, and some
+        // agents don't resolve by cwd at all. "continue" resolves to an exact id.
+        let resume_owned: Option<String> = if agent_id == crate::agents::AgentId::claude_code() {
+            let candidates = if resume.as_deref() == Some("continue") {
+                db.lock().ok().and_then(|g| {
+                    crate::agents::claude_code::conversation::resume_candidates(&g, &session_id)
+                })
+            } else {
+                None
+            };
+            let picked = candidates.and_then(|c| {
+                let dirs = crate::agents::claude_code::conversation::projects_dirs(
+                    c.transcript_path.as_deref(),
+                );
+                if dirs.iter().all(|d| !d.exists()) {
+                    tracing::warn!("Claude Code projects dirs missing: {dirs:?}");
+                }
+                crate::agents::claude_code::conversation::pick_resume_id(&c, &dirs)
+            });
+            cc_resume_arg(resume.as_deref(), picked)
+        } else {
+            match resume.as_deref() {
+                Some("continue") => {
+                    let stored = db
+                        .lock()
+                        .ok()
+                        .and_then(|g| g.find_session(&session_id).ok().flatten())
+                        .and_then(|s| s.agent_internal_session_id);
+                    Some(stored.unwrap_or_else(|| "continue".to_string()))
+                }
+                other => other.map(|s| s.to_string()),
             }
-            other => other.map(|s| s.to_string()),
         };
         // Deep link `session/new` stashes a prompt for the fresh session; the
         // adapter folds it into the launch command so it submits on spawn
@@ -1930,6 +1951,17 @@ pub fn terminal_attach(
         .compute_update(&session_id, &snapshot)
         .ok_or_else(|| "differ produced no update after invalidate (unreachable)".to_string())
 }
+
+pub(crate) fn cc_resume_arg(resume: Option<&str>, picked: Option<String>) -> Option<String> {
+    match resume {
+        Some("continue") => picked,
+        other => other.map(str::to_string),
+    }
+}
+
+#[cfg(test)]
+#[path = "pty_resume_tests.rs"]
+mod resume_tests;
 
 #[cfg(test)]
 mod tests {

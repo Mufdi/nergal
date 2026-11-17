@@ -221,10 +221,40 @@ export const deleteWorkspaceWithGraceAction = atom(null, (get, set, workspace: W
       appStore.set(pruneSessionStateAction, id);
       appStore.set(pruneConflictSessionAction, id);
     }
-    const errors = await invoke<string[]>("delete_workspace", {
-      workspaceId: workspace.id,
-    }).catch(() => undefined);
-    reportCleanupErrors(errors);
+    try {
+      const errors = await invoke<string[]>("delete_workspace", {
+        workspaceId: workspace.id,
+      });
+      reportCleanupErrors(errors);
+    } catch (e) {
+      const restored = await invoke<Workspace[]>("get_workspaces").catch(() => undefined);
+      let cameBack = sessionIds;
+      if (restored) {
+        appStore.set(workspacesAtom, restored);
+        cameBack = new Set(
+          restored.find((w) => w.id === workspace.id)?.sessions.map((s) => s.id) ?? [],
+        );
+      } else {
+        appStore.set(workspacesAtom, (prev) =>
+          prev.some((w) => w.id === workspace.id) ? prev : insertAt(prev, workspace, wsIndex),
+        );
+      }
+      appStore.set(sessionTabIdsAtom, (prev) => {
+        let next = prev;
+        for (const [i, id] of prevTabIds.entries()) {
+          if (cameBack.has(id) && !next.includes(id)) next = insertAt(next, id, i);
+        }
+        return next;
+      });
+      if (activeInWs && activeId && cameBack.has(activeId)) {
+        appStore.set(activeSessionIdAtom, activeId);
+      }
+      appStore.set(toastsAtom, {
+        message: "Could not delete workspace",
+        description: e instanceof Error ? e.message : String(e),
+        type: "error",
+      });
+    }
   };
 
   cancelTimer(workspace.id);

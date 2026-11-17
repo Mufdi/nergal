@@ -187,12 +187,22 @@ fn capabilities_for_agent_id(agents: &AgentRuntimeState, agent_id: &str) -> Vec<
     serde_json::from_value::<Vec<String>>(value).unwrap_or_default()
 }
 
+pub(crate) fn rows_to_delete_on_partial(outcomes: &[(String, bool, bool)]) -> Vec<String> {
+    outcomes
+        .iter()
+        .filter(|(_, has_worktree, reclaim_failed)| *has_worktree && !reclaim_failed)
+        .map(|(id, _, _)| id.clone())
+        .collect()
+}
+
 #[tauri::command]
-pub fn delete_workspace(
+pub async fn delete_workspace(
     db: State<'_, SharedDb>,
     workspace_id: String,
 ) -> Result<Vec<String>, String> {
     struct SessionCleanup {
+        id: String,
+        name: String,
         moc_inputs: Option<crate::obsidian::moc::MocInputs>,
         worktree_path: Option<PathBuf>,
         worktree_branch: Option<String>,
@@ -236,6 +246,8 @@ pub fn delete_workspace(
                     None
                 };
                 SessionCleanup {
+                    id: session.id.clone(),
+                    name: session.name.clone(),
                     moc_inputs,
                     worktree_path: session.worktree_path.clone(),
                     worktree_branch: session.worktree_branch.clone(),
@@ -255,26 +267,65 @@ pub fn delete_workspace(
             }
         }
     }
-    let mut cleanup_errors = Vec::new();
-    for s in &sessions {
-        if let Some(wt) = &s.worktree_path
-            && let Err(e) = crate::worktree::remove_worktree(&repo_path, wt)
-        {
-            tracing::warn!(worktree = %wt.display(), error = %e, "worktree cleanup failed");
-            cleanup_errors.push(e.to_string());
+    let (cleanup_errors, kept, removed_ids) = tauri::async_runtime::spawn_blocking(move || {
+        let reclaimer = crate::worktree::DockerReclaimer::new();
+        let mut cleanup_errors = Vec::new();
+        let mut kept: Vec<(String, String)> = Vec::new();
+        let mut outcomes: Vec<(String, bool, bool)> = Vec::new();
+        for s in &sessions {
+            let mut reclaim_failed = false;
+            if let Some(wt) = &s.worktree_path
+                && let Err(e) =
+                    crate::worktree::remove_worktree_reclaiming(&repo_path, wt, &reclaimer)
+            {
+                tracing::warn!(worktree = %wt.display(), error = %e, "worktree cleanup failed");
+                if crate::worktree::is_reclaim_failure(&e) {
+                    kept.push((s.name.clone(), e.to_string()));
+                    reclaim_failed = true;
+                } else {
+                    cleanup_errors.push(e.to_string());
+                }
+            }
+            outcomes.push((s.id.clone(), s.worktree_path.is_some(), reclaim_failed));
         }
-        // Delete the per-session branch too (after its worktree is gone, else
-        // git refuses) so a workspace nuke leaves no orphan `nergal/*` branches
-        // in the parent repo — parity with cleanup_merged_session.
-        if let Some(branch) = &s.worktree_branch {
-            let _ = crate::worktree::delete_branch(&repo_path, branch);
+        let removed_ids: Vec<String> = if kept.is_empty() {
+            outcomes.iter().map(|(id, _, _)| id.clone()).collect()
+        } else {
+            rows_to_delete_on_partial(&outcomes)
+        };
+        // Branch deletion needs its worktree gone, else git refuses; a workspace
+        // nuke must not leave orphan `nergal/*` branches (parity with
+        // cleanup_merged_session).
+        for s in &sessions {
+            if let Some(branch) = &s.worktree_branch
+                && removed_ids.contains(&s.id)
+            {
+                let _ = crate::worktree::delete_branch(&repo_path, branch);
+            }
         }
-    }
+        (cleanup_errors, kept, removed_ids)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
 
     let db = db.lock().map_err(|e| e.to_string())?;
-    db.delete_workspace(&workspace_id)
-        .map_err(|e| e.to_string())?;
-    Ok(cleanup_errors)
+    if kept.is_empty() {
+        db.delete_workspace(&workspace_id)
+            .map_err(|e| e.to_string())?;
+        return Ok(cleanup_errors);
+    }
+    for id in &removed_ids {
+        db.delete_session(id).map_err(|e| e.to_string())?;
+    }
+    let details: Vec<String> = kept
+        .iter()
+        .map(|(name, message)| format!("{name}: {message}"))
+        .collect();
+    Err(format!(
+        "Workspace kept: {} session(s) could not be cleaned up. {}",
+        kept.len(),
+        details.join(" | ")
+    ))
 }
 
 #[tauri::command]
@@ -536,16 +587,32 @@ pub async fn delete_session(
     }
 
     let mut cleanup_errors = Vec::new();
-    if let Some((repo_path, wt_path)) = worktree_cleanup
-        && let Err(e) = crate::worktree::remove_worktree(&repo_path, &wt_path)
-    {
-        tracing::warn!(
-            session_id = %session_id,
-            worktree = %wt_path.display(),
-            error = %e,
-            "worktree cleanup failed; session delete continues",
-        );
-        cleanup_errors.push(e.to_string());
+    if let Some((repo_path, wt_path)) = worktree_cleanup {
+        let removal = tauri::async_runtime::spawn_blocking(move || {
+            let reclaimer = crate::worktree::DockerReclaimer::new();
+            crate::worktree::remove_worktree_reclaiming(&repo_path, &wt_path, &reclaimer)
+                .map_err(|e| (wt_path, e))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        if let Err((wt_path, e)) = removal {
+            if crate::worktree::is_reclaim_failure(&e) {
+                tracing::warn!(
+                    session_id = %session_id,
+                    worktree = %wt_path.display(),
+                    error = %e,
+                    "worktree reclaim failed; session kept",
+                );
+                return Err(e.to_string());
+            }
+            tracing::warn!(
+                session_id = %session_id,
+                worktree = %wt_path.display(),
+                error = %e,
+                "worktree cleanup failed; session delete continues",
+            );
+            cleanup_errors.push(e.to_string());
+        }
     }
 
     // Fresh guard for the finalize phase: re-validate since the row may have
@@ -660,7 +727,7 @@ pub struct CleanupResult {
 /// by the Claude Code CLI itself, not nergal. We do not delete them — the
 /// CLI manages its own transcript lifecycle and we'd be overstepping.
 #[tauri::command]
-pub fn cleanup_merged_session(
+pub async fn cleanup_merged_session(
     db: State<'_, SharedDb>,
     session_id: String,
 ) -> Result<CleanupResult, String> {
@@ -698,23 +765,39 @@ pub fn cleanup_merged_session(
         }
     }
 
-    // Step 2: remove the worktree directory.
-    if let Some(ref wt_path) = session.worktree_path
-        && let Err(e) = crate::worktree::remove_worktree(&repo_path, wt_path)
-    {
-        let msg = format!("worktree remove: {e}");
-        tracing::warn!("{msg}");
-        warnings.push(msg);
-    }
-
-    // Step 3: delete the branch.
-    if let Some(ref branch) = session.worktree_branch
-        && let Err(e) = crate::worktree::delete_branch(&repo_path, branch)
-    {
-        let msg = format!("branch delete: {e}");
-        tracing::warn!("{msg}");
-        warnings.push(msg);
-    }
+    let removal_warnings = {
+        let repo_path = repo_path.clone();
+        let worktree_path = session.worktree_path.clone();
+        let branch = session.worktree_branch.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut warnings: Vec<String> = Vec::new();
+            if let Some(wt_path) = &worktree_path {
+                let reclaimer = crate::worktree::DockerReclaimer::new();
+                if let Err(e) =
+                    crate::worktree::remove_worktree_reclaiming(&repo_path, wt_path, &reclaimer)
+                {
+                    if crate::worktree::is_reclaim_failure(&e) {
+                        tracing::warn!(error = %e, "worktree reclaim failed; session kept");
+                        return Err(e.to_string());
+                    }
+                    let msg = format!("worktree remove: {e}");
+                    tracing::warn!("{msg}");
+                    warnings.push(msg);
+                }
+            }
+            if let Some(branch) = &branch
+                && let Err(e) = crate::worktree::delete_branch(&repo_path, branch)
+            {
+                let msg = format!("branch delete: {e}");
+                tracing::warn!("{msg}");
+                warnings.push(msg);
+            }
+            Ok::<_, String>(warnings)
+        })
+        .await
+        .map_err(|e| e.to_string())??
+    };
+    warnings.extend(removal_warnings);
 
     // Step 4: delete the DB row. Re-acquire and re-validate — the row may
     // have been removed by a concurrent delete while this one was unlocked.
@@ -944,3 +1027,7 @@ pub fn resolve_default_agent(project_path: String) -> Result<String, String> {
 #[cfg(test)]
 #[path = "workspaces_sessions_guard_tests.rs"]
 mod guard_tests;
+
+#[cfg(test)]
+#[path = "workspaces_sessions_partial_tests.rs"]
+mod partial_tests;

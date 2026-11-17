@@ -387,6 +387,10 @@ pub fn create_worktree(repo_path: &Path, slug: &str) -> Result<PathBuf> {
 /// deleting the directory and pruning the stale registration — otherwise
 /// the entry lingers in `git worktree list` forever.
 pub fn remove_worktree(repo_path: &Path, worktree_path: &Path) -> Result<()> {
+    remove_worktree_plain(repo_path, worktree_path)
+}
+
+fn remove_worktree_plain(repo_path: &Path, worktree_path: &Path) -> Result<()> {
     let output = git()
         .args(["worktree", "remove", "--force"])
         .arg(worktree_path)
@@ -410,16 +414,7 @@ pub fn remove_worktree(repo_path: &Path, worktree_path: &Path) -> Result<()> {
         .output()
         .context("failed to execute git worktree prune")?;
     if let Err(e) = dir_removal {
-        // Containers writing through a bind mount as root (BUG-42) leave files
-        // the user cannot delete; spell out the manual step instead of a bare EACCES.
-        let remedy = if e.kind() == std::io::ErrorKind::PermissionDenied {
-            format!(
-                ". Some files are owned by another user (often root, from a Docker bind mount); remove them with `sudo rm -rf {}`",
-                worktree_path.display()
-            )
-        } else {
-            String::new()
-        };
+        let remedy = permission_remedy(&e, worktree_path);
         anyhow::bail!(
             "could not remove worktree dir {}: {e}{remedy}",
             worktree_path.display()
@@ -430,6 +425,90 @@ pub fn remove_worktree(repo_path: &Path, worktree_path: &Path) -> Result<()> {
         anyhow::bail!("git worktree remove failed ({stderr}); prune also failed: {prune_err}");
     }
     Ok(())
+}
+
+/// Containers writing through a bind mount as root (BUG-42) leave files the
+/// user cannot delete; spell out the manual step instead of a bare EACCES.
+fn permission_remedy(e: &std::io::Error, worktree_path: &Path) -> String {
+    if e.kind() == std::io::ErrorKind::PermissionDenied {
+        format!(
+            ". Some files are owned by another user (often root, from a Docker bind mount); remove them with `sudo rm -rf {}`",
+            worktree_path.display()
+        )
+    } else {
+        String::new()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub enum ReclaimIssue {
+    GuardRejected,
+    InProgress,
+    DockerNotFound,
+    DockerUnsupported,
+    DockerFailed,
+    Ineffective,
+}
+
+#[derive(Debug)]
+pub struct ReclaimFailure {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub issue: ReclaimIssue,
+    pub message: String,
+}
+
+impl std::fmt::Display for ReclaimFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ReclaimFailure {}
+
+pub fn is_reclaim_failure(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<ReclaimFailure>().is_some()
+}
+
+#[cfg(target_os = "linux")]
+mod reclaim;
+#[cfg(target_os = "linux")]
+pub use reclaim::*;
+
+#[cfg(not(target_os = "linux"))]
+#[derive(Default)]
+pub struct DockerReclaimer;
+
+#[cfg(not(target_os = "linux"))]
+impl DockerReclaimer {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+/// User-initiated removal that also unblocks root-owned directories left by
+/// containers. Rollbacks keep `remove_worktree`.
+#[cfg(target_os = "linux")]
+pub fn remove_worktree_reclaiming(
+    repo_path: &Path,
+    worktree_path: &Path,
+    reclaimer: &DockerReclaimer,
+) -> Result<()> {
+    reclaim::remove_worktree_snapshotting(
+        repo_path,
+        worktree_path,
+        Some(reclaimer),
+        reclaim::reclaim_snapshot,
+    )
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn remove_worktree_reclaiming(
+    repo_path: &Path,
+    worktree_path: &Path,
+    _reclaimer: &DockerReclaimer,
+) -> Result<()> {
+    remove_worktree(repo_path, worktree_path)
 }
 
 /// Get the unified diff for a single file against HEAD.
@@ -1825,3 +1904,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "worktree_reclaim_tests.rs"]
+mod reclaim_tests;

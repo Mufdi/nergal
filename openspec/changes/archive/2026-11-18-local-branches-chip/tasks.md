@@ -171,5 +171,5 @@
 - [x] 8.3 Add `src/lib/historyTree.ts` and widen `cursorIndexFor` to keyed items.
 - [x] 8.4 `HistoryChip`: one keyed cursor over `historyTreeItems`, actions from `historyTreeKeyAction`, cursor highlight and focus ring on file rows, footer hint for Enter.
 - [x] 8.5 Gates as in 7.7.
-- [ ] 8.6 Manual walk: keyboard only in the History chip, reach a commit's file and open it with Enter, in the panel and in the Zen sidebar.
-- [ ] 8.7 Manual walk: push from the git panel; the window keeps responding during the push.
+- [x] 8.6 Manual walk: keyboard only in the History chip, reach a commit's file and open it with Enter, in the panel and in the Zen sidebar.
+- [x] 8.7 Manual walk: push from the git panel; the window keeps responding during the push.

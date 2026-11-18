@@ -117,4 +117,4 @@ Fixes:
 - Red: `src/lib/historyTree.test.ts` (15), written by a separate test-writer, locked. It failed on the missing module only.
 - `git_commit`, `git_push`, `git_ship`, `get_pr_preview_data` now `async` with `blocking()`.
 - Gates: clippy `--all-targets -D warnings` clean; `cargo test` 1136 passed, 1 ignored; `rustfmt --check` OK; `tsc` clean; `pnpm test` 361 passed; `work-gates.sh`: 11 locks unchanged, gitleaks clean. 6b WARN: the `HistoryChip` key-listener `eslint-disable react-hooks/exhaustive-deps` line, the same justification as `BranchesChip`.
-- Walks 8.6 and 8.7 pending on the next `.deb`.
+- Walks 8.6 and 8.7 (H1, H2, P1) passed on the 20:10 `.deb`, as the user reported ("todas las pruebas done").

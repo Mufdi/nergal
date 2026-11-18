@@ -79,3 +79,7 @@
 | `work-gates.sh 5efed37 worktree-root-owned-cleanup` | 3 Red locks PASS, Deps SKIP, 6a/6b/6c PASS |
 
 Pending: manual walks 4.2, 4.3, 5.6 on the installed `.deb`.
+
+## Manual walks (2026-11-18)
+
+The user confirmed on the installed `.deb` that the remaining manual walks pass (4.2 = walk B1, 4.3 and 5.6 = walks B2, D2, D3). Marked `[x]`.

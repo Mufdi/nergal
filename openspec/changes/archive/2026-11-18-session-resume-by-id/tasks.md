@@ -56,7 +56,7 @@
 
 - [x] 6.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check`
 - [x] 6.2 `npx tsc --noEmit && pnpm test`
-- [ ] 6.3 Manual walk on the installed `.deb`: "Fixes generales", "Upgrades de packages" and "Upgrades" each reopen their own conversation
-- [ ] 6.4 Manual walk: `claude -p "hi"` run inside a session does not change that session's stored id, transcript marker or last message; `time` the hook on a `Stop`; record a `pstree -p` with subagents and background tasks running and confirm no `claude` is a direct child of another `claude`
-- [ ] 6.5 Manual walk: a new XD001 session gets a worktree; "General XD001" shows no delete action; a demoted session shows one and deletes
-- [ ] 6.6 Manual walk: deleting a worktree directory and restarting Nergal shows the `Worktree no longer exists` toast and the session keeps its conversation
+- [x] 6.3 Manual walk on the installed `.deb`: "Fixes generales", "Upgrades de packages" and "Upgrades" each reopen their own conversation
+- [x] 6.4 Manual walk: `claude -p "hi"` run inside a session does not change that session's stored id, transcript marker or last message; `time` the hook on a `Stop`; record a `pstree -p` with subagents and background tasks running and confirm no `claude` is a direct child of another `claude`
+- [x] 6.5 Manual walk: a new XD001 session gets a worktree; "General XD001" shows no delete action; a demoted session shows one and deletes
+- [x] 6.6 Manual walk: deleting a worktree directory and restarting Nergal shows the `Worktree no longer exists` toast and the session keeps its conversation

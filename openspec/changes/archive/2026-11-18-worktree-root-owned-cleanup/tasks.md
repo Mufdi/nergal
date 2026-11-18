@@ -21,10 +21,10 @@
 - [x] 5.3 Implement the Revision 1 interfaces in `src-tauri/src/worktree/reclaim.rs` and `worktree.rs` (script + positional args, `chown -h`, `-H <endpoint>`, process group kill, bounded reader join, mode mask, recorded-path snapshot entry, `ReclaimFailure`)
 - [x] 5.4 Callers keep the row on `is_reclaim_failure` (`delete_session`, `cleanup_merged_session`); `delete_workspace` keeps the workspace and failed sessions
 - [x] 5.5 Frontend: refused `delete_workspace` handling in `src/stores/pendingDeletes.ts`
-- [ ] 5.6 Manual walk: with `alpine:3` retagged away, deleting a session with a root-owned dir keeps the session with a `docker failed` toast; after restoring the tag, deleting again succeeds
+- [x] 5.6 Manual walk: with `alpine:3` retagged away, deleting a session with a root-owned dir keeps the session with a `docker failed` toast; after restoring the tag, deleting again succeeds
 
 ## 4. Verification
 
 - [x] 4.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check`
-- [ ] 4.2 Manual walk: a session whose worktree holds a large root-owned tree (200k files) deletes from the sidebar with no prompt, leaves no directory and no `git worktree list` entry, and the window stays responsive during the delete
-- [ ] 4.3 Manual walk: with `alpine:3` retagged away, the delete shows an error with `docker failed` and the manual remedy; restore the tag afterwards
+- [x] 4.2 Manual walk: a session whose worktree holds a large root-owned tree (200k files) deletes from the sidebar with no prompt, leaves no directory and no `git worktree list` entry, and the window stays responsive during the delete
+- [x] 4.3 Manual walk: with `alpine:3` retagged away, the delete shows an error with `docker failed` and the manual remedy; restore the tag afterwards

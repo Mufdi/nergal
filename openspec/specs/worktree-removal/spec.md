@@ -1,8 +1,13 @@
-## ADDED Requirements
+# worktree-removal Specification
+
+## Purpose
+TBD - created by archiving change worktree-root-owned-cleanup. Update Purpose after archive.
+
+## Requirements
 
 ### Requirement: User-initiated deletes unblock directories before giving up
 
-When a user-initiated worktree removal (`delete_session`, `delete_workspace`, `cleanup_merged_session`) cannot delete the worktree directory because of `PermissionDenied`, the system SHALL first add `u+rwx` to every directory of the tree owned by the current user and retry. When directories owned by another user still block the deletion, it SHALL reclaim them through Docker: every directory of the tree is re-owned to the current uid/gid and gets `u+rwx`; regular files, symlinks and device nodes are not touched. Then it SHALL retry once and prune the git registration. The reclaim counts as successful only when the container exits 0 and no directory of the tree is left unwritable or unreadable afterwards. When the reclaim does not run or does not help, the error SHALL keep today's path and manual remedy text and SHALL add the reason: `guard rejected`, `removal in progress`, `docker not found`, `docker unsupported`, `docker failed` or `reclaim ineffective`.
+When a user-initiated worktree removal (`delete_session`, `delete_workspace`, `cleanup_merged_session`) cannot delete the worktree directory because of `PermissionDenied`, the system SHALL first add `u+rwx` to every directory of the tree owned by the current user and retry. When directories owned by another user still block the deletion, it SHALL reclaim them through Docker: every directory of the tree is re-owned to the current uid/gid and gets `u+rwx`; regular files, symlinks and device nodes are not touched. Then it SHALL retry once and prune the git registration. The reclaim counts as successful only when the container exits 0 and no directory of the tree is left unwritable or unreadable afterwards. When the reclaim does not run or does not help, the error SHALL keep today's path and manual remedy text, with the path single-quoted for the shell so a path with spaces or quotes stays one argument, and SHALL add the reason: `guard rejected`, `removal in progress`, `docker not found`, `docker unsupported`, `docker failed` or `reclaim ineffective`.
 
 #### Scenario: Read-only directories owned by the user need no Docker
 

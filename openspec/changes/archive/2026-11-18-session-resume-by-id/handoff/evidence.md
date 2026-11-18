@@ -100,3 +100,7 @@ Comment audit: 5 added comments, all WHY (why `continue` adds no flag ×2, why n
 Comment audit: added comments are WHY-only (why `continue` adds no flag, why the marker path is guarded, why nested hooks must not write identity, why reconcile stats outside the guard, why one pid per refresh).
 
 Pending: manual walk 6.3–6.6 on the installed `.deb`.
+
+## Manual walks (2026-11-18)
+
+The user confirmed on the installed `.deb` that the remaining manual walks pass (6.3, 6.4, 6.5, 6.6). Marked `[x]`.

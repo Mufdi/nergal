@@ -15,6 +15,8 @@ import { invoke } from "@/lib/tauri";
 import { pruneSessionStateAction } from "./sessionScope";
 import { pruneConflictSessionAction } from "./conflict";
 import { toastsAtom } from "./toast";
+import { confirm as swalConfirm } from "@/lib/confirm";
+import { escapeHtml } from "@/lib/escapeHtml";
 
 const DELETE_GRACE_MS = 5_000;
 /// Slack between the countdown reaching 0 and the physical deletion, so an
@@ -66,6 +68,27 @@ function reportCleanupErrors(errors: string[] | undefined): void {
   for (const description of errors ?? []) {
     appStore.set(toastsAtom, { message: "Worktree left on disk", description, type: "error" });
   }
+}
+
+type CleanupNoticeKind = "worktree_left" | "branch_kept" | "branch_deleted";
+
+interface CleanupNotice {
+  kind: CleanupNoticeKind;
+  message: string;
+}
+
+const NOTICE_TITLES: Record<CleanupNoticeKind, { message: string; type: "error" | "info" }> = {
+  worktree_left: { message: "Worktree left on disk", type: "error" },
+  branch_kept: { message: "Branch kept", type: "info" },
+  branch_deleted: { message: "Branch deleted", type: "info" },
+};
+
+export function noticeToast(notice: CleanupNotice): {
+  message: string;
+  description: string;
+  type: "error" | "info";
+} {
+  return { ...NOTICE_TITLES[notice.kind], description: notice.message };
 }
 
 function tooLateToast(): void {
@@ -134,8 +157,8 @@ export const deleteSessionWithGraceAction = atom(null, (get, set, session: Sessi
     appStore.set(pruneSessionStateAction, session.id);
     appStore.set(pruneConflictSessionAction, session.id);
     try {
-      const errors = await invoke<string[]>("delete_session", { sessionId: session.id });
-      reportCleanupErrors(errors);
+      const notices = await invoke<CleanupNotice[]>("delete_session", { sessionId: session.id });
+      for (const notice of notices ?? []) appStore.set(toastsAtom, noticeToast(notice));
     } catch (e) {
       const restored = await invoke<Workspace[]>("get_workspaces").catch(() => undefined);
       if (restored) {
@@ -168,6 +191,21 @@ export const deleteSessionWithGraceAction = atom(null, (get, set, session: Sessi
     timer: setTimeout(() => void finalize(), DELETE_GRACE_MS + FINALIZE_SLACK_MS),
   });
 });
+
+export async function confirmAndDeleteSession(
+  session: Session,
+  deleteWithGrace: (session: Session) => void,
+): Promise<void> {
+  const ok = await swalConfirm({
+    title: "Delete session?",
+    body: `<strong>${escapeHtml(session.name)}</strong> will be removed and its terminal closed.`,
+    confirmLabel: "Delete",
+    cancelLabel: "Cancel",
+    kind: "warning",
+    destructive: true,
+  });
+  if (ok) deleteWithGrace(session);
+}
 
 /// Workspace counterpart: hides the workspace (and its session tabs) for
 /// the grace window before invoking the destructive delete_workspace.

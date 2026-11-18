@@ -1,0 +1,37 @@
+{
+  "tier": "M",
+  "ceremony": "standard",
+  "risk_tier": "critical",
+  "spec_target": "session-continuity",
+  "tracker": {
+    "system": "linear",
+    "id": null,
+    "blocked": "plan-limit",
+    "related": "FRI-490",
+    "pending": []
+  },
+  "validation": "validated",
+  "planning_only": false,
+  "iprev": {
+    "rounds": 5,
+    "verdict": "REVISE (cap)"
+  },
+  "interview_answers": {
+    "branch_rule": "Delete the session's local branch only when it is safe (all commits on a remote or in the merge target); otherwise keep it and say so in the toast.",
+    "pending_delete": "A session kept after a failed reclaim (half-deleted worktree) is marked 'pending delete', never launches the agent, and only offers to retry the delete.",
+    "fresh_flag": "The user confirmed the B2 session had a conversation; fix the fresh flag so every relaunch resumes.",
+    "iprev_cap": "Proceed to implementation after round 5; code review is the next safety net."
+  },
+  "events": [
+    {
+      "ts": "2026-11-17",
+      "type": "iprev-cap",
+      "note": "5 rounds, critical risk. R1 14, R2 10, R3 8, R4 6, R5 5 findings; each round closed the previous set (R5 confirmed all R4 items). R5 findings (record dir not created on fresh installs, untestable CAS case, task 2.4 wording, root-run test, aux-shell missing row) applied before asking the user."
+    },
+    {
+      "ts": "2026-11-17",
+      "type": "validated",
+      "note": "User chose to implement after the iprev cap; openspec validate passes."
+    }
+  ]
+}

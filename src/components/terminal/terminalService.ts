@@ -106,6 +106,7 @@ interface Entry {
 
 const entries = new Map<string, Entry>();
 const pending = new Set<string>();
+const failureToasted = new Set<string>();
 const hosts = new Map<Region, HTMLDivElement | null>();
 const activeIds = new Map<Region, string | null>();
 
@@ -310,8 +311,9 @@ async function showTerminal(opts: {
 
   pending.add(key);
 
+  let container: HTMLDivElement | null = null;
   try {
-    const container = document.createElement("div");
+    container = document.createElement("div");
     container.style.cssText =
       "position:absolute;inset:0;display:flex;overflow:hidden;background:" +
       TERM_THEME.background +
@@ -446,6 +448,7 @@ async function showTerminal(opts: {
 
     paintAll(entry);
     entries.set(key, entry);
+    failureToasted.delete(key);
     if (focus) focusCanvas(entry);
     // wezterm starts out "focused"; align it so an app enabling DECSET 1004
     // later in an unfocused terminal gets `CSI I` on the first real focus.
@@ -456,6 +459,15 @@ async function showTerminal(opts: {
     }
   } catch (err) {
     console.error("wezterm: failed to create terminal", key, err);
+    container?.remove();
+    if (!failureToasted.has(key)) {
+      failureToasted.add(key);
+      appStore.set(toastsAtom, {
+        message: "Could not start the terminal",
+        description: err instanceof Error ? err.message : String(err),
+        type: "error",
+      });
+    }
   } finally {
     pending.delete(key);
   }

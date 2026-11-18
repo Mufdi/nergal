@@ -922,6 +922,7 @@ fn build_worktree_session(
         agent_id: agent_id.as_str().to_string(),
         agent_internal_session_id: None,
         agent_capabilities: Vec::new(),
+        worktree_pending_delete: false,
         pinned_note_paths: Vec::new(),
         launch_options,
         env_shells: Vec::new(),

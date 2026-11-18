@@ -16,6 +16,7 @@ fn seed(db: &Database, id: &str, worktree: Option<&str>) {
         agent_id: "claude-code".into(),
         agent_internal_session_id: None,
         agent_capabilities: Vec::new(),
+        worktree_pending_delete: false,
         pinned_note_paths: Vec::new(),
         launch_options: None,
         env_shells: Vec::new(),

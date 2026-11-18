@@ -6,6 +6,7 @@ import {
   MessagesSquare,
   Pencil,
   Trash2,
+  TriangleAlert,
 } from "lucide-react";
 import {
   Tooltip,
@@ -209,6 +210,17 @@ export function SessionRow({
         )}
       </span>
 
+      {session.worktree_pending_delete && (
+        <Tooltip>
+          <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
+            <TriangleAlert aria-hidden="true" className="size-3 text-yellow-500" />
+            <span className="sr-only">Worktree partly deleted</span>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="text-[10px]">
+            Worktree partly deleted: delete the session to finish
+          </TooltipContent>
+        </Tooltip>
+      )}
       {session.worktree_path !== null ? (
         <GitBranch className="size-3 shrink-0 text-muted-foreground/40" />
       ) : (

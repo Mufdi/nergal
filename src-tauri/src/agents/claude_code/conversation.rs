@@ -53,23 +53,66 @@ pub fn resume_candidates(db: &Database, session_id: &str) -> Option<ResumeCandid
     })
 }
 
-fn transcript_exists(id: &str, projects_dirs: &[PathBuf]) -> bool {
+fn find_transcript(id: &str, projects_dirs: &[PathBuf]) -> Option<PathBuf> {
     let file = format!("{id}.jsonl");
-    projects_dirs.iter().any(|dir| {
+    projects_dirs.iter().find_map(|dir| {
         std::fs::read_dir(dir)
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .any(|project| project.path().join(&file).is_file())
-            })
-            .unwrap_or(false)
+            .ok()?
+            .flatten()
+            .map(|project| project.path().join(&file))
+            .find(|candidate| candidate.is_file())
     })
+}
+
+fn transcript_exists(id: &str, projects_dirs: &[PathBuf]) -> bool {
+    find_transcript(id, projects_dirs).is_some()
+}
+
+const CONTINUATION_TAIL_BYTES: u64 = 64 * 1024;
+const MAX_CONTINUATION_HOPS: usize = 10;
+
+// Continuation markers are appended at the end; reading only the tail keeps this cheap on multi-MB transcripts.
+fn continued_in(path: &Path) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    file.seek(SeekFrom::Start(len.saturating_sub(CONTINUATION_TAIL_BYTES)))
+        .ok()?;
+    let mut tail = Vec::new();
+    file.read_to_end(&mut tail).ok()?;
+    String::from_utf8_lossy(&tail)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|v| v.get("type").and_then(|t| t.as_str()) == Some("continued-in"))
+        .filter_map(|v| {
+            v.get("continuedInSessionId")
+                .and_then(|id| id.as_str())
+                .map(str::to_owned)
+        })
+        .next_back()
+}
+
+fn follow_continuations(start: String, projects_dirs: &[PathBuf]) -> String {
+    let mut visited = vec![start.clone()];
+    let mut current = start;
+    for _ in 0..MAX_CONTINUATION_HOPS {
+        let Some(next) = find_transcript(&current, projects_dirs)
+            .and_then(|path| continued_in(&path))
+            .filter(|id| is_valid_conversation_id(id) && !visited.contains(id))
+            .filter(|id| transcript_exists(id, projects_dirs))
+        else {
+            break;
+        };
+        visited.push(next.clone());
+        current = next;
+    }
+    current
 }
 
 pub fn pick_resume_id(c: &ResumeCandidates, projects_dirs: &[PathBuf]) -> Option<String> {
     if let Some(id) = &c.stored_id {
         return (is_valid_conversation_id(id) && transcript_exists(id, projects_dirs))
-            .then(|| id.clone());
+            .then(|| follow_continuations(id.clone(), projects_dirs));
     }
 
     let transcript = c.transcript_path.as_deref()?;
@@ -84,7 +127,7 @@ pub fn pick_resume_id(c: &ResumeCandidates, projects_dirs: &[PathBuf]) -> Option
     if in_repo_root_project && !c.is_oldest_in_workspace {
         return None;
     }
-    transcript_exists(&stem, projects_dirs).then_some(stem)
+    transcript_exists(&stem, projects_dirs).then(|| follow_continuations(stem, projects_dirs))
 }
 
 pub fn projects_dirs(transcript_path: Option<&Path>) -> Vec<PathBuf> {

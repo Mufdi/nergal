@@ -6,7 +6,11 @@ import { confirm as swalConfirm } from "@/lib/confirm";
 import { escapeHtml } from "@/lib/escapeHtml";
 import { Pencil, Pin, Trash2 } from "lucide-react";
 import { TextInputDialog } from "@/components/ui/TextInputDialog";
-import { deleteSessionWithGraceAction, deleteWorkspaceWithGraceAction } from "@/stores/pendingDeletes";
+import {
+  confirmAndDeleteSession,
+  deleteSessionWithGraceAction,
+  deleteWorkspaceWithGraceAction,
+} from "@/stores/pendingDeletes";
 import { workspaceDefaultPinsMapAtom, loadWorkspaceDefaultPinsAtom } from "@/stores/pinnedNotes";
 import { focusZoneAtom, previousNonTerminalZoneAtom, triggerResumeSessionAtom, triggerNewSessionAtom, triggerAddWorkspaceAtom, triggerMergeAtom, triggerJumpToProjectAtom, sidebarSelectedIdxAtom, focusedWorkspaceIdAtom } from "@/stores/shortcuts";
 import {
@@ -233,17 +237,8 @@ function useSessionActions() {
       .catch(() => {});
   }
 
-  async function deleteSession(session: Session) {
-    const ok = await swalConfirm({
-      title: "Delete session?",
-      body: `<strong>${escapeHtml(session.name)}</strong> will be removed and its terminal closed.`,
-      confirmLabel: "Delete",
-      cancelLabel: "Cancel",
-      kind: "warning",
-      destructive: true,
-    });
-    if (!ok) return;
-    deleteWithGrace(session);
+  function deleteSession(session: Session) {
+    return confirmAndDeleteSession(session, deleteWithGrace);
   }
 
   return { renameSession, deleteSession };

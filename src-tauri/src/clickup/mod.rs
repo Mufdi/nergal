@@ -940,6 +940,7 @@ pub fn clickup_spawn_worktree_with_task(
         agent_id: agent_id.as_str().to_string(),
         agent_internal_session_id: None,
         agent_capabilities: Vec::new(),
+        worktree_pending_delete: false,
         pinned_note_paths: Vec::new(),
         launch_options: None,
         env_shells: Vec::new(),

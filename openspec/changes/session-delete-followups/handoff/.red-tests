@@ -1,0 +1,7 @@
+e56d7ff1acbd62697e2127e328450dd2dc56832c  src-tauri/src/worktree_branch_tests.rs
+5cd41f707a2e2805c259a0b4ba31119a84f8d8c9  src-tauri/src/commands/workspaces_sessions_notices_tests.rs
+3609f3c63eb8791e160a4e53cff04423e89a7b52  src/lib/launchMode.test.ts
+d598e97e99e953349064dfcac5fdc5e077995e47  src/stores/pendingDeletesNotices.test.ts
+00e1cee71b798adbeb89a62bcb19af36f194f451  src-tauri/src/worktree_review_tests.rs
+38b5c47c1c6aaeb3a2178225d46918ad8d27eb4f  src/lib/shellQuote.test.ts
+97eec1d9b4e846098991cc30e49620f49740fc65  src-tauri/src/agents/claude_code/conversation_continuation_tests.rs

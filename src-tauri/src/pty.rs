@@ -673,6 +673,18 @@ pub async fn start_claude_session(
     rows: u16,
     resume: Option<String>,
 ) -> Result<StartClaudeResult, String> {
+    let worktree_path = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        db.find_session(&session_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("session {session_id} not found"))?
+            .worktree_path
+    };
+    crate::commands::refuse_launch(
+        worktree_path.as_deref(),
+        cwd.as_deref().map(std::path::Path::new),
+    )?;
+
     let pty_id = format!(
         "pty-{}-{}",
         session_id,
@@ -1029,6 +1041,7 @@ fn aux_term_id(session_id: &str, shell_id: &str) -> String {
 pub async fn spawn_aux_shell(
     app: AppHandle,
     state: State<'_, PtyManager>,
+    db: State<'_, crate::db::SharedDb>,
     session_id: String,
     shell_id: String,
     cwd: Option<String>,
@@ -1039,6 +1052,14 @@ pub async fn spawn_aux_shell(
     command: Option<String>,
     autorun: bool,
 ) -> Result<String, String> {
+    let worktree_path = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        db.find_session(&session_id)
+            .map_err(|e| e.to_string())?
+            .and_then(|s| s.worktree_path)
+    };
+    crate::commands::refuse_launch(worktree_path.as_deref(), None)?;
+
     let term_id = aux_term_id(&session_id, &shell_id);
 
     // Per-shell dir wins when it resolves to a real directory; otherwise
@@ -2495,6 +2516,7 @@ mod tests {
             agent_id: "claude-code".into(),
             agent_internal_session_id: None,
             agent_capabilities: Vec::new(),
+            worktree_pending_delete: false,
             pinned_note_paths: Vec::new(),
             launch_options: None,
             env_shells: Vec::new(),

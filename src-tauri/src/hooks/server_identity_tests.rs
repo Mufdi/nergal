@@ -147,6 +147,7 @@ fn seed(db: &Database, id: &str, agent_id: &str, internal: Option<&str>) {
         agent_id: agent_id.to_string(),
         agent_internal_session_id: internal.map(String::from),
         agent_capabilities: Vec::new(),
+        worktree_pending_delete: false,
         pinned_note_paths: Vec::new(),
         launch_options: None,
         env_shells: Vec::new(),

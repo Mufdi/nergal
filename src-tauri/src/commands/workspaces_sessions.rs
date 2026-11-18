@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tauri::State;
 
@@ -7,6 +7,7 @@ use crate::agents::ThemePalette;
 use crate::agents::state::AgentRuntimeState;
 use crate::db::SharedDb;
 use crate::models::{Session, SessionStatus, Workspace};
+use crate::worktree::{BranchOutcome, KeptReason};
 
 fn strip_diacritics(s: &str) -> String {
     s.chars()
@@ -158,14 +159,20 @@ pub fn get_workspaces(
     db: State<'_, SharedDb>,
     agents: State<'_, AgentRuntimeState>,
 ) -> Result<Vec<Workspace>, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
-    let mut workspaces = db.get_workspaces().map_err(|e| e.to_string())?;
+    let mut workspaces = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        db.get_workspaces().map_err(|e| e.to_string())?
+    };
     // DB rows don't persist capabilities — they're a runtime property of the
     // adapter. Fill them in here so the frontend has the bitset to gate UI
     // (ResumeModal options, picker affordances) without an extra round-trip.
     for ws in &mut workspaces {
         for session in &mut ws.sessions {
             session.agent_capabilities = capabilities_for_agent_id(&agents, &session.agent_id);
+            session.worktree_pending_delete = session
+                .worktree_path
+                .as_deref()
+                .is_some_and(crate::worktree::worktree_pending_delete);
         }
     }
     Ok(workspaces)
@@ -379,6 +386,7 @@ fn build_new_session(
         pinned_clickup_task_ids: Vec::new(),
         active_linear_issue_id: None,
         pinned_linear_issue_ids: Vec::new(),
+        worktree_pending_delete: false,
     }
 }
 
@@ -504,12 +512,109 @@ pub(crate) fn refuse_last_root_session(
     Ok(())
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct CleanupNotice {
+    pub kind: &'static str,
+    pub message: String,
+}
+
+/// An empty path (no data directory) makes the write-ahead append fail, so the
+/// branch is kept instead of deleted without a restore record.
+fn deleted_branches_record() -> PathBuf {
+    dirs::data_dir()
+        .map(|d| d.join("nergal").join("deleted-branches.log"))
+        .unwrap_or_default()
+}
+
+fn kept_message(branch: &str, reason: &KeptReason) -> String {
+    match reason {
+        KeptReason::InUse => {
+            format!(
+                "Branch {branch} kept: it is checked out, or being rebased or bisected, in a worktree"
+            )
+        }
+        KeptReason::Unshared => {
+            format!("Branch {branch} kept: it has commits only on this machine")
+        }
+        KeptReason::Unchecked => format!("Branch {branch} kept: could not check its state"),
+        KeptReason::RecordFailed { path } if path.as_os_str().is_empty() => {
+            format!("Branch {branch} kept: could not write the restore record (no data directory)")
+        }
+        KeptReason::RecordFailed { path } => format!(
+            "Branch {branch} kept: could not write the restore record at {}",
+            path.display()
+        ),
+        KeptReason::Moved => format!("Branch {branch} kept: it changed while being deleted"),
+    }
+}
+
+/// The branch is only touched after the directory removal succeeded, so a
+/// failed or refused removal can never cost the user unmerged commits.
+pub(crate) fn notices_after_removal(
+    removal: anyhow::Result<()>,
+    repo_path: &Path,
+    branch: Option<&str>,
+    target: Option<&str>,
+    record: &Path,
+) -> Result<Vec<CleanupNotice>, String> {
+    if let Err(e) = removal {
+        if crate::worktree::is_reclaim_failure(&e) {
+            return Err(e.to_string());
+        }
+        let message = match branch {
+            Some(b) => format!("{e}; branch {b} kept"),
+            None => e.to_string(),
+        };
+        return Ok(vec![CleanupNotice {
+            kind: "worktree_left",
+            message,
+        }]);
+    }
+    let Some(branch) = branch else {
+        return Ok(Vec::new());
+    };
+    let notice = match crate::worktree::drop_session_branch(repo_path, branch, target, record) {
+        BranchOutcome::Missing => return Ok(Vec::new()),
+        BranchOutcome::Kept { reason } => CleanupNotice {
+            kind: "branch_kept",
+            message: kept_message(branch, &reason),
+        },
+        BranchOutcome::Deleted { sha } => CleanupNotice {
+            kind: "branch_deleted",
+            message: format!(
+                "Branch {branch} deleted. To restore it run: git branch {branch} {sha}"
+            ),
+        },
+    };
+    Ok(vec![notice])
+}
+
+pub(crate) fn refuse_launch(
+    worktree_path: Option<&Path>,
+    cwd: Option<&Path>,
+) -> Result<(), String> {
+    if let Some(wt) = worktree_path
+        && crate::worktree::worktree_pending_delete(wt)
+    {
+        return Err("This worktree was partly deleted; delete the session to finish".to_string());
+    }
+    if let Some(cwd) = cwd
+        && !cwd.is_dir()
+    {
+        return Err(format!(
+            "Working directory {} does not exist",
+            cwd.display()
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn delete_session(
     db: State<'_, SharedDb>,
     agents: State<'_, AgentRuntimeState>,
     session_id: String,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<CleanupNotice>, String> {
     {
         let db = db.lock().map_err(|e| e.to_string())?;
         refuse_last_root_session(&db, &session_id)?;
@@ -572,7 +677,12 @@ pub async fn delete_session(
                 .workspace_repo_path(&session.workspace_id)
                 .map_err(|e| e.to_string())?
         {
-            cleanup = Some((repo_path, wt_path.clone()));
+            cleanup = Some((
+                repo_path,
+                wt_path.clone(),
+                session.worktree_branch.clone(),
+                session.merge_target.clone(),
+            ));
         }
         (cleanup, footer_job, moc_job)
     };
@@ -587,32 +697,37 @@ pub async fn delete_session(
     }
 
     let mut cleanup_errors = Vec::new();
-    if let Some((repo_path, wt_path)) = worktree_cleanup {
-        let removal = tauri::async_runtime::spawn_blocking(move || {
+    if let Some((repo_path, wt_path, branch, target)) = worktree_cleanup {
+        let removal_session_id = session_id.clone();
+        let notices = tauri::async_runtime::spawn_blocking(move || {
             let reclaimer = crate::worktree::DockerReclaimer::new();
-            crate::worktree::remove_worktree_reclaiming(&repo_path, &wt_path, &reclaimer)
-                .map_err(|e| (wt_path, e))
-        })
-        .await
-        .map_err(|e| e.to_string())?;
-        if let Err((wt_path, e)) = removal {
-            if crate::worktree::is_reclaim_failure(&e) {
+            let removal =
+                crate::worktree::remove_worktree_reclaiming(&repo_path, &wt_path, &reclaimer);
+            if let Err(e) = &removal {
+                let reclaim = crate::worktree::is_reclaim_failure(e);
                 tracing::warn!(
-                    session_id = %session_id,
+                    session_id = %removal_session_id,
                     worktree = %wt_path.display(),
                     error = %e,
-                    "worktree reclaim failed; session kept",
+                    "{}",
+                    if reclaim {
+                        "worktree reclaim failed; session kept"
+                    } else {
+                        "worktree cleanup failed; session delete continues"
+                    },
                 );
-                return Err(e.to_string());
             }
-            tracing::warn!(
-                session_id = %session_id,
-                worktree = %wt_path.display(),
-                error = %e,
-                "worktree cleanup failed; session delete continues",
-            );
-            cleanup_errors.push(e.to_string());
-        }
+            notices_after_removal(
+                removal,
+                &repo_path,
+                branch.as_deref(),
+                target.as_deref(),
+                &deleted_branches_record(),
+            )
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        cleanup_errors = notices;
     }
 
     // Fresh guard for the finalize phase: re-validate since the row may have
@@ -1031,3 +1146,7 @@ mod guard_tests;
 #[cfg(test)]
 #[path = "workspaces_sessions_partial_tests.rs"]
 mod partial_tests;
+
+#[cfg(test)]
+#[path = "workspaces_sessions_notices_tests.rs"]
+mod notices_tests;

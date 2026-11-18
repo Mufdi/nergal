@@ -20,5 +20,9 @@ pub mod transcript;
 #[path = "conversation_tests.rs"]
 mod conversation_tests;
 
+#[cfg(test)]
+#[path = "conversation_continuation_tests.rs"]
+mod conversation_continuation_tests;
+
 pub use adapter::ClaudeCodeAdapter;
 pub use plans_path::resolve_cc_plans_directory;

@@ -15,6 +15,11 @@ export interface HookEvent {
   /// live when the turn ended. Shapes are CC-defined JSON objects.
   background_tasks?: Record<string, unknown>[];
   session_crons?: Record<string, unknown>[];
+  agent_id?: string;
+  agent_type?: string;
+  agent_message?: string;
+  agent_tokens?: number;
+  effort_level?: string;
 }
 
 export interface Task {
@@ -41,7 +46,6 @@ export interface Config {
   default_shell: string;
   theme_mode: string;
   preferred_editor: string;
-  terminal_kitty_keyboard: boolean;
   sidebar_dot_grid: boolean;
   panel_focus_pulse: boolean;
   panel_glow: boolean;
@@ -65,6 +69,11 @@ export interface Config {
   /// the dispatcher's read defaults to "nergal" before Phase 5 lands the
   /// Rust-side default.
   keyboard_ownership?: "nergal" | "agent";
+  /// Linear panel state filter and folded groups (frontend-owned; written
+  /// per-key by the panel, not through the Settings Save button).
+  linear_hidden_states?: string[];
+  linear_collapsed_groups?: string[];
+  linear_show_completed?: boolean;
 }
 
 export interface CrossSessionConfig {
@@ -172,7 +181,7 @@ export type PlanMode = "view" | "edit";
 export interface ActivityEntry {
   id: string;
   timestamp: number;
-  type: "tool_use" | "file_modified" | "session" | "task" | "plan" | "error";
+  type: "tool_use" | "file_modified" | "session" | "task" | "plan" | "error" | "subagent";
   message: string;
   detail?: string;
   /// Tool lifecycle: "running" set on PreToolUse, "done" patched on PostToolUse.
@@ -186,6 +195,14 @@ export interface ActivityEntry {
   /// The shell command a Bash tool ran — surfaced so "Bash" isn't opaque.
   /// Kept separate from `detail` (the >50-char "thinking" collapse path).
   command?: string;
+  /// Pairs SubagentStart with SubagentStop and marks the Agent tool row it claimed.
+  agentId?: string;
+  /// Subagent that issued this tool call (payload `agent_id`), so SubagentStop can close its leftovers.
+  ownerAgentId?: string;
+  /// Subagent type that issued this tool call, shown beside the row.
+  ownerLabel?: string;
+  /// Context tokens of a finished subagent, from its own transcript.
+  tokens?: number;
 }
 
 export interface DiffLine {
@@ -253,3 +270,9 @@ export interface ObsidianConfig {
 }
 
 export type ResolvedObsidianConfig = ObsidianConfig;
+
+export interface HooksStatus {
+  registered: boolean;
+  settings_path: string;
+  binary_on_path: boolean;
+}

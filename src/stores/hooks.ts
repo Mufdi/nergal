@@ -1,7 +1,7 @@
 import { type getDefaultStore } from "jotai";
 import { invoke, listen } from "@/lib/tauri";
 import type { HookEvent, CostSummary, Task, ActivityEntry } from "@/lib/types";
-import { costMapAtom, modeMapAtom, cwdMapAtom, agentStatusMapAtom, activeSessionIdAtom, type AgentStatus } from "./workspace";
+import { costMapAtom, modeMapAtom, cwdMapAtom, agentStatusMapAtom, activeSessionIdAtom, lastResponseEffortMapAtom, type AgentStatus } from "./workspace";
 import { taskMapAtom } from "./tasks";
 import { fileMapAtom, type ModifiedFile } from "./files";
 import { planStateMapAtom, planDocumentsAtom, PLAN_DOCUMENTS_MAX, registerPlanAtom, planReviewStatusMapAtom } from "./plan";
@@ -9,7 +9,15 @@ import { withBoundedEntry } from "@/lib/boundedRecord";
 import { pendingAsksAtom, pendingAttentionAtom } from "./askUser";
 import { openTabAction, expandRightPanelAtom, activePanelViewAtom } from "./rightPanel";
 import { refreshGitInfoAtom } from "./git";
-import { addActivityAtom, completeToolActivityAtom } from "./activity";
+import {
+  addActivityAtom,
+  completeToolActivityAtom,
+  startSubagentActivityAtom,
+  completeSubagentActivityAtom,
+  closeUnclaimedSubagentRowsAtom,
+  closeMainToolRowsAtom,
+} from "./activity";
+import { buildToolUseEntry, handbackReport, notificationAttentionMessage, shouldLogGenericActivity, shouldClearOnBackgroundCompletion, shouldClearOnTurnEvent } from "@/lib/agentTelemetry";
 import { toastsAtom } from "./toast";
 import { localhostPortsAtom } from "./browser";
 import { providerStatusAtom, type ProviderStatus } from "./statusFeed";
@@ -84,13 +92,16 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
           set(modeMapAtom, (prev) => ({ ...prev, [sid]: tool_name ?? "tool" }));
           set(addActivityAtom, {
             sessionId: sid,
-            entry: {
-              ...createActivity("tool_use", tool_name ?? "tool"),
-              status: "running",
+            entry: buildToolUseEntry({
+              id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              timestamp: Date.now(),
               toolName: tool_name,
               command: commandFromToolInput(event.tool_input),
               files: filesFromToolInput(event.tool_input),
-            },
+              agentId: event.agent_id,
+              agentType: event.agent_type,
+              detail: handbackReport(tool_name, event.tool_input),
+            }),
           });
           break;
         }
@@ -112,13 +123,19 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
             });
           }
           set(refreshGitInfoAtom, sid);
-          set(pendingAttentionAtom, (prev) => clearKey(prev, sid));
+          if (shouldClearOnTurnEvent(get(pendingAttentionAtom)[sid])) {
+            set(pendingAttentionAtom, (prev) => clearKey(prev, sid));
+          }
           break;
         }
         case "stop": {
           set(modeMapAtom, (prev) => ({ ...prev, [sid]: "idle" }));
           set(planReviewStatusMapAtom, (prev) => ({ ...prev, [sid]: "idle" }));
-          set(pendingAttentionAtom, (prev) => clearKey(prev, sid));
+          set(closeUnclaimedSubagentRowsAtom, sid);
+          set(closeMainToolRowsAtom, sid);
+          if (shouldClearOnTurnEvent(get(pendingAttentionAtom)[sid])) {
+            set(pendingAttentionAtom, (prev) => clearKey(prev, sid));
+          }
           set(pendingAsksAtom, (prev) => clearKey(prev, sid));
           set(addActivityAtom, { sessionId: sid, entry: createActivity("session", `Stopped: ${stop_reason ?? "completed"}`) });
           {
@@ -167,7 +184,38 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
           set(addActivityAtom, { sessionId: sid, entry: createActivity("session", "Session ended") });
           break;
         }
+        case "subagent_start": {
+          if (!event.agent_id || !event.agent_type) break;
+          set(startSubagentActivityAtom, {
+            sessionId: sid,
+            agentId: event.agent_id,
+            agentType: event.agent_type,
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            timestamp: Date.now(),
+          });
+          break;
+        }
+        case "subagent_stop": {
+          if (!event.agent_id || !event.agent_type) break;
+          set(completeSubagentActivityAtom, {
+            sessionId: sid,
+            agentId: event.agent_id,
+            agentType: event.agent_type,
+            message: event.agent_message,
+            effort: event.effort_level,
+            tokens: event.agent_tokens,
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            timestamp: Date.now(),
+          });
+          break;
+        }
+        // The attention:pending / agent:background-completed listeners log notifications;
+        // falling through to default would add a second, generic entry.
+        case "notification": {
+          break;
+        }
         case "user_prompt_submit": {
+          set(lastResponseEffortMapAtom, (prev) => clearKey(prev, sid));
           set(pendingAttentionAtom, (prev) => clearKey(prev, sid));
           // "Chat about this" abandons the AskUserQuestion tool with no result, so
           // PostToolUse never fires ask:user-resolved — clear the pending tint here.
@@ -176,6 +224,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
           break;
         }
         default: {
+          if (!shouldLogGenericActivity(event_type)) break;
           set(addActivityAtom, { sessionId: sid, entry: createActivity("session", `Event: ${event_type}`) });
         }
       }
@@ -331,16 +380,39 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
       (payload) => {
         const sid = payload.session_id;
         if (!sid) return;
-        set(pendingAttentionAtom, (prev) => ({ ...prev, [sid]: true }));
         const ntype = payload.notification_type ?? "input";
+        set(pendingAttentionAtom, (prev) => ({ ...prev, [sid]: ntype }));
         const detail = payload.message ?? undefined;
         set(addActivityAtom, {
           sessionId: sid,
-          entry: createActivity("session", `Claude needs attention: ${ntype}`, detail),
+          entry: createActivity("session", notificationAttentionMessage(payload.notification_type), detail),
         });
         notify("Claude needs attention", detail ?? `Type: ${ntype}`);
       },
     ),
+  );
+
+  unlisteners.push(
+    await listen<{ session_id: string; message?: string | null }>("agent:background-completed", (payload) => {
+      const sid = payload.session_id;
+      if (!sid) return;
+      set(addActivityAtom, {
+        sessionId: sid,
+        entry: createActivity("subagent", "Background agent finished", payload.message ?? undefined),
+      });
+      notify("Background agent finished", payload.message ?? "");
+      if (shouldClearOnBackgroundCompletion(get(pendingAttentionAtom)[sid])) {
+        set(pendingAttentionAtom, (prev) => clearKey(prev, sid));
+      }
+    }),
+  );
+
+  unlisteners.push(
+    await listen<{ session_id: string; effort: string }>("effort:last-response", (payload) => {
+      const sid = payload.session_id;
+      if (!sid) return;
+      set(lastResponseEffortMapAtom, (prev) => ({ ...prev, [sid]: payload.effort }));
+    }),
   );
 
   // Live preview browser: localhost dev-server ports detected by the Rust
@@ -397,6 +469,17 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
   }
   // Initial gate load (covers requests enqueued before this boot).
   void loadWorktreeRequests(store);
+
+  try {
+    const demoted = await invoke<string[]>("take_reconciled_worktrees");
+    if (demoted.length > 0) {
+      set(toastsAtom, {
+        message: "Worktree no longer exists",
+        description: `Moved to the repo root, each keeping its conversation: ${demoted.join(", ")}.`,
+        type: "info",
+      });
+    }
+  } catch {}
 
   return unlisteners;
 }

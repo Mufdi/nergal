@@ -269,6 +269,240 @@ pub fn delete_branch(repo_path: &Path, branch: &str) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum BranchState {
+    Exists { sha: String },
+    Missing,
+    Unknown,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum KeptReason {
+    InUse,
+    Unshared,
+    Unchecked,
+    RecordFailed { path: PathBuf },
+    Moved,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum BranchOutcome {
+    Deleted { sha: String },
+    Kept { reason: KeptReason },
+    Missing,
+}
+
+pub fn branch_state(repo_path: &Path, branch: &str) -> BranchState {
+    let full_ref = format!("refs/heads/{branch}");
+    let Ok(status) = git()
+        .args(["show-ref", "--verify", "--quiet", &full_ref])
+        .current_dir(repo_path)
+        .status()
+    else {
+        return BranchState::Unknown;
+    };
+    match status.code() {
+        Some(0) => {}
+        Some(1) => return BranchState::Missing,
+        _ => return BranchState::Unknown,
+    }
+    let is_symref = git()
+        .args(["symbolic-ref", "-q", &full_ref])
+        .current_dir(repo_path)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(true);
+    if is_symref {
+        return BranchState::Unknown;
+    }
+    match git_stdout(repo_path, &["rev-parse", &full_ref]) {
+        Some(sha) if !sha.is_empty() => BranchState::Exists { sha },
+        _ => BranchState::Unknown,
+    }
+}
+
+fn git_stdout(repo_path: &Path, args: &[&str]) -> Option<String> {
+    let out = git().args(args).current_dir(repo_path).output().ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// `git branch -D` refuses a branch that is checked out or mid-rebase/bisect,
+/// but `update-ref -d` does not, so those states are checked explicitly. A git
+/// failure counts as in use: the caller keeps the branch.
+pub fn branch_checked_out(repo_path: &Path, branch: &str) -> bool {
+    let Some(listing) = git_stdout(repo_path, &["worktree", "list", "--porcelain"]) else {
+        return true;
+    };
+    let wanted = format!("branch refs/heads/{branch}");
+    if listing.lines().any(|l| l.trim_end() == wanted) {
+        return true;
+    }
+
+    let resolve = |p: String| {
+        let p = PathBuf::from(p);
+        if p.is_absolute() {
+            p
+        } else {
+            repo_path.join(p)
+        }
+    };
+    let Some(git_dir) = git_stdout(repo_path, &["rev-parse", "--git-dir"]).map(resolve) else {
+        return true;
+    };
+    let Some(common_dir) = git_stdout(repo_path, &["rev-parse", "--git-common-dir"]).map(resolve)
+    else {
+        return true;
+    };
+
+    let mut dirs = vec![git_dir, common_dir.clone()];
+    if let Ok(entries) = std::fs::read_dir(common_dir.join("worktrees")) {
+        dirs.extend(entries.flatten().map(|e| e.path()));
+    }
+    let full_ref = format!("refs/heads/{branch}");
+    dirs.iter().any(|dir| {
+        let read = |rel: &str| {
+            std::fs::read_to_string(dir.join(rel))
+                .map(|s| s.trim().to_string())
+                .ok()
+        };
+        read("rebase-merge/head-name").as_deref() == Some(full_ref.as_str())
+            || read("rebase-apply/head-name").as_deref() == Some(full_ref.as_str())
+            || read("BISECT_START").as_deref() == Some(branch)
+    })
+}
+
+pub fn branch_is_safe_to_drop(repo_path: &Path, sha: &str, target: Option<&str>) -> bool {
+    let target_ref = target.map_or_else(|| "HEAD".to_string(), |t| format!("refs/heads/{t}"));
+    let Ok(out) = git()
+        .args(["rev-list", sha, "--not", "--remotes", &target_ref, "--"])
+        .current_dir(repo_path)
+        .output()
+    else {
+        return false;
+    };
+    out.status.success() && out.stdout.iter().all(u8::is_ascii_whitespace)
+}
+
+fn rfc3339_utc(epoch_secs: u64) -> String {
+    let days = (epoch_secs / 86_400) as i64;
+    let rem = epoch_secs % 86_400;
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        rem / 3_600,
+        rem % 3_600 / 60,
+        rem % 60
+    )
+}
+
+pub fn record_deleted_branch(
+    record: &Path,
+    repo_path: &Path,
+    branch: &str,
+    sha: &str,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    if let Some(parent) = record.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(record)?;
+    writeln!(
+        file,
+        "{}\t{}\t{branch}\t{sha}",
+        rfc3339_utc(now),
+        repo_path.display()
+    )?;
+    file.sync_all()
+}
+
+pub fn delete_branch_if_at(repo_path: &Path, branch: &str, sha: &str) -> bool {
+    git()
+        .args([
+            "update-ref",
+            "--no-deref",
+            "-d",
+            &format!("refs/heads/{branch}"),
+            sha,
+        ])
+        .current_dir(repo_path)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+pub fn drop_session_branch(
+    repo_path: &Path,
+    branch: &str,
+    target: Option<&str>,
+    record: &Path,
+) -> BranchOutcome {
+    let kept = |reason| BranchOutcome::Kept { reason };
+    let sha = match branch_state(repo_path, branch) {
+        BranchState::Missing => return BranchOutcome::Missing,
+        BranchState::Unknown => return kept(KeptReason::Unchecked),
+        BranchState::Exists { sha } => sha,
+    };
+    if branch_checked_out(repo_path, branch) {
+        return kept(KeptReason::InUse);
+    }
+    if !branch_is_safe_to_drop(repo_path, &sha, target) {
+        return kept(KeptReason::Unshared);
+    }
+    if let Err(e) = record_deleted_branch(record, repo_path, branch, &sha) {
+        tracing::warn!(error = %e, record = %record.display(), "could not write the deleted-branch record");
+        return kept(KeptReason::RecordFailed {
+            path: record.to_path_buf(),
+        });
+    }
+    if branch_checked_out(repo_path, branch) {
+        return kept(KeptReason::InUse);
+    }
+    if !delete_branch_if_at(repo_path, branch, &sha) {
+        return kept(KeptReason::Moved);
+    }
+    tracing::info!(branch, sha = %sha, repo = %repo_path.display(), "deleted session branch");
+    BranchOutcome::Deleted { sha }
+}
+
+pub fn worktree_pending_delete(worktree_path: &Path) -> bool {
+    let dot_git = worktree_path.join(".git");
+    let Ok(meta) = std::fs::metadata(&dot_git) else {
+        return true;
+    };
+    if meta.is_dir() {
+        return false;
+    }
+    let Ok(content) = std::fs::read_to_string(&dot_git) else {
+        return true;
+    };
+    let Some(target) = content
+        .lines()
+        .find_map(|line| line.strip_prefix("gitdir:"))
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    else {
+        return true;
+    };
+    !worktree_path.join(target).join("HEAD").is_file()
+}
+
 /// Check if the worktree branch has commits ahead of main_branch.
 pub fn has_commits_ahead(worktree_path: &Path, main_branch: &str) -> Result<bool> {
     let range = format!("{main_branch}..HEAD");
@@ -387,6 +621,10 @@ pub fn create_worktree(repo_path: &Path, slug: &str) -> Result<PathBuf> {
 /// deleting the directory and pruning the stale registration — otherwise
 /// the entry lingers in `git worktree list` forever.
 pub fn remove_worktree(repo_path: &Path, worktree_path: &Path) -> Result<()> {
+    remove_worktree_plain(repo_path, worktree_path)
+}
+
+fn remove_worktree_plain(repo_path: &Path, worktree_path: &Path) -> Result<()> {
     let output = git()
         .args(["worktree", "remove", "--force"])
         .arg(worktree_path)
@@ -410,16 +648,7 @@ pub fn remove_worktree(repo_path: &Path, worktree_path: &Path) -> Result<()> {
         .output()
         .context("failed to execute git worktree prune")?;
     if let Err(e) = dir_removal {
-        // Containers writing through a bind mount as root (BUG-42) leave files
-        // the user cannot delete; spell out the manual step instead of a bare EACCES.
-        let remedy = if e.kind() == std::io::ErrorKind::PermissionDenied {
-            format!(
-                ". Some files are owned by another user (often root, from a Docker bind mount); remove them with `sudo rm -rf {}`",
-                worktree_path.display()
-            )
-        } else {
-            String::new()
-        };
+        let remedy = permission_remedy(&e, worktree_path);
         anyhow::bail!(
             "could not remove worktree dir {}: {e}{remedy}",
             worktree_path.display()
@@ -430,6 +659,94 @@ pub fn remove_worktree(repo_path: &Path, worktree_path: &Path) -> Result<()> {
         anyhow::bail!("git worktree remove failed ({stderr}); prune also failed: {prune_err}");
     }
     Ok(())
+}
+
+/// Containers writing through a bind mount as root (BUG-42) leave files the
+/// user cannot delete; spell out the manual step instead of a bare EACCES.
+fn permission_remedy(e: &std::io::Error, worktree_path: &Path) -> String {
+    if e.kind() == std::io::ErrorKind::PermissionDenied {
+        format!(
+            ". Some files are owned by another user (often root, from a Docker bind mount); remove them with `sudo rm -rf {}`",
+            shell_quote(&worktree_path.to_string_lossy())
+        )
+    } else {
+        String::new()
+    }
+}
+
+pub(crate) fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub enum ReclaimIssue {
+    GuardRejected,
+    InProgress,
+    DockerNotFound,
+    DockerUnsupported,
+    DockerFailed,
+    Ineffective,
+}
+
+#[derive(Debug)]
+pub struct ReclaimFailure {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub issue: ReclaimIssue,
+    pub message: String,
+}
+
+impl std::fmt::Display for ReclaimFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ReclaimFailure {}
+
+pub fn is_reclaim_failure(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<ReclaimFailure>().is_some()
+}
+
+#[cfg(target_os = "linux")]
+mod reclaim;
+#[cfg(target_os = "linux")]
+pub use reclaim::*;
+
+#[cfg(not(target_os = "linux"))]
+#[derive(Default)]
+pub struct DockerReclaimer;
+
+#[cfg(not(target_os = "linux"))]
+impl DockerReclaimer {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+/// User-initiated removal that also unblocks root-owned directories left by
+/// containers. Rollbacks keep `remove_worktree`.
+#[cfg(target_os = "linux")]
+pub fn remove_worktree_reclaiming(
+    repo_path: &Path,
+    worktree_path: &Path,
+    reclaimer: &DockerReclaimer,
+) -> Result<()> {
+    reclaim::remove_worktree_snapshotting(
+        repo_path,
+        worktree_path,
+        Some(reclaimer),
+        reclaim::reclaim_snapshot,
+    )
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn remove_worktree_reclaiming(
+    repo_path: &Path,
+    worktree_path: &Path,
+    _reclaimer: &DockerReclaimer,
+) -> Result<()> {
+    remove_worktree(repo_path, worktree_path)
 }
 
 /// Get the unified diff for a single file against HEAD.
@@ -1825,3 +2142,15 @@ mod tests {
         }
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "worktree_reclaim_tests.rs"]
+mod reclaim_tests;
+
+#[cfg(all(test, unix))]
+#[path = "worktree_branch_tests.rs"]
+mod branch_tests;
+
+#[cfg(all(test, unix))]
+#[path = "worktree_review_tests.rs"]
+mod review_tests;

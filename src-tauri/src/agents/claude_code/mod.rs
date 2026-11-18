@@ -8,11 +8,21 @@
 //! moved files at their new path.
 
 pub mod adapter;
+pub mod conversation;
 pub mod cost;
 pub mod plan;
 pub mod plans_path;
+pub mod subagent_transcript;
 pub mod tasks_parser;
 pub mod transcript;
+
+#[cfg(test)]
+#[path = "conversation_tests.rs"]
+mod conversation_tests;
+
+#[cfg(test)]
+#[path = "conversation_continuation_tests.rs"]
+mod conversation_continuation_tests;
 
 pub use adapter::ClaudeCodeAdapter;
 pub use plans_path::resolve_cc_plans_directory;

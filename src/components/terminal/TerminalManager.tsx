@@ -1,4 +1,5 @@
 import { useRef, useEffect } from "react";
+import { TriangleAlert } from "lucide-react";
 import { useAtomValue, useSetAtom } from "jotai";
 import {
   workspacesAtom,
@@ -9,6 +10,10 @@ import {
   freshSessionsAtom,
 } from "@/stores/workspace";
 import { focusZoneAtom } from "@/stores/shortcuts";
+import { confirmAndDeleteSession, deleteSessionWithGraceAction } from "@/stores/pendingDeletes";
+import { launchAndConsume } from "@/lib/launchMode";
+import { posixQuote } from "@/lib/shellQuote";
+import { Button } from "@/components/ui/button";
 import { spawnEnvShells } from "@/stores/quake";
 import * as terminalService from "./terminalService";
 import { NergalMark } from "@/components/layout/NergalLogo";
@@ -26,7 +31,10 @@ export function TerminalManager() {
   const freshSessions = useAtomValue(freshSessionsAtom);
   const focusZone = useAtomValue(focusZoneAtom);
   const setFocusZone = useSetAtom(focusZoneAtom);
+  const setFreshSessions = useSetAtom(freshSessionsAtom);
+  const deleteWithGrace = useSetAtom(deleteSessionWithGraceAction);
   const hostRef = useRef<HTMLDivElement>(null);
+  const deleteButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     terminalService.setHost(hostRef.current);
@@ -42,14 +50,13 @@ export function TerminalManager() {
     if (!activeSession || !activeWorkspace) return;
     if (activeSession.status === "completed") return;
 
-    let mode: "new" | "continue";
-    if (launchModes[activeSessionId]) {
-      mode = launchModes[activeSessionId];
-    } else if (freshSessions.has(activeSessionId)) {
-      mode = "new";
-    } else {
-      mode = "continue";
+    if (activeSession.worktree_pending_delete) {
+      terminalService.hideAll();
+      return;
     }
+
+    const { mode, nextFresh } = launchAndConsume(activeSessionId, launchModes, freshSessions);
+    if (nextFresh.size !== freshSessions.size) setFreshSessions(nextFresh);
 
     const cwd = activeSession.worktree_path ?? activeWorkspace.repo_path;
     void terminalService.show(activeSessionId, cwd, mode);
@@ -61,7 +68,7 @@ export function TerminalManager() {
     if (activeSession.env_shells?.length) {
       spawnEnvShells(activeSessionId, cwd, activeWorkspace.repo_path, activeSession.env_shells, false);
     }
-  }, [activeSessionId, activeSession, activeWorkspace, launchModes, freshSessions]);
+  }, [activeSessionId, activeSession, activeWorkspace, launchModes, freshSessions, setFreshSessions]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -83,6 +90,20 @@ export function TerminalManager() {
     }
   }, [focusZone]);
 
+  const pendingSession = activeSession?.worktree_pending_delete ? activeSession : null;
+
+  const pendingSessionId = pendingSession?.id ?? null;
+  useEffect(() => {
+    if (pendingSessionId !== null && focusZone === "terminal") {
+      deleteButtonRef.current?.focus();
+    }
+  }, [pendingSessionId, focusZone]);
+
+  function finishDelete() {
+    if (!pendingSession) return Promise.resolve();
+    return confirmAndDeleteSession(pendingSession, deleteWithGrace);
+  }
+
   const hasAnySessions = workspaces.some((ws) => ws.sessions.length > 0);
 
   return (
@@ -99,6 +120,28 @@ export function TerminalManager() {
         terminalService.focusActive();
       }}
     >
+      {pendingSession && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-8 text-center">
+          <TriangleAlert className="size-5 text-yellow-500" />
+          <p className="max-w-md text-[12px] text-terminal-foreground/70">
+            This worktree was partly deleted. Press Delete to finish. If it fails again, run:
+          </p>
+          <code className="max-w-md select-text break-all rounded bg-muted/50 px-2 py-1 text-[11px]">
+            sudo rm -rf {posixQuote(pendingSession.worktree_path ?? "")}
+          </code>
+          <p className="text-[12px] text-terminal-foreground/70">Then press Delete.</p>
+          <Button
+            ref={deleteButtonRef}
+            type="button"
+            variant="destructive"
+            size="sm"
+            onClick={() => void finishDelete()}
+            className="focus:border-destructive/40 focus:ring-2 focus:ring-inset focus:ring-destructive/40"
+          >
+            Delete
+          </Button>
+        </div>
+      )}
       {(!hasAnySessions || !activeSessionId) && (
         <div className="flex h-full flex-col items-center justify-center gap-6 select-none">
           <NergalMark className="h-[min(70%,420px)] w-auto" />

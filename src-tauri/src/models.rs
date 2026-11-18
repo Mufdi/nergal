@@ -95,6 +95,9 @@ pub struct Session {
     /// (migration `024`), same pattern as `pinned_clickup_task_ids`.
     #[serde(default)]
     pub pinned_linear_issue_ids: Vec<String>,
+    /// Derived from disk on every workspace load, never persisted.
+    #[serde(default)]
+    pub worktree_pending_delete: bool,
 }
 
 /// One environment shell: a long-running command (`pnpm dev`, `docker

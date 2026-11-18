@@ -1,0 +1,38 @@
+{
+  "tier": "M",
+  "ceremony": "standard",
+  "risk_tier": "medium",
+  "spec_target": "session-continuity, cc-adapter",
+  "tracker": {
+    "system": "linear",
+    "id": null,
+    "blocked": "plan-limit",
+    "related": "FRI-490",
+    "pending": []
+  },
+  "validation": "validated",
+  "planning_only": false,
+  "iprev": {
+    "rounds": 3,
+    "verdict": "REVISE (cap reached; round-3 findings applied)"
+  },
+  "interview_answers": {
+    "lost_worktree": "Demote to a repo-root session that resumes its own conversation; do not recreate the worktree (worktrees are deleted on purpose once committed). Show a notice.",
+    "delete_rule": "Every session is deletable except the last repo-root session of a workspace.",
+    "new_session_rule": "Unchanged: first session of a workspace is repo-root, later ones get a worktree.",
+    "orphan_dir_feat_review_panel_checksum": "Delete it; its work is done.",
+    "linear": "No room for new issues; comment on a related issue instead."
+  },
+  "events": [
+    {
+      "ts": "2026-11-17",
+      "type": "iprev-cap",
+      "note": "Round 3 REVISE with 2 medium + 3 low, all applied to the artifacts (detached-process rule, cleanup_merged_session guard, race residue documented, pstree walk check, lock order). Medium risk: cap rule continues without asking."
+    },
+    {
+      "ts": "2026-11-17",
+      "type": "validated",
+      "note": "openspec validate passes; iprev R1 11 issues (1 critical), R2 6 (1 high), R3 5 (2 medium), all addressed."
+    }
+  ]
+}

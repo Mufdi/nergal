@@ -1,0 +1,30 @@
+{
+  "tier": "M",
+  "ceremony": "standard",
+  "risk_tier": "critical",
+  "spec_target": "worktree-removal",
+  "tracker": {
+    "system": "linear",
+    "id": null,
+    "blocked": "plan-limit",
+    "related": "FRI-490",
+    "pending": []
+  },
+  "validation": "validated",
+  "planning_only": false,
+  "iprev": {
+    "rounds": 5,
+    "verdict": "APPROVED"
+  },
+  "interview_answers": {
+    "strategy": "Docker only (option 2). pkexec dropped after iprev R1 found a same-user TOCTOU escalation; root-owned files come from containers, so Docker is present when needed.",
+    "scope": "A separate, bounded change after session-resume-by-id."
+  },
+  "events": [
+    {
+      "ts": "2026-11-17",
+      "type": "validated",
+      "note": "iprev R1 13 issues (pkexec escalation -> Docker only by user decision), R2 9 (1 critical: registration dropped by git worktree remove), R3 8, R4 7, R5 APPROVED with 5 lows folded into implementation.md/tasks.md. Container vector smoke-tested twice on the host."
+    }
+  ]
+}

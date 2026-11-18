@@ -198,6 +198,8 @@ fn wrap(session_id: &str, cwd: &Path, ev: TranscriptEvent) -> Option<HookEvent> 
                 tool_name: name,
                 tool_input: input,
                 tool_result: None,
+                agent_id: None,
+                agent_type: None,
             })
         }
         TranscriptEvent::ToolResult { .. } => None,
@@ -218,6 +220,7 @@ fn wrap(session_id: &str, cwd: &Path, ev: TranscriptEvent) -> Option<HookEvent> 
                 rate_7d_pct: None,
                 rate_7d_resets_at: None,
                 effort_level: None,
+                prompt_cache: None,
             })
         }
         TranscriptEvent::Message { .. } | TranscriptEvent::Other(_) => None,

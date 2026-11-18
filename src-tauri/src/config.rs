@@ -123,11 +123,6 @@ pub struct Config {
     pub default_shell: String,
     pub theme_mode: String,
     pub preferred_editor: String,
-    /// Enable Kitty keyboard protocol on the wezterm-term emulator. When
-    /// enabled (default), Ctrl+Backspace, Shift+Enter, Alt+letter, etc.
-    /// encode unambiguously so shells can bind them distinctively.
-    #[serde(default = "default_true")]
-    pub terminal_kitty_keyboard: bool,
     /// Render the radial dot-grid texture behind the left sidebar islands.
     /// Disable for plainer surfaces in mono / brutalist themes.
     #[serde(default)]
@@ -229,6 +224,20 @@ pub struct Config {
     /// it on every write from Settings → Keymap.
     #[serde(default = "default_keyboard_ownership")]
     pub keyboard_ownership: String,
+    /// Linear panel: workflow state names hidden by the state filter.
+    /// Frontend-owned. Lives here and not in localStorage because WebKitGTK
+    /// flushes localStorage lazily, so a quit right after a change lost it.
+    #[serde(default)]
+    pub linear_hidden_states: Vec<String>,
+    /// Linear panel: folded group and sub-group keys. Frontend-owned, same
+    /// reason as `linear_hidden_states`.
+    #[serde(default)]
+    pub linear_collapsed_groups: Vec<String>,
+    /// Linear panel: whether completed/canceled issues show. Frontend-owned,
+    /// same reason as `linear_hidden_states`; defaults on so configs written
+    /// before this field existed keep showing them.
+    #[serde(default = "default_true")]
+    pub linear_show_completed: bool,
 }
 
 /// Tuning + kill-switch for agent-spawned worktree sessions. All fields have
@@ -406,7 +415,6 @@ impl Default for Config {
             default_shell: default_shell(),
             theme_mode: "v1-dark".into(),
             preferred_editor: String::new(),
-            terminal_kitty_keyboard: true,
             sidebar_dot_grid: false,
             panel_focus_pulse: false,
             panel_glow: false,
@@ -425,6 +433,9 @@ impl Default for Config {
             cross_session: CrossSessionConfig::default(),
             agent_spawned_worktrees: AgentWorktreesConfig::default(),
             keyboard_ownership: default_keyboard_ownership(),
+            linear_hidden_states: Vec::new(),
+            linear_collapsed_groups: Vec::new(),
+            linear_show_completed: true,
         }
     }
 }
@@ -530,6 +541,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn linear_panel_prefs_round_trip() {
+        let base = Config {
+            linear_hidden_states: vec!["done".into(), "canceled".into()],
+            linear_collapsed_groups: vec!["state:abc".into(), "p1|state:todo".into()],
+            ..Config::default()
+        };
+        let back: Config = serde_json::from_str(&serde_json::to_string(&base).unwrap()).unwrap();
+        assert_eq!(back.linear_hidden_states, base.linear_hidden_states);
+        assert_eq!(back.linear_collapsed_groups, base.linear_collapsed_groups);
+    }
+
+    #[test]
+    fn config_without_linear_panel_prefs_defaults_to_empty() {
+        let mut v = serde_json::to_value(Config::default()).unwrap();
+        let obj = v.as_object_mut().unwrap();
+        obj.remove("linear_hidden_states");
+        obj.remove("linear_collapsed_groups");
+        let back: Config = serde_json::from_value(v).unwrap();
+        assert!(back.linear_hidden_states.is_empty());
+        assert!(back.linear_collapsed_groups.is_empty());
+    }
+
+    #[test]
+    fn linear_show_completed_defaults_true_when_absent_and_round_trips() {
+        let mut v = serde_json::to_value(Config::default()).unwrap();
+        v.as_object_mut().unwrap().remove("linear_show_completed");
+        let back: Config = serde_json::from_value(v).unwrap();
+        assert!(back.linear_show_completed);
+
+        let hidden = Config {
+            linear_show_completed: false,
+            ..Config::default()
+        };
+        let back: Config = serde_json::from_str(&serde_json::to_string(&hidden).unwrap()).unwrap();
+        assert!(!back.linear_show_completed);
+    }
+
+    #[test]
     fn defaults_have_no_agent_preferences() {
         let c = Config::default();
         assert!(c.default_agent.is_none());
@@ -552,6 +601,18 @@ mod tests {
         let cfg = Config::load_from(&path);
         assert_eq!(cfg.default_agent.as_deref(), Some("codex"));
         assert!(!path.with_extension("json.corrupt").exists());
+    }
+
+    #[test]
+    fn legacy_terminal_kitty_keyboard_key_is_ignored() {
+        let mut json = serde_json::to_value(Config::default()).unwrap();
+        json["terminal_kitty_keyboard"] = serde_json::Value::Bool(true);
+        let cfg: Config = serde_json::from_value(json).unwrap();
+        assert!(
+            !serde_json::to_string(&cfg)
+                .unwrap()
+                .contains("terminal_kitty_keyboard")
+        );
     }
 
     #[test]

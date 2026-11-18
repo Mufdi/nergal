@@ -9,6 +9,13 @@ use crate::agents::claude_code::cost::CostSummary;
 use crate::models::{Session, SessionStatus, Workspace};
 use crate::tasks::{Task, TaskStatus};
 
+pub struct ResumePeer {
+    pub id: String,
+    pub created_at: u64,
+    pub internal_id: Option<String>,
+    pub transcript_path: Option<String>,
+}
+
 /// Persisted AI session summary (phase 6). A row exists only when summaries
 /// are enabled for the session's project; absence means never-summarized.
 ///
@@ -410,6 +417,7 @@ mod tests {
             agent_id: "claude-code".into(),
             agent_internal_session_id: None,
             agent_capabilities: Vec::new(),
+            worktree_pending_delete: false,
             pinned_note_paths: Vec::new(),
             launch_options: None,
             env_shells: Vec::new(),
@@ -967,6 +975,7 @@ mod tests {
             agent_id: "claude-code".into(),
             agent_internal_session_id: None,
             agent_capabilities: Vec::new(),
+            worktree_pending_delete: false,
             pinned_note_paths: Vec::new(),
             launch_options: None,
             env_shells: defs.clone(),
@@ -1070,6 +1079,7 @@ mod tests {
             agent_id: "claude-code".into(),
             agent_internal_session_id: None,
             agent_capabilities: Vec::new(),
+            worktree_pending_delete: false,
             pinned_note_paths: Vec::new(),
             launch_options: Some(LaunchOptions {
                 permission_preset: PermissionPreset::AcceptEdits,
@@ -1200,6 +1210,7 @@ mod tests {
             agent_id: "claude-code".into(),
             agent_internal_session_id: None,
             agent_capabilities: Vec::new(),
+            worktree_pending_delete: false,
             pinned_note_paths: Vec::new(),
             launch_options: None,
             env_shells: Vec::new(),
@@ -1250,6 +1261,7 @@ mod tests {
             agent_id: "claude-code".into(),
             agent_internal_session_id: None,
             agent_capabilities: Vec::new(),
+            worktree_pending_delete: false,
             pinned_note_paths: Vec::new(),
             launch_options: None,
             env_shells: Vec::new(),

@@ -57,8 +57,24 @@ const HOOKS: &[HookDef] = &[
     },
     HookDef {
         event: "Notification",
-        matcher: Some("permission_prompt"),
+        matcher: Some("permission_prompt|agent_needs_input|agent_completed"),
         command: "nergal hook notification",
+        is_async: true,
+        timeout: None,
+        if_condition: None,
+    },
+    HookDef {
+        event: "SubagentStart",
+        matcher: Some(".+"),
+        command: "nergal hook send subagent-start",
+        is_async: true,
+        timeout: None,
+        if_condition: None,
+    },
+    HookDef {
+        event: "SubagentStop",
+        matcher: Some(".+"),
+        command: "nergal hook send subagent-stop",
         is_async: true,
         timeout: None,
         if_condition: None,
@@ -151,11 +167,28 @@ struct ObsoleteHook {
 /// forwards it to the GUI as an AgentStatus.
 const STATUSLINE_COMMAND: &str = "nergal hook statusline";
 
-/// Run the setup command: configure Claude Code hooks in ~/.claude/settings.json.
-pub fn run() -> Result<()> {
-    let settings_path = settings_path()?;
+#[derive(Debug)]
+struct SetupChanges {
+    removed: Vec<&'static str>,
+    added: Vec<&'static str>,
+    skipped: Vec<&'static str>,
+    statusline_added: bool,
+}
 
-    let mut settings = load_settings(&settings_path)?;
+impl SetupChanges {
+    fn is_empty(&self) -> bool {
+        self.added.is_empty() && self.removed.is_empty() && !self.statusline_added
+    }
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct HooksStatus {
+    pub registered: bool,
+    pub settings_path: String,
+    pub binary_on_path: bool,
+}
+
+fn apply_setup(settings: &mut Map<String, Value>) -> Result<SetupChanges> {
     let hooks_obj = settings
         .entry("hooks")
         .or_insert_with(|| Value::Object(Map::new()));
@@ -163,6 +196,19 @@ pub fn run() -> Result<()> {
     let Value::Object(hooks_map) = hooks_obj else {
         anyhow::bail!("~/.claude/settings.json: 'hooks' is not an object");
     };
+
+    // merge_hook skips non-array events silently; fail loudly so the user learns
+    // which key leaves its hook dead. Only events Nergal manages are inspected:
+    // an unrelated malformed key must not block setup.
+    for event in HOOKS
+        .iter()
+        .map(|h| h.event)
+        .chain(OBSOLETE_HOOKS.iter().map(|o| o.event))
+    {
+        if hooks_map.get(event).is_some_and(|v| !v.is_array()) {
+            anyhow::bail!("~/.claude/settings.json: hooks.{event} is not an array");
+        }
+    }
 
     let mut removed = Vec::new();
     for obs in OBSOLETE_HOOKS {
@@ -186,34 +232,93 @@ pub fn run() -> Result<()> {
 
     // `statusLine` is a top-level key, not under `hooks` — merge it after the
     // hooks_map borrow ends.
-    let statusline_added = merge_statusline(&mut settings);
+    let statusline_added = merge_statusline(settings);
 
-    if added.is_empty() && removed.is_empty() && !statusline_added {
+    Ok(SetupChanges {
+        removed,
+        added,
+        skipped,
+        statusline_added,
+    })
+}
+
+/// Run the setup command: configure Claude Code hooks in ~/.claude/settings.json.
+pub fn run() -> Result<()> {
+    run_at(&settings_path()?)
+}
+
+fn run_at(settings_path: &Path) -> Result<()> {
+    let mut settings = load_settings(settings_path)?;
+    let changes = apply_setup(&mut settings)?;
+
+    if changes.is_empty() {
         println!("All nergal hooks already configured. Nothing to do.");
         return Ok(());
     }
 
-    backup_settings(&settings_path)?;
-    save_settings(&settings_path, &settings)?;
+    backup_settings(settings_path)?;
+    save_settings(settings_path, &settings)?;
 
     println!("Configured nergal hooks in {}", settings_path.display());
     println!();
-    for cmd in &removed {
+    for cmd in &changes.removed {
         println!("  - {cmd} (obsolete, removed)");
     }
-    for event in &added {
+    for event in &changes.added {
         println!("  + {event}");
     }
-    if statusline_added {
+    if changes.statusline_added {
         println!("  + statusLine");
     }
-    for event in &skipped {
+    for event in &changes.skipped {
         println!("  ~ {event} (already present, kept existing)");
     }
     println!();
     println!("Backup saved as {}.bak", settings_path.display());
 
     Ok(())
+}
+
+pub fn hooks_status() -> Result<HooksStatus> {
+    hooks_status_at(&settings_path()?)
+}
+
+/// An AppImage mount vanishes when the app exits, so a `nergal` resolved inside
+/// `$APPDIR` would leave the registered hooks dead; one installed elsewhere works.
+#[cfg(any(not(windows), test))]
+fn binary_usable(resolved: Option<&Path>, appdir: Option<&Path>) -> bool {
+    match (resolved, appdir) {
+        (None, _) => false,
+        (Some(_), None) => true,
+        (Some(bin), Some(dir)) => !bin.starts_with(dir),
+    }
+}
+
+#[cfg(not(windows))]
+fn binary_on_path() -> bool {
+    binary_usable(
+        which::which("nergal").ok().as_deref(),
+        std::env::var_os("APPDIR").map(PathBuf::from).as_deref(),
+    )
+}
+
+#[cfg(windows)]
+fn binary_on_path() -> bool {
+    true
+}
+
+fn hooks_status_at(path: &Path) -> Result<HooksStatus> {
+    let mut settings = match std::fs::read_to_string(path) {
+        Ok(contents) => parse_settings(&contents)?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Map::new(),
+        Err(e) => return Err(e).context("reading settings.json"),
+    };
+    let registered = apply_setup(&mut settings)?.is_empty();
+    Ok(HooksStatus {
+        registered,
+        settings_path: path.to_string_lossy().into_owned(),
+        binary_on_path: binary_on_path(),
+    })
 }
 
 /// Match a configured hook command against a target `nergal hook …` command,
@@ -463,16 +568,17 @@ fn settings_path() -> Result<PathBuf> {
     Ok(home.join(".claude").join("settings.json"))
 }
 
-fn load_settings(path: &PathBuf) -> Result<Map<String, Value>> {
+fn parse_settings(contents: &str) -> Result<Map<String, Value>> {
+    let val: Value = serde_json::from_str(contents).context("invalid JSON in settings.json")?;
+    let Value::Object(map) = val else {
+        anyhow::bail!("settings.json root is not an object");
+    };
+    Ok(map)
+}
+
+fn load_settings(path: &Path) -> Result<Map<String, Value>> {
     match std::fs::read_to_string(path) {
-        Ok(contents) => {
-            let val: Value =
-                serde_json::from_str(&contents).context("invalid JSON in settings.json")?;
-            let Value::Object(map) = val else {
-                anyhow::bail!("settings.json root is not an object");
-            };
-            Ok(map)
-        }
+        Ok(contents) => parse_settings(&contents),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -483,7 +589,7 @@ fn load_settings(path: &PathBuf) -> Result<Map<String, Value>> {
     }
 }
 
-fn backup_settings(path: &PathBuf) -> Result<()> {
+fn backup_settings(path: &Path) -> Result<()> {
     if path.exists() {
         let backup = path.with_extension("json.bak");
         std::fs::copy(path, &backup).context("creating settings backup")?;
@@ -629,6 +735,98 @@ mod tests {
         assert!(
             cmd.contains("/nergal-conditional.sh "),
             "wrapper command must be preserved through matcher upgrade"
+        );
+    }
+
+    fn hook_row(event: &str, command: &str) -> &'static HookDef {
+        HOOKS
+            .iter()
+            .find(|h| h.event == event && h.command == command)
+            .unwrap_or_else(|| panic!("no HOOKS row for {event} / {command}"))
+    }
+
+    #[test]
+    fn notification_row_matches_permission_and_background_agent_types() {
+        let row = hook_row("Notification", "nergal hook notification");
+        assert_eq!(
+            row.matcher,
+            Some("permission_prompt|agent_needs_input|agent_completed")
+        );
+        assert!(row.is_async);
+        assert_eq!(row.timeout, None);
+    }
+
+    #[test]
+    fn subagent_start_row_is_async_with_wildcard_matcher() {
+        let row = hook_row("SubagentStart", "nergal hook send subagent-start");
+        assert_eq!(row.matcher, Some(".+"));
+        assert!(row.is_async);
+        assert_eq!(row.timeout, None);
+    }
+
+    #[test]
+    fn subagent_stop_row_is_async_with_wildcard_matcher() {
+        let row = hook_row("SubagentStop", "nergal hook send subagent-stop");
+        assert_eq!(row.matcher, Some(".+"));
+        assert!(row.is_async);
+        assert_eq!(row.timeout, None);
+    }
+
+    #[test]
+    fn merge_hook_upgrades_notification_matcher_in_place_for_wrapper_entry() {
+        let mut hooks_map = Map::new();
+        hooks_map.insert(
+            "Notification".into(),
+            json!([{
+                "hooks": [{
+                    "type": "command",
+                    "command": "/home/felipe/.claude/hooks/nergal-conditional.sh notification",
+                    "async": true,
+                }],
+                "matcher": "permission_prompt"
+            }]),
+        );
+
+        let def = hook_row("Notification", "nergal hook notification");
+
+        assert!(merge_hook(&mut hooks_map, def, None));
+        let arr = hooks_map["Notification"].as_array().unwrap();
+        assert_eq!(arr.len(), 1, "matcher upgrade must not duplicate");
+        assert_eq!(
+            arr[0].get("matcher").and_then(|m| m.as_str()),
+            Some("permission_prompt|agent_needs_input|agent_completed")
+        );
+        let cmd = arr[0]["hooks"][0]["command"].as_str().unwrap();
+        assert!(cmd.contains("/nergal-conditional.sh "));
+    }
+
+    #[test]
+    fn merge_hook_upgrades_notification_matcher_in_place_for_bare_entry() {
+        let mut hooks_map = Map::new();
+        hooks_map.insert(
+            "Notification".into(),
+            json!([{
+                "hooks": [{
+                    "type": "command",
+                    "command": "nergal hook notification",
+                    "async": true,
+                }],
+                "matcher": "permission_prompt"
+            }]),
+        );
+
+        let def = hook_row("Notification", "nergal hook notification");
+
+        assert!(merge_hook(&mut hooks_map, def, None));
+        let arr = hooks_map["Notification"].as_array().unwrap();
+        assert_eq!(arr.len(), 1, "matcher upgrade must not duplicate");
+        assert_eq!(
+            arr[0].get("matcher").and_then(|m| m.as_str()),
+            Some("permission_prompt|agent_needs_input|agent_completed")
+        );
+        assert_eq!(
+            arr[0]["hooks"][0]["command"].as_str(),
+            Some("nergal hook notification")
         );
     }
 
@@ -856,3 +1054,7 @@ mod tests {
         assert!(!merge_statusline(&mut settings));
     }
 }
+
+#[cfg(test)]
+#[path = "setup_status_tests.rs"]
+mod status_tests;

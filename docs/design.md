@@ -102,7 +102,7 @@ swapped for `--primary`. Keep encoding consistent.
 | `green-500` / `green-400` | Success, additions, working state | Lines added, working spinner, ship button, replace/insert annotation |
 | `red-500` / `red-400` / `red-300` | Conflicts, deletions, close, errors | Conflict badge, lines removed, close button, delete annotation |
 | `yellow-500` / `yellow-400` (`#eab308` / `#facc15`) | Warnings, pending annotations, file-modified | Highlighter mark, pinpoint outline, rate-limit threshold |
-| `sky-400` | "Thinking" / active not-yet-busy | Session in active mode |
+| `sky-400` | "Thinking" / active not-yet-busy | Session in active mode; subagent activity rows |
 | `blue-400` (`#60a5fa`) | Comment annotation, tool-use activity | Annotation type "comment" |
 | `amber-400` | Minimize button | Cosmetic accent |
 

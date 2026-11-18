@@ -18,11 +18,22 @@ type SharedWriter = Arc<Mutex<Box<dyn Write + Send>>>;
 struct SharedWriterAdapter(SharedWriter);
 
 impl Write for SharedWriterAdapter {
+    // wezterm's writer thread calls `write` once per message and ignores a
+    // short count, so a partial write would truncate a mouse report or an
+    // answerback mid-sequence. `write_all` under one lock also keeps the
+    // message contiguous against the command-layer writers. Any error ends
+    // that thread for good, so it is logged: keys, mouse reports and
+    // answerbacks would otherwise stop reaching the PTY with no trace.
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0
+        let result = self
+            .0
             .lock()
-            .map_err(|e| std::io::Error::other(e.to_string()))?
-            .write(buf)
+            .map_err(|e| std::io::Error::other(e.to_string()))
+            .and_then(|mut w| w.write_all(buf));
+        if let Err(err) = &result {
+            tracing::warn!(error = %err, "terminal PTY write failed; wezterm writer thread stops");
+        }
+        result.map(|()| buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
@@ -60,13 +71,14 @@ impl Drop for PtyInstance {
         if let Some(pid) = self.child_pid
             && pid > 1
         {
+            crate::platform_proc::hangup_group(pid);
             crate::platform_proc::kill_tree(pid);
         }
         // Reap AFTER the signal above, so we wait on a process that has
         // already been asked to exit rather than blocking on one still
         // running.
         if let Some(child) = self.child.take() {
-            reap_child(child);
+            reap_child(child, self.child_pid);
         }
     }
 }
@@ -77,7 +89,7 @@ impl Drop for PtyInstance {
 /// past the cap, ownership moves to a detached thread that blocks on
 /// `wait()`, so the process is still reaped eventually without stalling
 /// whoever dropped the instance.
-fn reap_child(mut child: Box<dyn portable_pty::Child + Send + Sync>) {
+fn reap_child(mut child: Box<dyn portable_pty::Child + Send + Sync>, pid: Option<u32>) {
     const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
     const MAX_POLLS: u32 = 40; // ~2s cap
     for _ in 0..MAX_POLLS {
@@ -86,9 +98,19 @@ fn reap_child(mut child: Box<dyn portable_pty::Child + Send + Sync>) {
             Ok(None) => std::thread::sleep(POLL_INTERVAL),
         }
     }
+    if let Some(pid) = pid {
+        crate::platform_proc::force_kill(pid);
+    }
     std::thread::spawn(move || {
         let _ = child.wait();
     });
+}
+
+/// Sync `#[tauri::command]`s run on the main thread; dropping a `PtyInstance`
+/// signals and polls its child, so the drop runs on a detached thread to keep
+/// the UI responsive.
+fn drop_off_main_thread<T: Send + 'static>(value: T) {
+    std::thread::spawn(move || drop(value));
 }
 
 pub struct PtyManager {
@@ -108,21 +130,33 @@ pub struct PtyManager {
     /// session_id -> prompt to submit at spawn (deep link `session/new`).
     /// Consumed once by `start_claude_session` when it builds the spawn command.
     pending_prompts: Mutex<HashMap<String, String>>,
-    /// Value of `config.terminal_kitty_keyboard` at startup. Applied to every
-    /// new `TerminalSession`; runtime toggling would require restarting PTYs.
-    kitty_keyboard: bool,
+}
+
+/// Single construction point for app sessions. Kitty keyboard stays
+/// unadvertised until the encoder implements it (FRI-503); advertising it
+/// without an encoder makes Claude Code skip modifyOtherKeys.
+fn build_terminal_session(
+    cols: u16,
+    rows: u16,
+    writer: Box<dyn std::io::Write + Send>,
+) -> TerminalSession {
+    TerminalSession::with_config(cols, rows, writer, NergalTerminalConfig::new())
 }
 
 impl PtyManager {
-    pub fn new(kitty_keyboard: bool) -> Self {
+    pub fn new() -> Self {
         Self {
             instances: Mutex::new(HashMap::new()),
             session_ptys: Mutex::new(HashMap::new()),
             aux_shells: Mutex::new(HashMap::new()),
             aux_line_trackers: Mutex::new(HashMap::new()),
             pending_prompts: Mutex::new(HashMap::new()),
-            kitty_keyboard,
         }
+    }
+
+    pub fn agent_shell_pid(&self, session_id: &str) -> Option<u32> {
+        let pty_id = self.session_ptys.lock().ok()?.get(session_id).cloned()?;
+        self.instances.lock().ok()?.get(&pty_id)?.child_pid
     }
 
     /// Tear down every live PTY (main + aux shells) on app exit. Takes the
@@ -437,12 +471,10 @@ fn spawn_pty(
     let raw_writer = pair.master.take_writer().map_err(|e| e.to_string())?;
     let writer: SharedWriter = Arc::new(Mutex::new(raw_writer));
 
-    let config = NergalTerminalConfig::new().with_kitty_keyboard(state.kitty_keyboard);
-    let session = TerminalSession::with_config(
+    let session = build_terminal_session(
         cols,
         rows,
         Box::new(SharedWriterAdapter(Arc::clone(&writer))),
-        config,
     );
     let mut terminal = TerminalHandle::new(session);
     terminal.spawn_emitter(session_id.to_owned());
@@ -641,6 +673,18 @@ pub async fn start_claude_session(
     rows: u16,
     resume: Option<String>,
 ) -> Result<StartClaudeResult, String> {
+    let worktree_path = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        db.find_session(&session_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("session {session_id} not found"))?
+            .worktree_path
+    };
+    crate::commands::refuse_launch(
+        worktree_path.as_deref(),
+        cwd.as_deref().map(std::path::Path::new),
+    )?;
+
     let pty_id = format!(
         "pty-{}-{}",
         session_id,
@@ -730,22 +774,38 @@ pub async fn start_claude_session(
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
-        // For "continue" intent, prefer the agent-internal session id (e.g. Pi
-        // UUID, Codex rollout id) the adapter previously harvested and the
-        // runtime persisted to the DB. Some agents' generic `--continue` flag
-        // doesn't reliably resolve a session by cwd alone, so passing the
-        // exact id avoids "No conversation found" surprises after a nergal
-        // restart.
-        let resume_owned: Option<String> = match resume.as_deref() {
-            Some("continue") => {
-                let stored = db
-                    .lock()
-                    .ok()
-                    .and_then(|g| g.find_session(&session_id).ok().flatten())
-                    .and_then(|s| s.agent_internal_session_id);
-                Some(stored.unwrap_or_else(|| "continue".to_string()))
+        // `--continue` can't tell sessions apart: several share one cwd, and some
+        // agents don't resolve by cwd at all. "continue" resolves to an exact id.
+        let resume_owned: Option<String> = if agent_id == crate::agents::AgentId::claude_code() {
+            let candidates = if resume.as_deref() == Some("continue") {
+                db.lock().ok().and_then(|g| {
+                    crate::agents::claude_code::conversation::resume_candidates(&g, &session_id)
+                })
+            } else {
+                None
+            };
+            let picked = candidates.and_then(|c| {
+                let dirs = crate::agents::claude_code::conversation::projects_dirs(
+                    c.transcript_path.as_deref(),
+                );
+                if dirs.iter().all(|d| !d.exists()) {
+                    tracing::warn!("Claude Code projects dirs missing: {dirs:?}");
+                }
+                crate::agents::claude_code::conversation::pick_resume_id(&c, &dirs)
+            });
+            cc_resume_arg(resume.as_deref(), picked)
+        } else {
+            match resume.as_deref() {
+                Some("continue") => {
+                    let stored = db
+                        .lock()
+                        .ok()
+                        .and_then(|g| g.find_session(&session_id).ok().flatten())
+                        .and_then(|s| s.agent_internal_session_id);
+                    Some(stored.unwrap_or_else(|| "continue".to_string()))
+                }
+                other => other.map(|s| s.to_string()),
             }
-            other => other.map(|s| s.to_string()),
         };
         // Deep link `session/new` stashes a prompt for the fresh session; the
         // adapter folds it into the launch command so it submits on spawn
@@ -981,6 +1041,7 @@ fn aux_term_id(session_id: &str, shell_id: &str) -> String {
 pub async fn spawn_aux_shell(
     app: AppHandle,
     state: State<'_, PtyManager>,
+    db: State<'_, crate::db::SharedDb>,
     session_id: String,
     shell_id: String,
     cwd: Option<String>,
@@ -991,6 +1052,14 @@ pub async fn spawn_aux_shell(
     command: Option<String>,
     autorun: bool,
 ) -> Result<String, String> {
+    let worktree_path = {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        db.find_session(&session_id)
+            .map_err(|e| e.to_string())?
+            .and_then(|s| s.worktree_path)
+    };
+    crate::commands::refuse_launch(worktree_path.as_deref(), None)?;
+
     let term_id = aux_term_id(&session_id, &shell_id);
 
     // Per-shell dir wins when it resolves to a real directory; otherwise
@@ -1123,7 +1192,7 @@ pub fn kill_aux_shell(
             let mut instances = state.instances.lock().map_err(|e| e.to_string())?;
             instances.remove(&id)
         };
-        drop(removed);
+        drop_off_main_thread(removed);
     }
     if let Ok(mut trackers) = state.aux_line_trackers.lock() {
         trackers.remove(&term_id);
@@ -1182,7 +1251,7 @@ fn kill_session_aux_shells(state: &PtyManager, session_id: &str) -> Result<(), S
     // is the lock every session's terminal_input/write/resize/paste/scroll
     // path takes; reaping under it would let one stuck child freeze
     // terminal I/O for every other live session.
-    drop(removed);
+    drop_off_main_thread(removed);
     Ok(())
 }
 
@@ -1409,7 +1478,7 @@ pub fn kill_session_pty(state: State<'_, PtyManager>, session_id: String) -> Res
             let mut instances = state.instances.lock().map_err(|e| e.to_string())?;
             instances.remove(&id)
         };
-        drop(removed);
+        drop_off_main_thread(removed);
     }
 
     // Drop the ephemeral system-prompt file written for AppendSystemPromptFile
@@ -1508,12 +1577,26 @@ pub fn terminal_paste(
 /// not a submit.
 fn write_bracketed(w: &mut dyn Write, text: &str, submit: bool) -> std::io::Result<()> {
     w.write_all(b"\x1b[200~")?;
-    w.write_all(text.as_bytes())?;
+    w.write_all(strip_paste_markers(text).as_bytes())?;
     w.write_all(b"\x1b[201~")?;
     if submit {
         w.write_all(b"\r")?;
     }
     w.flush()
+}
+
+/// A body carrying its own `ESC[201~` would end the paste early and let the
+/// rest run as typed input. Repeats until stable because removing one marker
+/// can join its neighbours into a new one (`ESC[20` + marker + `1~`).
+fn strip_paste_markers(text: &str) -> String {
+    const MARKERS: [&str; 4] = ["\x1b[200~", "\x1b[201~", "\u{9b}200~", "\u{9b}201~"];
+    let mut out = text.to_owned();
+    while MARKERS.iter().any(|m| out.contains(m)) {
+        for marker in MARKERS {
+            out = out.replace(marker, "");
+        }
+    }
+    out
 }
 
 /// Paste `text` into an AGENT session's PTY wrapped in bracketed-paste
@@ -1798,6 +1881,31 @@ pub fn terminal_mouse_button(
     Ok(())
 }
 
+#[tauri::command]
+pub fn terminal_focus(
+    state: State<'_, PtyManager>,
+    session_id: String,
+    focused: bool,
+) -> Result<(), String> {
+    let pty_id = {
+        let session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
+        session_ptys
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| "no PTY for session".to_string())?
+    };
+
+    let instances = state.instances.lock().map_err(|e| e.to_string())?;
+    let instance = instances.get(&pty_id).ok_or("PTY instance not found")?;
+    instance
+        .terminal
+        .session
+        .lock()
+        .map_err(|e| e.to_string())?
+        .focus_changed(focused);
+    Ok(())
+}
+
 /// Snap the scrollback viewport back to the live bottom. Idempotent.
 #[tauri::command]
 pub fn terminal_scroll_to_bottom(
@@ -1864,6 +1972,17 @@ pub fn terminal_attach(
         .compute_update(&session_id, &snapshot)
         .ok_or_else(|| "differ produced no update after invalidate (unreachable)".to_string())
 }
+
+pub(crate) fn cc_resume_arg(resume: Option<&str>, picked: Option<String>) -> Option<String> {
+    match resume {
+        Some("continue") => picked,
+        other => other.map(str::to_string),
+    }
+}
+
+#[cfg(test)]
+#[path = "pty_resume_tests.rs"]
+mod resume_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1994,6 +2113,82 @@ mod tests {
     }
 
     #[test]
+    fn bracketed_paste_strips_embedded_markers_from_the_body() {
+        let mut out: Vec<u8> = Vec::new();
+        write_bracketed(&mut out, "safe\x1b[201~rm -rf ~\r", false).unwrap();
+        assert_eq!(out, b"\x1b[200~saferm -rf ~\r\x1b[201~");
+    }
+
+    #[test]
+    fn bracketed_paste_strips_markers_rebuilt_by_a_first_pass() {
+        let mut out: Vec<u8> = Vec::new();
+        write_bracketed(&mut out, "a\x1b[20\x1b[201~1~b", false).unwrap();
+        assert_eq!(out, b"\x1b[200~ab\x1b[201~");
+    }
+
+    #[test]
+    fn bracketed_paste_strips_c1_marker_forms() {
+        let mut out: Vec<u8> = Vec::new();
+        write_bracketed(&mut out, "a\u{9b}201~b\u{9b}200~c", false).unwrap();
+        assert_eq!(out, "\x1b[200~abc\x1b[201~".as_bytes());
+    }
+
+    #[test]
+    fn bracketed_paste_keeps_other_escape_sequences() {
+        let mut out: Vec<u8> = Vec::new();
+        write_bracketed(&mut out, "\x1b[31mred\x1b[0m", false).unwrap();
+        assert_eq!(out, b"\x1b[200~\x1b[31mred\x1b[0m\x1b[201~");
+    }
+
+    struct ShortWriter {
+        max: usize,
+        out: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Write for ShortWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            let n = buf.len().min(self.max);
+            self.out.lock().unwrap().extend_from_slice(&buf[..n]);
+            Ok(n)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct BrokenWriter;
+
+    impl Write for BrokenWriter {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn shared_writer_adapter_propagates_write_errors() {
+        let shared: SharedWriter = Arc::new(Mutex::new(Box::new(BrokenWriter)));
+        let mut adapter = SharedWriterAdapter(shared);
+        let err = adapter.write(b"\x1b[I").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn shared_writer_adapter_never_splits_a_report_on_short_writes() {
+        let out = Arc::new(Mutex::new(Vec::new()));
+        let shared: SharedWriter = Arc::new(Mutex::new(Box::new(ShortWriter {
+            max: 3,
+            out: Arc::clone(&out),
+        })));
+        let mut adapter = SharedWriterAdapter(shared);
+        let report = b"\x1b[<2;5;3m";
+        assert_eq!(adapter.write(report).unwrap(), report.len());
+        assert_eq!(*out.lock().unwrap(), report);
+    }
+
+    #[test]
     fn bracketed_paste_wraps_multiline_body_without_submit() {
         let mut out: Vec<u8> = Vec::new();
         write_bracketed(&mut out, "line1\nline2\nline3", false).unwrap();
@@ -2012,16 +2207,40 @@ mod tests {
 
     #[test]
     fn paste_to_session_rejects_aux_shells() {
-        let mgr = PtyManager::new(false);
+        let mgr = PtyManager::new();
         let err = paste_to_session(&mgr, "sess::shell", "x", false).unwrap_err();
         assert!(err.contains("agent sessions only"));
+    }
+
+    #[test]
+    fn app_session_ignores_legacy_kitty_keyboard_config_key() {
+        #[derive(Clone)]
+        struct Sink(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Sink {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut json = serde_json::to_value(crate::config::Config::default()).unwrap();
+        json["terminal_kitty_keyboard"] = serde_json::Value::Bool(true);
+        let _cfg: crate::config::Config = serde_json::from_value(json).unwrap();
+
+        let sink = Sink(Arc::new(Mutex::new(Vec::new())));
+        let mut session = build_terminal_session(80, 24, Box::new(sink.clone()));
+        session.advance_bytes(b"\x1b[?u");
+        assert!(sink.0.lock().unwrap().is_empty());
     }
 
     // ── session_ptys reserve/release (fix-pty-double-spawn) ──
 
     #[test]
     fn reserve_session_pty_second_caller_gets_first_callers_id_without_spawning() {
-        let mgr = PtyManager::new(false);
+        let mgr = PtyManager::new();
         let first = reserve_session_pty(&mgr, "sess-1", "pty-a").unwrap();
         assert_eq!(first, None, "first caller reserves the slot");
 
@@ -2040,7 +2259,7 @@ mod tests {
 
     #[test]
     fn release_session_pty_clears_reservation_so_next_call_succeeds_cleanly() {
-        let mgr = PtyManager::new(false);
+        let mgr = PtyManager::new();
         reserve_session_pty(&mgr, "sess-2", "pty-a").unwrap();
 
         release_session_pty(&mgr, "sess-2");
@@ -2084,13 +2303,8 @@ mod tests {
 
         let raw_writer = pair.master.take_writer().unwrap();
         let writer: SharedWriter = Arc::new(Mutex::new(raw_writer));
-        let config = NergalTerminalConfig::new().with_kitty_keyboard(false);
-        let session = TerminalSession::with_config(
-            80,
-            24,
-            Box::new(SharedWriterAdapter(Arc::clone(&writer))),
-            config,
-        );
+        let session =
+            build_terminal_session(80, 24, Box::new(SharedWriterAdapter(Arc::clone(&writer))));
         let terminal = TerminalHandle::new(session);
 
         let instance = PtyInstance {
@@ -2105,7 +2319,7 @@ mod tests {
 
     #[test]
     fn confirm_reservation_returns_intact_when_reservation_holds() {
-        let mgr = PtyManager::new(false);
+        let mgr = PtyManager::new();
         reserve_session_pty(&mgr, "sess-4", "pty-y").unwrap();
 
         let result = confirm_reservation_or_extract(&mgr, "sess-4", "pty-y").unwrap();
@@ -2117,7 +2331,7 @@ mod tests {
 
     #[test]
     fn confirm_reservation_reports_gone_even_when_kill_already_extracted() {
-        let mgr = PtyManager::new(false);
+        let mgr = PtyManager::new();
         reserve_session_pty(&mgr, "sess-6", "pty-w").unwrap();
 
         // Kill arrived AFTER spawn_pty's insert: the normal kill path removed
@@ -2135,7 +2349,7 @@ mod tests {
 
     #[test]
     fn confirm_reservation_extracts_and_reaps_orphan_when_killed_mid_spawn() {
-        let mgr = PtyManager::new(false);
+        let mgr = PtyManager::new();
         reserve_session_pty(&mgr, "sess-5", "pty-z").unwrap();
 
         // Simulate spawn_pty's own insert landing after a concurrent
@@ -2302,6 +2516,7 @@ mod tests {
             agent_id: "claude-code".into(),
             agent_internal_session_id: None,
             agent_capabilities: Vec::new(),
+            worktree_pending_delete: false,
             pinned_note_paths: Vec::new(),
             launch_options: None,
             env_shells: Vec::new(),
@@ -2373,6 +2588,24 @@ mod tests {
 
     // ── Zombie reaping ──
 
+    #[cfg(unix)]
+    #[test]
+    fn dropping_instance_hangs_up_a_shell_that_ignores_sigterm() {
+        let (instance, pid) = build_test_pty_instance(r#"trap "" TERM; while :; do sleep 1; done"#);
+        // Let the shell install its trap before teardown races it.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+
+        let started = std::time::Instant::now();
+        drop(instance);
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "teardown took {elapsed:?}"
+        );
+        assert_reaped(pid);
+    }
+
     #[test]
     fn reap_child_leaves_no_zombie() {
         let pty_system = NativePtySystem::default();
@@ -2396,7 +2629,7 @@ mod tests {
         // returns — unlike `drop(child)`, which (per portable-pty's Unix
         // impl wrapping `std::process::Child`) never waits and leaves a
         // defunct entry until the whole app exits.
-        reap_child(child);
+        reap_child(child, Some(pid));
 
         assert_reaped(pid);
     }

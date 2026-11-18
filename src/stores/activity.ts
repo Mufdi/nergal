@@ -1,5 +1,13 @@
 import { atom } from "jotai";
 import type { ActivityEntry } from "@/lib/types";
+import {
+  appendEntryPinned,
+  applySubagentStart,
+  applySubagentStop,
+  closeRunningMainToolRows,
+  closeUnclaimedSubagentToolRows,
+  pickToolRowToComplete,
+} from "@/lib/agentTelemetry";
 import { activeSessionIdAtom } from "./workspace";
 import { sessionScopedMapAtom } from "./sessionScope";
 
@@ -18,7 +26,7 @@ export const addActivityAtom = atom(
   (_get, set, payload: { sessionId: string; entry: ActivityEntry }) => {
     set(activityMapAtom, (prev) => {
       const existing = prev[payload.sessionId] ?? [];
-      const updated = [...existing, payload.entry].slice(-MAX_ENTRIES);
+      const updated = appendEntryPinned(existing, payload.entry).slice(-MAX_ENTRIES);
       return { ...prev, [payload.sessionId]: updated };
     });
   },
@@ -27,23 +35,15 @@ export const addActivityAtom = atom(
 /// Complete the most recent running tool entry for a session (pairs a
 /// PostToolUse with its PreToolUse): stamp duration + mark done. Prefers the
 /// last running entry of the SAME tool; falls back to the last running tool of
-/// any name. Returns whether a match was patched so the caller can fall back to
-/// creating a standalone "done" entry.
+/// any name except Agent/Task (those complete via SubagentStop). Returns
+/// whether a match was patched so the caller can fall back to creating a
+/// standalone "done" entry.
 export const completeToolActivityAtom = atom(
   null,
   (get, set, payload: { sessionId: string; toolName?: string }): boolean => {
     const list = get(activityMapAtom)[payload.sessionId];
     if (!list) return false;
-    let idx = -1;
-    for (let i = list.length - 1; i >= 0; i--) {
-      const e = list[i];
-      if (e.type !== "tool_use" || e.status !== "running") continue;
-      if (payload.toolName && e.toolName === payload.toolName) {
-        idx = i;
-        break;
-      }
-      if (idx === -1) idx = i; // first running tool seen (fallback if no name match)
-    }
+    const idx = pickToolRowToComplete(list, payload.toolName);
     if (idx === -1) return false;
     const matched = list[idx];
     const patched = { ...matched, status: "done" as const, durationMs: Date.now() - matched.timestamp };
@@ -51,6 +51,55 @@ export const completeToolActivityAtom = atom(
     next[idx] = patched;
     set(activityMapAtom, (prev) => ({ ...prev, [payload.sessionId]: next }));
     return true;
+  },
+);
+
+export const startSubagentActivityAtom = atom(
+  null,
+  (
+    get,
+    set,
+    payload: { sessionId: string; agentId: string; agentType: string; id: string; timestamp: number },
+  ) => {
+    const list = get(activityMapAtom)[payload.sessionId] ?? [];
+    const next = applySubagentStart(list, payload).slice(-MAX_ENTRIES);
+    set(activityMapAtom, (prev) => ({ ...prev, [payload.sessionId]: next }));
+  },
+);
+
+export const closeUnclaimedSubagentRowsAtom = atom(null, (get, set, sessionId: string) => {
+  const list = get(activityMapAtom)[sessionId];
+  if (!list) return;
+  const next = closeUnclaimedSubagentToolRows(list, Date.now());
+  if (next !== list) set(activityMapAtom, (prev) => ({ ...prev, [sessionId]: next }));
+});
+
+export const closeMainToolRowsAtom = atom(null, (get, set, sessionId: string) => {
+  const list = get(activityMapAtom)[sessionId];
+  if (!list) return;
+  const next = closeRunningMainToolRows(list);
+  if (next !== list) set(activityMapAtom, (prev) => ({ ...prev, [sessionId]: next }));
+});
+
+export const completeSubagentActivityAtom = atom(
+  null,
+  (
+    get,
+    set,
+    payload: {
+      sessionId: string;
+      agentId: string;
+      agentType: string;
+      message?: string | null;
+      effort?: string | null;
+      tokens?: number | null;
+      id: string;
+      timestamp: number;
+    },
+  ) => {
+    const list = get(activityMapAtom)[payload.sessionId] ?? [];
+    const next = applySubagentStop(list, payload).slice(-MAX_ENTRIES);
+    set(activityMapAtom, (prev) => ({ ...prev, [payload.sessionId]: next }));
   },
 );
 

@@ -1048,7 +1048,7 @@ mark[data-ws-hidden] {
 
 
 /* Quake terminal slide. Keyframes instead of class-toggled transitions:
-   the enter animation runs on mount without rAF choreography, which
+   the animation starts on the class swap without rAF choreography, which
    WebKitGTK's paint coalescing made unreliable. The -8px clears the
    content area's padding gap so the shadow fully exits too. */
 @keyframes quake-slide-down {
@@ -1059,11 +1059,36 @@ mark[data-ws-hidden] {
   from { transform: translateY(0); }
   to { transform: translateY(calc(-100% - 8px)); }
 }
+/* The overlay stays mounted and keeps its layer pinned: WebKitGTK otherwise
+   builds and paints a fresh layer as the slide starts (first frames stall)
+   and can drop it mid-exit. */
+.quake-overlay {
+  will-change: transform;
+}
+/* An exiting overlay is still visible for the slide; a click then would
+   refocus its textarea and strand focus on a hidden shell. */
+.quake-exit,
+.quake-hidden {
+  pointer-events: none;
+}
+.quake-hidden {
+  transform: translateY(calc(-100% - 8px));
+  visibility: hidden;
+}
 .quake-enter {
   animation: quake-slide-down 200ms ease-out;
 }
 .quake-exit {
   animation: quake-slide-up 200ms ease-in forwards;
+}
+/* The Ctrl+} focus hop lands mid-slide. With panel glow on, a 200ms
+   box-shadow transition on the overlay and on the panels under it repaints
+   every frame of the slide, which is what made it stutter. Snap instead. */
+.quake-enter.nergal-panel-focus,
+.quake-exit.nergal-panel-focus,
+.quake-enter ~ * .nergal-panel-focus,
+.quake-exit ~ * .nergal-panel-focus {
+  transition: none;
 }
 
 /* Indeterminate progress sliver (ProgressBar). Travels left→right on loop;

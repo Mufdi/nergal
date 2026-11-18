@@ -5,6 +5,8 @@ import { confirm as swalConfirm } from "@/lib/confirm";
 import { escapeHtml } from "@/lib/escapeHtml";
 import { focusZoneAtom } from "./shortcuts";
 import { toastsAtom } from "./toast";
+import { configAtom } from "./config";
+import { MAX_COLLAPSED_GROUPS, boundRecent } from "./linearPrefs";
 import {
   activeSessionIdAtom,
   activeWorkspaceAtom,
@@ -239,15 +241,58 @@ export const linearTeamFilterAtom = atom<string | null>(null);
 export const linearGroupByAtom = atom<LinearGroupBy>("state");
 /// Default true: show only issues assigned to the viewer.
 export const linearAssignedToMeAtom = atom(true);
-/// When true, completed/canceled/duplicate issues show (local filter, no fetch).
-/// Default on — the user wants terminal issues visible (they ARE mirrored).
-export const linearShowCompletedAtom = atom(true);
 
 /// Issue currently open in the floating detail module (null = closed).
 export const linearDetailIssueIdAtom = atom<string | null>(null);
 
 /// Active label filter: set of label ids. Empty set = no filter.
 export const linearLabelFilterAtom = atom<ReadonlySet<string>>(new Set<string>());
+
+type SetUpdate = ReadonlySet<string> | ((prev: ReadonlySet<string>) => ReadonlySet<string>);
+type LinearPrefKey = "linear_hidden_states" | "linear_collapsed_groups";
+
+// Only the changed key goes to `save_config` (merged over the on-disk config):
+// sending the whole configAtom would also persist unsaved Settings drafts.
+function linearPrefAtom(key: LinearPrefKey, max?: number) {
+  return atom(
+    (get) => new Set(get(configAtom)[key] ?? []),
+    (get, set, update: SetUpdate) => {
+      const prev = new Set(get(configAtom)[key] ?? []);
+      const resolved = typeof update === "function" ? update(prev) : update;
+      const next = max === undefined ? resolved : boundRecent(resolved, max);
+      const values = [...next];
+      set(configAtom, (cfg) => ({ ...cfg, [key]: values }));
+      invoke("save_config", { config: { [key]: values } }).catch((err) =>
+        console.error(`[linear] persisting ${key} failed:`, err),
+      );
+    },
+  );
+}
+
+/// Hidden workflow states, keyed by normalized state name so one choice spans
+/// every team that shares the name.
+export const linearHiddenStatesAtom = linearPrefAtom("linear_hidden_states");
+
+/// Folded group and sub-group keys (`state:<id>`, `<section>|state:<name>`, ...);
+/// all derive from server ids/names so they stay valid across restarts.
+export const linearCollapsedGroupsAtom = linearPrefAtom(
+  "linear_collapsed_groups",
+  MAX_COLLAPSED_GROUPS,
+);
+
+/// When true, completed/canceled/duplicate issues show (local filter, no fetch).
+/// Default on — the user wants terminal issues visible (they ARE mirrored).
+export const linearShowCompletedAtom = atom(
+  (get) => get(configAtom).linear_show_completed ?? true,
+  (get, set, update: boolean | ((prev: boolean) => boolean)) => {
+    const prev = get(configAtom).linear_show_completed ?? true;
+    const next = typeof update === "function" ? update(prev) : update;
+    set(configAtom, (cfg) => ({ ...cfg, linear_show_completed: next }));
+    invoke("save_config", { config: { linear_show_completed: next } }).catch((err) =>
+      console.error("[linear] persisting linear_show_completed failed:", err),
+    );
+  },
+);
 
 /// Active project filter — null = "Todos" (group all by project); a project id = filter + group by state.
 export const linearProjectFilterAtom = atom<string | null>(null);

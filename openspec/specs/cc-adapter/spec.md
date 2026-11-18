@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change agent-adapter-foundation. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Claude Code adapter implements the AgentAdapter contract
 
 The system SHALL ship a `ClaudeCodeAdapter` in `src-tauri/src/agents/claude_code/mod.rs` that implements `AgentAdapter` and preserves all current nergal behavior for CC sessions. The adapter SHALL be registered as the default in `AgentRegistry`.
@@ -39,7 +41,7 @@ The returned `binary_path` SHALL come from `which claude` if available; the `con
 
 ### Requirement: CC adapter spawns claude binary with current behavior
 
-`ClaudeCodeAdapter::spawn(ctx)` SHALL return a `SpawnSpec` whose `binary` is `claude` (or the configured override from `config.claude_binary`), whose `args` follow the existing pty.rs convention (`--continue` when `ctx.resume_from` is Some and the session was previously active; `--resume` for explicit resume; no flag for fresh start), and whose `env` includes `NERGAL_SESSION_ID = ctx.session_id`.
+`ClaudeCodeAdapter::spawn(ctx)` SHALL return a `SpawnSpec` whose `binary` is `claude` (or the configured override from `config.claude_binary`), whose `args` resume a conversation only by explicit id (`--resume <conversation id>` when `ctx.resume_from` is a conversation id; `--resume` alone when `ctx.resume_from == "resume_pick"`; no flag for a fresh start), and whose `env` includes `NERGAL_SESSION_ID = ctx.session_id`. The adapter SHALL NOT emit `--continue`: it picks the newest conversation of the cwd, which belongs to another session when two sessions share a cwd.
 
 #### Scenario: Fresh session spawn
 
@@ -48,8 +50,19 @@ The returned `binary_path` SHALL come from `which claude` if available; the `con
 
 #### Scenario: Continue an existing session
 
-- **WHEN** `spawn(ctx)` is called with `ctx.resume_from == Some(prior_session_id)` and continuation is desired
-- **THEN** `SpawnSpec.args` SHALL be `["--continue"]` (or `["--resume", prior_session_id]` if explicit resume)
+- **WHEN** `spawn(ctx)` is called with `ctx.resume_from == Some("aaaa-1111")`
+- **THEN** `SpawnSpec.args` SHALL start with `["--resume", "aaaa-1111"]`
+
+#### Scenario: Let Claude Code prompt for the conversation
+
+- **WHEN** `spawn(ctx)` is called with `ctx.resume_from == Some("resume_pick")`
+- **THEN** `SpawnSpec.args` SHALL start with `["--resume"]` followed by no id
+
+#### Scenario: The continue sentinel never reaches the CLI
+
+- **WHEN** `spawn(ctx)` is called with `ctx.resume_from == Some("continue")`
+- **THEN** `SpawnSpec.args` SHALL NOT contain `--continue`
+- **AND** `SpawnSpec.args` SHALL NOT contain `--resume`
 
 ### Requirement: CC adapter parses CC's JSONL transcript schema
 
@@ -84,13 +97,25 @@ The CC adapter SHALL use the existing Unix socket at `/tmp/nergal.sock` to recei
 
 ### Requirement: Setup flow for CC writes ~/.claude/settings.json hooks
 
-`setup_agent(AgentId::claude_code())` SHALL produce the same `~/.claude/settings.json` hook configuration as the pre-foundation `nergal setup` command. Hook matchers, async/sync flags, and timeouts SHALL match the current behavior exactly.
+`setup_agent(AgentId::claude_code())` SHALL write the Nergal hook configuration into `~/.claude/settings.json`. Hook matchers, async/sync flags, and timeouts SHALL follow the `HOOKS` table in `src-tauri/src/setup.rs`. An existing Nergal entry whose matcher differs from the table SHALL get its matcher upgraded in place, keeping its command form (bare, wrapper, or absolute exe).
 
 #### Scenario: Setup writes all current hook entries
 
 - **WHEN** `setup_agent('claude-code')` runs against a fresh `~/.claude/settings.json`
-- **THEN** the resulting file SHALL include hook entries for SessionStart, SessionEnd, PermissionRequest[ExitPlanMode], PreToolUse + PreToolUse[AskUserQuestion], PostToolUse[Write|Edit|MultiEdit|Bash|TaskCreate|TaskUpdate|TodoWrite|NotebookEdit|Create], TaskCreated, TaskCompleted, CwdChanged, FileChanged, PermissionDenied, Stop, UserPromptSubmit
+- **THEN** the resulting file SHALL include hook entries for SessionStart, SessionEnd, PermissionRequest[ExitPlanMode], PreToolUse + PreToolUse[AskUserQuestion], PostToolUse[Write|Edit|MultiEdit|Bash|TaskCreate|TaskUpdate|TodoWrite|NotebookEdit|Create|AskUserQuestion], Notification[permission_prompt|agent_needs_input|agent_completed], SubagentStart[.+], SubagentStop[.+], Stop, UserPromptSubmit
 - **AND** the obsolete-hooks cleanup logic SHALL remove any pre-existing entries from older nergal versions
+
+#### Scenario: Subagent hooks are async senders
+
+- **WHEN** setup inserts the SubagentStart and SubagentStop entries
+- **THEN** their commands SHALL be `nergal hook send subagent-start` and `nergal hook send subagent-stop`
+- **AND** both SHALL be `async: true` with matcher `.+`, so CC internal agents with an empty `agent_type` never spawn the hook
+
+#### Scenario: Existing Notification entry gets the widened matcher
+
+- **WHEN** settings already hold a Notification entry `nergal hook notification` with matcher `permission_prompt`
+- **THEN** setup SHALL rewrite only its matcher to `permission_prompt|agent_needs_input|agent_completed`
+- **AND** it SHALL NOT add a second Notification entry
 
 ### Requirement: Plan watcher respects user's plansDirectory configuration
 
@@ -177,11 +202,10 @@ The end-to-end flows that work pre-foundation SHALL continue to work post-founda
 - Task list (TodoWrite/TaskCreate/TaskUpdate → TaskPanel updates)
 - Cost token counts in status bar (transcript → RawCost → token display)
 - Annotation injection via UserPromptSubmit hook
-- Session resume (`claude --continue` / `claude --resume`)
+- Session resume (`claude --resume <conversation id>` for the session's own conversation, `claude --resume` for the picker; never `claude --continue`)
 - File-changed events updating ModifiedFiles panel
 
 #### Scenario: All flows pass integration tests
 
 - **WHEN** the integration test suite runs against the post-foundation codebase with a CC adapter
 - **THEN** every flow listed above SHALL pass without modification of test expectations from the pre-foundation baseline
-

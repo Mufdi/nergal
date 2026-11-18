@@ -4,7 +4,7 @@
 //! the [`TerminalHandle`] wraps it with a [`GridDiffer`] and an async
 //! emitter task that ships grid updates to the frontend over a per-terminal channel.
 //! [`NergalTerminalConfig`] is the [`TerminalConfiguration`] impl — it
-//! defaults to Kitty keyboard protocol on and bumps scrollback to 10k
+//! leaves Kitty keyboard protocol unadvertised and bumps scrollback to 10k
 //! rows.
 
 #![allow(dead_code, unused_imports)]

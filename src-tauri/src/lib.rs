@@ -322,9 +322,7 @@ pub fn run() {
     }
 
     // Startup reconciliation: clean up sessions with missing worktree paths
-    if let Ok(db_guard) = db.lock() {
-        reconcile_worktrees(&db_guard);
-    }
+    let demoted_worktrees = reconcile_shared_worktrees(&db);
 
     // Probe bg-spawn capability + drain markers a previous crash/exit left
     // behind. The report drives the recovery/failure toasts emitted from setup
@@ -402,7 +400,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_deep_link::init())
-        .manage(PtyManager::new(config.terminal_kitty_keyboard))
+        .manage(PtyManager::new())
         .manage(db.clone())
         .manage(plan_state.clone())
         .manage(agent_state.clone())
@@ -417,6 +415,7 @@ pub fn run() {
         .manage(linear::writeback::WritebackRegistry::default())
         .manage(linear::closure::GatedTokenStore::default())
         .manage(PendingDeepLinks::default())
+        .manage(ReconciledWorktrees(Mutex::new(demoted_worktrees)))
         .invoke_handler(tauri::generate_handler![
             // PTY commands
             pty::start_claude_session,
@@ -432,6 +431,7 @@ pub fn run() {
             pty::terminal_scroll,
             pty::terminal_scroll_to_bottom,
             pty::terminal_mouse_button,
+            pty::terminal_focus,
             pty::terminal_paste,
             pty::terminal_clipboard_write,
             // Config commands
@@ -483,6 +483,7 @@ pub fn run() {
             // Setup command
             commands::send_notification,
             commands::setup_hooks,
+            commands::setup_hooks_status,
             // Cost command
             commands::get_cost,
             // Workspace commands
@@ -495,6 +496,7 @@ pub fn run() {
             // Session commands
             commands::create_session,
             commands::delete_session,
+            take_reconciled_worktrees,
             commands::rename_session,
             commands::list_branches,
             commands::list_prs,
@@ -1188,25 +1190,83 @@ fn queue_close_markers(app: &tauri::AppHandle) {
     }
 }
 
-fn reconcile_worktrees(db: &Database) {
-    let sessions = match db.sessions_with_worktrees() {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::error!("failed to query sessions for reconciliation: {e}");
-            return;
-        }
-    };
+pub struct ReconciledWorktrees(Mutex<Vec<String>>);
 
-    for (session_id, wt_path) in sessions {
-        if !wt_path.exists() {
-            tracing::warn!(
-                "worktree missing for session {session_id}: {}, resetting",
-                wt_path.display()
-            );
-            let _ = db.clear_session_worktree(&session_id);
-        }
+impl ReconciledWorktrees {
+    fn take(&self) -> Vec<String> {
+        self.0
+            .lock()
+            .map(|mut names| std::mem::take(&mut *names))
+            .unwrap_or_default()
     }
 }
+
+#[tauri::command]
+fn take_reconciled_worktrees(state: tauri::State<'_, ReconciledWorktrees>) -> Vec<String> {
+    state.take()
+}
+
+type WorktreeRow = (String, String, std::path::PathBuf);
+
+fn missing_worktrees(sessions: Vec<WorktreeRow>) -> Vec<(String, String)> {
+    sessions
+        .into_iter()
+        .filter(|(session_id, _, wt_path)| {
+            let missing = !wt_path.exists();
+            if missing {
+                tracing::warn!(
+                    "worktree missing for session {session_id}: {}, resetting",
+                    wt_path.display()
+                );
+            }
+            missing
+        })
+        .map(|(session_id, name, _)| (session_id, name))
+        .collect()
+}
+
+fn clear_missing(db: &Database, missing: Vec<(String, String)>) -> Vec<String> {
+    missing
+        .into_iter()
+        .filter(|(session_id, _)| db.clear_session_worktree(session_id).is_ok())
+        .map(|(_, name)| name)
+        .collect()
+}
+
+/// Stats the worktree paths without the DB guard held (`db-lock-discipline`).
+fn reconcile_shared_worktrees(db: &db::SharedDb) -> Vec<String> {
+    let rows = match db.lock().map(|g| g.worktree_sessions()) {
+        Ok(Ok(rows)) => rows,
+        Ok(Err(e)) => {
+            tracing::error!("failed to query sessions for reconciliation: {e}");
+            return Vec::new();
+        }
+        Err(_) => return Vec::new(),
+    };
+    let missing = missing_worktrees(rows);
+    if missing.is_empty() {
+        return Vec::new();
+    }
+    db.lock()
+        .map(|g| clear_missing(&g, missing))
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+fn reconcile_worktrees(db: &Database) -> Vec<String> {
+    match db.worktree_sessions() {
+        Ok(rows) => clear_missing(db, missing_worktrees(rows)),
+        Err(_) => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+#[path = "lib_reconcile_tests.rs"]
+mod reconcile_tests;
+
+#[cfg(test)]
+#[path = "lib_take_tests.rs"]
+mod take_tests;
 
 #[cfg(test)]
 mod sentinel_tests {

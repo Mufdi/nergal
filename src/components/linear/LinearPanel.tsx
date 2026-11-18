@@ -14,6 +14,7 @@ import {
   Flag,
   GitBranchPlus,
   Link2,
+  ListFilter,
   Paperclip,
   Pin,
   PinOff,
@@ -53,6 +54,8 @@ import {
   linearDetailIssueIdAtom,
   linearDuplicateRequestAtom,
   linearGroupByAtom,
+  linearHiddenStatesAtom,
+  linearCollapsedGroupsAtom,
   linearIssuesAtom,
   linearLabelFilterAtom,
   linearOverlayAtom,
@@ -74,6 +77,16 @@ import {
   type WorkflowStateView,
 } from "@/stores/linear";
 import { invoke } from "@/lib/tauri";
+import {
+  compareStates,
+  groupByState,
+  isClosedState,
+  normalizeStateName,
+  stateFilterOptions,
+  type StateLike,
+  type StateSubGroup,
+} from "@/lib/linearStateOrder";
+import { foldedByStateFilter, isGroupFolded, withoutPeeks, type FoldContext } from "@/lib/linearFold";
 import { toastsAtom } from "@/stores/toast";
 
 // ── Priority mapping: Linear int → PriorityIcon string ──
@@ -169,34 +182,9 @@ interface IssueGroup {
   stateType: string | null;
   color: string | null;
   issues: IssueView[];
-  // Used for ordering state groups by workflow position.
-  _stateRank?: number;
-  _statePosition?: number;
+  state?: StateLike;
+  stateSubGroups?: StateSubGroup<IssueView>[];
 }
-
-function isTerminal(stateType: string | undefined): boolean {
-  return (
-    stateType === "completed" ||
-    stateType === "cancelled" ||
-    stateType === "canceled" ||
-    stateType === "duplicate"
-  );
-}
-
-/// Rank for state groups: Linear's own order as shown in the user's workspace —
-/// triage → started → unstarted → backlog → completed → canceled → duplicate.
-/// Within a rank, groups sort by workflow `position` ascending (so a completed
-/// state with position −899, "Pending", precedes "Done"). "No state" sorts last.
-const STATE_TYPE_RANK: Record<string, number> = {
-  triage: 0,
-  started: 1,
-  unstarted: 2,
-  backlog: 3,
-  completed: 4,
-  cancelled: 5,
-  canceled: 5,
-  duplicate: 6,
-};
 
 function groupIssues(issues: IssueView[], groupBy: LinearGroupBy): IssueGroup[] {
   const groups = new Map<string, IssueGroup>();
@@ -207,12 +195,11 @@ function groupIssues(issues: IssueView[], groupBy: LinearGroupBy): IssueGroup[] 
     stateType: string | null,
     color: string | null,
     issue: IssueView,
-    stateRank?: number,
-    statePosition?: number,
+    state?: StateLike,
   ) => {
     let g = groups.get(key);
     if (!g) {
-      g = { key, label, stateType, color, issues: [], _stateRank: stateRank, _statePosition: statePosition };
+      g = { key, label, stateType, color, issues: [], state };
       groups.set(key, g);
     }
     g.issues.push(issue);
@@ -221,8 +208,7 @@ function groupIssues(issues: IssueView[], groupBy: LinearGroupBy): IssueGroup[] 
   for (const issue of issues) {
     if (groupBy === "state") {
       const label = issue.stateName ?? "No state";
-      const rank = issue.stateType != null ? (STATE_TYPE_RANK[issue.stateType] ?? 7) : 8;
-      push(`state:${issue.stateId ?? label}`, label, issue.stateType ?? null, issue.stateColor ?? null, issue, rank, issue.statePosition);
+      push(`state:${issue.stateId ?? label}`, label, issue.stateType ?? null, issue.stateColor ?? null, issue, issue);
     } else if (groupBy === "project") {
       const label = issue.projectName ?? "No project";
       push(`project:${issue.projectId ?? "none"}`, label, null, null, issue);
@@ -241,15 +227,7 @@ function groupIssues(issues: IssueView[], groupBy: LinearGroupBy): IssueGroup[] 
   const result = [...groups.values()];
 
   if (groupBy === "state") {
-    // Order by workflow rank, then statePosition within the same type.
-    result.sort((a, b) => {
-      const ra = a._stateRank ?? 7;
-      const rb = b._stateRank ?? 7;
-      if (ra !== rb) return ra - rb;
-      const pa = a._statePosition ?? 0;
-      const pb = b._statePosition ?? 0;
-      return pa - pb;
-    });
+    result.sort((a, b) => compareStates(a.state ?? {}, b.state ?? {}));
   } else if (groupBy === "project") {
     // Alphabetical, "No project" last.
     result.sort((a, b) => {
@@ -280,6 +258,10 @@ function groupIssues(issues: IssueView[], groupBy: LinearGroupBy): IssueGroup[] 
     });
   }
 
+  if (groupBy !== "state") {
+    for (const g of result) g.stateSubGroups = groupByState(g.issues);
+  }
+
   return result;
 }
 
@@ -294,18 +276,24 @@ export function LinearPanel() {
   const [sort, setSort] = useAtom(linearSortAtom);
   const [labelFilter, setLabelFilter] = useAtom(linearLabelFilterAtom);
   const [projectFilter, setProjectFilter] = useAtom(linearProjectFilterAtom);
+  const [hiddenStates, setHiddenStates] = useAtom(linearHiddenStatesAtom);
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   const setDetailIssueId = useSetAtom(linearDetailIssueIdAtom);
   const copyIssue = useSetAtom(copyLinearIssueAction);
   const zenOpen = useAtomValue(zenModeAtom).open;
   const rootRef = useRef<HTMLDivElement>(null);
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const [collapsed, setCollapsed] = useAtom(linearCollapsedGroupsAtom);
+  const [peeked, setPeeked] = useState<ReadonlyMap<string, StateLike>>(new Map());
   // Per-issue sub-issue expansion. Default collapsed (absent = closed).
   const [expandedIssueIds, setExpandedIssueIds] = useState<ReadonlySet<string>>(new Set());
   const [labelPopoverOpen, setLabelPopoverOpen] = useState(false);
   const labelPopoverRef = useRef<HTMLDivElement>(null);
   const labelTriggerRef = useRef<HTMLButtonElement>(null);
   const labelListRef = useRef<HTMLDivElement>(null);
+  const [statePopoverOpen, setStatePopoverOpen] = useState(false);
+  const statePopoverRef = useRef<HTMLDivElement>(null);
+  const stateTriggerRef = useRef<HTMLButtonElement>(null);
+  const stateListRef = useRef<HTMLDivElement>(null);
 
   const activeView: LinearView = assignedToMe && groupBy === "state" ? "mine" : groupBy;
 
@@ -385,7 +373,7 @@ export function LinearPanel() {
   // Latest parent-id set for the expand/collapse-all shortcut.
   const allParentIdsRef = useRef<ReadonlySet<string>>(new Set());
 
-  const { groups, visibleCount, childMap, allLabels } = useMemo(() => {
+  const { groups, visibleCount, childMap, allLabels, stateOptions } = useMemo(() => {
     const teamScoped = teamFilter
       ? issues.filter((i) => i.teamId === teamFilter)
       : issues;
@@ -395,15 +383,13 @@ export function LinearPanel() {
         ? teamScoped.filter((i) => i.assigneeId === syncStatus.viewerId)
         : teamScoped;
 
-    const withCompleted = showCompleted
-      ? viewerFiltered
-      : viewerFiltered.filter((i) => !isTerminal(i.stateType));
+    const stateOptions = stateFilterOptions(viewerFiltered);
 
     // Apply label filter: keep issues that have at least one selected label.
     const labelFiltered =
       labelFilter.size > 0
-        ? withCompleted.filter((i) => i.labels.some((l) => labelFilter.has(l.id)))
-        : withCompleted;
+        ? viewerFiltered.filter((i) => i.labels.some((l) => labelFilter.has(l.id)))
+        : viewerFiltered;
 
     // Apply project filter: when a specific project is selected in the project view,
     // narrow to that project and re-group by state (like the "mine" view).
@@ -415,11 +401,11 @@ export function LinearPanel() {
     const effectiveGroupBy: LinearGroupBy =
       projectFilter !== null && groupBy === "project" ? "state" : groupBy;
 
-    // Build global parent→children map over the full (unfiltered) pool so a
-    // visible parent shows ALL its sub-issues regardless of filter (§9 canon).
-    const fullPool = showCompleted ? teamScoped : teamScoped.filter((i) => !isTerminal(i.stateType));
+    // A visible parent shows all its sub-issues regardless of the assignee,
+    // label, project and state-fold filters (§9 canon): expanding the parent
+    // is the fold for its tree.
     const childMap = new Map<string, IssueView[]>();
-    for (const i of fullPool) {
+    for (const i of teamScoped) {
       if (i.parentId) {
         const arr = childMap.get(i.parentId);
         if (arr) arr.push(i);
@@ -427,25 +413,11 @@ export function LinearPanel() {
       }
     }
     const compare = (a: IssueView, b: IssueView) => compareIssues(a, b, sort.field, sort.dir);
-    // In non-state groupings (project/assignee/cycle) the section header isn't a
-    // state, so order issues within each group by the default state order first
-    // (In Progress → Todo → Backlog → … → Duplicate), then the active sort —
-    // mirrors Linear. In the state grouping each group is one state, so this is
-    // a no-op and the active sort wins.
-    const stateRankOf = (i: IssueView) =>
-      i.stateType != null ? (STATE_TYPE_RANK[i.stateType] ?? 7) : 8;
+    // Non-state groupings have no state header, so state rank leads the sort.
     const groupCompare =
       effectiveGroupBy === "state"
         ? compare
-        : (a: IssueView, b: IssueView) => {
-            const ra = stateRankOf(a);
-            const rb = stateRankOf(b);
-            if (ra !== rb) return ra - rb;
-            const pa = a.statePosition ?? 0;
-            const pb = b.statePosition ?? 0;
-            if (pa !== pb) return pa - pb;
-            return compare(a, b);
-          };
+        : (a: IssueView, b: IssueView) => compareStates(a, b) || compare(a, b);
     for (const arr of childMap.values()) arr.sort(groupCompare);
 
     // Top-level rows: visible issues whose parent is not also visible.
@@ -457,7 +429,7 @@ export function LinearPanel() {
     // Collect all unique labels present in the team-scoped+completed-scoped pool
     // (not the label-filtered one) so the filter popover always shows all options.
     const labelsMap = new Map<string, { id: string; name: string; color?: string }>();
-    for (const i of withCompleted) {
+    for (const i of viewerFiltered) {
       for (const l of i.labels) {
         if (!labelsMap.has(l.id)) labelsMap.set(l.id, l);
       }
@@ -469,10 +441,27 @@ export function LinearPanel() {
       visibleCount: topLevel.length,
       childMap,
       allLabels,
+      stateOptions,
     };
-  }, [issues, teamFilter, assignedToMe, showCompleted, groupBy, syncStatus?.viewerId, sort, labelFilter, projectFilter]);
+  }, [issues, teamFilter, assignedToMe, groupBy, syncStatus?.viewerId, sort, labelFilter, projectFilter]);
+
+  const foldCtx: FoldContext = { collapsed, peeked, hidden: hiddenStates, showCompleted };
+  // The window keydown listener outlives renders, so toggles read the latest
+  // fold inputs and group states through refs.
+  const foldCtxRef = useRef(foldCtx);
+  foldCtxRef.current = foldCtx;
+  const groupStatesRef = useRef<ReadonlyMap<string, StateLike>>(new Map());
+  groupStatesRef.current = useMemo(() => {
+    const map = new Map<string, StateLike>();
+    for (const g of groups) {
+      if (g.state) map.set(g.key, g.state);
+      for (const sub of g.stateSubGroups ?? []) map.set(subGroupKey(g.key, sub.key), sub.state);
+    }
+    return map;
+  }, [groups]);
 
   allParentIdsRef.current = new Set(childMap.keys());
+  const hiddenStateCount = stateOptions.filter((o) => hiddenStates.has(o.key)).length;
 
   const allExpanded = expandedIssueIds.size > 0;
   const isDefaultSort = sort.field === "updated" && sort.dir === "desc";
@@ -483,6 +472,17 @@ export function LinearPanel() {
   }
 
   function toggleGroup(key: string) {
+    const state = groupStatesRef.current.get(key);
+    const { hidden, showCompleted: completedShown } = foldCtxRef.current;
+    if (state && foldedByStateFilter(state, hidden, completedShown)) {
+      setPeeked((prev) => {
+        const next = new Map(prev);
+        if (next.has(key)) next.delete(key);
+        else next.set(key, state);
+        return next;
+      });
+      return;
+    }
     setCollapsed((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -507,6 +507,65 @@ export function LinearPanel() {
       else next.add(labelId);
       return next;
     });
+  }
+
+  function toggleShowCompleted() {
+    setShowCompleted((prev) => !prev);
+    setPeeked((prev) => withoutPeeks(prev, isClosedState));
+  }
+
+  function clearStatePeeks(names: ReadonlySet<string>) {
+    setPeeked((prev) => withoutPeeks(prev, (st) => names.has(normalizeStateName(st.stateName))));
+  }
+
+  function toggleStateHidden(key: string) {
+    clearStatePeeks(new Set([key]));
+    setHiddenStates((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    if (!statePopoverOpen) return;
+    function onPointerDown(e: PointerEvent) {
+      if (statePopoverRef.current && !statePopoverRef.current.contains(e.target as Node)) {
+        setStatePopoverOpen(false);
+      }
+    }
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [statePopoverOpen]);
+
+  useEffect(() => {
+    if (!statePopoverOpen) return;
+    stateListRef.current?.querySelector<HTMLElement>("[role='option']")?.focus();
+  }, [statePopoverOpen]);
+
+  // e.key, not e.code: WebKitGTK native key events can arrive without `code`.
+  function onStateListKeyDown(e: ReactKeyboardEvent<HTMLDivElement>) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      setStatePopoverOpen(false);
+      stateTriggerRef.current?.focus();
+      return;
+    }
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();
+    e.stopPropagation();
+    const opts = Array.from(
+      stateListRef.current?.querySelectorAll<HTMLElement>("[role='option']") ?? [],
+    );
+    if (opts.length === 0) return;
+    const cur = opts.findIndex((o) => o === document.activeElement);
+    const next =
+      e.key === "ArrowDown"
+        ? Math.min(cur + 1, opts.length - 1)
+        : Math.max(cur - 1, 0);
+    opts[next < 0 ? 0 : next]?.focus();
   }
 
   // Close label popover on outside click.
@@ -612,7 +671,7 @@ export function LinearPanel() {
           setAssignedToMe((prev) => !prev);
         } else if (e.code === "KeyH") {
           e.preventDefault();
-          setShowCompleted((prev) => !prev);
+          toggleShowCompleted();
         } else {
           e.preventDefault();
           setExpandedIssueIds((prev) =>
@@ -933,8 +992,8 @@ export function LinearPanel() {
                 <button
                   type="button"
                   data-header-action
-                  onClick={() => setShowCompleted((prev) => !prev)}
-                  aria-label="Show completed / canceled"
+                  onClick={toggleShowCompleted}
+                  aria-label="Expand completed / canceled"
                   aria-pressed={showCompleted}
                   className={`flex size-6 shrink-0 items-center justify-center rounded text-[10px] font-medium transition-colors ${
                     showCompleted
@@ -946,8 +1005,94 @@ export function LinearPanel() {
             >
               <AlignLeft size={13} />
             </TooltipTrigger>
-            <TooltipContent side="bottom">Show completed / canceled (H)</TooltipContent>
+            <TooltipContent side="bottom">Expand completed / canceled (H)</TooltipContent>
           </Tooltip>
+
+          <div className="relative" ref={statePopoverRef}>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    ref={stateTriggerRef}
+                    type="button"
+                    data-header-action
+                    onClick={() => setStatePopoverOpen((prev) => !prev)}
+                    onKeyDown={(e) => {
+                      if (e.key !== "ArrowDown") return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (!statePopoverOpen) setStatePopoverOpen(true);
+                      else stateListRef.current?.querySelector<HTMLElement>("[role='option']")?.focus();
+                    }}
+                    aria-label="Filter by state"
+                    aria-haspopup="listbox"
+                    aria-expanded={statePopoverOpen}
+                    aria-pressed={hiddenStateCount > 0}
+                    className={`flex size-6 shrink-0 items-center justify-center rounded transition-colors ${
+                      hiddenStateCount > 0
+                        ? "bg-primary/10 text-primary"
+                        : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+                    }`}
+                  />
+                }
+              >
+                <ListFilter size={13} />
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {hiddenStateCount > 0
+                  ? `States: ${hiddenStateCount} folded`
+                  : "Filter by state"}
+              </TooltipContent>
+            </Tooltip>
+
+            {statePopoverOpen && stateOptions.length > 0 && (
+              <div
+                ref={stateListRef}
+                role="listbox"
+                aria-label="Filter by state"
+                aria-multiselectable
+                tabIndex={-1}
+                onKeyDown={onStateListKeyDown}
+                className="absolute right-0 top-full z-50 mt-1 min-w-48 max-w-64 overflow-hidden rounded-md border border-border bg-popover shadow-md outline-none"
+              >
+                <div className="flex items-center justify-between border-b border-border/50 px-2 py-1">
+                  <span className="text-[10px] font-medium text-muted-foreground">States</span>
+                  {hiddenStates.size > 0 && (
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      onClick={() => {
+                        clearStatePeeks(hiddenStates);
+                        setHiddenStates(new Set());
+                      }}
+                      className="text-[10px] text-muted-foreground hover:text-foreground"
+                    >
+                      Unfold all
+                    </button>
+                  )}
+                </div>
+                <div className="max-h-64 overflow-y-auto">
+                  {stateOptions.map((opt) => {
+                    const shown = !hiddenStates.has(opt.key);
+                    return (
+                      <button
+                        key={opt.key}
+                        type="button"
+                        role="option"
+                        aria-selected={shown}
+                        tabIndex={-1}
+                        onClick={() => toggleStateHidden(opt.key)}
+                        className={`flex w-full items-center gap-1.5 bg-secondary/40 px-3 py-1.5 text-left text-[11px] font-medium text-foreground/70 outline-none transition-colors hover:bg-secondary/60 focus:bg-accent focus:text-accent-foreground ${shown ? "" : "opacity-40"}`}
+                      >
+                        <LinearStatusIcon stateType={opt.stateType} color={opt.color} size={13} className="shrink-0" />
+                        <span className="truncate">{opt.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Label filter: popover button + inline clear */}
           <div className="relative" ref={labelPopoverRef}>
@@ -1123,8 +1268,10 @@ export function LinearPanel() {
               <LinearGroupSection
                 key={group.key}
                 group={group}
-                expanded={!collapsed.has(group.key)}
+                expanded={!isGroupFolded(group.key, group.state, foldCtx)}
                 onToggle={() => toggleGroup(group.key)}
+                foldCtx={foldCtx}
+                onToggleGroup={toggleGroup}
                 expandedIssueIds={expandedIssueIds}
                 onToggleIssue={toggleIssueExpand}
                 childMap={childMap}
@@ -1140,10 +1287,16 @@ export function LinearPanel() {
   );
 }
 
+function subGroupKey(groupKey: string, stateKey: string): string {
+  return `${groupKey}|state:${stateKey || "none"}`;
+}
+
 function LinearGroupSection({
   group,
   expanded,
   onToggle,
+  foldCtx,
+  onToggleGroup,
   expandedIssueIds,
   onToggleIssue,
   childMap,
@@ -1154,6 +1307,8 @@ function LinearGroupSection({
   group: IssueGroup;
   expanded: boolean;
   onToggle: () => void;
+  foldCtx: FoldContext;
+  onToggleGroup: (key: string) => void;
   expandedIssueIds: ReadonlySet<string>;
   onToggleIssue: (issueId: string) => void;
   childMap: ReadonlyMap<string, IssueView[]>;
@@ -1188,28 +1343,79 @@ function LinearGroupSection({
 
   return (
     <div>
-      <button
-        type="button"
-        data-nav-item
-        data-nav-expanded={expanded}
-        data-group-key={group.key}
-        onClick={onToggle}
-        className="flex w-full items-center gap-1.5 bg-secondary/40 px-3 py-1.5 text-left text-[11px] font-medium text-foreground/70 transition-colors hover:bg-secondary/60"
-      >
-        {expanded
-          ? <ChevronDown size={11} className="shrink-0 text-muted-foreground" />
-          : <ChevronRight size={11} className="shrink-0 text-muted-foreground" />
-        }
-        {group.stateType ? (
-          <LinearStatusIcon stateType={group.stateType} color={group.color} size={13} className="shrink-0" title={group.label} />
-        ) : group.color ? (
-          <span className="size-1.5 shrink-0 rounded-full" style={{ background: group.color }} />
-        ) : null}
-        <span className="truncate">{group.label}</span>
-        <span className="tabular-nums text-muted-foreground/50">{group.issues.length}</span>
-      </button>
-      {expanded && group.issues.map((issue) => renderNode(issue, 0, new Set<string>()))}
+      <GroupHeader
+        groupKey={group.key}
+        label={group.label}
+        stateType={group.stateType}
+        color={group.color}
+        count={group.issues.length}
+        expanded={expanded}
+        onToggle={onToggle}
+      />
+      {expanded && !group.stateSubGroups && group.issues.map((issue) => renderNode(issue, 0, new Set<string>()))}
+      {expanded && group.stateSubGroups?.map((sub) => {
+        const subKey = subGroupKey(group.key, sub.key);
+        const subExpanded = !isGroupFolded(subKey, sub.state, foldCtx);
+        return (
+          <div key={subKey}>
+            <GroupHeader
+              groupKey={subKey}
+              label={sub.label}
+              stateType={sub.stateType}
+              color={sub.color}
+              count={sub.issues.length}
+              expanded={subExpanded}
+              onToggle={() => onToggleGroup(subKey)}
+              nested
+            />
+            {subExpanded && sub.issues.map((issue) => renderNode(issue, 0, new Set<string>()))}
+          </div>
+        );
+      })}
     </div>
+  );
+}
+
+function GroupHeader({
+  groupKey,
+  label,
+  stateType,
+  color,
+  count,
+  expanded,
+  onToggle,
+  nested = false,
+}: {
+  groupKey: string;
+  label: string;
+  stateType: string | null;
+  color: string | null;
+  count: number;
+  expanded: boolean;
+  onToggle: () => void;
+  nested?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      data-nav-item
+      data-nav-expanded={expanded}
+      data-group-key={groupKey}
+      onClick={onToggle}
+      className={`flex w-full items-center gap-1.5 bg-secondary/40 py-1.5 text-left text-[11px] font-medium text-foreground/70 transition-colors hover:bg-secondary/60 ${nested ? "pl-5 pr-3" : "px-3"}`}
+    >
+      {expanded
+        ? <ChevronDown size={11} className="shrink-0 text-muted-foreground" />
+        : <ChevronRight size={11} className="shrink-0 text-muted-foreground" />
+      }
+      {stateType ? (
+        <LinearStatusIcon stateType={stateType} color={color} size={13} className="shrink-0" title={label} />
+      ) : color ? (
+        <span className="size-1.5 shrink-0 rounded-full" style={{ background: color }} />
+      ) : null}
+      <span className="truncate">{label}</span>
+      <span className="tabular-nums text-muted-foreground/50">{count}</span>
+    </button>
   );
 }
 
@@ -1311,11 +1517,11 @@ function LinearIssueRow({
   const priorityStr = linearPriorityStr(issue.priority);
   const now = Date.now();
   // dueDate from backend is epoch seconds; multiply by 1000 to compare with Date.now() (ms).
-  const overdue = issue.dueDate != null && issue.dueDate * 1000 < now && !isTerminal(issue.stateType);
+  const overdue = issue.dueDate != null && issue.dueDate * 1000 < now && !isClosedState(issue);
 
   // Sub-issue progress: count children from the full pool (not filtered).
   const subIssueTotal = allIssues.filter((i) => i.parentId === issue.id).length;
-  const subIssueDone = allIssues.filter((i) => i.parentId === issue.id && isTerminal(i.stateType)).length;
+  const subIssueDone = allIssues.filter((i) => i.parentId === issue.id && isClosedState(i)).length;
 
   // Issue → agent verbs, read per-row (cheap derived atoms) so the prop chain
   // through the group/tree stays untouched. Reveal mirrors ClickUpPanel: the

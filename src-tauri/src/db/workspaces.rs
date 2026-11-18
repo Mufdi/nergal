@@ -50,6 +50,7 @@ impl Database {
                         agent_id: row.get(9)?,
                         agent_internal_session_id: row.get(10)?,
                         agent_capabilities: Vec::new(),
+                        worktree_pending_delete: false,
                         pinned_note_paths: parse_pinned_note_paths(row.get(11)?),
                         launch_options: parse_launch_options(row.get(12)?),
                         env_shells: parse_env_shells(row.get(13)?),

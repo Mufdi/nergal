@@ -5,12 +5,14 @@ use anyhow::Result;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::AsyncBufReadExt;
 
-use super::events::HookEvent;
+use super::events::{BACKGROUND_INPUT_WAITING_PREFIX, HookEvent, PromptCacheStatus};
 use crate::agents::AgentId;
+use crate::agents::claude_code::subagent_transcript::read_subagent_summary;
 use crate::agents::state::AgentRuntimeState;
 use crate::db::SharedDb;
 use crate::plan_state::SharedPlanState;
 use crate::platform::RejectionRateLimit;
+use crate::platform_proc::AgentChain;
 
 /// Flat event structure the frontend expects.
 #[derive(Clone, serde::Serialize)]
@@ -28,6 +30,16 @@ struct FrontendHookEvent {
     background_tasks: Vec<serde_json::Value>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     session_crons: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effort_level: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_tokens: Option<u64>,
 }
 
 impl FrontendHookEvent {
@@ -44,6 +56,7 @@ impl FrontendHookEvent {
                     session_id,
                     tool_name,
                     tool_input,
+                    ..
                 } => (
                     session_id.clone(),
                     "pre_tool_use",
@@ -148,6 +161,12 @@ impl FrontendHookEvent {
                     None,
                     None,
                 ),
+                HookEvent::SubagentStart { session_id, .. } => {
+                    (session_id.clone(), "subagent_start", None, None, None, None)
+                }
+                HookEvent::SubagentStop { session_id, .. } => {
+                    (session_id.clone(), "subagent_stop", None, None, None, None)
+                }
                 HookEvent::CwdChanged { session_id, .. } => {
                     (session_id.clone(), "cwd_changed", None, None, None, None)
                 }
@@ -191,6 +210,34 @@ impl FrontendHookEvent {
             } => (background_tasks.clone(), session_crons.clone()),
             _ => (Vec::new(), Vec::new()),
         };
+        let (agent_id, agent_type, agent_message) = match event {
+            HookEvent::SubagentStart {
+                agent_id,
+                agent_type,
+                ..
+            } => (agent_id.clone(), agent_type.clone(), None),
+            HookEvent::SubagentStop {
+                agent_id,
+                agent_type,
+                last_assistant_message,
+                ..
+            } => (
+                agent_id.clone(),
+                agent_type.clone(),
+                last_assistant_message.clone(),
+            ),
+            HookEvent::PreToolUse {
+                agent_id,
+                agent_type,
+                ..
+            }
+            | HookEvent::PostToolUse {
+                agent_id,
+                agent_type,
+                ..
+            } => (agent_id.clone(), agent_type.clone(), None),
+            _ => (None, None, None),
+        };
         Self {
             session_id,
             nergal_session_id: None,
@@ -201,8 +248,66 @@ impl FrontendHookEvent {
             transcript_path,
             background_tasks,
             session_crons,
+            agent_id,
+            agent_type,
+            agent_message,
+            effort_level: event.effort_level(),
+            agent_tokens: None,
         }
     }
+
+    /// Fills what only the subagent's own transcript knows: the final text when the
+    /// hook payload carries none (agent stopped mid-run) and the token count.
+    fn attach_subagent_transcript(&mut self, event: &HookEvent) {
+        let HookEvent::SubagentStop {
+            agent_transcript_path: Some(path),
+            ..
+        } = event
+        else {
+            return;
+        };
+        let summary = read_subagent_summary(Path::new(path));
+        self.agent_tokens = summary.tokens;
+        if self.agent_message.as_deref().is_none_or(str::is_empty) {
+            self.agent_message = summary.last_text;
+        }
+    }
+}
+
+/// CC fires subagent hooks for internal agents too; without an `agent_type`
+/// they would surface as unlabelled rows, so they are dropped before any side effect.
+fn is_droppable_subagent_event(event: &HookEvent) -> bool {
+    match event {
+        HookEvent::SubagentStart { agent_type, .. }
+        | HookEvent::SubagentStop { agent_type, .. } => {
+            agent_type.as_deref().is_none_or(str::is_empty)
+        }
+        _ => false,
+    }
+}
+
+/// A background agent that asked for input marked the session `needs_attention`;
+/// its completion is the only signal that the wait is over, since no Stop follows.
+fn mcp_activity_after_completion(mode: &str, waiting_for: Option<&str>) -> Option<&'static str> {
+    if mode == "needs_attention"
+        && waiting_for.is_some_and(|w| w.starts_with(BACKGROUND_INPUT_WAITING_PREFIX))
+    {
+        Some("idle")
+    } else {
+        None
+    }
+}
+
+/// A background agent is answered in agent view, outside this session, so the
+/// foreground session's own tool calls and stops must not erase its wait.
+fn preserves_background_wait(mode: &str, waiting_for: Option<&str>, event: &HookEvent) -> bool {
+    mcp_activity_after_completion(mode, waiting_for).is_some()
+        && !matches!(
+            event,
+            HookEvent::UserPromptSubmit { .. }
+                | HookEvent::SessionEnd { .. }
+                | HookEvent::Notification { .. }
+        )
 }
 
 /// Starts the IPC server that receives hook events from the agent CLI. Bound
@@ -294,6 +399,24 @@ pub async fn start_hook_server(
                         .map(String::from)
                 });
 
+                let top_level = match (parsed.as_ref(), nergal_sid.as_deref()) {
+                    (Some(raw), Some(sid)) => {
+                        let chain = parse_agent_chain(raw);
+                        let shell_pid = app.state::<crate::pty::PtyManager>().agent_shell_pid(sid);
+                        if let (Some(c), Some(shell)) = (chain.as_ref(), shell_pid)
+                            && !c.complete
+                            && !c.entries.iter().any(|(pid, _)| *pid == shell)
+                        {
+                            tracing::warn!(
+                                session_id = %sid,
+                                "agent chain lacks the PTY shell pid; treating the event as top-level"
+                            );
+                        }
+                        is_top_level_chain(chain.as_ref(), shell_pid)
+                    }
+                    _ => true,
+                };
+
                 match serde_json::from_str::<HookEvent>(&line) {
                     Ok(event) => {
                         process_event(
@@ -303,6 +426,7 @@ pub async fn start_hook_server(
                             &plan_state,
                             &agent_state,
                             nergal_sid.as_deref(),
+                            top_level,
                         );
                     }
                     Err(e) => {
@@ -373,7 +497,15 @@ pub fn spawn_adapter_event_consumer(
     tauri::async_runtime::spawn(async move {
         while let Some(event) = rx.recv().await {
             let csid = event.session_id().to_string();
-            process_event(&app, &event, &db, &plan_state, &agent_state, Some(&csid));
+            process_event(
+                &app,
+                &event,
+                &db,
+                &plan_state,
+                &agent_state,
+                Some(&csid),
+                true,
+            );
         }
     });
 }
@@ -676,6 +808,100 @@ fn resolve_active_plan(
     Some((path, content))
 }
 
+pub(crate) fn parse_agent_chain(raw: &serde_json::Value) -> Option<AgentChain> {
+    let entries = raw
+        .get("agent_chain")?
+        .as_array()?
+        .iter()
+        .map(|item| {
+            let pid = u32::try_from(item.get("pid")?.as_u64()?).ok()?;
+            let claude = item.get("claude")?.as_bool()?;
+            Some((pid, claude))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let complete = raw
+        .get("agent_chain_complete")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    Some(AgentChain { entries, complete })
+}
+
+/// Pull-based summaries: `Stop` only writes the cheap, LLM-free pull-marker.
+/// Written regardless of the summary opt-in since it is just a pointer; only a
+/// top-level Stop moves it. The path is guarded because the marker feeds an
+/// on-demand file read to an LLM backend, and a crafted same-uid hook payload
+/// must not steer the summarizer at an arbitrary file (e.g. a secret).
+fn record_stop_marker(
+    db: &crate::db::Database,
+    session_id: &str,
+    transcript_path: Option<&str>,
+    top_level: bool,
+) {
+    if !top_level {
+        return;
+    }
+    let Some(path) = transcript_path.filter(|p| p.ends_with(".jsonl")) else {
+        return;
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    if let Err(e) = db.set_session_transcript(session_id, path, now) {
+        tracing::warn!(session_id = %session_id, "persisting pull-marker failed: {e:#}");
+    }
+}
+
+/// A hook fired by a `claude` nested under the session's own `claude` (e.g. a
+/// `claude -p` run from a tool shell) inherits `NERGAL_SESSION_ID` and must not
+/// write the session's identity.
+pub(crate) fn is_top_level_chain(chain: Option<&AgentChain>, shell_pid: Option<u32>) -> bool {
+    let (Some(chain), Some(shell_pid)) = (chain, shell_pid) else {
+        return true;
+    };
+    let Some(shell_idx) = chain.entries.iter().position(|(pid, _)| *pid == shell_pid) else {
+        return !chain.complete;
+    };
+    let mut runs = 0;
+    let mut in_run = false;
+    for (_, claude) in &chain.entries[..shell_idx] {
+        if *claude && !in_run {
+            runs += 1;
+        }
+        in_run = *claude;
+    }
+    runs < 2
+}
+
+pub(crate) fn record_cc_conversation_id(
+    db: &crate::db::Database,
+    nergal_session_id: &str,
+    event: &HookEvent,
+) {
+    let HookEvent::SessionStart { session_id } = event else {
+        return;
+    };
+    if !crate::agents::claude_code::conversation::is_valid_conversation_id(session_id) {
+        return;
+    }
+    let row = match db.find_session(nergal_session_id) {
+        Ok(Some(row)) => row,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::warn!(session_id = %nergal_session_id, "reading session for conversation id failed: {e:#}");
+            return;
+        }
+    };
+    if row.agent_id != AgentId::claude_code().as_str()
+        || row.agent_internal_session_id.as_deref() == Some(session_id.as_str())
+    {
+        return;
+    }
+    if let Err(e) = db.update_agent_internal_session_id(nergal_session_id, session_id) {
+        tracing::warn!(session_id = %nergal_session_id, "persisting conversation id failed: {e:#}");
+    }
+}
+
 fn process_event(
     app: &AppHandle,
     event: &HookEvent,
@@ -683,7 +909,11 @@ fn process_event(
     plan_state: &SharedPlanState,
     agent_state: &AgentRuntimeState,
     nergal_session_id: Option<&str>,
+    top_level: bool,
 ) {
+    if is_droppable_subagent_event(event) {
+        return;
+    }
     if nergal_session_id.is_none() {
         tracing::warn!(
             event_type = ?std::any::type_name_of_val(event),
@@ -696,42 +926,29 @@ fn process_event(
     // the MCP descriptor can surface them. Every Stop overwrites: empty arrays
     // must clear a prior snapshot (a finished/killed bg task has to stop showing
     // as running), so there is deliberately no "skip empty payloads" gate.
-    if let HookEvent::Stop {
-        session_id,
-        background_tasks,
-        session_crons,
-        last_assistant_message,
-        transcript_path,
-        ..
-    } = event
+    if top_level
+        && let HookEvent::Stop {
+            session_id,
+            background_tasks,
+            session_crons,
+            last_assistant_message,
+            transcript_path,
+            ..
+        } = event
     {
         let csid = nergal_session_id.unwrap_or(session_id);
         agent_state.set_session_background(csid, background_tasks.clone(), session_crons.clone());
         agent_state.set_session_last_message(csid, last_assistant_message.clone());
-        // Pull-based summaries (Revision 1): `Stop` only writes the cheap,
-        // LLM-free pull-marker (transcript path + activity timestamp). Actual
-        // generation is triggered lazily by `get_session` on the read path.
-        // Written unconditionally (independent of the summary opt-in) since the
-        // marker is just a pointer; `get_session` gates on the backend.
-        //
-        // Guard the path: the marker drives an on-demand file read fed to an LLM
-        // backend, so reject anything that is not a `.jsonl` transcript. All four
-        // adapters write `.jsonl` transcripts, so this never rejects a real one;
-        // it blocks a crafted same-uid hook payload from steering the summarizer
-        // at an arbitrary file (e.g. a secret) for exfiltration.
-        if let Some(path) = transcript_path.as_deref()
-            && path.ends_with(".jsonl")
-        {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            if let Ok(guard) = db.lock()
-                && let Err(e) = guard.set_session_transcript(csid, path, now)
-            {
-                tracing::warn!(session_id = %csid, "persisting pull-marker failed: {e:#}");
-            }
+        if let Ok(guard) = db.lock() {
+            record_stop_marker(&guard, csid, transcript_path.as_deref(), true);
         }
+    }
+
+    if top_level
+        && let Some(csid) = nergal_session_id
+        && let Ok(guard) = db.lock()
+    {
+        record_cc_conversation_id(&guard, csid, event);
     }
 
     // Resolve the owning adapter for this session (cache → DB-fallback path
@@ -754,7 +971,12 @@ fn process_event(
     // row. Telemetry-only events (`mcp_mode` → None) leave the prior state.
     if let Some(csid) = nergal_session_id {
         if let Some(mode) = event.mcp_mode() {
-            agent_state.record_activity(csid, mode, event.waiting_for().as_deref());
+            let keep_wait = agent_state.session_activity(csid).is_some_and(|prev| {
+                preserves_background_wait(&prev.mode, prev.waiting_for.as_deref(), event)
+            });
+            if !keep_wait {
+                agent_state.record_activity(csid, mode, event.waiting_for().as_deref());
+            }
         }
         // Touched files come from PreToolUse: it is registered unmatched so it
         // fires for every tool (Read included), whereas the PostToolUse hook is
@@ -792,7 +1014,8 @@ fn process_event(
     // pending queue is non-empty, so this is a no-op when the feature is off or
     // nothing queued. Gated to `Stop` (not `SessionEnd`) so a teardown never
     // wakes a dying PTY.
-    if let Some(csid) = nergal_session_id
+    if top_level
+        && let Some(csid) = nergal_session_id
         && matches!(event, HookEvent::Stop { .. })
     {
         let bridge = crate::mcp::delivery::AppBridge::new(app.clone());
@@ -811,6 +1034,7 @@ fn process_event(
     }
 
     let mut frontend_event = FrontendHookEvent::from_hook(event);
+    frontend_event.attach_subagent_transcript(event);
     frontend_event.nergal_session_id = nergal_session_id.map(String::from);
     let _ = app.emit("hook:event", &frontend_event);
 
@@ -876,6 +1100,7 @@ fn process_event(
             tool_name,
             tool_input,
             session_id,
+            ..
         } => {
             tracing::debug!("PreToolUse: tool_name={tool_name}");
 
@@ -940,9 +1165,9 @@ fn process_event(
             transcript_path: Some(path),
             ..
         } => {
-            let cost = crate::agents::claude_code::cost::parse_cost_from_transcript(
-                &std::path::PathBuf::from(path),
-            );
+            let scan =
+                crate::agents::claude_code::cost::scan_transcript(&std::path::PathBuf::from(path));
+            let cost = scan.cost;
 
             let csid = nergal_session_id.unwrap_or(session_id);
             if let Ok(db_guard) = db.lock()
@@ -971,6 +1196,21 @@ fn process_event(
                     total_usd: cost.total_usd,
                 },
             );
+
+            if let Some(effort) = scan.last_effort {
+                #[derive(Clone, serde::Serialize)]
+                struct EffortLastResponse {
+                    session_id: String,
+                    effort: String,
+                }
+                let _ = app.emit(
+                    "effort:last-response",
+                    EffortLastResponse {
+                        session_id: csid.to_string(),
+                        effort,
+                    },
+                );
+            }
         }
 
         HookEvent::Stop {
@@ -1146,6 +1386,7 @@ fn process_event(
                     rate_7d_pct: *rate_7d_pct,
                     rate_7d_resets_at: *rate_7d_resets_at,
                     effort_level: None,
+                    prompt_cache: None,
                 },
             );
         }
@@ -1163,6 +1404,7 @@ fn process_event(
             rate_7d_pct,
             rate_7d_resets_at,
             effort_level,
+            prompt_cache,
         } => {
             cache_model(nergal_session_id, model_name);
             emit_agent_status(
@@ -1180,6 +1422,7 @@ fn process_event(
                     rate_7d_pct: *rate_7d_pct,
                     rate_7d_resets_at: *rate_7d_resets_at,
                     effort_level: effort_level.clone(),
+                    prompt_cache: prompt_cache.clone(),
                 },
             );
         }
@@ -1207,21 +1450,47 @@ fn process_event(
             message,
         } => {
             tracing::debug!("Notification: type={notification_type:?} message={message:?}");
-            #[derive(Clone, serde::Serialize)]
-            struct AttentionPendingPayload {
-                session_id: String,
-                notification_type: Option<String>,
-                message: Option<String>,
+            let csid = nergal_session_id.unwrap_or(session_id);
+            if notification_type.as_deref() == Some("agent_completed") {
+                #[derive(Clone, serde::Serialize)]
+                struct BackgroundCompletedPayload {
+                    session_id: String,
+                    message: Option<String>,
+                }
+                let _ = app.emit(
+                    "agent:background-completed",
+                    BackgroundCompletedPayload {
+                        session_id: csid.to_string(),
+                        message: message.clone(),
+                    },
+                );
+                if let Some(activity) = agent_state.session_activity(csid)
+                    && let Some(mode) = mcp_activity_after_completion(
+                        &activity.mode,
+                        activity.waiting_for.as_deref(),
+                    )
+                {
+                    agent_state.record_activity(csid, mode, None);
+                }
+            } else {
+                #[derive(Clone, serde::Serialize)]
+                struct AttentionPendingPayload {
+                    session_id: String,
+                    notification_type: Option<String>,
+                    message: Option<String>,
+                }
+                let _ = app.emit(
+                    "attention:pending",
+                    AttentionPendingPayload {
+                        session_id: csid.to_string(),
+                        notification_type: notification_type.clone(),
+                        message: message.clone(),
+                    },
+                );
             }
-            let _ = app.emit(
-                "attention:pending",
-                AttentionPendingPayload {
-                    session_id: nergal_session_id.unwrap_or(session_id).to_string(),
-                    notification_type: notification_type.clone(),
-                    message: message.clone(),
-                },
-            );
         }
+
+        HookEvent::SubagentStart { .. } | HookEvent::SubagentStop { .. } => {}
     }
 }
 
@@ -1240,6 +1509,7 @@ pub(crate) struct AgentStatusEmit<'a> {
     pub rate_7d_pct: Option<f64>,
     pub rate_7d_resets_at: Option<u64>,
     pub effort_level: Option<String>,
+    pub prompt_cache: Option<PromptCacheStatus>,
 }
 
 /// Emit `agent:status-update` to the frontend. Single emit path so every
@@ -1260,6 +1530,7 @@ pub(crate) fn emit_agent_status(app: &AppHandle, status: AgentStatusEmit<'_>) {
         rate_7d_pct: Option<f64>,
         rate_7d_resets_at: Option<u64>,
         effort_level: Option<String>,
+        prompt_cache: Option<PromptCacheStatus>,
     }
     let _ = app.emit(
         "agent:status-update",
@@ -1276,6 +1547,7 @@ pub(crate) fn emit_agent_status(app: &AppHandle, status: AgentStatusEmit<'_>) {
             rate_7d_pct: status.rate_7d_pct,
             rate_7d_resets_at: status.rate_7d_resets_at,
             effort_level: status.effort_level,
+            prompt_cache: status.prompt_cache,
         },
     );
 }
@@ -1528,6 +1800,10 @@ fn process_task_event(
 // substantially larger, non-behavior-preserving restructuring of a ~400-line
 // effect-per-branch function and was judged out of scope for this pass.
 #[cfg(test)]
+#[path = "server_identity_tests.rs"]
+mod identity_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
@@ -1643,6 +1919,8 @@ mod tests {
                     session_id: "s".into(),
                     tool_name: "Read".into(),
                     tool_input: json!({"a": 1}),
+                    agent_id: None,
+                    agent_type: None,
                 },
                 "pre_tool_use",
             ),
@@ -1652,6 +1930,8 @@ mod tests {
                     tool_name: "Read".into(),
                     tool_input: json!({}),
                     tool_result: None,
+                    agent_id: None,
+                    agent_type: None,
                 },
                 "post_tool_use",
             ),
@@ -1771,14 +2051,34 @@ mod tests {
                     rate_7d_pct: None,
                     rate_7d_resets_at: None,
                     effort_level: None,
+                    prompt_cache: None,
                 },
                 "agent_status",
+            ),
+            (
+                HookEvent::SubagentStart {
+                    session_id: "s".into(),
+                    agent_id: Some("a1".into()),
+                    agent_type: Some("Explore".into()),
+                },
+                "subagent_start",
+            ),
+            (
+                HookEvent::SubagentStop {
+                    session_id: "s".into(),
+                    agent_id: Some("a1".into()),
+                    agent_type: Some("Explore".into()),
+                    last_assistant_message: None,
+                    effort: serde_json::Value::Null,
+                    agent_transcript_path: None,
+                },
+                "subagent_stop",
             ),
         ];
 
         assert_eq!(
             cases.len(),
-            16,
+            18,
             "every HookEvent variant must appear exactly once above"
         );
 
@@ -1826,6 +2126,273 @@ mod tests {
         assert_eq!(fe.tool_input, Some(json!({"command": "rm -rf /"})));
     }
 
+    #[test]
+    fn from_hook_subagent_start_serializes_agent_identity() {
+        let event = HookEvent::SubagentStart {
+            session_id: "s".into(),
+            agent_id: Some("a1".into()),
+            agent_type: Some("Explore".into()),
+        };
+
+        let v = serde_json::to_value(FrontendHookEvent::from_hook(&event)).unwrap();
+
+        assert_eq!(v["event_type"], "subagent_start");
+        assert_eq!(v["agent_id"], "a1");
+        assert_eq!(v["agent_type"], "Explore");
+        assert!(v.get("agent_message").is_none());
+        assert!(v.get("effort_level").is_none());
+    }
+
+    #[test]
+    fn from_hook_subagent_stop_serializes_message_and_effort() {
+        let event = HookEvent::SubagentStop {
+            session_id: "s".into(),
+            agent_id: Some("a1".into()),
+            agent_type: Some("Plan".into()),
+            last_assistant_message: Some("plan ready".into()),
+            effort: json!({"level": "high"}),
+            agent_transcript_path: None,
+        };
+
+        let v = serde_json::to_value(FrontendHookEvent::from_hook(&event)).unwrap();
+
+        assert_eq!(v["event_type"], "subagent_stop");
+        assert_eq!(v["agent_id"], "a1");
+        assert_eq!(v["agent_type"], "Plan");
+        assert_eq!(v["agent_message"], "plan ready");
+        assert_eq!(v["effort_level"], "high");
+    }
+
+    fn subagent_stop_with_transcript(message: Option<&str>, path: &str) -> HookEvent {
+        HookEvent::SubagentStop {
+            session_id: "s".into(),
+            agent_id: Some("a1".into()),
+            agent_type: Some("Explore".into()),
+            last_assistant_message: message.map(str::to_string),
+            effort: serde_json::Value::Null,
+            agent_transcript_path: Some(path.into()),
+        }
+    }
+
+    fn transcript_file(text: &str) -> tempfile::NamedTempFile {
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"assistant","message":{{"id":"m","content":[{{"type":"text","text":"{text}"}}],"usage":{{"input_tokens":2,"cache_creation_input_tokens":8,"cache_read_input_tokens":90,"output_tokens":5}}}}}}"#
+        )
+        .unwrap();
+        f
+    }
+
+    #[test]
+    fn subagent_stop_without_message_takes_transcript_text_and_tokens() {
+        let f = transcript_file("last words");
+        let event = subagent_stop_with_transcript(Some(""), f.path().to_str().unwrap());
+        let mut fe = FrontendHookEvent::from_hook(&event);
+        fe.attach_subagent_transcript(&event);
+        assert_eq!(fe.agent_message.as_deref(), Some("last words"));
+        assert_eq!(fe.agent_tokens, Some(100));
+    }
+
+    #[test]
+    fn subagent_stop_keeps_payload_message_over_transcript_text() {
+        let f = transcript_file("from transcript");
+        let event = subagent_stop_with_transcript(Some("from payload"), f.path().to_str().unwrap());
+        let mut fe = FrontendHookEvent::from_hook(&event);
+        fe.attach_subagent_transcript(&event);
+        assert_eq!(fe.agent_message.as_deref(), Some("from payload"));
+        assert_eq!(fe.agent_tokens, Some(100));
+    }
+
+    #[test]
+    fn subagent_stop_with_unreadable_transcript_leaves_fields_absent() {
+        let event = subagent_stop_with_transcript(None, "/nonexistent/agent.jsonl");
+        let mut fe = FrontendHookEvent::from_hook(&event);
+        fe.attach_subagent_transcript(&event);
+        let v = serde_json::to_value(&fe).unwrap();
+        assert!(v.get("agent_message").is_none());
+        assert!(v.get("agent_tokens").is_none());
+    }
+
+    #[test]
+    fn from_hook_subagent_stop_omits_absent_optionals() {
+        let event = HookEvent::SubagentStop {
+            session_id: "s".into(),
+            agent_id: None,
+            agent_type: None,
+            last_assistant_message: None,
+            effort: serde_json::Value::Null,
+            agent_transcript_path: None,
+        };
+
+        let v = serde_json::to_value(FrontendHookEvent::from_hook(&event)).unwrap();
+
+        for key in ["agent_id", "agent_type", "agent_message", "effort_level"] {
+            assert!(v.get(key).is_none(), "{key} must be absent");
+        }
+    }
+
+    #[test]
+    fn from_hook_tool_events_omit_agent_keys_when_absent() {
+        let pre = HookEvent::PreToolUse {
+            session_id: "s".into(),
+            tool_name: "Read".into(),
+            tool_input: json!({}),
+            agent_id: None,
+            agent_type: None,
+        };
+        let post = HookEvent::PostToolUse {
+            session_id: "s".into(),
+            tool_name: "Read".into(),
+            tool_input: json!({}),
+            tool_result: None,
+            agent_id: None,
+            agent_type: None,
+        };
+
+        for event in [pre, post] {
+            let v = serde_json::to_value(FrontendHookEvent::from_hook(&event)).unwrap();
+            for key in ["agent_id", "agent_type", "agent_message", "effort_level"] {
+                assert!(v.get(key).is_none(), "{key} must be absent");
+            }
+        }
+    }
+
+    #[test]
+    fn from_hook_tool_events_forward_agent_keys_when_present() {
+        let pre = HookEvent::PreToolUse {
+            session_id: "s".into(),
+            tool_name: "SubagentHandback".into(),
+            tool_input: json!({"message": "report"}),
+            agent_id: Some("a1".into()),
+            agent_type: Some("Explore".into()),
+        };
+        let post = HookEvent::PostToolUse {
+            session_id: "s".into(),
+            tool_name: "Bash".into(),
+            tool_input: json!({}),
+            tool_result: None,
+            agent_id: Some("a1".into()),
+            agent_type: None,
+        };
+
+        let v = serde_json::to_value(FrontendHookEvent::from_hook(&pre)).unwrap();
+        assert_eq!(v["agent_id"], "a1");
+        assert_eq!(v["agent_type"], "Explore");
+        let v = serde_json::to_value(FrontendHookEvent::from_hook(&post)).unwrap();
+        assert_eq!(v["agent_id"], "a1");
+        assert!(v.get("agent_type").is_none());
+    }
+
+    #[test]
+    fn pre_tool_use_payload_deserializes_agent_fields() {
+        let json = r#"{"hook_event_name":"PreToolUse","session_id":"s","tool_name":"Bash","agent_id":"a1","agent_type":"Explore"}"#;
+        match serde_json::from_str::<HookEvent>(json).unwrap() {
+            HookEvent::PreToolUse {
+                agent_id,
+                agent_type,
+                ..
+            } => {
+                assert_eq!(agent_id.as_deref(), Some("a1"));
+                assert_eq!(agent_type.as_deref(), Some("Explore"));
+            }
+            _ => panic!("expected PreToolUse"),
+        }
+    }
+
+    #[test]
+    fn subagent_events_without_agent_type_are_droppable() {
+        let start = |t: Option<&str>| HookEvent::SubagentStart {
+            session_id: "s".into(),
+            agent_id: Some("a1".into()),
+            agent_type: t.map(str::to_string),
+        };
+        let stop = |t: Option<&str>| HookEvent::SubagentStop {
+            session_id: "s".into(),
+            agent_id: Some("a1".into()),
+            agent_type: t.map(str::to_string),
+            last_assistant_message: None,
+            effort: serde_json::Value::Null,
+            agent_transcript_path: None,
+        };
+
+        assert!(is_droppable_subagent_event(&start(None)));
+        assert!(is_droppable_subagent_event(&start(Some(""))));
+        assert!(is_droppable_subagent_event(&stop(None)));
+        assert!(is_droppable_subagent_event(&stop(Some(""))));
+        assert!(!is_droppable_subagent_event(&start(Some("Explore"))));
+        assert!(!is_droppable_subagent_event(&stop(Some("Explore"))));
+    }
+
+    #[test]
+    fn non_subagent_events_are_never_droppable() {
+        let events = vec![
+            HookEvent::SessionStart {
+                session_id: "s".into(),
+            },
+            HookEvent::PreToolUse {
+                session_id: "s".into(),
+                tool_name: "Agent".into(),
+                tool_input: json!({}),
+                agent_id: None,
+                agent_type: None,
+            },
+            HookEvent::Notification {
+                session_id: "s".into(),
+                notification_type: None,
+                message: None,
+            },
+        ];
+        for ev in events {
+            assert!(!is_droppable_subagent_event(&ev));
+        }
+    }
+
+    #[test]
+    fn background_input_wait_resets_to_idle_on_completion() {
+        assert_eq!(
+            mcp_activity_after_completion(
+                "needs_attention",
+                Some("background agent: Pick a branch")
+            ),
+            Some("idle")
+        );
+        assert_eq!(
+            mcp_activity_after_completion("needs_attention", Some("background agent")),
+            Some("idle")
+        );
+    }
+
+    #[test]
+    fn other_waits_survive_background_completion() {
+        assert_eq!(
+            mcp_activity_after_completion("needs_attention", Some("permission for Bash")),
+            None
+        );
+        assert_eq!(
+            mcp_activity_after_completion("needs_attention", Some("plan review")),
+            None
+        );
+        assert_eq!(
+            mcp_activity_after_completion("needs_attention", Some("answering a question")),
+            None
+        );
+        assert_eq!(mcp_activity_after_completion("needs_attention", None), None);
+    }
+
+    #[test]
+    fn background_completion_leaves_non_attention_modes_alone() {
+        assert_eq!(
+            mcp_activity_after_completion("running", Some("background agent: x")),
+            None
+        );
+        assert_eq!(
+            mcp_activity_after_completion("idle", Some("background agent")),
+            None
+        );
+    }
+
     // -- session_log_line: the #2 log line per event --
 
     #[test]
@@ -1834,6 +2401,8 @@ mod tests {
             session_id: "s".into(),
             tool_name: "Edit".into(),
             tool_input: json!({ "file_path": "src/main.rs" }),
+            agent_id: None,
+            agent_type: None,
         };
 
         assert_eq!(
@@ -1848,6 +2417,8 @@ mod tests {
             session_id: "s".into(),
             tool_name: "Read".into(),
             tool_input: json!({}),
+            agent_id: None,
+            agent_type: None,
         };
 
         assert_eq!(session_log_line(&event).as_deref(), Some("Read"));
@@ -1859,6 +2430,8 @@ mod tests {
             session_id: "s".into(),
             tool_name: "Bash".into(),
             tool_input: json!({}),
+            agent_id: None,
+            agent_type: None,
         };
 
         assert_eq!(session_log_line(&event).as_deref(), Some("Tool Bash"));
@@ -1923,5 +2496,63 @@ mod tests {
             Some("c.rs")
         );
         assert_eq!(file_path_from_tool_input(&json!({})), None);
+    }
+
+    #[test]
+    fn background_wait_survives_turn_events_of_the_foreground_session() {
+        let wait = Some("background agent: Pick a branch");
+        let pre = HookEvent::PreToolUse {
+            session_id: "s".into(),
+            tool_name: "Read".into(),
+            tool_input: json!({}),
+            agent_id: None,
+            agent_type: None,
+        };
+        let stop = HookEvent::Stop {
+            session_id: "s".into(),
+            stop_reason: None,
+            transcript_path: None,
+            background_tasks: vec![],
+            session_crons: vec![],
+            last_assistant_message: None,
+        };
+        assert!(preserves_background_wait("needs_attention", wait, &pre));
+        assert!(preserves_background_wait("needs_attention", wait, &stop));
+    }
+
+    #[test]
+    fn background_wait_yields_to_prompt_submit_session_end_and_notifications() {
+        let wait = Some("background agent");
+        let submit = HookEvent::UserPromptSubmit {
+            session_id: "s".into(),
+        };
+        let end = HookEvent::SessionEnd {
+            session_id: "s".into(),
+        };
+        let notif = HookEvent::Notification {
+            session_id: "s".into(),
+            notification_type: Some("permission_prompt".into()),
+            message: None,
+        };
+        assert!(!preserves_background_wait("needs_attention", wait, &submit));
+        assert!(!preserves_background_wait("needs_attention", wait, &end));
+        assert!(!preserves_background_wait("needs_attention", wait, &notif));
+    }
+
+    #[test]
+    fn non_background_waits_are_never_preserved() {
+        let pre = HookEvent::PreToolUse {
+            session_id: "s".into(),
+            tool_name: "Read".into(),
+            tool_input: json!({}),
+            agent_id: None,
+            agent_type: None,
+        };
+        assert!(!preserves_background_wait(
+            "needs_attention",
+            Some("permission for Bash"),
+            &pre
+        ));
+        assert!(!preserves_background_wait("running", None, &pre));
     }
 }

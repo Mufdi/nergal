@@ -140,6 +140,12 @@ impl TerminalSession {
         Ok(true)
     }
 
+    /// Safe to call on every DOM focus/blur: wezterm emits `CSI I` / `CSI O`
+    /// only when the app enabled DECSET 1004, and drops repeats.
+    pub fn focus_changed(&mut self, focused: bool) {
+        self.terminal.focus_changed(focused);
+    }
+
     /// Read-only access to the underlying wezterm terminal. Useful for tests
     /// and for Phase 2 grid-diffing logic that needs richer access than
     /// [`Self::grid_snapshot`] exposes.
@@ -617,29 +623,6 @@ mod tests {
     }
 
     #[test]
-    fn shift_enter_distinguishes_when_csi_u_fallback_active() {
-        // With Kitty disabled, CSI-u kicks in as the fallback and now
-        // Shift+Enter encodes as a distinct CSI-u sequence.
-        let w = CapturedWriter::new();
-        let cfg = NergalTerminalConfig::new().with_kitty_keyboard(false);
-        let mut s = TerminalSession::with_config(80, 24, Box::new(w.clone()), cfg);
-
-        s.key_down(&evt("Enter", "Enter")).unwrap();
-        let plain = w.drain();
-        w.clear();
-
-        let mut shift_enter = evt("Enter", "Enter");
-        shift_enter.shift = true;
-        s.key_down(&shift_enter).unwrap();
-        let with_shift = w.drain();
-
-        assert_ne!(
-            plain, with_shift,
-            "csi_u fallback: Shift+Enter distinct from Enter"
-        );
-    }
-
-    #[test]
     fn plain_printable_is_written_verbatim() {
         let (mut s, w) = session_with_writer(80, 24);
         s.key_down(&evt("KeyA", "a")).unwrap();
@@ -658,11 +641,6 @@ mod tests {
         assert_ne!(bytes, b"a");
         assert!(!bytes.is_empty());
     }
-
-    // Note: the old `kitty_disabled_falls_back_to_csi_u` test became
-    // redundant once Ctrl+Backspace started remapping unconditionally to
-    // Ctrl+W. The CSI-u fallback is now exercised by
-    // `shift_enter_distinguishes_when_csi_u_fallback_active`.
 
     #[test]
     fn scroll_offset_clamped_when_no_history_available() {
@@ -756,6 +734,109 @@ mod tests {
         assert_eq!(s.scroll_offset(), 0);
         let grid = s.grid_snapshot();
         assert!(grid.cursor.visible, "back at bottom → cursor visible again");
+    }
+
+    fn answer_to(seq: &[u8]) -> Vec<u8> {
+        let (mut s, w) = session_with_writer(80, 24);
+        s.advance_bytes(seq);
+        w.drain()
+    }
+
+    #[test]
+    fn kitty_keyboard_query_is_not_answered_by_default() {
+        assert!(answer_to(b"\x1b[?u").is_empty());
+    }
+
+    #[test]
+    fn kitty_flags_push_does_not_change_ctrl_enter() {
+        let (mut s, w) = session_with_writer(80, 24);
+        s.advance_bytes(b"\x1b[>1u");
+        let mut ctrl_enter = evt("Enter", "Enter");
+        ctrl_enter.ctrl = true;
+        s.key_down(&ctrl_enter).unwrap();
+        assert_eq!(w.drain(), b"\r", "termwiz has no kitty encoder");
+    }
+
+    #[test]
+    fn modify_other_keys_distinguishes_ctrl_enter() {
+        let (mut s, w) = session_with_writer(80, 24);
+        s.advance_bytes(b"\x1b[>4;2m");
+        let mut ctrl_enter = evt("Enter", "Enter");
+        ctrl_enter.ctrl = true;
+        s.key_down(&ctrl_enter).unwrap();
+        assert_eq!(w.drain(), b"\x1b[27;5;13~");
+    }
+
+    #[test]
+    fn default_mode_keeps_ctrl_enter_legacy_until_modify_other_keys() {
+        let (mut s, w) = session_with_writer(80, 24);
+        let mut ctrl_enter = evt("Enter", "Enter");
+        ctrl_enter.ctrl = true;
+        s.key_down(&ctrl_enter).unwrap();
+        assert_eq!(w.drain(), b"\r");
+    }
+
+    #[test]
+    fn primary_device_attributes_are_answered() {
+        assert_eq!(answer_to(b"\x1b[c"), b"\x1b[?65;4;6;18;22c");
+    }
+
+    #[test]
+    fn xtversion_reports_nergal() {
+        let expected = format!("\x1bP>|nergal {}\x1b\\", env!("CARGO_PKG_VERSION"));
+        assert_eq!(answer_to(b"\x1b[>q"), expected.as_bytes());
+    }
+
+    #[test]
+    fn background_color_query_reports_the_backend_palette() {
+        let answer = String::from_utf8(answer_to(b"\x1b]11;?\x1b\\")).unwrap();
+        assert!(answer.starts_with("\x1b]11;rgb:"), "{answer:?}");
+    }
+
+    #[test]
+    fn synchronized_output_query_reports_recognized_but_reset() {
+        assert_eq!(answer_to(b"\x1b[?2026$p"), b"\x1b[?2026;2$y");
+    }
+
+    #[test]
+    fn focus_change_is_reported_only_after_decset_1004() {
+        let (mut s, w) = session_with_writer(80, 24);
+        s.focus_changed(false);
+        s.focus_changed(true);
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(w.bytes().is_empty(), "no report without DECSET 1004");
+
+        s.advance_bytes(b"\x1b[?1004h");
+        s.focus_changed(false);
+        assert_eq!(w.drain(), b"\x1b[O");
+        w.clear();
+        s.focus_changed(true);
+        assert_eq!(w.drain(), b"\x1b[I");
+    }
+
+    #[test]
+    fn repeated_focus_state_is_not_reported_twice() {
+        let (mut s, w) = session_with_writer(80, 24);
+        s.advance_bytes(b"\x1b[?1004h");
+        s.focus_changed(false);
+        s.focus_changed(false);
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(w.drain(), b"\x1b[O");
+    }
+
+    #[test]
+    fn right_and_middle_buttons_report_press_and_release() {
+        for (button, code) in [(PrimaryButton::Right, 2), (PrimaryButton::Middle, 1)] {
+            let (mut s, w) = session_with_writer(80, 24);
+            s.advance_bytes(b"\x1b[?1000h\x1b[?1006h");
+            s.mouse_button(button, PrimaryKind::Press, 4, 2, MouseMods::default())
+                .unwrap();
+            s.mouse_button(button, PrimaryKind::Release, 4, 2, MouseMods::default())
+                .unwrap();
+            std::thread::sleep(Duration::from_millis(50));
+            let expected = format!("\x1b[<{code};5;3M\x1b[<{code};5;3m");
+            assert_eq!(w.drain(), expected.as_bytes(), "{button:?}");
+        }
     }
 
     fn plain_text(row: &[CellSnapshot]) -> String {

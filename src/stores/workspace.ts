@@ -1,5 +1,6 @@
 import { atom } from "jotai";
 import type { CostSummary } from "@/lib/types";
+import type { PromptCacheStatus } from "@/lib/agentTelemetry";
 import { sessionScopedMapAtom } from "./sessionScope";
 
 /// Mirrors `PermissionPreset` in src-tauri/src/models.rs (kebab-case wire
@@ -45,6 +46,7 @@ export interface Session {
   /// Wire-form capability bitset emitted by the backend on session creation
   /// so the frontend can gate UI synchronously without a separate fetch.
   agent_capabilities?: string[];
+  worktree_pending_delete?: boolean;
   /// Absolute vault-note paths pinned to this session (obsidian-context
   /// -injection). Seeds the chip's initial count; runtime mutations live in
   /// `pinnedNotesMapAtom`.
@@ -203,6 +205,7 @@ export interface AgentStatus {
   rate_7d_pct: number | null;
   rate_7d_resets_at: number | null;
   effort_level: string | null;
+  prompt_cache: PromptCacheStatus | null;
 }
 
 const defaultAgentStatus: AgentStatus = {
@@ -217,6 +220,7 @@ const defaultAgentStatus: AgentStatus = {
   rate_7d_pct: null,
   rate_7d_resets_at: null,
   effort_level: null,
+  prompt_cache: null,
 };
 
 export const agentStatusMapAtom = sessionScopedMapAtom<AgentStatus>();
@@ -225,4 +229,12 @@ export const activeAgentStatusAtom = atom<AgentStatus>((get) => {
   const id = get(activeSessionIdAtom);
   if (!id) return defaultAgentStatus;
   return get(agentStatusMapAtom)[id] ?? defaultAgentStatus;
+});
+
+export const lastResponseEffortMapAtom = sessionScopedMapAtom<string>();
+
+export const activeLastResponseEffortAtom = atom<string | null>((get) => {
+  const id = get(activeSessionIdAtom);
+  if (!id) return null;
+  return get(lastResponseEffortMapAtom)[id] ?? null;
 });

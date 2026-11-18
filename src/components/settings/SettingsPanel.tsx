@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Switch } from "@/components/ui/switch";
 import { Select } from "@/components/ui/select";
-import { CheckCircle2, AlertTriangle, XCircle, Info, FolderTree, Bot, Pencil, Palette, Terminal, NotebookText, RefreshCw, Check, ArrowLeft, Trash2, Sliders, Download, ExternalLink, FolderOpen, ClipboardCopy, Bug, Keyboard, Network } from "lucide-react";
+import { CheckCircle2, AlertTriangle, XCircle, Info, FolderTree, Bot, Pencil, Palette, NotebookText, RefreshCw, Check, ArrowLeft, Trash2, Sliders, Download, ExternalLink, FolderOpen, ClipboardCopy, Bug, Keyboard, Network } from "lucide-react";
 import { ClickUpIcon } from "@/components/icons/ClickUpIcon";
 import { LinearIcon } from "@/components/icons/LinearIcon";
 import Markdown from "react-markdown";
@@ -1364,14 +1364,6 @@ type BooleanConfigKey = {
   [K in keyof Config]-?: Config[K] extends boolean ? K : never;
 }[keyof Config];
 
-const TOGGLE_FIELDS: { key: BooleanConfigKey; label: string; help: string }[] = [
-  {
-    key: "terminal_kitty_keyboard",
-    label: "Kitty keyboard protocol",
-    help: "Distinct encoding for Ctrl+Backspace, Shift+Enter, Alt+letter.",
-  },
-];
-
 function ThemePreviewCard({
   theme,
   selected,
@@ -2101,7 +2093,7 @@ function AppearanceSection({
   );
 }
 
-type SectionId = "paths" | "agents" | "editor" | "appearance" | "terminal" | "keymap" | "mcp" | "scratchpad" | "obsidian" | "clickup" | "linear" | "about";
+type SectionId = "paths" | "agents" | "editor" | "appearance" | "keymap" | "mcp" | "scratchpad" | "obsidian" | "clickup" | "linear" | "about";
 
 type SectionMeta = { id: SectionId; label: string; icon: typeof FolderTree };
 
@@ -2117,7 +2109,6 @@ const CATEGORIES: { id: string; label: string; sections: SectionMeta[] }[] = [
     sections: [
       { id: "paths", label: "Paths", icon: FolderTree },
       { id: "agents", label: "Agents", icon: Bot },
-      { id: "terminal", label: "Terminal", icon: Terminal },
       { id: "scratchpad", label: "Scratchpad", icon: NotebookText },
     ],
   },
@@ -2155,7 +2146,6 @@ const SECTION_KEYWORDS: Record<SectionId, string> = {
   agents: "agent codex gemini opencode default cli detect binary",
   editor: "editor ide vscode open external",
   appearance: "theme color colour appearance dark light palette custom accent",
-  terminal: "terminal font size scrollback cursor shell prelude quake",
   keymap: "keyboard shortcut keybinding keymap leader ownership override reset",
   mcp: "mcp server cross-session summary worktree messaging",
   scratchpad: "scratchpad notes temp draft",
@@ -3541,26 +3531,6 @@ export function SettingsPanel({ open, onOpenChange }: SettingsProps) {
                 handleTextChange={handleTextChange}
                 handleToggleChange={handleToggleChange}
               />
-            )}
-
-            {activeSection === "terminal" && (
-              <div className="space-y-4 pt-1">
-                {TOGGLE_FIELDS.map(({ key, label, help }) => (
-                  <div key={key} className="flex items-start gap-3 text-sm">
-                    <Switch
-                      id={`setting-${key}`}
-                      checked={config[key]}
-                      onCheckedChange={(v) => handleToggleChange(key, v)}
-                      aria-label={label}
-                      className="mt-1"
-                    />
-                    <label htmlFor={`setting-${key}`} className="flex flex-col gap-0.5 cursor-pointer">
-                      <span className="font-medium">{label}</span>
-                      <span className="text-xs text-muted-foreground">{help}</span>
-                    </label>
-                  </div>
-                ))}
-              </div>
             )}
 
             {activeSection === "keymap" && <KeymapSection />}

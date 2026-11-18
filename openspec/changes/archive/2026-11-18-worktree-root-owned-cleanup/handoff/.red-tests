@@ -1,0 +1,3 @@
+2cdcded2c890be605ea7199529633f9ae48e5e81  src-tauri/src/worktree_reclaim_tests.rs
+bd7621f53917d9160a9ab643258d5c83833b1105  src/stores/pendingDeletesWorkspace.test.ts
+f2e902b7c66603bdac38c66374224ac0cc1f5559  src-tauri/src/commands/workspaces_sessions_partial_tests.rs

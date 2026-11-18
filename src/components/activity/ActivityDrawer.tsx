@@ -5,6 +5,7 @@ import { openTabAction, expandRightPanelAtom } from "@/stores/rightPanel";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import type { ActivityEntry } from "@/lib/types";
 import * as terminalService from "@/components/terminal/terminalService";
+import { formatTokens } from "@/lib/agentTelemetry";
 import { PulseDots } from "@/components/ui/PulseDots";
 import {
   Tooltip,
@@ -13,6 +14,7 @@ import {
   TooltipProvider,
 } from "@/components/ui/tooltip";
 import { X, Zap, ChevronDown, ChevronRight, Search, Trash2 } from "lucide-react";
+import { rowKeyAction } from "./rowKeyAction";
 
 const TYPE_COLORS: Record<ActivityEntry["type"], string> = {
   tool_use: "bg-blue-500",
@@ -21,6 +23,7 @@ const TYPE_COLORS: Record<ActivityEntry["type"], string> = {
   plan: "bg-primary",
   error: "bg-destructive",
   file_modified: "bg-yellow-500",
+  subagent: "bg-sky-400",
 };
 
 /// Filter chips, important types first.
@@ -28,6 +31,7 @@ const TYPE_ORDER: ActivityEntry["type"][] = [
   "tool_use",
   "file_modified",
   "task",
+  "subagent",
   "error",
   "plan",
   "session",
@@ -122,7 +126,7 @@ export function ActivityDrawer() {
 
   // Keyboard nav, scoped to the drawer zone (patterns.md §1/§8/§10, mirroring
   // ClickUpPanel): ↑/↓ move a data-nav-selected cursor over rows (scroll
-  // follows); Enter opens the cursor row's file (or toggles a group); ↑ from
+  // follows); Enter opens the cursor row's file, toggles a group, or expands a detail row (rowKeyAction); ↑ from
   // the first row jumps to the filter chips; ←/→ move across chips when one is
   // focused, or expand/collapse a group header; c clears.
   useEffect(() => {
@@ -132,6 +136,14 @@ export function ActivityDrawer() {
         const n = new Set(prev);
         if (n.has(k)) n.delete(k);
         else n.add(k);
+        return n;
+      });
+    }
+    function toggleDetailId(id: string) {
+      setExpandedIds((prev) => {
+        const n = new Set(prev);
+        if (n.has(id)) n.delete(id);
+        else n.add(id);
         return n;
       });
     }
@@ -220,23 +232,22 @@ export function ActivityDrawer() {
         return;
       }
 
-      if (e.code === "Space" && selected?.dataset.groupKey) {
-        e.preventDefault();
-        toggleGroupKey(selected.dataset.groupKey);
-        return;
-      }
-
-      if (e.code === "Enter") {
-        if (!selected) return;
-        e.preventDefault();
-        if (selected.dataset.groupKey) {
-          toggleGroupKey(selected.dataset.groupKey);
+      if ((e.code === "Enter" || e.code === "Space") && selected) {
+        const action = rowKeyAction(e.code, {
+          groupKey: selected.dataset.groupKey,
+          file: selected.dataset.file,
+          detailId: selected.dataset.detailId,
+        });
+        if (action.kind === "none") {
+          if (e.code === "Enter") e.preventDefault();
           return;
         }
-        const file = selected.dataset.file;
-        if (file) {
+        e.preventDefault();
+        if (action.kind === "toggle-group") toggleGroupKey(action.key);
+        else if (action.kind === "toggle-detail") toggleDetailId(action.id);
+        else {
           openTab({
-            tab: { id: `file:${file}`, type: "file", label: basename(file), data: { path: file, sessionId } },
+            tab: { id: `file:${action.path}`, type: "file", label: basename(action.path), data: { path: action.path, sessionId } },
           });
           setExpand((p) => p + 1);
         }
@@ -308,7 +319,8 @@ export function ActivityDrawer() {
   }
 
   function entryRow(entry: ActivityEntry, indented = false) {
-    const hasThinking = !!entry.detail && entry.detail.length > 50;
+    const isSubagent = entry.type === "subagent";
+    const hasThinking = !!entry.detail && (isSubagent || entry.detail.length > 50);
     const isExpanded = expandedIds.has(entry.id);
     const hasFiles = !!entry.files && entry.files.length > 0;
     return (
@@ -316,6 +328,7 @@ export function ActivityDrawer() {
         key={entry.id}
         data-nav-item
         data-file={entry.files?.[0]}
+        data-detail-id={hasThinking ? entry.id : undefined}
         className={`rounded hover:bg-secondary/50 ${indented ? "pl-2" : ""}`}
       >
         <div className="flex items-start gap-2 px-2 py-1.5">
@@ -326,10 +339,18 @@ export function ActivityDrawer() {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
               <p className="text-xs text-foreground">{entry.message}</p>
+              {entry.ownerLabel && (
+                <span className="shrink-0 text-[9px] text-muted-foreground/60">{entry.ownerLabel}</span>
+              )}
               {entry.status === "running" && <PulseDots count={3} className="text-primary" />}
               {entry.durationMs != null && (
                 <span className="shrink-0 text-[9px] tabular-nums text-muted-foreground/60">
                   {formatDuration(entry.durationMs)}
+                </span>
+              )}
+              {entry.tokens != null && (
+                <span className="shrink-0 text-[9px] tabular-nums text-muted-foreground/60">
+                  {formatTokens(entry.tokens)} tokens
                 </span>
               )}
             </div>
@@ -373,7 +394,7 @@ export function ActivityDrawer() {
                 className="mt-0.5 flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-foreground"
               >
                 {isExpanded ? <ChevronDown className="size-2.5" /> : <ChevronRight className="size-2.5" />}
-                thinking
+                {isSubagent ? "report" : "thinking"}
               </button>
             )}
           </div>

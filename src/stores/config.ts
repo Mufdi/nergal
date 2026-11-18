@@ -16,7 +16,6 @@ export const configAtom = atom<Config>({
   default_shell: "/bin/bash",
   theme_mode: DEFAULT_THEME_ID,
   preferred_editor: "",
-  terminal_kitty_keyboard: true,
   sidebar_dot_grid: false,
   panel_focus_pulse: false,
   panel_glow: false,
@@ -27,4 +26,7 @@ export const configAtom = atom<Config>({
   keymap_overrides: {},
   mcp_server_enabled: false,
   keyboard_ownership: "nergal",
+  linear_hidden_states: [],
+  linear_collapsed_groups: [],
+  linear_show_completed: true,
 });

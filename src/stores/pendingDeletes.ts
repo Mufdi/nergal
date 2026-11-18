@@ -15,6 +15,8 @@ import { invoke } from "@/lib/tauri";
 import { pruneSessionStateAction } from "./sessionScope";
 import { pruneConflictSessionAction } from "./conflict";
 import { toastsAtom } from "./toast";
+import { confirm as swalConfirm } from "@/lib/confirm";
+import { escapeHtml } from "@/lib/escapeHtml";
 
 const DELETE_GRACE_MS = 5_000;
 /// Slack between the countdown reaching 0 and the physical deletion, so an
@@ -66,6 +68,27 @@ function reportCleanupErrors(errors: string[] | undefined): void {
   for (const description of errors ?? []) {
     appStore.set(toastsAtom, { message: "Worktree left on disk", description, type: "error" });
   }
+}
+
+type CleanupNoticeKind = "worktree_left" | "branch_kept" | "branch_deleted";
+
+interface CleanupNotice {
+  kind: CleanupNoticeKind;
+  message: string;
+}
+
+const NOTICE_TITLES: Record<CleanupNoticeKind, { message: string; type: "error" | "info" }> = {
+  worktree_left: { message: "Worktree left on disk", type: "error" },
+  branch_kept: { message: "Branch kept", type: "info" },
+  branch_deleted: { message: "Branch deleted", type: "info" },
+};
+
+export function noticeToast(notice: CleanupNotice): {
+  message: string;
+  description: string;
+  type: "error" | "info";
+} {
+  return { ...NOTICE_TITLES[notice.kind], description: notice.message };
 }
 
 function tooLateToast(): void {
@@ -133,10 +156,33 @@ export const deleteSessionWithGraceAction = atom(null, (get, set, session: Sessi
     terminalService.destroy(session.id);
     appStore.set(pruneSessionStateAction, session.id);
     appStore.set(pruneConflictSessionAction, session.id);
-    const errors = await invoke<string[]>("delete_session", { sessionId: session.id }).catch(
-      () => undefined,
-    );
-    reportCleanupErrors(errors);
+    try {
+      const notices = await invoke<CleanupNotice[]>("delete_session", { sessionId: session.id });
+      for (const notice of notices ?? []) appStore.set(toastsAtom, noticeToast(notice));
+    } catch (e) {
+      const restored = await invoke<Workspace[]>("get_workspaces").catch(() => undefined);
+      if (restored) {
+        appStore.set(workspacesAtom, restored);
+      } else {
+        appStore.set(workspacesAtom, (prev) =>
+          prev.map((w) => {
+            if (w.id !== wsId || w.sessions.some((s) => s.id === session.id)) return w;
+            return { ...w, sessions: insertAt(w.sessions, session, sessionIndex) };
+          }),
+        );
+      }
+      if (tabIndex !== -1) {
+        appStore.set(sessionTabIdsAtom, (prev) =>
+          prev.includes(session.id) ? prev : insertAt(prev, session.id, tabIndex),
+        );
+      }
+      if (wasActive) appStore.set(activeSessionIdAtom, session.id);
+      appStore.set(toastsAtom, {
+        message: "Could not delete session",
+        description: e instanceof Error ? e.message : String(e),
+        type: "error",
+      });
+    }
   };
 
   cancelTimer(session.id);
@@ -145,6 +191,21 @@ export const deleteSessionWithGraceAction = atom(null, (get, set, session: Sessi
     timer: setTimeout(() => void finalize(), DELETE_GRACE_MS + FINALIZE_SLACK_MS),
   });
 });
+
+export async function confirmAndDeleteSession(
+  session: Session,
+  deleteWithGrace: (session: Session) => void,
+): Promise<void> {
+  const ok = await swalConfirm({
+    title: "Delete session?",
+    body: `<strong>${escapeHtml(session.name)}</strong> will be removed and its terminal closed.`,
+    confirmLabel: "Delete",
+    cancelLabel: "Cancel",
+    kind: "warning",
+    destructive: true,
+  });
+  if (ok) deleteWithGrace(session);
+}
 
 /// Workspace counterpart: hides the workspace (and its session tabs) for
 /// the grace window before invoking the destructive delete_workspace.
@@ -198,10 +259,40 @@ export const deleteWorkspaceWithGraceAction = atom(null, (get, set, workspace: W
       appStore.set(pruneSessionStateAction, id);
       appStore.set(pruneConflictSessionAction, id);
     }
-    const errors = await invoke<string[]>("delete_workspace", {
-      workspaceId: workspace.id,
-    }).catch(() => undefined);
-    reportCleanupErrors(errors);
+    try {
+      const errors = await invoke<string[]>("delete_workspace", {
+        workspaceId: workspace.id,
+      });
+      reportCleanupErrors(errors);
+    } catch (e) {
+      const restored = await invoke<Workspace[]>("get_workspaces").catch(() => undefined);
+      let cameBack = sessionIds;
+      if (restored) {
+        appStore.set(workspacesAtom, restored);
+        cameBack = new Set(
+          restored.find((w) => w.id === workspace.id)?.sessions.map((s) => s.id) ?? [],
+        );
+      } else {
+        appStore.set(workspacesAtom, (prev) =>
+          prev.some((w) => w.id === workspace.id) ? prev : insertAt(prev, workspace, wsIndex),
+        );
+      }
+      appStore.set(sessionTabIdsAtom, (prev) => {
+        let next = prev;
+        for (const [i, id] of prevTabIds.entries()) {
+          if (cameBack.has(id) && !next.includes(id)) next = insertAt(next, id, i);
+        }
+        return next;
+      });
+      if (activeInWs && activeId && cameBack.has(activeId)) {
+        appStore.set(activeSessionIdAtom, activeId);
+      }
+      appStore.set(toastsAtom, {
+        message: "Could not delete workspace",
+        description: e instanceof Error ? e.message : String(e),
+        type: "error",
+      });
+    }
   };
 
   cancelTimer(workspace.id);

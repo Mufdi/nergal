@@ -47,7 +47,11 @@ enum HookAction {
     /// statusLine reader: parse CC's session snapshot from stdin, forward it to
     /// the GUI as an AgentStatus, and echo a compact line for CC's own TUI.
     /// Cross-platform native replacement for the Linux bash+jq statusline feeder.
-    Statusline,
+    Statusline {
+        /// Feed Nergal's status bar only; print nothing in CC's status row.
+        #[arg(long)]
+        silent: bool,
+    },
     /// Configure Claude Code hooks in ~/.claude/settings.json
     Setup,
 }
@@ -108,10 +112,10 @@ fn main() {
                         std::process::exit(1);
                     }
                 }
-                HookAction::Statusline => {
+                HookAction::Statusline { silent } => {
                     // Best-effort: a statusline feeder must never break CC's
                     // render loop, so failures are swallowed (logged inside).
-                    nergal::hooks::cli::statusline(&socket_path);
+                    nergal::hooks::cli::statusline(&socket_path, silent);
                 }
                 HookAction::Setup => {
                     if let Err(e) = nergal::setup::run() {

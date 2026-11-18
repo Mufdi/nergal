@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { activeSessionIdAtom, activeModeAtom, activeCwdAtom, activeAgentStatusAtom } from "@/stores/workspace";
+import { activeSessionIdAtom, activeModeAtom, activeCwdAtom, activeAgentStatusAtom, activeLastResponseEffortAtom } from "@/stores/workspace";
+import { effortChipText, formatMissCauses, formatTokens, promptCacheChip } from "@/lib/agentTelemetry";
 import { activeGitInfoAtom, refreshGitInfoAtom, renameBranchSignalAtom } from "@/stores/git";
 import { loadSessionFilesAtom } from "@/stores/files";
 import { loadPinnedNotesAtom } from "@/stores/pinnedNotes";
@@ -23,7 +24,7 @@ import { leaderPendingAtom } from "@/stores/leader";
 import * as terminalService from "@/components/terminal/terminalService";
 import { Badge } from "@/components/ui/badge";
 import { Kbd } from "@/components/ui/kbd";
-import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, Clock, Globe, CalendarRange, Pencil, TriangleAlert, Timer, History, X, Copy, ExternalLink } from "lucide-react";
+import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, DatabaseZap, Clock, Globe, CalendarRange, Pencil, TriangleAlert, Timer, History, X, Copy, ExternalLink } from "lucide-react";
 import { activeIncidentsAtom, providerStatusOpenAtom, type ProviderStatusDetail } from "@/stores/statusFeed";
 import { notificationHistoryAtom, clearNotificationsAtom, notificationHistoryOpenAtom, type NotificationEntry } from "@/stores/notifications";
 import {
@@ -64,11 +65,6 @@ function asciiBar(pct: number, width = 12): string {
   return "█".repeat(filled) + "░".repeat(width - filled);
 }
 
-function formatTokens(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}K`;
-  return `${Math.round(n)}`;
-}
-
 function modeDotColor(mode: string): string {
   if (mode === "idle") return "bg-muted-foreground";
   if (mode === "active") return "bg-sky-400";
@@ -87,6 +83,9 @@ export function StatusBar() {
   const summary = useAtomValue(activitySummaryAtom);
   const setDrawerOpen = useSetAtom(activityDrawerOpenAtom);
   const sl = useAtomValue(activeAgentStatusAtom);
+  const lastResponseEffort = useAtomValue(activeLastResponseEffortAtom);
+  const cacheChip = promptCacheChip(sl.prompt_cache);
+  const effortText = effortChipText(sl.effort_level, lastResponseEffort);
   const agentMeta = useAtomValue(activeAgentMetadataAtom);
   const [now, setNow] = useState(() => Date.now());
   const leaderPending = useAtomValue(leaderPendingAtom);
@@ -288,6 +287,32 @@ export function StatusBar() {
           </Tooltip>
         )}
 
+        {cacheChip != null && sl.prompt_cache && (
+          <Tooltip>
+            <TooltipTrigger className="flex shrink-0 cursor-default items-center gap-1 whitespace-nowrap" aria-label={`Prompt cache ${cacheChip}`}>
+              <DatabaseZap className="size-3 shrink-0" />
+              <span className="inline-block min-w-[2.25rem] text-right tabular-nums">{cacheChip}</span>
+            </TooltipTrigger>
+            <TooltipContent className="flex-col items-start gap-0.5">
+              <span>
+                Prompt cache: {sl.prompt_cache.warm === false ? "cold" : "warm"}
+                {sl.prompt_cache.ttl && <> · TTL {sl.prompt_cache.ttl}</>}
+              </span>
+              {sl.prompt_cache.requests != null && sl.prompt_cache.misses != null && (
+                <span>
+                  {sl.prompt_cache.requests} requests · {sl.prompt_cache.misses} misses
+                </span>
+              )}
+              {sl.prompt_cache.miss_recache_tokens != null && sl.prompt_cache.miss_recache_tokens > 0 && (
+                <span>{formatTokens(sl.prompt_cache.miss_recache_tokens)} tokens re-cached by misses</span>
+              )}
+              {sl.prompt_cache.last_miss_causes.length > 0 && (
+                <span>Last miss: {formatMissCauses(sl.prompt_cache.last_miss_causes)}</span>
+              )}
+            </TooltipContent>
+          </Tooltip>
+        )}
+
         {sl.rate_5h_pct != null && (
           <Tooltip>
             <TooltipTrigger className="flex cursor-default items-center gap-1">
@@ -318,12 +343,15 @@ export function StatusBar() {
           </Tooltip>
         )}
 
-        {sl.effort_level && (
+        {effortText && (
           <Tooltip>
-            <TooltipTrigger className="cursor-default text-muted-foreground/80">
-              {sl.effort_level}
+            <TooltipTrigger className="shrink-0 cursor-default whitespace-nowrap text-muted-foreground/80" aria-label={`Effort ${effortText}`}>
+              {effortText}
             </TooltipTrigger>
-            <TooltipContent>Effort level</TooltipContent>
+            <TooltipContent className="flex-col items-start gap-0.5">
+              {sl.effort_level && <span>Setting: {sl.effort_level}</span>}
+              {lastResponseEffort && <span>Last response: {lastResponseEffort}</span>}
+            </TooltipContent>
           </Tooltip>
         )}
 

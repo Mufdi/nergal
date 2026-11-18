@@ -61,6 +61,7 @@ impl Database {
                 agent_id: row.get(9)?,
                 agent_internal_session_id: row.get(10)?,
                 agent_capabilities: Vec::new(),
+                worktree_pending_delete: false,
                 pinned_note_paths: parse_pinned_note_paths(row.get(11)?),
                 launch_options: parse_launch_options(row.get(12)?),
                 env_shells: parse_env_shells(row.get(13)?),
@@ -161,6 +162,74 @@ impl Database {
         Ok(rows)
     }
 
+    pub fn worktree_sessions(&self) -> Result<Vec<(String, String, PathBuf)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, worktree_path FROM sessions WHERE worktree_path IS NOT NULL ORDER BY created_at",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })?
+            .filter_map(|r| r.ok())
+            .map(|(id, name, path)| (id, name, PathBuf::from(path)))
+            .collect();
+        Ok(rows)
+    }
+
+    pub fn is_last_root_session(&self, session_id: &str) -> Result<bool> {
+        let (workspace_id, worktree_path) = match self.conn.query_row(
+            "SELECT workspace_id, worktree_path FROM sessions WHERE id = ?1",
+            [session_id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+        ) {
+            Ok(row) => row,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(false),
+            Err(e) => return Err(e.into()),
+        };
+        if worktree_path.is_some() {
+            return Ok(false);
+        }
+        let other_roots: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE workspace_id = ?1 AND worktree_path IS NULL AND id != ?2",
+            params![workspace_id, session_id],
+            |r| r.get(0),
+        )?;
+        Ok(other_roots == 0)
+    }
+
+    pub fn workspace_resume_peers(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<(PathBuf, Vec<ResumePeer>)>> {
+        let (workspace_id, repo_path) = match self.conn.query_row(
+            "SELECT w.id, w.repo_path FROM sessions s JOIN workspaces w ON w.id = s.workspace_id WHERE s.id = ?1",
+            [session_id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        ) {
+            Ok(row) => row,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+        let mut stmt = self.conn.prepare(
+            "SELECT s.id, s.created_at, s.agent_internal_session_id, t.transcript_path FROM sessions s LEFT JOIN session_transcripts t ON t.session_id = s.id WHERE s.workspace_id = ?1",
+        )?;
+        let peers = stmt
+            .query_map([workspace_id], |r| {
+                Ok(ResumePeer {
+                    id: r.get(0)?,
+                    created_at: r.get(1)?,
+                    internal_id: r.get(2)?,
+                    transcript_path: r.get(3)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(Some((PathBuf::from(repo_path), peers)))
+    }
+
     pub fn set_merge_target(&self, id: &str, target: &str) -> Result<()> {
         self.conn.execute(
             "UPDATE sessions SET merge_target = ?1, updated_at = ?2 WHERE id = ?3",
@@ -185,3 +254,7 @@ impl Database {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "sessions_root_tests.rs"]
+mod root_tests;

@@ -6,6 +6,7 @@ import {
   MessagesSquare,
   Pencil,
   Trash2,
+  TriangleAlert,
 } from "lucide-react";
 import {
   Tooltip,
@@ -14,6 +15,7 @@ import {
   TooltipProvider,
 } from "@/components/ui/tooltip";
 import type { Session, Workspace } from "@/stores/workspace";
+import { canDeleteSession } from "@/lib/sessionDelete";
 import { gitInfoMapAtom } from "@/stores/git";
 import { pendingAsksAtom, pendingAttentionAtom } from "@/stores/askUser";
 import { crossSessionUnreadMapAtom, crossSessionActiveParticipantsAtom } from "@/stores/crossSession";
@@ -42,7 +44,7 @@ interface SessionRowProps {
 
 export function SessionRow({
   session,
-  workspace: _workspace,
+  workspace,
   isActive,
   shortcutNumber,
   onSelect,
@@ -190,9 +192,7 @@ export function SessionRow({
           </TooltipTrigger>
           <TooltipContent side="top" className="text-[10px]">Rename</TooltipContent>
         </Tooltip>
-        {/* Delete only for worktree sessions — the main session is the repo root,
-            not a disposable worktree, so deleting it from the sidebar is wrong. */}
-        {session.worktree_path !== null && (
+        {canDeleteSession(session, workspace) && (
           <Tooltip>
             <TooltipTrigger>
               <span
@@ -210,6 +210,17 @@ export function SessionRow({
         )}
       </span>
 
+      {session.worktree_pending_delete && (
+        <Tooltip>
+          <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
+            <TriangleAlert aria-hidden="true" className="size-3 text-yellow-500" />
+            <span className="sr-only">Worktree partly deleted</span>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="text-[10px]">
+            Worktree partly deleted: delete the session to finish
+          </TooltipContent>
+        </Tooltip>
+      )}
       {session.worktree_path !== null ? (
         <GitBranch className="size-3 shrink-0 text-muted-foreground/40" />
       ) : (

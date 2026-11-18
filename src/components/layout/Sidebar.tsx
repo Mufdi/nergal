@@ -6,7 +6,11 @@ import { confirm as swalConfirm } from "@/lib/confirm";
 import { escapeHtml } from "@/lib/escapeHtml";
 import { Pencil, Pin, Trash2 } from "lucide-react";
 import { TextInputDialog } from "@/components/ui/TextInputDialog";
-import { deleteSessionWithGraceAction, deleteWorkspaceWithGraceAction } from "@/stores/pendingDeletes";
+import {
+  confirmAndDeleteSession,
+  deleteSessionWithGraceAction,
+  deleteWorkspaceWithGraceAction,
+} from "@/stores/pendingDeletes";
 import { workspaceDefaultPinsMapAtom, loadWorkspaceDefaultPinsAtom } from "@/stores/pinnedNotes";
 import { focusZoneAtom, previousNonTerminalZoneAtom, triggerResumeSessionAtom, triggerNewSessionAtom, triggerAddWorkspaceAtom, triggerMergeAtom, triggerJumpToProjectAtom, sidebarSelectedIdxAtom, focusedWorkspaceIdAtom } from "@/stores/shortcuts";
 import {
@@ -37,6 +41,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import * as terminalService from "@/components/terminal/terminalService";
 import { TasksIsland } from "@/components/tasks/TasksIsland";
 import { NergalLogo, NergalN } from "@/components/layout/NergalLogo";
+import { canDeleteSession } from "@/lib/sessionDelete";
 import {
   Tooltip,
   TooltipProvider,
@@ -232,17 +237,8 @@ function useSessionActions() {
       .catch(() => {});
   }
 
-  async function deleteSession(session: Session) {
-    const ok = await swalConfirm({
-      title: "Delete session?",
-      body: `<strong>${escapeHtml(session.name)}</strong> will be removed and its terminal closed.`,
-      confirmLabel: "Delete",
-      cancelLabel: "Cancel",
-      kind: "warning",
-      destructive: true,
-    });
-    if (!ok) return;
-    deleteWithGrace(session);
+  function deleteSession(session: Session) {
+    return confirmAndDeleteSession(session, deleteWithGrace);
   }
 
   return { renameSession, deleteSession };
@@ -265,7 +261,7 @@ function CollapsedSidebar() {
   const sessionsWithWs = workspaces.flatMap((w) =>
     w.sessions
       .filter((s) => s.status !== "completed")
-      .map((s) => ({ session: s, workspaceName: w.name }))
+      .map((s) => ({ session: s, workspace: w }))
   );
 
   return (
@@ -274,7 +270,7 @@ function CollapsedSidebar() {
       <div className="mb-2 mt-1 flex shrink-0 items-center justify-center px-1.5">
         <NergalN size={20} />
       </div>
-      {sessionsWithWs.map(({ session: s, workspaceName }) => (
+      {sessionsWithWs.map(({ session: s, workspace }) => (
         <Tooltip key={s.id}>
           <TooltipTrigger
             onClick={() => setActiveSessionId(s.id)}
@@ -286,7 +282,7 @@ function CollapsedSidebar() {
           </TooltipTrigger>
           <TooltipContent side="right" className="p-0" sideOffset={4}>
             <div className="px-2.5 py-1.5">
-              <p className="text-[9px] text-muted-foreground">{workspaceName}</p>
+              <p className="text-[9px] text-muted-foreground">{workspace.name}</p>
               <div className="flex items-center gap-1.5">
                 <p className="text-[11px] font-medium">{s.name}</p>
                 <button
@@ -297,7 +293,7 @@ function CollapsedSidebar() {
                 >
                   <Pencil className="size-2.5" />
                 </button>
-                {s.worktree_path !== null && (
+                {canDeleteSession(s, workspace) && (
                   <button
                     type="button"
                     aria-label="Delete"
@@ -609,9 +605,7 @@ function WorkspacesView() {
     // conversation. The backend (pty.rs) swaps the "continue" sentinel for
     // the stored agent_internal_session_id when one is on the session row,
     // so this resolves to `claude --resume <uuid>` / `pi --session <uuid>` /
-    // `codex resume <id>` / `opencode --session <id>`. When no UUID is
-    // persisted (very short sessions, crash before capture) the adapters
-    // fall back to their `--continue` equivalents.
+    // `codex resume <id>` / `opencode --session <id>`.
     if (!freshSessions.has(session.id) && !terminalService.hasTerminal(session.id)) {
       setLaunchMode((prev) => ({ ...prev, [session.id]: "continue" }));
     }

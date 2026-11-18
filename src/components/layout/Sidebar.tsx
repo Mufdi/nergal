@@ -12,6 +12,7 @@ import {
   deleteWorkspaceWithGraceAction,
 } from "@/stores/pendingDeletes";
 import { workspaceDefaultPinsMapAtom, loadWorkspaceDefaultPinsAtom } from "@/stores/pinnedNotes";
+import { addAndActivateSessionAtom } from "@/stores/sessionActivation";
 import { focusZoneAtom, previousNonTerminalZoneAtom, triggerResumeSessionAtom, triggerNewSessionAtom, triggerAddWorkspaceAtom, triggerMergeAtom, triggerJumpToProjectAtom, sidebarSelectedIdxAtom, focusedWorkspaceIdAtom } from "@/stores/shortcuts";
 import {
   workspacesAtom,
@@ -348,7 +349,7 @@ function WorkspacesView() {
   const setActiveSessionId = useSetAtom(activeSessionIdAtom);
   const setLaunchMode = useSetAtom(sessionLaunchModeAtom);
   const freshSessions = useAtomValue(freshSessionsAtom);
-  const setFreshSessions = useSetAtom(freshSessionsAtom);
+  const addAndActivateSession = useSetAtom(addAndActivateSessionAtom);
   const expandedFromAtom = useAtomValue(expandedWorkspaceIdsAtom);
   const setExpandedAtom = useSetAtom(expandedWorkspaceIdsAtom);
   const openTab = useSetAtom(openTabAction);
@@ -641,23 +642,7 @@ function WorkspacesView() {
         }
       }
 
-      setWorkspaces((prev) =>
-        prev.map((w) =>
-          w.id === workspaceId
-            ? { ...w, sessions: [...w.sessions, session] }
-            : w,
-        ),
-      );
-      // Keep the workspace expanded so the new row stays visible and the
-      // numeric switch-session shortcuts (Ctrl+1..9) keep targeting it.
-      setExpandedIds((prev) => {
-        if (prev.has(workspaceId)) return prev;
-        const next = new Set(prev);
-        next.add(workspaceId);
-        return next;
-      });
-      setFreshSessions((prev: Set<string>) => new Set([...prev, session.id]));
-      setActiveSessionId(session.id);
+      addAndActivateSession(session);
       setAddingSessionFor(null);
       setNewSessionName("");
       setFocusZoneDirect("terminal");

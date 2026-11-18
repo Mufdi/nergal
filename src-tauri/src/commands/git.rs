@@ -1,8 +1,9 @@
 use tauri::State;
 
+use super::shared::blocking;
+
 use super::shared::{resolve_session_branch, resolve_session_cwd};
 use crate::db::SharedDb;
-use crate::platform_spawn::NoWindow;
 
 #[tauri::command]
 pub fn init_git_repo(db: State<'_, SharedDb>, workspace_id: String) -> Result<(), String> {
@@ -135,10 +136,15 @@ pub struct GitInfo {
 
 /// Return branch name, dirty state, and commits-ahead count for a session.
 #[tauri::command]
-pub fn get_session_git_info(
+pub async fn get_session_git_info(
     db: State<'_, SharedDb>,
     session_id: String,
 ) -> Result<GitInfo, String> {
+    let db = db.inner().clone();
+    blocking(move || get_session_git_info_blocking(&db, session_id)).await
+}
+
+fn get_session_git_info_blocking(db: &SharedDb, session_id: String) -> Result<GitInfo, String> {
     let (wt_path, worktree_branch_fallback, repo_path) = {
         let db = db.lock().map_err(|e| e.to_string())?;
 
@@ -286,10 +292,15 @@ pub struct GitFullStatus {
 }
 
 #[tauri::command]
-pub fn get_git_status(
+pub async fn get_git_status(
     db: State<'_, SharedDb>,
     session_id: String,
 ) -> Result<GitFullStatus, String> {
+    let db = db.inner().clone();
+    blocking(move || get_git_status_blocking(&db, session_id)).await
+}
+
+fn get_git_status_blocking(db: &SharedDb, session_id: String) -> Result<GitFullStatus, String> {
     let cwd = {
         let db = db.lock().map_err(|e| e.to_string())?;
         resolve_session_cwd(&db, &session_id)?
@@ -391,8 +402,17 @@ pub fn git_unstage_all(db: State<'_, SharedDb>, session_id: String) -> Result<()
 }
 
 #[tauri::command]
-pub fn git_commit(
+pub async fn git_commit(
     db: State<'_, SharedDb>,
+    session_id: String,
+    message: String,
+) -> Result<String, String> {
+    let db = db.inner().clone();
+    blocking(move || git_commit_blocking(&db, session_id, message)).await
+}
+
+fn git_commit_blocking(
+    db: &SharedDb,
     session_id: String,
     message: String,
 ) -> Result<String, String> {
@@ -404,8 +424,16 @@ pub fn git_commit(
 }
 
 #[tauri::command]
-pub fn git_stash_list(
+pub async fn git_stash_list(
     db: State<'_, SharedDb>,
+    session_id: String,
+) -> Result<Vec<crate::worktree::StashEntry>, String> {
+    let db = db.inner().clone();
+    blocking(move || git_stash_list_blocking(&db, session_id)).await
+}
+
+fn git_stash_list_blocking(
+    db: &SharedDb,
     session_id: String,
 ) -> Result<Vec<crate::worktree::StashEntry>, String> {
     let cwd = {
@@ -495,8 +523,17 @@ pub fn git_stash_branch(
 }
 
 #[tauri::command]
-pub fn get_recent_commits(
+pub async fn get_recent_commits(
     db: State<'_, SharedDb>,
+    session_id: String,
+    count: u32,
+) -> Result<Vec<crate::worktree::CommitEntry>, String> {
+    let db = db.inner().clone();
+    blocking(move || get_recent_commits_blocking(&db, session_id, count)).await
+}
+
+fn get_recent_commits_blocking(
+    db: &SharedDb,
     session_id: String,
     count: u32,
 ) -> Result<Vec<crate::worktree::CommitEntry>, String> {
@@ -555,7 +592,12 @@ pub fn pull_target_into_session(
 }
 
 #[tauri::command]
-pub fn git_push(db: State<'_, SharedDb>, session_id: String) -> Result<bool, String> {
+pub async fn git_push(db: State<'_, SharedDb>, session_id: String) -> Result<bool, String> {
+    let db = db.inner().clone();
+    blocking(move || git_push_blocking(&db, session_id)).await
+}
+
+fn git_push_blocking(db: &SharedDb, session_id: String) -> Result<bool, String> {
     let (cwd, branch) = {
         let db = db.lock().map_err(|e| e.to_string())?;
         (
@@ -564,40 +606,4 @@ pub fn git_push(db: State<'_, SharedDb>, session_id: String) -> Result<bool, Str
         )
     };
     crate::worktree::push(&cwd, &branch).map_err(|e| e.to_string())
-}
-
-// ── Git: commit files ──
-
-#[tauri::command]
-pub fn get_commit_files(
-    session_id: String,
-    hash: String,
-    db: State<'_, SharedDb>,
-) -> Result<Vec<String>, String> {
-    let cwd = {
-        let db = db.lock().map_err(|e| e.to_string())?;
-        resolve_session_cwd(&db, &session_id)?
-    };
-
-    let output = std::process::Command::new("git")
-        .no_window()
-        .args(["diff-tree", "--no-commit-id", "-r", "--name-only", &hash])
-        .current_dir(&cwd)
-        .output()
-        .map_err(|e| e.to_string())?;
-
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).to_string());
-    }
-
-    let files = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(|l| {
-            // Return absolute path for DiffView compatibility
-            cwd.join(l).to_string_lossy().to_string()
-        })
-        .collect();
-
-    Ok(files)
 }

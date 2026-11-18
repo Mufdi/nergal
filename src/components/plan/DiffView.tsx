@@ -4,7 +4,7 @@ import { ProgressBar } from "@/components/ui/ProgressBar";
 import { useAtomValue } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
 import { activeSessionFilesAtom } from "@/stores/files";
-import { zenModeAtom, zenActiveZoneAtom, prZenAtom } from "@/stores/zenMode";
+import { zenModeAtom, zenActiveZoneAtom, prZenAtom, type CommitScope } from "@/stores/zenMode";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
 import { filePickerOpenAtom } from "@/stores/rightPanel";
 import { ChevronUp, ChevronDown, ChevronRight, ChevronLeft, Maximize2 } from "lucide-react";
@@ -407,9 +407,10 @@ interface DiffViewProps {
   /// decides what "next file" means — e.g., next entry in the Zen state.files
   /// list, or next entry in `activeSessionFilesAtom` for a Diff tab.
   onNavFile?: (direction: "prev" | "next") => void;
+  commit?: { hash: string; scope: CommitScope } | null;
 }
 
-export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen, inZen = false, onNavFile }: DiffViewProps) {
+export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen, inZen = false, onNavFile, commit = null }: DiffViewProps) {
   const [lines, setLines] = useState<DiffLine[]>([]);
   const [hunks, setHunks] = useState<Hunk[]>([]);
   const [loading, setLoading] = useState(true);
@@ -420,13 +421,20 @@ export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen, i
   const scrollRef = useRef<HTMLDivElement>(null);
   const hunkRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
-  const fileTimestamp = files.find((f) => f.path === filePath)?.timestamp ?? 0;
+  const fileTimestamp = commit ? 0 : (files.find((f) => f.path === filePath)?.timestamp ?? 0);
 
   const fetchDiff = useCallback(() => {
     setLoading(true);
     setError(null);
 
-    invoke<{ diff_text: string }>("get_file_diff", { sessionId, filePath })
+    const request = commit
+      ? invoke<{ diff_text: string }>("get_commit_file_diff", {
+          scope: commit.scope,
+          hash: commit.hash,
+          filePath,
+        })
+      : invoke<{ diff_text: string }>("get_file_diff", { sessionId, filePath });
+    request
       .then((res) => {
         const parsed = parseDiff(res.diff_text);
         setLines(parsed.lines);
@@ -436,7 +444,7 @@ export function DiffView({ filePath, sessionId, sideBySide = false, onOpenZen, i
       })
       .catch((err: unknown) => setError(String(err)))
       .finally(() => setLoading(false));
-  }, [filePath, sessionId]);
+  }, [filePath, sessionId, commit?.hash, commit?.scope]);
 
   useEffect(() => {
     fetchDiff();

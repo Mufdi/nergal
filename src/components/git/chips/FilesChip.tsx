@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke, subscribe } from "@/lib/tauri";
 import { useSetAtom, useAtomValue } from "jotai";
+import { chipKeysActive } from "@/lib/gitChipKeys";
+import { focusZoneAtom } from "@/stores/shortcuts";
 import { refreshGitInfoAtom } from "@/stores/git";
 import { triggerShipAtom } from "@/stores/ship";
 import { toastsAtom } from "@/stores/toast";
@@ -73,11 +75,10 @@ export function FilesChip({ sessionId, ahead, inZen = false }: FilesChipProps) {
   const anyZenOpen = zenState.open || conflictsZen || prZen !== null;
   // The Zen sidebar copy fires keys only when the user has switched the Zen
   // zone to "sidebar" (via Alt+→ or click). The non-Zen copy fires only when
-  // no Zen overlay is up. Result: exactly one FilesChip listener is active
-  // at any time, and DOM focus never enters the equation.
-  const listenerActive = inZen
-    ? anyZenOpen && zenZone === "sidebar"
-    : !anyZenOpen;
+  // no Zen overlay is up and the panel zone holds focus. Result: at most one
+  // FilesChip listener is active at any time.
+  const focusZone = useAtomValue(focusZoneAtom);
+  const listenerActive = chipKeysActive({ inZen, anyZenOpen, zenZone, focusZone });
 
   const allFiles = [
     ...status.staged.map((f) => f.path),

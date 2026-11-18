@@ -7,6 +7,7 @@ import {
   activeConflictedFilesAtom,
   prChecksMapAtom,
   prsCacheMapAtom,
+  localBranchesCacheAtom,
   stashCountMapAtom,
   gitHeaderMapAtom,
   prInfoMapAtom,
@@ -44,6 +45,9 @@ import { HistoryChip } from "./chips/HistoryChip";
 import { StashesChip } from "./chips/StashesChip";
 import { PrsChip } from "./chips/PrsChip";
 import { ConflictsChip } from "./chips/ConflictsChip";
+import { BranchesChip } from "./chips/BranchesChip";
+import { orphanBranchCount } from "@/lib/localBranches";
+import { loadLocalBranches } from "@/stores/localBranchesLoader";
 
 interface PrInfo {
   number: number;
@@ -74,6 +78,8 @@ export function GitPanel({ sessionId }: GitPanelProps) {
   const setChipModeMap = useSetAtom(gitChipModeAtom);
   const prsCacheMap = useAtomValue(prsCacheMapAtom);
   const setPrsCacheMap = useSetAtom(prsCacheMapAtom);
+  const branchesCache = useAtomValue(localBranchesCacheAtom);
+  const setBranchesCache = useSetAtom(localBranchesCacheAtom);
   const stashCountMap = useAtomValue(stashCountMapAtom);
   const setStashCountMap = useSetAtom(stashCountMapAtom);
   const gitHeaderMap = useAtomValue(gitHeaderMapAtom);
@@ -113,6 +119,7 @@ export function GitPanel({ sessionId }: GitPanelProps) {
     ? (prsCacheMap[workspaceId]?.data.filter((p) => p.state === "OPEN").length ?? 0)
     : 0;
   const stashCount = stashCountMap[sessionId]?.count ?? 0;
+  const branchCount = orphanBranchCount(workspaceId ? (branchesCache[workspaceId] ?? []) : []);
 
   const setChipMode = useCallback((mode: ChipMode) => {
     setChipModeMap((prev) => ({ ...prev, [sessionId]: mode }));
@@ -213,6 +220,17 @@ export function GitPanel({ sessionId }: GitPanelProps) {
     // mutation (would create a refresh loop).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, refreshPrsList]);
+
+  const workspaceSessionIds = (workspaces.find((w) => w.id === workspaceId)?.sessions ?? [])
+    .map((s) => s.id)
+    .join(",");
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    loadLocalBranches(workspaceId, { fresh: true })
+      .then((rows) => setBranchesCache((prev) => ({ ...prev, [workspaceId]: rows })))
+      .catch(() => {});
+  }, [workspaceId, workspaceSessionIds, setBranchesCache]);
 
   useEffect(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -465,6 +483,7 @@ export function GitPanel({ sessionId }: GitPanelProps) {
         conflictCount={conflictedFiles.length}
         prCount={prCount}
         stashCount={stashCount}
+        branchCount={branchCount}
         onSelect={setChipMode}
       />
 
@@ -474,6 +493,7 @@ export function GitPanel({ sessionId }: GitPanelProps) {
         {chipMode === "stashes" && <StashesChip sessionId={sessionId} />}
         {chipMode === "prs" && <PrsChip sessionId={sessionId} workspaceId={workspaceId} />}
         {chipMode === "conflicts" && <ConflictsChip sessionId={sessionId} />}
+        {chipMode === "branches" && <BranchesChip sessionId={sessionId} workspaceId={workspaceId} />}
       </div>
     </div>
   );

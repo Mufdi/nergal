@@ -3,6 +3,7 @@ import { activeSessionIdAtom, sessionTabIdsAtom, workspacesAtom, type Workspace 
 import { toastsAtom } from "./toast";
 import { invoke } from "@/lib/tauri";
 import { sessionScopedMapAtom } from "./sessionScope";
+import type { LocalBranchRow } from "@/lib/localBranches";
 
 export interface GitInfo {
   branch: string;
@@ -79,11 +80,11 @@ export const activePrChecksAtom = atom<PrChecks | null>((get) => {
   return get(prChecksMapAtom)[id] ?? null;
 });
 
-/// The five chips of the GitPanel. Each chip owns its full layout; chips are
-/// reached via `Shift+←/→` and persist per-workspace.
-export type ChipMode = "files" | "history" | "stashes" | "prs" | "conflicts";
+/// The six chips of the GitPanel. Each chip owns its full layout; chips are
+/// reached via `Shift+←/→` and persist per-session.
+export type ChipMode = "files" | "history" | "stashes" | "prs" | "conflicts" | "branches";
 
-export const CHIP_ORDER: ChipMode[] = ["files", "history", "stashes", "prs", "conflicts"];
+export const CHIP_ORDER: ChipMode[] = ["files", "history", "stashes", "prs", "conflicts", "branches"];
 
 /// Per-session active chip in the GitPanel. Keyed by sessionId because each
 /// chip's data is naturally session-scoped: Files/History/Stashes/Conflicts
@@ -92,6 +93,9 @@ export const CHIP_ORDER: ChipMode[] = ["files", "history", "stashes", "prs", "co
 /// chip selection across sessions of the same repo — switching from a
 /// conflicted session to a clean sibling kept the Conflicts chip showing.
 export const gitChipModeAtom = sessionScopedMapAtom<ChipMode>();
+
+// Keyed by workspaceId, not sessionId — plain atom (branches belong to the repo).
+export const localBranchesCacheAtom = atom<Record<string, LocalBranchRow[]>>({});
 
 /// A stash entry surfaced by the backend's `git_stash_list`. Mirrors the
 /// Rust `StashEntry` struct exactly.

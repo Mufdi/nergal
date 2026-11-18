@@ -1,15 +1,22 @@
 use tauri::State;
 
+use super::shared::blocking;
+
 use super::shared::resolve_session_cwd;
 use crate::db::SharedDb;
 use crate::hooks::state::HookState;
 use crate::platform_spawn::NoWindow;
 
 #[tauri::command]
-pub fn get_conflicted_files(
+pub async fn get_conflicted_files(
     db: State<'_, SharedDb>,
     session_id: String,
 ) -> Result<Vec<String>, String> {
+    let db = db.inner().clone();
+    blocking(move || get_conflicted_files_blocking(&db, session_id)).await
+}
+
+fn get_conflicted_files_blocking(db: &SharedDb, session_id: String) -> Result<Vec<String>, String> {
     let cwd = {
         let db = db.lock().map_err(|e| e.to_string())?;
         resolve_session_cwd(&db, &session_id)?

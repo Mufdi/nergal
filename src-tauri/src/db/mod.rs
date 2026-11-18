@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::agents::claude_code::cost::CostSummary;
-use crate::models::{Session, SessionStatus, Workspace};
+use crate::models::{BranchOwner, Session, SessionStatus, Workspace};
 use crate::tasks::{Task, TaskStatus};
 
 pub struct ResumePeer {

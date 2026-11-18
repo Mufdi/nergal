@@ -224,6 +224,11 @@ export function GitFullView() {
               <ChevronLeft className="size-4" />
             </button>
             <span className="text-xs text-foreground font-medium truncate">{fileName}</span>
+            {state.commit && (
+              <span className="font-mono text-[10px] text-muted-foreground">
+                {state.commit.hash.slice(0, 7)}
+              </span>
+            )}
             <span className="text-[10px] text-muted-foreground">
               ({state.currentIndex + 1}/{state.files.length})
             </span>
@@ -252,7 +257,8 @@ export function GitFullView() {
         {/* Diff viewer — side by side */}
         <div className="flex-1 overflow-hidden">
           <DiffView
-            key={state.filePath}
+            key={`${state.commit?.hash ?? ""}:${state.filePath}`}
+            commit={state.commit}
             filePath={state.filePath}
             sessionId={state.sessionId}
             sideBySide

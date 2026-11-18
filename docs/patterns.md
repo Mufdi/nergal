@@ -165,7 +165,7 @@ Out of scope for v1: bare-letter §8 verbs are not remappable.
 
 A horizontal strip of pill chips switches sibling views inside one panel.
 Canonical implementation: `src/components/git/chips/ChipStrip.tsx` (GitPanel:
-Files / History / Stashes / PRs / Conflicts). Other instances:
+Files / History / Stashes / PRs / Conflicts / Branches). Other instances:
 `src/components/spec/SpecPanel.tsx:389` (spec tabs) and
 `src/components/clickup/ClickUpPanel.tsx` (`VIEW_ORDER`: My tasks / Status /
 List / Assignee — `Shift+←/→` cycles, handler at `:175`).

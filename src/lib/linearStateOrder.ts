@@ -15,21 +15,8 @@ const CLOSED_FROM = 10;
 const NO_STATE_RANK = 20;
 const UNKNOWN_OPEN_RANK = 5;
 
-// Name wins over type: Linear gives Duplicate and Canceled the same `canceled`
-// type, and team RR's legacy Pending is `completed` but means In Review.
-const RANK_BY_NAME: Record<string, number> = {
-  "in review": 0,
-  pending: 0,
-  "in progress": 1,
-  todo: 2,
-  backlog: 3,
-  triage: 4,
-  done: 10,
-  duplicate: 11,
-  canceled: 12,
-  cancelled: 12,
-};
-
+// From the state type only, so renaming or adding a state in Linear needs no
+// change here.
 const RANK_BY_TYPE: Record<string, number> = {
   started: 1,
   unstarted: 2,
@@ -46,8 +33,6 @@ export function normalizeStateName(name: string | undefined): string {
 }
 
 export function stateRank(s: StateLike): number {
-  const byName = RANK_BY_NAME[normalizeStateName(s.stateName)];
-  if (byName !== undefined) return byName;
   if (s.stateType == null) return s.stateName ? UNKNOWN_OPEN_RANK : NO_STATE_RANK;
   return RANK_BY_TYPE[s.stateType] ?? UNKNOWN_OPEN_RANK;
 }
@@ -57,11 +42,16 @@ export function isClosedState(s: StateLike): boolean {
   return rank >= CLOSED_FROM && rank < NO_STATE_RANK;
 }
 
+// Linear sorts by status "closest to done first": an open workflow lists its
+// later columns first, a closed one keeps its own order.
 export function compareStates(a: StateLike, b: StateLike): number {
   const ra = stateRank(a);
   const rb = stateRank(b);
   if (ra !== rb) return ra - rb;
-  return (a.statePosition ?? 0) - (b.statePosition ?? 0);
+  const pa = a.statePosition ?? 0;
+  const pb = b.statePosition ?? 0;
+  if (pa !== pb) return ra >= CLOSED_FROM ? pa - pb : pb - pa;
+  return normalizeStateName(a.stateName).localeCompare(normalizeStateName(b.stateName));
 }
 
 export function stateFilterOptions(
@@ -70,7 +60,12 @@ export function stateFilterOptions(
   const byKey = new Map<string, { option: StateFilterOption; sample: StateLike }>();
   for (const i of issues) {
     const key = normalizeStateName(i.stateName);
-    if (!key || byKey.has(key)) continue;
+    if (!key) continue;
+    const seen = byKey.get(key);
+    if (seen) {
+      if (compareStates(i, seen.sample) < 0) seen.sample = i;
+      continue;
+    }
     byKey.set(key, {
       option: {
         key,
@@ -112,6 +107,10 @@ export function groupByState<T extends StateLike & { stateColor?: string }>(
         state: i,
       };
       groups.set(key, g);
+    } else if (compareStates(i, g.state) < 0) {
+      // Two teams can share a state name with different positions; the best
+      // member ranks the group so the order does not follow arrival order.
+      g.state = i;
     }
     g.issues.push(i);
   }

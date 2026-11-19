@@ -1,0 +1,28 @@
+{
+  "tier": "S",
+  "ceremony": "quick-fix",
+  "risk_tier": "low",
+  "spec_target": "linear-mirror",
+  "tracker": {
+    "system": "linear",
+    "id": "FRI-509",
+    "pending": []
+  },
+  "validation": "validated",
+  "planning_only": false,
+  "iprev": {
+    "rounds": 2,
+    "verdict": "APPROVED"
+  },
+  "interview_answers": {
+    "rule": "FRI-509 description: type order started\u2192unstarted\u2192backlog\u2192triage\u2192completed\u2192duplicate\u2192canceled; open types position desc, closed asc; no names.",
+    "changelog": "User: check recent changelogs for panel improvements and just do it, no questions."
+  },
+  "events": [
+    {
+      "ts": "2026-11-18T22:00:00-03:00",
+      "type": "validated",
+      "note": "iprev 2 rounds sonnet; R1 9 findings (duplicate type refuted by mirror data; ties/null position/fold tests added), R2 APPROVED."
+    }
+  ]
+}

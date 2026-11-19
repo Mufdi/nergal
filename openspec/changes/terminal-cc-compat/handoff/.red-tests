@@ -1,0 +1,4 @@
+79c08a3b6bda6d9d04ecba68994b1009deb0c08d  src-tauri/src/terminal/session_compat_tests.rs
+7b523093278fac62a199965e8a831a52967fc7eb  src-tauri/src/terminal/emitter_sync_tests.rs
+7ea02d16e46f27e8905fff545e677bc10b6e5faf  src/components/terminal/cssColor.test.ts
+88789017633003886bc59b4cb5dd627afef40f91  src-tauri/src/terminal/emitter_review_tests.rs

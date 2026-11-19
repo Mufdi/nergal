@@ -23,6 +23,7 @@ import { toastsAtom } from "@/stores/toast";
 import { FontAtlas, isWideCell, measureFont, type FontMetrics } from "./fontAtlas";
 import { auxButtonToForward, auxPress, auxRelease, type AuxHeld } from "./mouseButtons";
 import { TERM_FONT, TERM_THEME, refreshTermTheme, rgbaToCss } from "./theme";
+import { cssColorToRgb } from "./cssColor";
 import { shouldPassThrough } from "./passThrough";
 
 const ATTACH_ATTEMPTS = 20;
@@ -107,6 +108,19 @@ interface Entry {
 
 const entries = new Map<string, Entry>();
 const pending = new Set<string>();
+// The backend answers OSC 10/11 color queries from these, so the agent CLI can pick a
+// light or dark palette that matches the app theme.
+async function syncDefaultColors(): Promise<void> {
+  const fg = cssColorToRgb(TERM_THEME.foreground);
+  const bg = cssColorToRgb(TERM_THEME.background);
+  if (!fg || !bg) return;
+  try {
+    await invoke("set_terminal_default_colors", { fg, bg });
+  } catch (err) {
+    console.warn("set_terminal_default_colors failed", err);
+  }
+}
+
 const failureToasted = new Set<string>();
 const hosts = new Map<Region, HTMLDivElement | null>();
 const activeIds = new Map<Region, string | null>();
@@ -115,6 +129,7 @@ const activeIds = new Map<Region, string | null>();
 // The atlas keys glyphs by `(ch, fg, …)` so a later color flip lazily
 // rasterizes new variants — no manual cache invalidation needed.
 refreshTermTheme();
+void syncDefaultColors();
 
 // Window-level so a middle/right release off the pane still reaches the app
 // (CC pastes on release); one listener for all terminals instead of one per
@@ -139,6 +154,7 @@ if (typeof document !== "undefined") {
   // family changed, rebuild the family-keyed metrics + atlas and refit.
   const restyleTerminals = (): void => {
     refreshTermTheme();
+    void syncDefaultColors();
     const dpr = window.devicePixelRatio || 1;
     for (const entry of entries.values()) {
       // The container's inline `background` was set imperatively at create

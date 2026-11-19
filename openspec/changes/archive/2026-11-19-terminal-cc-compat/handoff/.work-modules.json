@@ -1,0 +1,31 @@
+{
+  "tier": "M",
+  "ceremony": "standard",
+  "risk_tier": "low",
+  "spec_target": "terminal-wezterm",
+  "tracker": {
+    "system": "linear",
+    "id": "FRI-504",
+    "related": [
+      "FRI-505"
+    ],
+    "pending": []
+  },
+  "validation": "validated",
+  "planning_only": false,
+  "iprev": {
+    "rounds": 2,
+    "verdict": "APPROVED"
+  },
+  "interview_answers": {
+    "user_order": "FRI-504 and FRI-505 after FRI-496",
+    "decrqm": "Keep DECRQM 2026 answer at 2 (recognized); CC only checks support."
+  },
+  "events": [
+    {
+      "ts": "2026-11-18T21:40:00-03:00",
+      "type": "validated",
+      "note": "iprev 2 rounds (sonnet): R1 REVISE 12 findings (shared cell races, wait spec, scanner), R2 APPROVED with task-level tightenings applied."
+    }
+  ]
+}

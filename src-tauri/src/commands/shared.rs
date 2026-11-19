@@ -1,5 +1,17 @@
 use std::path::PathBuf;
 
+// Tauri 2 runs a sync command on the main thread, where the Linux webview
+// draws, so a slow git or gh call there freezes the whole window.
+pub(crate) async fn blocking<T, F>(work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 // ── Ship flow: push, ship, PR preview, CI checks, conflicts ──
 
 pub(crate) fn resolve_session_base(

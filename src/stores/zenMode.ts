@@ -28,12 +28,17 @@ export const prZenAtom = atom<PrZenTarget | null>(null);
 /// The default ("viewer") matches the natural intent: Zen opens, you read.
 export const zenActiveZoneAtom = atom<ZenZone>("viewer");
 
+export type CommitScope =
+  | { kind: "session"; sessionId: string }
+  | { kind: "workspace"; workspaceId: string };
+
 export interface ZenModeState {
   open: boolean;
   filePath: string | null;
   sessionId: string | null;
   files: string[];
   currentIndex: number;
+  commit: { hash: string; scope: CommitScope } | null;
 }
 
 const defaultState: ZenModeState = {
@@ -42,13 +47,19 @@ const defaultState: ZenModeState = {
   sessionId: null,
   files: [],
   currentIndex: 0,
+  commit: null,
 };
 
 export const zenModeAtom = atom<ZenModeState>(defaultState);
 
 export const openZenModeAtom = atom(
   null,
-  (_get, set, params: { filePath: string; sessionId: string; files: string[] }) => {
+  (_get, set, params: {
+    filePath: string;
+    sessionId: string;
+    files: string[];
+    commit?: { hash: string; scope: CommitScope };
+  }) => {
     const idx = params.files.indexOf(params.filePath);
     set(zenModeAtom, {
       open: true,
@@ -56,6 +67,7 @@ export const openZenModeAtom = atom(
       sessionId: params.sessionId,
       files: params.files,
       currentIndex: idx >= 0 ? idx : 0,
+      commit: params.commit ?? null,
     });
   },
 );

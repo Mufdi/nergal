@@ -1,10 +1,16 @@
 import { useEffect } from "react";
+import { useAtomValue } from "jotai";
+import { chipKeysActive } from "@/lib/gitChipKeys";
+import { focusZoneAtom } from "@/stores/shortcuts";
+import { zenModeAtom, prZenAtom } from "@/stores/zenMode";
+import { conflictsZenOpenAtom } from "@/stores/conflict";
 import {
   FileText,
   GitCommitHorizontal,
   Archive,
   GitPullRequest,
   AlertTriangle,
+  GitBranch,
 } from "lucide-react";
 import { CHIP_ORDER, type ChipMode } from "@/stores/git";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
@@ -14,6 +20,7 @@ interface ChipStripProps {
   conflictCount: number;
   prCount: number;
   stashCount: number;
+  branchCount: number;
   onSelect: (mode: ChipMode) => void;
 }
 
@@ -23,11 +30,24 @@ const CHIP_META: Record<ChipMode, { label: string; icon: typeof FileText }> = {
   stashes: { label: "Stashes", icon: Archive },
   prs: { label: "PRs", icon: GitPullRequest },
   conflicts: { label: "Conflicts", icon: AlertTriangle },
+  branches: { label: "Branches", icon: GitBranch },
 };
 
-export function ChipStrip({ active, conflictCount, prCount, stashCount, onSelect }: ChipStripProps) {
+export function ChipStrip({ active, conflictCount, prCount, stashCount, branchCount, onSelect }: ChipStripProps) {
+  const focusZone = useAtomValue(focusZoneAtom);
+  const zenOpen = useAtomValue(zenModeAtom).open;
+  const conflictsZen = useAtomValue(conflictsZenOpenAtom);
+  const prZen = useAtomValue(prZenAtom);
+  const listenerActive = chipKeysActive({
+    inZen: false,
+    anyZenOpen: zenOpen || conflictsZen || prZen !== null,
+    zenZone: "",
+    focusZone,
+  });
+
   /// Shift+←/→ cycles between chips. Mirrors SpecPanel.tsx:380.
   useEffect(() => {
+    if (!listenerActive) return;
     function onKey(e: KeyboardEvent) {
       const target = e.target as HTMLElement | null;
       const inField = target?.tagName === "INPUT"
@@ -47,7 +67,7 @@ export function ChipStrip({ active, conflictCount, prCount, stashCount, onSelect
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, onSelect]);
+  }, [active, onSelect, listenerActive]);
 
   return (
     <div className="flex shrink-0 items-center border-b border-border/50">
@@ -55,7 +75,7 @@ export function ChipStrip({ active, conflictCount, prCount, stashCount, onSelect
         {CHIP_ORDER.map((mode) => {
           const { label, icon: Icon } = CHIP_META[mode];
           const isActive = active === mode;
-          const count = mode === "conflicts" ? conflictCount : mode === "prs" ? prCount : mode === "stashes" ? stashCount : 0;
+          const count = mode === "conflicts" ? conflictCount : mode === "prs" ? prCount : mode === "stashes" ? stashCount : mode === "branches" ? branchCount : 0;
           const conflictHot = mode === "conflicts" && conflictCount > 0;
           const dim = mode === "conflicts" && conflictCount === 0 && !isActive;
           return (

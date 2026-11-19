@@ -6,7 +6,8 @@ const s = (stateName: string, stateType: string): StateLike => ({ stateName, sta
 
 const DONE = s("Done", "completed");
 const TODO = s("Todo", "unstarted");
-const PENDING = s("Pending", "completed");
+const SHIPPED = s("Shipped", "completed");
+const PENDING_STARTED = s("Pending", "started");
 const CANCELED = s("Canceled", "canceled");
 
 function ctx(overrides: Partial<FoldContext> = {}): FoldContext {
@@ -31,8 +32,12 @@ describe("foldedByStateFilter", () => {
     expect(foldedByStateFilter(TODO, new Set(), false)).toBe(false);
   });
 
-  it("keeps Pending unfolded when show-completed is off", () => {
-    expect(foldedByStateFilter(PENDING, new Set(), false)).toBe(false);
+  it("folds a Shipped completed state when show-completed is off", () => {
+    expect(foldedByStateFilter(SHIPPED, new Set(), false)).toBe(true);
+  });
+
+  it("keeps a state named Pending of type started unfolded when show-completed is off", () => {
+    expect(foldedByStateFilter(PENDING_STARTED, new Set(), false)).toBe(false);
   });
 
   it("never folds a group without a state", () => {

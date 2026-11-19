@@ -246,6 +246,21 @@ impl Database {
         Ok(())
     }
 
+    pub fn branch_owners(&self, workspace_id: &str) -> Result<Vec<BranchOwner>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, worktree_branch, merge_target FROM sessions WHERE workspace_id = ?1 AND worktree_branch IS NOT NULL ORDER BY created_at, rowid",
+        )?;
+        let rows = stmt.query_map([workspace_id], |row| {
+            Ok(BranchOwner {
+                session_id: row.get(0)?,
+                session_name: row.get(1)?,
+                branch: row.get(2)?,
+                merge_target: row.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     pub fn clear_session_worktree(&self, id: &str) -> Result<()> {
         self.conn.execute(
             "UPDATE sessions SET worktree_path = NULL, worktree_branch = NULL, status = 'idle', updated_at = ?1 WHERE id = ?2",
@@ -258,3 +273,7 @@ impl Database {
 #[cfg(test)]
 #[path = "sessions_root_tests.rs"]
 mod root_tests;
+
+#[cfg(test)]
+#[path = "branch_owners_tests.rs"]
+mod branch_owners_tests;

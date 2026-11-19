@@ -32,6 +32,14 @@ impl SessionStatus {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchOwner {
+    pub session_id: String,
+    pub session_name: String,
+    pub branch: String,
+    pub merge_target: Option<String>,
+}
+
 /// A single agent conversation, optionally backed by a git worktree.
 ///
 /// `agent_id` identifies which adapter owns the session (CC, OpenCode, Pi,

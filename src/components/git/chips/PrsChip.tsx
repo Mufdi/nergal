@@ -1,5 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
+import { chipKeysActive } from "@/lib/gitChipKeys";
+import { focusZoneAtom } from "@/stores/shortcuts";
 import { invoke } from "@/lib/tauri";
 import { open as openShell } from "@tauri-apps/plugin-shell";
 import type { PrSummary } from "@/stores/git";
@@ -86,7 +88,13 @@ export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
   const setPrZen = useSetAtom(prZenAtom);
   // PRs chip never lives in Zen — bail when any overlay is open so j/k
   // doesn't slide the (hidden) picker cursor while the user navigates Zen.
-  const listenerActive = !(zenState.open || conflictsZen || prZen !== null);
+  const focusZone = useAtomValue(focusZoneAtom);
+  const listenerActive = chipKeysActive({
+    inZen: false,
+    anyZenOpen: zenState.open || conflictsZen || prZen !== null,
+    zenZone: "",
+    focusZone,
+  });
 
   // leader 0 routes here when chipMode === "prs" (see shortcuts.ts).
   // Open PR Zen with the currently-selected PR; the cursor PR is the

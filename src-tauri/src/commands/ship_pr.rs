@@ -1,5 +1,7 @@
 use tauri::State;
 
+use super::shared::blocking;
+
 use super::shared::{resolve_session_base, resolve_session_branch, resolve_session_cwd};
 use crate::db::SharedDb;
 use crate::platform_spawn::NoWindow;
@@ -19,7 +21,15 @@ pub struct PrSummary {
 /// List the workspace's pull requests via `gh pr list`. Ordered with OPEN
 /// first (by `updatedAt` desc), then MERGED/CLOSED. Capped at 20.
 #[tauri::command]
-pub fn list_prs(db: State<'_, SharedDb>, workspace_id: String) -> Result<Vec<PrSummary>, String> {
+pub async fn list_prs(
+    db: State<'_, SharedDb>,
+    workspace_id: String,
+) -> Result<Vec<PrSummary>, String> {
+    let db = db.inner().clone();
+    blocking(move || list_prs_blocking(&db, workspace_id)).await
+}
+
+fn list_prs_blocking(db: &SharedDb, workspace_id: String) -> Result<Vec<PrSummary>, String> {
     let repo_path = {
         let db = db.lock().map_err(|e| e.to_string())?;
         db.workspace_repo_path(&workspace_id)
@@ -179,8 +189,16 @@ pub fn gh_pr_merge(
 }
 
 #[tauri::command]
-pub fn get_pr_status(
+pub async fn get_pr_status(
     db: State<'_, SharedDb>,
+    session_id: String,
+) -> Result<Option<crate::worktree::PrInfo>, String> {
+    let db = db.inner().clone();
+    blocking(move || get_pr_status_blocking(&db, session_id)).await
+}
+
+fn get_pr_status_blocking(
+    db: &SharedDb,
     session_id: String,
 ) -> Result<Option<crate::worktree::PrInfo>, String> {
     let (cwd, worktree_branch) = {
@@ -267,7 +285,15 @@ pub fn complete_pending_merge(
 }
 
 #[tauri::command]
-pub fn has_pending_merge(db: State<'_, SharedDb>, session_id: String) -> Result<bool, String> {
+pub async fn has_pending_merge(
+    db: State<'_, SharedDb>,
+    session_id: String,
+) -> Result<bool, String> {
+    let db = db.inner().clone();
+    blocking(move || has_pending_merge_blocking(&db, session_id)).await
+}
+
+fn has_pending_merge_blocking(db: &SharedDb, session_id: String) -> Result<bool, String> {
     let cwd = {
         let db = db.lock().map_err(|e| e.to_string())?;
         resolve_session_cwd(&db, &session_id)?
@@ -294,8 +320,16 @@ pub fn gh_available() -> bool {
 }
 
 #[tauri::command]
-pub fn get_pr_preview_data(
+pub async fn get_pr_preview_data(
     db: State<'_, SharedDb>,
+    session_id: String,
+) -> Result<crate::worktree::PrPreviewData, String> {
+    let db = db.inner().clone();
+    blocking(move || get_pr_preview_data_blocking(&db, session_id)).await
+}
+
+fn get_pr_preview_data_blocking(
+    db: &SharedDb,
     session_id: String,
 ) -> Result<crate::worktree::PrPreviewData, String> {
     let (cwd, base) = {
@@ -309,8 +343,16 @@ pub fn get_pr_preview_data(
 }
 
 #[tauri::command]
-pub fn poll_pr_checks(
+pub async fn poll_pr_checks(
     db: State<'_, SharedDb>,
+    session_id: String,
+) -> Result<Option<crate::worktree::PrChecks>, String> {
+    let db = db.inner().clone();
+    blocking(move || poll_pr_checks_blocking(&db, session_id)).await
+}
+
+fn poll_pr_checks_blocking(
+    db: &SharedDb,
     session_id: String,
 ) -> Result<Option<crate::worktree::PrChecks>, String> {
     let (cwd, branch) = {
@@ -333,9 +375,36 @@ pub fn poll_pr_checks(
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // Tauri command surface — collapsing to a struct breaks the JS call shape.
-pub fn git_ship(
+pub async fn git_ship(
     app: tauri::AppHandle,
     db: State<'_, SharedDb>,
+    session_id: String,
+    message: Option<String>,
+    pr_title: String,
+    pr_body: String,
+    auto_merge: Option<bool>,
+    target_branch: Option<String>,
+) -> Result<crate::worktree::ShipResult, String> {
+    let db = db.inner().clone();
+    blocking(move || {
+        git_ship_blocking(
+            app,
+            &db,
+            session_id,
+            message,
+            pr_title,
+            pr_body,
+            auto_merge,
+            target_branch,
+        )
+    })
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+fn git_ship_blocking(
+    app: tauri::AppHandle,
+    db: &SharedDb,
     session_id: String,
     message: Option<String>,
     pr_title: String,

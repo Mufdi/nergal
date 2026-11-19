@@ -38,7 +38,7 @@ src/                              # React frontend
 │   ├── plan/      # PlanPanel + AnnotatableMarkdownView
 │   ├── spec/      # SpecPanel (OpenSpec artifacts)
 │   ├── tasks/ · activity/ · session/
-│   ├── git/       # GitPanel + chips/ (Files, History, Stashes, PRs, Conflicts) + PrViewer + ConflictsPanel + ShipDialog
+│   ├── git/       # GitPanel + chips/ (Files, History, Stashes, PRs, Conflicts, Branches) + PrViewer + ConflictsPanel + ShipDialog
 │   ├── files/ · panel/ · zen/ · command/
 │   ├── ui/ · settings/
 ├── stores/        # Jotai atoms — workspace, rightPanel, hooks, shortcuts,

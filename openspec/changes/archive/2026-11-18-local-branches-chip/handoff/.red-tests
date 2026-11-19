@@ -1,0 +1,11 @@
+7f5d855a13d11910ecbdfaa8a3d97538dd8f0666  src/stores/zenMode.test.ts
+cf3edd2803cec4780352eb5724c3b30d9511ff6f  src/lib/localBranches.test.ts
+126a9904f522ac19f7e799cef42b065efea33344  src/stores/sessionActivation.test.ts
+423f467681bcdbc7492d31c1d76540458e311271  src-tauri/src/worktree_local_branches_tests.rs
+e4f12c3bcf2f1bf767f461fb2243ebfdeed95843  src-tauri/src/db/branch_owners_tests.rs
+9117d40062896515ddc51b2d7a11da508bfd3bbe  src-tauri/src/commands/branches_tests.rs
+d98e0e67d300a5a24f3619f010af09dc7b08d89e  src-tauri/src/worktree_local_branches_review_tests.rs
+513f070edfde4b4366ecce9172e35b97351cf1df  src-tauri/src/commands/branches_review_tests.rs
+8c69b1631c3237a5234f5bf840a7a81129b1c193  src/lib/branchTree.test.ts
+ee527cf58d94297f946083252e30af4c0ce54183  src/lib/gitChipKeys.test.ts
+3c1bede78647261f8b9936cb64fc46d90fa92014  src/lib/historyTree.test.ts

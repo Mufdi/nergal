@@ -1938,6 +1938,11 @@ pub fn terminal_scroll_to_bottom(
     Ok(())
 }
 
+#[tauri::command]
+pub fn set_terminal_default_colors(fg: [u8; 3], bg: [u8; 3]) {
+    crate::terminal::config::set_colors(&crate::terminal::config::shared_colors(), fg, bg);
+}
+
 /// Attach the frontend renderer's channel to a session's terminal and return
 /// the current full grid. Invalidates the differ so the next delta is also a
 /// full resend — ensuring the frontend syncs deterministically on mount/reload.

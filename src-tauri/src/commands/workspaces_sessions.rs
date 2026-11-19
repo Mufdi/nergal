@@ -180,7 +180,7 @@ pub fn get_workspaces(
 
 /// Lookup the wire-form capability list for an agent id, falling back to
 /// an empty list if the adapter is unregistered (defensive — config drift).
-fn capabilities_for_agent_id(agents: &AgentRuntimeState, agent_id: &str) -> Vec<String> {
+pub(crate) fn capabilities_for_agent_id(agents: &AgentRuntimeState, agent_id: &str) -> Vec<String> {
     let Ok(parsed) = AgentId::new(agent_id) else {
         return Vec::new();
     };
@@ -345,7 +345,7 @@ pub fn reorder_workspaces(ordered_ids: Vec<String>, db: State<'_, SharedDb>) -> 
 // -- Session commands --
 
 #[allow(clippy::too_many_arguments)]
-fn build_new_session(
+pub(crate) fn build_new_session(
     session_id: String,
     name: String,
     workspace_id: String,
@@ -520,13 +520,13 @@ pub struct CleanupNotice {
 
 /// An empty path (no data directory) makes the write-ahead append fail, so the
 /// branch is kept instead of deleted without a restore record.
-fn deleted_branches_record() -> PathBuf {
+pub(crate) fn deleted_branches_record() -> PathBuf {
     dirs::data_dir()
         .map(|d| d.join("nergal").join("deleted-branches.log"))
         .unwrap_or_default()
 }
 
-fn kept_message(branch: &str, reason: &KeptReason) -> String {
+pub(crate) fn kept_message(branch: &str, reason: &KeptReason) -> String {
     match reason {
         KeptReason::InUse => {
             format!(
@@ -573,7 +573,12 @@ pub(crate) fn notices_after_removal(
     let Some(branch) = branch else {
         return Ok(Vec::new());
     };
-    let notice = match crate::worktree::drop_session_branch(repo_path, branch, target, record) {
+    let outcome = {
+        let lock = crate::commands::branches::branch_repo_lock(repo_path);
+        let _held = lock.lock().unwrap_or_else(|e| e.into_inner());
+        crate::worktree::drop_session_branch(repo_path, branch, target, record)
+    };
+    let notice = match outcome {
         BranchOutcome::Missing => return Ok(Vec::new()),
         BranchOutcome::Kept { reason } => CleanupNotice {
             kind: "branch_kept",

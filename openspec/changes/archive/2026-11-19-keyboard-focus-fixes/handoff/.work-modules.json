@@ -1,0 +1,29 @@
+{
+  "tier": "S",
+  "ceremony": "quick-fix",
+  "risk_tier": "low",
+  "spec_target": "keyboard-shortcuts",
+  "tracker": {
+    "system": "linear",
+    "id": "FRI-496",
+    "url": "https://linear.app/redribbon/issue/FRI-496",
+    "pending": []
+  },
+  "validation": "validated",
+  "planning_only": false,
+  "iprev": {
+    "rounds": 3,
+    "verdict": "REVISE (cap, low risk): round-3 medium #4 applied; remaining lows accepted in design.md"
+  },
+  "interview_answers": {
+    "agent_mode_ctrl_b": "Keep keyboard_ownership semantics: agent mode yields Ctrl+B to Claude Code (spec 'Keyboard ownership switch'); the bug is the key being lost.",
+    "user_order": "FRI-496 + focus-halo bug now; FRI-504/505 next; FRI-509 after."
+  },
+  "events": [
+    {
+      "ts": "2026-11-18T21:20:00-03:00",
+      "type": "validated",
+      "note": "iprev 3 rounds (sonnet; opus weekly limit). R1 11 findings, R2 8, R3 1 medium applied + lows accepted."
+    }
+  ]
+}

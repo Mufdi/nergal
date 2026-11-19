@@ -79,6 +79,7 @@ export function linearStateToIconType(stateType: string | undefined): string | n
       return "done";
     case "cancelled":
     case "canceled":
+    case "duplicate":
       return "closed";
     default:
       return null;

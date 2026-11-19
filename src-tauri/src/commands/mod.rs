@@ -1,4 +1,5 @@
 mod annotations;
+mod branches;
 mod config_misc;
 mod conflicts;
 mod files;
@@ -12,6 +13,7 @@ mod tasks_costs;
 mod workspaces_sessions;
 
 pub use annotations::*;
+pub use branches::*;
 pub use config_misc::*;
 pub use conflicts::*;
 pub use files::*;

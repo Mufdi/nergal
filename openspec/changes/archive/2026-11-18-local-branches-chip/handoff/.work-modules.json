@@ -1,0 +1,33 @@
+{
+  "tier": "L",
+  "ceremony": "deep",
+  "risk_tier": "critical",
+  "spec_target": "local-branches, git-panel-v2",
+  "tracker": {
+    "system": "linear",
+    "id": null,
+    "blocked": "plan-limit",
+    "related": "FRI-490",
+    "pending": []
+  },
+  "validation": "validated",
+  "planning_only": false,
+  "iprev": {
+    "rounds": 2,
+    "verdict": "APPROVED"
+  },
+  "interview_answers": {
+    "delete_scope": "Only branches no session references ('no session'), and never a branch checked out, rebased or bisected in any worktree. Branches with a session are deleted by deleting the session.",
+    "diff_view": "Commits of the branch not in its target; expanding one lists its files; opening a file shows THAT commit's diff in Zen (new per-commit diff command).",
+    "history_bug_in_scope": "Yes: the History chip's commit files must show the commit's diff, using the same command.",
+    "scope": "Only local refs/heads/nergal/* branches with commits on no remote and not in the merge target (negation of branch_is_safe_to_drop). Linux + Claude Code only.",
+    "subagents": "At most 3 subagents at a time."
+  },
+  "events": [
+    {
+      "ts": "2026-11-18",
+      "type": "validated",
+      "note": "iprev R1 opus: 11 findings (1 critical detached-HEAD worktree, 2 high: lock-order deadlock, prunable worktrees block branches). All addressed. R2 sonnet (opus weekly limit hit, codex auth expired): APPROVED with 6 low/medium notes; chip-count load and risk notes applied. openspec validate passes."
+    }
+  ]
+}

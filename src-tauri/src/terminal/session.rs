@@ -1,5 +1,6 @@
 use std::io::Write;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use anyhow::Result;
 use wezterm_term::TerminalConfiguration;
@@ -9,6 +10,30 @@ use wezterm_term::{Terminal, TerminalSize};
 use super::config::NergalTerminalConfig;
 use super::input::map_event;
 use super::types::{CellSnapshot, CursorSnapshot, GridSnapshot, TerminalKeyEvent};
+
+pub type SyncState = Arc<Mutex<Option<Instant>>>;
+
+const SYNC_ON: &[u8] = b"\x1b[?2026h";
+const SYNC_OFF: &[u8] = b"\x1b[?2026l";
+const FULL_RESET: &[u8] = b"\x1bc";
+
+enum SyncEvent {
+    On,
+    Off,
+    Reset,
+}
+
+fn match_sync(window: &[u8]) -> Option<SyncEvent> {
+    if window.ends_with(SYNC_ON) {
+        Some(SyncEvent::On)
+    } else if window.ends_with(SYNC_OFF) {
+        Some(SyncEvent::Off)
+    } else if window.ends_with(FULL_RESET) {
+        Some(SyncEvent::Reset)
+    } else {
+        None
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum PrimaryButton {
@@ -55,6 +80,8 @@ pub struct TerminalSession {
     /// same content when new PTY output pushes lines into scrollback while
     /// the user is scrolled up.
     last_scrollback_rows: usize,
+    sync_since: SyncState,
+    sync_tail: Vec<u8>,
 }
 
 impl TerminalSession {
@@ -94,11 +121,52 @@ impl TerminalSession {
             palette,
             scroll_offset: 0,
             last_scrollback_rows: 0,
+            sync_since: Arc::new(Mutex::new(None)),
+            sync_tail: Vec::new(),
         }
+    }
+
+    pub fn sync_output_since(&self) -> Option<Instant> {
+        self.sync_since.lock().ok().and_then(|slot| *slot)
+    }
+
+    pub fn sync_state(&self) -> SyncState {
+        Arc::clone(&self.sync_since)
+    }
+
+    // wezterm-term tracks no 2026 state of its own, and sequences can straddle PTY reads,
+    // so the last 7 bytes are carried between calls.
+    fn track_sync_mode(&mut self, bytes: &[u8]) {
+        let carried = self.sync_tail.len();
+        let mut window = std::mem::take(&mut self.sync_tail);
+        window.extend_from_slice(bytes);
+        for end in 1..=window.len() {
+            // Matches that finish inside the carried tail were already handled.
+            if end <= carried {
+                continue;
+            }
+            let Some(event) = match_sync(&window[..end]) else {
+                continue;
+            };
+            let Ok(mut slot) = self.sync_since.lock() else {
+                continue;
+            };
+            match event {
+                SyncEvent::On => {
+                    if slot.is_none() {
+                        *slot = Some(Instant::now());
+                    }
+                }
+                SyncEvent::Off | SyncEvent::Reset => *slot = None,
+            }
+        }
+        let keep = window.len().min(SYNC_ON.len() - 1);
+        self.sync_tail = window.split_off(window.len() - keep);
     }
 
     /// Feed bytes from the PTY reader into the VT parser.
     pub fn advance_bytes(&mut self, bytes: &[u8]) {
+        self.track_sync_mode(bytes);
         self.terminal.advance_bytes(bytes);
     }
 
@@ -847,3 +915,7 @@ mod tests {
             .to_owned()
     }
 }
+
+#[cfg(test)]
+#[path = "session_compat_tests.rs"]
+mod compat_tests;

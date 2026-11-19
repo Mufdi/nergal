@@ -139,9 +139,15 @@ function switchToSession(index: number) {
     s.set(triggerResumeSessionAtom, session.id);
     return;
   }
+  const alreadyActive = s.get(activeSessionIdAtom) === session.id;
   s.set(activeSessionIdAtom, session.id);
   // Selecting clears the "I'm browsing another workspace" state.
   s.set(focusedWorkspaceIdAtom, null);
+  // Workspace's session-switch effect skips the first activation of a run and
+  // a switch to the already-active session. A new terminal focuses itself on
+  // mount, so only the already-active case needs an explicit focus.
+  s.set(focusZoneAtom, "terminal");
+  if (alreadyActive) terminalService.focusActive();
 }
 
 function togglePanel(type: Tab["type"], _label: string) {

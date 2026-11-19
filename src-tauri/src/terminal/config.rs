@@ -1,6 +1,23 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock, RwLock};
+use termwiz::color::SrgbaTuple;
 use wezterm_term::TerminalConfiguration;
 use wezterm_term::color::ColorPalette;
+
+pub type DefaultColors = ([u8; 3], [u8; 3]);
+pub type ColorCell = Arc<RwLock<Option<DefaultColors>>>;
+
+static SHARED_COLORS: LazyLock<ColorCell> = LazyLock::new(|| Arc::new(RwLock::new(None)));
+
+pub fn shared_colors() -> ColorCell {
+    Arc::clone(&SHARED_COLORS)
+}
+
+pub fn set_colors(cell: &ColorCell, fg: [u8; 3], bg: [u8; 3]) {
+    if let Ok(mut slot) = cell.write() {
+        *slot = Some((fg, bg));
+    }
+}
 
 /// nergal's [`TerminalConfiguration`] implementation.
 ///
@@ -20,14 +37,20 @@ pub struct NergalTerminalConfig {
     generation: AtomicUsize,
     scrollback_size: usize,
     color_palette: ColorPalette,
+    colors: ColorCell,
 }
 
 impl NergalTerminalConfig {
     pub fn new() -> Self {
+        Self::with_colors(shared_colors())
+    }
+
+    pub fn with_colors(colors: ColorCell) -> Self {
         Self {
             generation: AtomicUsize::new(0),
             scrollback_size: 10_000,
             color_palette: ColorPalette::default(),
+            colors,
         }
     }
 
@@ -62,6 +85,11 @@ impl TerminalConfiguration for NergalTerminalConfig {
     }
 
     fn color_palette(&self) -> ColorPalette {
-        self.color_palette.clone()
+        let mut palette = self.color_palette.clone();
+        if let Some((fg, bg)) = self.colors.read().ok().and_then(|slot| *slot) {
+            palette.foreground = SrgbaTuple::from((fg[0], fg[1], fg[2]));
+            palette.background = SrgbaTuple::from((bg[0], bg[1], bg[2]));
+        }
+        palette
     }
 }

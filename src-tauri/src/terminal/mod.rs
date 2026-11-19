@@ -9,7 +9,7 @@
 
 #![allow(dead_code, unused_imports)]
 
-mod config;
+pub(crate) mod config;
 mod differ;
 mod emitter;
 mod input;

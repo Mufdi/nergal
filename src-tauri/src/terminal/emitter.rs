@@ -8,8 +8,12 @@ use tauri::ipc::Channel;
 use tokio::sync::Notify;
 
 use super::differ::GridDiffer;
-use super::session::TerminalSession;
+use super::session::{SyncState, TerminalSession};
 use super::types::GridUpdate;
+
+/// Upper bound on how long a synchronized-output frame (DECSET 2026) may hold back updates,
+/// so an app that never closes the frame cannot freeze the view.
+pub const SYNC_OUTPUT_CAP: Duration = Duration::from_millis(150);
 
 /// Bundle of per-session state that together drives the grid-update stream
 /// to the frontend.
@@ -62,8 +66,15 @@ impl TerminalHandle {
         let notify = Arc::clone(&self.notify);
         let shutdown = Arc::clone(&self.shutdown);
         let subscriber = Arc::clone(&self.subscriber);
+        let Ok(sync) = self.session.lock().map(|guard| guard.sync_state()) else {
+            tracing::error!("terminal session mutex poisoned");
+            return;
+        };
         self.task = Some(async_runtime::spawn(async move {
-            run_emitter(session_id, session, differ, notify, shutdown, subscriber).await;
+            run_emitter(
+                session_id, session, differ, notify, shutdown, subscriber, sync,
+            )
+            .await;
         }));
     }
 
@@ -97,6 +108,7 @@ async fn run_emitter(
     notify: Arc<Notify>,
     shutdown: Arc<AtomicBool>,
     subscriber: Arc<Mutex<Option<Channel<GridUpdate>>>>,
+    sync: SyncState,
 ) {
     // 8ms ≈ 120Hz. Generous enough to coalesce bursts without adding
     // perceptible latency; see Decision 3 in the change design.
@@ -113,6 +125,21 @@ async fn run_emitter(
         tokio::time::sleep(coalesce).await;
         if shutdown.load(Ordering::Acquire) {
             break;
+        }
+
+        // A stream whose chunks end in `l` + the next `h` restarts `since` on
+        // every chunk, so a hold that only watched the cap would never draw.
+        // A changed `since` means a frame closed after the hold began.
+        let held_frame = sync.lock().ok().and_then(|slot| *slot);
+        while let Some(since) = sync.lock().ok().and_then(|slot| *slot) {
+            let elapsed = since.elapsed();
+            if Some(since) != held_frame || elapsed >= SYNC_OUTPUT_CAP {
+                break;
+            }
+            let _ = tokio::time::timeout(SYNC_OUTPUT_CAP - elapsed, notify.notified()).await;
+            if shutdown.load(Ordering::Acquire) {
+                return;
+            }
         }
 
         // Unattached: skip the diff entirely; `terminal_attach` sends a full
@@ -174,3 +201,11 @@ mod tests {
         assert!(json.contains("\"sessionId\":\"s1\""), "{json}");
     }
 }
+
+#[cfg(test)]
+#[path = "emitter_sync_tests.rs"]
+mod sync_tests;
+
+#[cfg(test)]
+#[path = "emitter_review_tests.rs"]
+mod review_tests;

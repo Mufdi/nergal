@@ -23,6 +23,8 @@ import { toastsAtom } from "@/stores/toast";
 import { FontAtlas, isWideCell, measureFont, type FontMetrics } from "./fontAtlas";
 import { auxButtonToForward, auxPress, auxRelease, type AuxHeld } from "./mouseButtons";
 import { TERM_FONT, TERM_THEME, refreshTermTheme, rgbaToCss } from "./theme";
+import { cssColorToRgb } from "./cssColor";
+import { shouldPassThrough } from "./passThrough";
 
 const ATTACH_ATTEMPTS = 20;
 const ATTACH_RETRY_MS = 100;
@@ -106,6 +108,19 @@ interface Entry {
 
 const entries = new Map<string, Entry>();
 const pending = new Set<string>();
+// The backend answers OSC 10/11 color queries from these, so the agent CLI can pick a
+// light or dark palette that matches the app theme.
+async function syncDefaultColors(): Promise<void> {
+  const fg = cssColorToRgb(TERM_THEME.foreground);
+  const bg = cssColorToRgb(TERM_THEME.background);
+  if (!fg || !bg) return;
+  try {
+    await invoke("set_terminal_default_colors", { fg, bg });
+  } catch (err) {
+    console.warn("set_terminal_default_colors failed", err);
+  }
+}
+
 const failureToasted = new Set<string>();
 const hosts = new Map<Region, HTMLDivElement | null>();
 const activeIds = new Map<Region, string | null>();
@@ -114,6 +129,7 @@ const activeIds = new Map<Region, string | null>();
 // The atlas keys glyphs by `(ch, fg, …)` so a later color flip lazily
 // rasterizes new variants — no manual cache invalidation needed.
 refreshTermTheme();
+void syncDefaultColors();
 
 // Window-level so a middle/right release off the pane still reaches the app
 // (CC pastes on release); one listener for all terminals instead of one per
@@ -138,6 +154,7 @@ if (typeof document !== "undefined") {
   // family changed, rebuild the family-keyed metrics + atlas and refit.
   const restyleTerminals = (): void => {
     refreshTermTheme();
+    void syncDefaultColors();
     const dpr = window.devicePixelRatio || 1;
     for (const entry of entries.values()) {
       // The container's inline `background` was set imperatively at create
@@ -1115,39 +1132,6 @@ const DROPPED_KEYS = new Set([
 
 function isModifierOrDead(e: KeyboardEvent): boolean {
   return DROPPED_CODES.has(e.code) || DROPPED_KEYS.has(e.key);
-}
-
-function shouldPassThrough(e: KeyboardEvent): boolean {
-  // Same shortcut set the legacy terminalService.wireIMEFix filters — these
-  // are handled by nergal globally, not by the terminal.
-  if (e.type !== "keydown") return true;
-  if (e.ctrlKey && !e.shiftKey && !e.altKey) {
-    if (
-      e.code === "Semicolon" ||
-      e.code === "KeyK" ||
-      e.code === "KeyB" ||
-      e.code === "KeyS" ||
-      e.code === "KeyW" ||
-      e.code === "KeyN" ||
-      e.code === "Tab"
-    ) {
-      return true;
-    }
-    if (e.code >= "Digit1" && e.code <= "Digit9") return true;
-  }
-  if (e.ctrlKey && e.shiftKey && !e.altKey) {
-    if (
-      [
-        "KeyB","KeyP","KeyF","KeyD","KeyS","KeyG","KeyK","KeyL","KeyT",
-        "KeyE","KeyM","KeyN","KeyC","KeyI","KeyJ","KeyO","KeyX","KeyA",
-        "KeyR","KeyU",
-      ].includes(e.code)
-    ) {
-      return true;
-    }
-  }
-  if (e.altKey && e.code.startsWith("Arrow")) return true;
-  return false;
 }
 
 function focusCanvas(entry: Entry): void {

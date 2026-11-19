@@ -339,7 +339,12 @@ pub fn branch_checked_out(repo_path: &Path, branch: &str) -> bool {
     if listing.lines().any(|l| l.trim_end() == wanted) {
         return true;
     }
+    branch_mid_operation(repo_path, branch)
+}
 
+/// Rebase/bisect state lives in git-dir files that `worktree list` does not
+/// report. A git failure counts as mid-operation so callers keep the branch.
+pub(crate) fn branch_mid_operation(repo_path: &Path, branch: &str) -> bool {
     let resolve = |p: String| {
         let p = PathBuf::from(p);
         if p.is_absolute() {
@@ -447,10 +452,31 @@ pub fn delete_branch_if_at(repo_path: &Path, branch: &str, sha: &str) -> bool {
         .unwrap_or(false)
 }
 
+pub enum DropPolicy<'a> {
+    RequireSafe { target: Option<&'a str> },
+    Unconditional,
+}
+
 pub fn drop_session_branch(
     repo_path: &Path,
     branch: &str,
     target: Option<&str>,
+    record: &Path,
+) -> BranchOutcome {
+    drop_branch(
+        repo_path,
+        branch,
+        None,
+        DropPolicy::RequireSafe { target },
+        record,
+    )
+}
+
+pub fn drop_branch(
+    repo_path: &Path,
+    branch: &str,
+    expected_sha: Option<&str>,
+    policy: DropPolicy<'_>,
     record: &Path,
 ) -> BranchOutcome {
     let kept = |reason| BranchOutcome::Kept { reason };
@@ -459,10 +485,15 @@ pub fn drop_session_branch(
         BranchState::Unknown => return kept(KeptReason::Unchecked),
         BranchState::Exists { sha } => sha,
     };
+    if expected_sha.is_some_and(|expected| expected != sha) {
+        return kept(KeptReason::Moved);
+    }
     if branch_checked_out(repo_path, branch) {
         return kept(KeptReason::InUse);
     }
-    if !branch_is_safe_to_drop(repo_path, &sha, target) {
+    if let DropPolicy::RequireSafe { target } = policy
+        && !branch_is_safe_to_drop(repo_path, &sha, target)
+    {
         return kept(KeptReason::Unshared);
     }
     if let Err(e) = record_deleted_branch(record, repo_path, branch, &sha) {
@@ -707,6 +738,8 @@ impl std::error::Error for ReclaimFailure {}
 pub fn is_reclaim_failure(err: &anyhow::Error) -> bool {
     err.downcast_ref::<ReclaimFailure>().is_some()
 }
+
+pub mod local_branches;
 
 #[cfg(target_os = "linux")]
 mod reclaim;
@@ -2146,6 +2179,14 @@ mod tests {
 #[cfg(all(test, target_os = "linux"))]
 #[path = "worktree_reclaim_tests.rs"]
 mod reclaim_tests;
+
+#[cfg(test)]
+#[path = "worktree_local_branches_tests.rs"]
+mod local_branches_tests;
+
+#[cfg(test)]
+#[path = "worktree_local_branches_review_tests.rs"]
+mod local_branches_review_tests;
 
 #[cfg(all(test, unix))]
 #[path = "worktree_branch_tests.rs"]

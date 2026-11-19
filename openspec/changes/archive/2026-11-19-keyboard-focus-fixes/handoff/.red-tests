@@ -1,0 +1,6 @@
+d81d61d754f943ef540e0ee7fe91e9cee8e783b3  src/lib/agentYield.test.ts
+230cf5626cbe1fac23356da2ff71bd4b0230d6dc  src/components/terminal/passThrough.test.ts
+b12f31cf3f5da1c41396b7e8886bd57618294693  src/lib/focusZoneSync.test.ts
+79c38acc784de3e126ef5ff77bb24eebe092a305  src/lib/shouldYieldToAgent.test.ts
+bc06ebfe80671f1626e3d1ab30f8ff63a05498db  src/stores/shortcutSignals.test.ts
+2a6578f512e16f5fb0b2394418eb1191afeeef46  src/stores/sessionSwitchFocus.test.ts

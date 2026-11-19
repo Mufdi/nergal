@@ -30,6 +30,7 @@ import {
 import { spawnEnvShells } from "@/stores/quake";
 import { openTabAction } from "@/stores/rightPanel";
 import { appStore } from "@/stores/jotaiStore";
+import { consumeCounterSignal, consumeJumpSignal } from "@/stores/shortcutSignals";
 import { toastsAtom } from "@/stores/toast";
 import { bootstrapPromptAtom } from "@/stores/obsidian";
 import { SessionRow } from "@/components/session/SessionRow";
@@ -324,11 +325,6 @@ function CollapsedSidebar() {
   );
 }
 
-// Persists across mount cycles — a `useRef` inside the component resets
-// when WorkspacesView unmounts (sidebar collapses), which replays the
-// last Ctrl+N trigger as soon as the sidebar re-expands.
-let lastNewSessionConsumed = 0;
-
 function WorkspacesView() {
   const { renameSession, deleteSession } = useSessionActions();
   const deleteWorkspaceWithGrace = useSetAtom(deleteWorkspaceWithGraceAction);
@@ -405,6 +401,7 @@ function WorkspacesView() {
       if (session) {
         setLaunchMode((prev) => ({ ...prev, [session.id]: "continue" }));
         setActiveSessionId(session.id);
+        setFocusZoneDirect("terminal");
         setTriggerResume(null);
         return;
       }
@@ -413,9 +410,7 @@ function WorkspacesView() {
   }, [triggerResumeId]);
 
   useEffect(() => {
-    if (triggerNewSession === 0 || workspaces.length === 0) return;
-    if (triggerNewSession <= lastNewSessionConsumed) return;
-    lastNewSessionConsumed = triggerNewSession;
+    if (!consumeCounterSignal(appStore, triggerNewSessionAtom, workspaces.length > 0)) return;
     if (workspaces.length === 1) {
       setAddingSessionFor(workspaces[0].id);
     } else {
@@ -424,7 +419,7 @@ function WorkspacesView() {
   }, [triggerNewSession, workspaces.length]);
 
   useEffect(() => {
-    if (triggerAddWorkspace > 0) handleAddWorkspace();
+    if (consumeCounterSignal(appStore, triggerAddWorkspaceAtom)) void handleAddWorkspace();
   }, [triggerAddWorkspace]);
 
   // Merge entry point moved to GitPanel — it owns both the visible button
@@ -449,8 +444,9 @@ function WorkspacesView() {
   }, []);
 
   useEffect(() => {
-    if (jumpToProject.tick === 0) return;
-    const ws = workspaces[jumpToProject.index];
+    const index = consumeJumpSignal(appStore, workspaces.length);
+    if (index === null) return;
+    const ws = workspaces[index];
     if (!ws) return;
     setExpandedIds((prev) => {
       const next = new Set(prev);
@@ -474,7 +470,7 @@ function WorkspacesView() {
       // Focus the sidebar zone (not the button) so arrow keys are handled by handleSidebarKeyDown
       zone.focus();
     });
-  }, [jumpToProject.tick]);
+  }, [jumpToProject.tick, workspaces.length]);
 
   function toggleWorkspace(id: string) {
     setSelectedWorkspaceId(id);

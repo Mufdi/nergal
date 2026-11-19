@@ -1,5 +1,7 @@
 import { useEffect } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
+import { shouldYieldToAgent, yieldToAgent } from "@/lib/agentYield";
+import { zoneOf } from "@/lib/focusZoneSync";
 import {
   resolvedShortcutsAtom,
   keymapOverridesAtom,
@@ -341,14 +343,18 @@ export function useKeyboardShortcuts() {
           // binds the same combo locally (Ship using the textarea message);
           // let its bubble handler win instead of double-firing.
           if (action.id === "ship-session" && target?.closest("[data-git-commit-textarea]")) return;
-          // App-scope gate (keyboard ownership switch): in "agent" mode with
-          // focus in the terminal/quake zone, an app-scope entry yields the
-          // key to the PTY — `continue` without preventDefault so the event
-          // genuinely reaches it instead of being silently swallowed.
-          if (action.scope === "app") {
-            const ownership = appStore.get(configAtom).keyboard_ownership ?? "nergal";
-            const zone = appStore.get(focusZoneAtom);
-            if (ownership === "agent" && (zone === "terminal" || zone === "quake")) continue;
+          // The zone comes from the event target, not focusZoneAtom: the atom
+          // can lag DOM focus. Only the terminal's input textarea forwards keys
+          // to the PTY, so a key yielded from any other element is lost. The
+          // mark keeps the terminal's pass-through table from dropping it.
+          const yieldTarget = e.target as HTMLElement | null;
+          if (shouldYieldToAgent({
+            ownership: appStore.get(configAtom).keyboard_ownership ?? "nergal",
+            scope: action.scope,
+            targetZone: yieldTarget?.tagName === "TEXTAREA" ? zoneOf(yieldTarget) : null,
+          })) {
+            yieldToAgent(e);
+            return;
           }
           e.preventDefault();
           e.stopPropagation();

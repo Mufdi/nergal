@@ -23,6 +23,7 @@ import { toastsAtom } from "@/stores/toast";
 import { FontAtlas, isWideCell, measureFont, type FontMetrics } from "./fontAtlas";
 import { auxButtonToForward, auxPress, auxRelease, type AuxHeld } from "./mouseButtons";
 import { TERM_FONT, TERM_THEME, refreshTermTheme, rgbaToCss } from "./theme";
+import { shouldPassThrough } from "./passThrough";
 
 const ATTACH_ATTEMPTS = 20;
 const ATTACH_RETRY_MS = 100;
@@ -1115,39 +1116,6 @@ const DROPPED_KEYS = new Set([
 
 function isModifierOrDead(e: KeyboardEvent): boolean {
   return DROPPED_CODES.has(e.code) || DROPPED_KEYS.has(e.key);
-}
-
-function shouldPassThrough(e: KeyboardEvent): boolean {
-  // Same shortcut set the legacy terminalService.wireIMEFix filters — these
-  // are handled by nergal globally, not by the terminal.
-  if (e.type !== "keydown") return true;
-  if (e.ctrlKey && !e.shiftKey && !e.altKey) {
-    if (
-      e.code === "Semicolon" ||
-      e.code === "KeyK" ||
-      e.code === "KeyB" ||
-      e.code === "KeyS" ||
-      e.code === "KeyW" ||
-      e.code === "KeyN" ||
-      e.code === "Tab"
-    ) {
-      return true;
-    }
-    if (e.code >= "Digit1" && e.code <= "Digit9") return true;
-  }
-  if (e.ctrlKey && e.shiftKey && !e.altKey) {
-    if (
-      [
-        "KeyB","KeyP","KeyF","KeyD","KeyS","KeyG","KeyK","KeyL","KeyT",
-        "KeyE","KeyM","KeyN","KeyC","KeyI","KeyJ","KeyO","KeyX","KeyA",
-        "KeyR","KeyU",
-      ].includes(e.code)
-    ) {
-      return true;
-    }
-  }
-  if (e.altKey && e.code.startsWith("Arrow")) return true;
-  return false;
 }
 
 function focusCanvas(entry: Entry): void {

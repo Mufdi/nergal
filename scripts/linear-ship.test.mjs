@@ -37,6 +37,17 @@ test('planTransitions ships only Done issues', () => {
   assert.deepEqual(skip.map((i) => i.identifier), ['FRI-2', 'FRI-3']);
 });
 
+test('planTransitions sets aside issues Linear no longer has instead of failing', () => {
+  const issues = [
+    { identifier: 'FRI-1', state: 'Done' },
+    { id: null, identifier: 'FRI-2', state: null },
+  ];
+  const { ship, skip, missing } = planTransitions(issues);
+  assert.deepEqual(ship.map((i) => i.identifier), ['FRI-1']);
+  assert.deepEqual(skip, []);
+  assert.deepEqual(missing.map((i) => i.identifier), ['FRI-2']);
+});
+
 test('shippedComment links the release', () => {
   assert.equal(
     shippedComment('v0.6.0', 'https://github.com/Mufdi/nergal/releases/tag/v0.6.0'),

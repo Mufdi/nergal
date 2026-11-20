@@ -61,11 +61,13 @@ export function mergeIds(...lists) {
 export function planTransitions(issues) {
   const ship = [];
   const skip = [];
+  const missing = [];
   for (const issue of issues) {
-    if (issue.state === FROM_STATE) ship.push(issue);
+    if (issue.state === null) missing.push(issue);
+    else if (issue.state === FROM_STATE) ship.push(issue);
     else skip.push(issue);
   }
-  return { ship, skip };
+  return { ship, skip, missing };
 }
 
 export function shippedComment(tag, url) {
@@ -107,6 +109,10 @@ async function linear(apiKey, query, variables) {
   return body.data;
 }
 
+function notInLinear(identifier) {
+  return { id: null, identifier, state: null };
+}
+
 async function fetchIssue(apiKey, identifier) {
   try {
     const data = await linear(
@@ -115,10 +121,12 @@ async function fetchIssue(apiKey, identifier) {
       { id: identifier },
     );
     const i = data.issue;
-    return i ? { id: i.id, identifier: i.identifier, state: i.state.name } : null;
+    return i ? { id: i.id, identifier: i.identifier, state: i.state.name } : notInLinear(identifier);
   } catch (e) {
-    // A commit can cite an issue that was deleted or belongs to another workspace.
-    if (/not found|Entity not found/i.test(e.message)) return null;
+    // The daily vault sweep deletes closed issues from Linear, so a release can
+    // cite one that now lives only as a vault note; a commit can also cite
+    // another workspace's issue.
+    if (/not found|Entity not found/i.test(e.message)) return notInLinear(identifier);
     throw e;
   }
 }
@@ -180,12 +188,13 @@ async function main() {
   }
 
   const issues = [];
-  for (const id of ids) {
-    const issue = await fetchIssue(apiKey, id);
-    if (issue) issues.push(issue);
-    else process.stdout.write(`${id}: not found, skipped\n`);
+  for (const id of ids) issues.push(await fetchIssue(apiKey, id));
+  const { ship, skip, missing } = planTransitions(issues);
+  if (missing.length) {
+    process.stdout.write(
+      `${missing.length} not in Linear (in the vault): ${missing.map((i) => i.identifier).join(', ')}\n`,
+    );
   }
-  const { ship, skip } = planTransitions(issues);
   for (const i of skip) process.stdout.write(`${i.identifier}: ${i.state}, left as is\n`);
   if (ship.length === 0) return;
 

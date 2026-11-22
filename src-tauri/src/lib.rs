@@ -29,6 +29,9 @@ mod tracker_shared;
 mod updater;
 mod worktree;
 
+#[cfg(all(test, target_os = "linux"))]
+mod log_owner_tests;
+
 use agents::claude_code::plan::{PlanWatcher, SharedPlanWatcher};
 use agents::claude_code::transcript::TranscriptWatcher;
 use agents::state::AgentRuntimeState;
@@ -39,35 +42,68 @@ use plan_state::PlanStateManager;
 use pty::PtyManager;
 use scratchpad::commands::ScratchpadState;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
 use tauri_plugin_deep_link::DeepLinkExt;
 
 #[derive(Default)]
 pub struct PendingDeepLinks(pub Mutex<Vec<String>>);
 
-/// When launched under systemd (gnome-shell Activities, .desktop entries on
-/// kernel 6.8.0-117+), stdout/stderr are a journald pipe (`JOURNAL_STREAM`
-/// env set). `tracing_subscriber` INFO output + WebKitGTK's stderr noise
-/// saturates the pipe; the resulting `write()` backpressure stalls the main
-/// thread before the frontend reaches `getCurrentWindow().show()`, leaving
-/// a 10x10 invisible ghost window. Mitigation: divert fd 1/2 to a regular
-/// file. No-op when launched from a terminal (no `JOURNAL_STREAM`).
+type LogGuard = Arc<Mutex<Option<std::fs::File>>>;
+
+struct LogOwner {
+    _guard: LogGuard,
+}
+
 #[cfg(target_os = "linux")]
-fn redirect_journald_stdio_to_logfile() {
-    if std::env::var_os("JOURNAL_STREAM").is_none() {
-        return;
-    }
-    let log_path = dirs::cache_dir()
+fn log_dir() -> PathBuf {
+    dirs::cache_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join("nergal")
-        .join("nergal.log");
-    if let Some(parent) = log_path.parent()
-        && let Err(e) = std::fs::create_dir_all(parent)
-    {
-        eprintln!("nergal: log dir {} unavailable: {e}", parent.display());
-        return;
+}
+
+/// One non-blocking attempt at the exclusive log lock. A plain `std::fs::File` is close-on-exec,
+/// so PTY children and the detached post-session runner never inherit the lock.
+#[cfg(target_os = "linux")]
+fn try_lock_log(dir: &std::path::Path) -> Option<std::fs::File> {
+    use std::os::unix::io::AsRawFd;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join("nergal.log.lock"))
+        .ok()?;
+    // SAFETY: flock on an fd owned by `file`, which stays open for the call.
+    let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    (rc == 0).then_some(file)
+}
+
+#[cfg(target_os = "linux")]
+fn retry_lock_log(dir: &std::path::Path, timeout: std::time::Duration) -> Option<std::fs::File> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if let Some(file) = try_lock_log(dir) {
+            return Some(file);
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
+}
+
+#[cfg(target_os = "linux")]
+fn rotate_log(dir: &std::path::Path) {
+    if let Err(e) = std::fs::rename(dir.join("nergal.log"), dir.join("nergal.log.1"))
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        eprintln!("nergal: cannot rotate log: {e}");
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn redirect_stdio_to_log(dir: &std::path::Path) {
+    let log_path = dir.join("nergal.log");
     let file = match std::fs::OpenOptions::new()
         .create(true)
         .write(true)
@@ -82,8 +118,8 @@ fn redirect_journald_stdio_to_logfile() {
     };
     use std::os::unix::io::AsRawFd;
     let fd = file.as_raw_fd();
-    // SAFETY: dup2 with a valid open fd; called once at process start before
-    // any threads or tokio runtime exist, so no concurrent fd access.
+    // SAFETY: dup2 with a valid open fd. It can run after other threads exist (setup retry);
+    // dup2 replaces the target fd atomically, so a concurrent write lands in either target.
     unsafe {
         if libc::dup2(fd, libc::STDOUT_FILENO) < 0 {
             eprintln!(
@@ -102,8 +138,65 @@ fn redirect_journald_stdio_to_logfile() {
     // the underlying open file description alive.
 }
 
+/// When launched under systemd (gnome-shell Activities, .desktop entries on
+/// kernel 6.8.0-117+), stdout/stderr are a journald pipe (`JOURNAL_STREAM`
+/// env set). `tracing_subscriber` INFO output + WebKitGTK's stderr noise
+/// saturates the pipe; the resulting `write()` backpressure stalls the main
+/// thread before the frontend reaches `getCurrentWindow().show()`, leaving
+/// a 10x10 invisible ghost window. Mitigation: divert fd 1/2 to a regular
+/// file. No-op when launched from a terminal (no `JOURNAL_STREAM`).
+///
+/// Only the process holding the log lock rotates and redirects. Returns `true` when the
+/// lock was denied, so the primary instance can retry from `setup`.
+#[cfg(target_os = "linux")]
+fn redirect_journald_stdio_to_logfile(guard: &LogGuard) -> bool {
+    if std::env::var_os("JOURNAL_STREAM").is_none() {
+        return false;
+    }
+    let dir = log_dir();
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("nergal: log dir {} unavailable: {e}", dir.display());
+        return false;
+    }
+    let Some(lock) = try_lock_log(&dir) else {
+        return true;
+    };
+    rotate_log(&dir);
+    redirect_stdio_to_log(&dir);
+    if let Ok(mut slot) = guard.lock() {
+        *slot = Some(lock);
+    }
+    false
+}
+
+/// In-app relaunch starts the child before the parent exits, so the parent still holds the lock.
+#[cfg(target_os = "linux")]
+fn retry_log_redirect_in_background(guard: LogGuard) {
+    let spawned = std::thread::Builder::new()
+        .name("log-owner-retry".into())
+        .spawn(move || {
+            let dir = log_dir();
+            let Some(lock) = retry_lock_log(&dir, std::time::Duration::from_secs(3)) else {
+                return;
+            };
+            rotate_log(&dir);
+            redirect_stdio_to_log(&dir);
+            if let Ok(mut slot) = guard.lock() {
+                *slot = Some(lock);
+            }
+        });
+    if let Err(e) = spawned {
+        eprintln!("nergal: cannot start log retry thread: {e}");
+    }
+}
+
 #[cfg(not(target_os = "linux"))]
-fn redirect_journald_stdio_to_logfile() {}
+fn redirect_journald_stdio_to_logfile(_guard: &LogGuard) -> bool {
+    false
+}
+
+#[cfg(not(target_os = "linux"))]
+fn retry_log_redirect_in_background(_guard: LogGuard) {}
 
 /// Shared on-disk log location: `<cache>/nergal/nergal.log`. On Windows
 /// `dirs::cache_dir()` is `%LOCALAPPDATA%`, matching what the in-app diagnostics
@@ -258,7 +351,8 @@ fn augment_path_from_user_shell() {
 const CLOSE_WATCHDOG: std::time::Duration = std::time::Duration::from_secs(8);
 
 pub fn run() {
-    redirect_journald_stdio_to_logfile();
+    let log_guard: LogGuard = Arc::new(Mutex::new(None));
+    let log_lock_denied = redirect_journald_stdio_to_logfile(&log_guard);
     let sentinel = SentinelGuard::new();
     let sentinel_arm = sentinel.arm_handle();
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -698,6 +792,14 @@ pub fn run() {
         ])
         .setup(move |app| {
             sentinel_arm.arm();
+            // Managed state outlives setup (the FnOnce closure drops its captures on return) and
+            // lives until the app exits, which keeps the flock held for the whole process.
+            app.manage(LogOwner {
+                _guard: Arc::clone(&log_guard),
+            });
+            if log_lock_denied {
+                retry_log_redirect_in_background(Arc::clone(&log_guard));
+            }
             if let Some(window) = app.get_webview_window("main") {
                 let icon = tauri::include_image!("icons/icon.png");
                 tracing::info!(

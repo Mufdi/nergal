@@ -21,6 +21,7 @@ import { appStore } from "@/stores/jotaiStore";
 import { toastsAtom } from "@/stores/toast";
 
 import { FontAtlas, isWideCell, measureFont, type FontMetrics } from "./fontAtlas";
+import { afterResizeFailure, nextResize, pixelGeometry, recordRequest, type Sent } from "./pixelGeometry";
 import { auxButtonToForward, auxPress, auxRelease, type AuxHeld } from "./mouseButtons";
 import { TERM_FONT, TERM_THEME, refreshTermTheme, rgbaToCss } from "./theme";
 import { cssColorToRgb } from "./cssColor";
@@ -70,6 +71,9 @@ interface Entry {
   metrics: FontMetrics;
   cols: number;
   rows: number;
+  /// Last geometry requested, recorded before the invoke so overlapping resizes resolving out
+  /// of order cannot make a later fit look unchanged.
+  lastRequested: Sent | null;
   totalRows: number;
   grid: CellSnapshot[][];
   cursor: { x: number; y: number; visible: boolean };
@@ -250,12 +254,14 @@ export async function show(
     key: sessionId,
     region: "center",
     ownerSessionId: sessionId,
-    spawn: (cols, rows) =>
+    spawn: (cols, rows, geometry) =>
       invoke("start_claude_session", {
         sessionId,
         cwd,
         cols,
         rows,
+        pixelWidth: geometry.pixelWidth,
+        pixelHeight: geometry.pixelHeight,
         resume: mode === "new" ? null : mode,
       }),
   });
@@ -281,7 +287,7 @@ export async function showShell(opts: {
     // zone the user is typing in — the caller asserts focus explicitly when
     // the quake zone owns it.
     focus: false,
-    spawn: (cols, rows) =>
+    spawn: (cols, rows, geometry) =>
       invoke("spawn_aux_shell", {
         sessionId: opts.sessionId,
         shellId: opts.shellId,
@@ -290,6 +296,8 @@ export async function showShell(opts: {
         baseDir: opts.baseDir ?? null,
         cols,
         rows,
+        pixelWidth: geometry.pixelWidth,
+        pixelHeight: geometry.pixelHeight,
         command: opts.command ?? null,
         autorun: opts.autorun ?? false,
       }),
@@ -301,7 +309,11 @@ async function showTerminal(opts: {
   region: Region;
   ownerSessionId: string;
   focus?: boolean;
-  spawn: (cols: number, rows: number) => Promise<unknown>;
+  spawn: (
+    cols: number,
+    rows: number,
+    geometry: { pixelWidth: number; pixelHeight: number },
+  ) => Promise<unknown>;
 }): Promise<void> {
   const { key, region, ownerSessionId, spawn, focus = true } = opts;
   activeIds.set(region, key);
@@ -412,6 +424,7 @@ async function showTerminal(opts: {
       metrics,
       cols,
       rows,
+      lastRequested: null,
       totalRows: rows,
       grid: emptyGrid(cols, rows),
       cursor: { x: 0, y: 0, visible: true },
@@ -433,15 +446,11 @@ async function showTerminal(opts: {
 
     wireInput(entry);
 
-    await spawn(cols, rows);
+    await spawn(cols, rows, pixelGeometry(cols, rows, metrics));
 
-    // Env shells auto-run headless at a placeholder grid (spawn_aux_shell is
-    // idempotent, so the spawn above didn't resize them); align the PTY to
-    // the freshly measured host before seeding. Center is left untouched —
-    // its PTY was just created at exactly these dims.
-    if (region === "quake") {
-      await invoke("resize_session_terminal", { sessionId: key, cols, rows }).catch(() => {});
-    }
+    // spawn is idempotent for a live PTY (re-attach, headless autorun at a placeholder grid), so
+    // it never applied this geometry; the backend treats an unchanged size as a no-op.
+    await sendResize(entry);
 
     const channel = new Channel<GridUpdate>((update) => applyUpdate(entry, update));
     entry.unlisten = () => {
@@ -1173,26 +1182,47 @@ function sizeCanvas(
   rows: number,
   metrics: FontMetrics,
 ): void {
-  canvas.width = cols * metrics.cellWidth;
-  canvas.height = rows * metrics.cellHeight;
+  const { pixelWidth, pixelHeight } = pixelGeometry(cols, rows, metrics);
+  canvas.width = pixelWidth;
+  canvas.height = pixelHeight;
   canvas.style.width = `${cols * metrics.cssWidth}px`;
   canvas.style.height = `${rows * metrics.cssHeight}px`;
 }
 
-function fit(entry: Entry): void {
-  const { cols, rows } = computeCols(entry.container, entry.metrics);
-  if (cols === entry.cols && rows === entry.rows) return;
-  entry.cols = cols;
-  entry.rows = rows;
-  entry.grid = reshapeGrid(entry.grid, cols, rows);
-  sizeCanvas(entry.canvas, cols, rows, entry.metrics);
-  invoke("resize_session_terminal", {
-    sessionId: entry.sessionId,
-    cols,
-    rows,
-  }).catch((err: unknown) => {
+async function sendResize(entry: Entry): Promise<void> {
+  const payload = nextResize(
+    entry.lastRequested,
+    entry.sessionId,
+    entry.cols,
+    entry.rows,
+    entry.metrics,
+  );
+  if (!payload) return;
+  const requested = recordRequest(payload);
+  entry.lastRequested = requested;
+  try {
+    await invoke("resize_session_terminal", { ...payload });
+  } catch (err) {
+    entry.lastRequested = afterResizeFailure(entry.lastRequested, requested);
     console.error("resize_session_terminal failed", err);
-  });
+  }
+}
+
+function fit(entry: Entry): void {
+  // A display:none container measures 0x0; computeCols would size it to its 80x24 fallback.
+  const rect = entry.container.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return;
+  const { cols, rows } = computeCols(entry.container, entry.metrics);
+  const { pixelWidth, pixelHeight } = pixelGeometry(cols, rows, entry.metrics);
+  if (cols !== entry.cols || rows !== entry.rows) {
+    entry.cols = cols;
+    entry.rows = rows;
+    entry.grid = reshapeGrid(entry.grid, cols, rows);
+  }
+  if (entry.canvas.width !== pixelWidth || entry.canvas.height !== pixelHeight) {
+    sizeCanvas(entry.canvas, cols, rows, entry.metrics);
+  }
+  void sendResize(entry);
 }
 
 // ── Private: grid maintenance ──

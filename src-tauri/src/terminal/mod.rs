@@ -13,8 +13,14 @@ pub(crate) mod config;
 mod differ;
 mod emitter;
 mod input;
-mod session;
+pub(crate) mod session;
 mod types;
+
+#[cfg(test)]
+#[allow(clippy::type_complexity)]
+mod pixel_geometry_tests;
+#[cfg(test)]
+mod sixel_zero_pixel_tests;
 
 pub use config::NergalTerminalConfig;
 pub use differ::GridDiffer;

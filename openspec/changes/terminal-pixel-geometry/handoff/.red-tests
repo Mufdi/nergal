@@ -1,0 +1,7 @@
+d9d5640a2d74b490d2ec33a6cc1b2877a412d371  src-tauri/src/terminal/sixel_zero_pixel_tests.rs
+9b5df514c3b2faaff202fcd9d8ee3f46d5b5102e  src-tauri/src/terminal/pixel_geometry_tests.rs
+f53445656e13adfab7482e2b805eb3ce96edbd10  src-tauri/src/pty_pixel_tests.rs
+c1f5dbaf50ef0a7baa75d047dff12007501718a9  src-tauri/src/log_owner_tests.rs
+997dd625ec8b5652221c9e78503b4e28f2041b60  src/components/terminal/pixelGeometry.test.ts
+952da9eda7ee7e7728fc626098c8f3f85c9a29c8  src/components/terminal/resizeTracker.test.ts
+f6b3415db8d5e4d8ffc141742dc6261f49d5002d  src-tauri/src/pty_zero_size_tests.rs

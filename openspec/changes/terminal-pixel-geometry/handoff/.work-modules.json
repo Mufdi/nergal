@@ -1,0 +1,33 @@
+{
+  "tier": "S",
+  "ceremony": "quick-fix",
+  "risk_tier": "low",
+  "spec_target": "terminal-wezterm, app-diagnostics-log",
+  "tracker": {
+    "system": "linear",
+    "id": "FRI-597",
+    "pending": []
+  },
+  "validation": "validated",
+  "planning_only": false,
+  "iprev": {
+    "rounds": 3,
+    "verdict": "APPROVED"
+  },
+  "interview_answers": {
+    "image_rendering": "User 2026-11-22: draw images on the canvas, tracked separately as FRI-600. Keep advertising sixel. This change only stops the crash and keeps the logs.",
+    "order": "User 2026-11-22: Claude picks the order; FRI-597 goes first because it is Urgent."
+  },
+  "events": [
+    {
+      "ts": "2026-11-22T19:42:39-03:00",
+      "type": "validated",
+      "note": "iprev opus R1 REVISE (2H 4M 6L), R2 REVISE (1H 2M 3L), R3 APPROVED (4L applied)"
+    },
+    {
+      "ts": "2026-11-22T20:09:36-03:00",
+      "type": "yield",
+      "note": "iprev 3 rounds (R1 12 defects: 2H 4M 6L); adversarial 2 Important + 1 compliance, re-review 0 Important; walk defects 0 (walk pending, no UI view change); Red conflicts 1 (clippy type_complexity on locked test, ruled allow on mod line); gate failures 0"
+    }
+  ]
+}

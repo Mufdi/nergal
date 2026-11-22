@@ -138,9 +138,44 @@ pub struct PtyManager {
 fn build_terminal_session(
     cols: u16,
     rows: u16,
+    pixel_width: Option<u16>,
+    pixel_height: Option<u16>,
     writer: Box<dyn std::io::Write + Send>,
 ) -> TerminalSession {
-    TerminalSession::with_config(cols, rows, writer, NergalTerminalConfig::new())
+    TerminalSession::with_config_and_pixels(
+        cols,
+        rows,
+        pixel_width,
+        pixel_height,
+        writer,
+        NergalTerminalConfig::new(),
+    )
+}
+
+/// A zero-column or zero-row grid makes wezterm divide by zero when answering size queries or
+/// placing images, aborting the app.
+fn validate_grid_size(cols: u16, rows: u16) -> Result<(), String> {
+    if cols == 0 || rows == 0 {
+        return Err(format!("invalid terminal size {cols}x{rows}"));
+    }
+    Ok(())
+}
+
+/// PTY and emulator must see the same size, so both derive it from the one clamp.
+fn pty_size_for(
+    cols: u16,
+    rows: u16,
+    pixel_width: Option<u16>,
+    pixel_height: Option<u16>,
+) -> PtySize {
+    let (pixel_width, pixel_height) =
+        crate::terminal::session::clamp_pixel_geometry(cols, rows, pixel_width, pixel_height);
+    PtySize {
+        rows,
+        cols,
+        pixel_width,
+        pixel_height,
+    }
 }
 
 impl PtyManager {
@@ -425,6 +460,8 @@ fn spawn_pty(
     pty_id: String,
     cols: u16,
     rows: u16,
+    pixel_width: Option<u16>,
+    pixel_height: Option<u16>,
     cwd: Option<&str>,
     session_id: &str,
     agent_session: bool,
@@ -433,12 +470,7 @@ fn spawn_pty(
     let pty_system = NativePtySystem::default();
 
     let pair = pty_system
-        .openpty(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
+        .openpty(pty_size_for(cols, rows, pixel_width, pixel_height))
         .map_err(|e| e.to_string())?;
 
     // Resolve from the user's configured `default_shell` (Settings), not raw
@@ -474,6 +506,8 @@ fn spawn_pty(
     let session = build_terminal_session(
         cols,
         rows,
+        pixel_width,
+        pixel_height,
         Box::new(SharedWriterAdapter(Arc::clone(&writer))),
     );
     let mut terminal = TerminalHandle::new(session);
@@ -558,26 +592,35 @@ fn spawn_pty(
     Ok(())
 }
 
-/// Internal: resize both the PTY ioctl and the wezterm emulator grid.
-fn resize_pty(state: &PtyManager, pty_id: &str, cols: u16, rows: u16) -> Result<(), String> {
+/// Internal: resize both the PTY ioctl and the wezterm emulator grid. An unchanged size is a
+/// full no-op: no `SIGWINCH` for the child and no emulator reset of scroll margins and cursor.
+fn resize_pty(
+    state: &PtyManager,
+    pty_id: &str,
+    cols: u16,
+    rows: u16,
+    pixel_width: Option<u16>,
+    pixel_height: Option<u16>,
+) -> Result<(), String> {
+    validate_grid_size(cols, rows)?;
     let instances = state.instances.lock().map_err(|e| e.to_string())?;
     let instance = instances.get(pty_id).ok_or("PTY not found")?;
+    let mut session = match instance.terminal.session.lock() {
+        Ok(guard) => guard,
+        Err(err) => {
+            tracing::error!(error = %err, "session mutex poisoned during resize");
+            return Ok(());
+        }
+    };
+    if !session.size_changed(cols, rows, pixel_width, pixel_height) {
+        return Ok(());
+    }
     instance
         .master
-        .resize(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
+        .resize(pty_size_for(cols, rows, pixel_width, pixel_height))
         .map_err(|e| e.to_string())?;
-
-    // Keep the wezterm emulator in sync with the PTY so its internal grid
-    // matches the shell's view.
-    match instance.terminal.session.lock() {
-        Ok(mut guard) => guard.resize(cols, rows),
-        Err(err) => tracing::error!(error = %err, "session mutex poisoned during resize"),
-    }
+    session.resize_with_pixels(cols, rows, pixel_width, pixel_height);
+    drop(session);
     // Force a full resend on next emission — row count may have changed.
     if let Ok(mut differ) = instance.terminal.differ.lock() {
         differ.invalidate();
@@ -671,8 +714,11 @@ pub async fn start_claude_session(
     cwd: Option<String>,
     cols: u16,
     rows: u16,
+    pixel_width: Option<u16>,
+    pixel_height: Option<u16>,
     resume: Option<String>,
 ) -> Result<StartClaudeResult, String> {
+    validate_grid_size(cols, rows)?;
     let worktree_path = {
         let db = db.lock().map_err(|e| e.to_string())?;
         db.find_session(&session_id)
@@ -708,6 +754,8 @@ pub async fn start_claude_session(
         pty_id.clone(),
         cols,
         rows,
+        pixel_width,
+        pixel_height,
         cwd.as_deref(),
         session_id.as_str(),
         true,
@@ -1049,9 +1097,12 @@ pub async fn spawn_aux_shell(
     base_dir: Option<String>,
     cols: u16,
     rows: u16,
+    pixel_width: Option<u16>,
+    pixel_height: Option<u16>,
     command: Option<String>,
     autorun: bool,
 ) -> Result<String, String> {
+    validate_grid_size(cols, rows)?;
     let worktree_path = {
         let db = db.lock().map_err(|e| e.to_string())?;
         db.find_session(&session_id)
@@ -1116,6 +1167,8 @@ pub async fn spawn_aux_shell(
         pty_id.clone(),
         cols,
         rows,
+        pixel_width,
+        pixel_height,
         cwd.as_deref(),
         term_id.as_str(),
         false,
@@ -1497,7 +1550,10 @@ pub fn resize_session_terminal(
     session_id: String,
     cols: u16,
     rows: u16,
+    pixel_width: Option<u16>,
+    pixel_height: Option<u16>,
 ) -> Result<(), String> {
+    validate_grid_size(cols, rows)?;
     let pty_id = {
         let session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
         session_ptys
@@ -1505,7 +1561,7 @@ pub fn resize_session_terminal(
             .cloned()
             .ok_or_else(|| "no PTY for session".to_string())?
     };
-    resize_pty(&state, &pty_id, cols, rows)
+    resize_pty(&state, &pty_id, cols, rows, pixel_width, pixel_height)
 }
 
 /// Write `text` to the OS clipboard from a blocking worker thread. The
@@ -2236,7 +2292,7 @@ mod tests {
         let _cfg: crate::config::Config = serde_json::from_value(json).unwrap();
 
         let sink = Sink(Arc::new(Mutex::new(Vec::new())));
-        let mut session = build_terminal_session(80, 24, Box::new(sink.clone()));
+        let mut session = build_terminal_session(80, 24, None, None, Box::new(sink.clone()));
         session.advance_bytes(b"\x1b[?u");
         assert!(sink.0.lock().unwrap().is_empty());
     }
@@ -2308,8 +2364,13 @@ mod tests {
 
         let raw_writer = pair.master.take_writer().unwrap();
         let writer: SharedWriter = Arc::new(Mutex::new(raw_writer));
-        let session =
-            build_terminal_session(80, 24, Box::new(SharedWriterAdapter(Arc::clone(&writer))));
+        let session = build_terminal_session(
+            80,
+            24,
+            None,
+            None,
+            Box::new(SharedWriterAdapter(Arc::clone(&writer))),
+        );
         let terminal = TerminalHandle::new(session);
 
         let instance = PtyInstance {
@@ -2662,3 +2723,11 @@ mod tests {
     #[cfg(not(target_os = "linux"))]
     fn assert_reaped(_pid: u32) {}
 }
+
+#[cfg(test)]
+#[path = "pty_pixel_tests.rs"]
+mod pixel_tests;
+
+#[cfg(test)]
+#[path = "pty_zero_size_tests.rs"]
+mod zero_size_tests;

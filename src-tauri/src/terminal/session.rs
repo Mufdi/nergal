@@ -57,6 +57,31 @@ pub struct MouseMods {
     pub alt: bool,
 }
 
+const FALLBACK_CELL_WIDTH: usize = 8;
+const FALLBACK_CELL_HEIGHT: usize = 16;
+
+/// wezterm-term divides by `pixel / cols` while placing inline images, so an axis below one
+/// pixel per cell must never reach it.
+pub fn clamp_pixel_geometry(
+    cols: u16,
+    rows: u16,
+    pixel_width: Option<u16>,
+    pixel_height: Option<u16>,
+) -> (u16, u16) {
+    fn axis(count: u16, pixels: Option<u16>, fallback_cell: usize) -> u16 {
+        let count = usize::from(count);
+        let value = match pixels {
+            Some(p) if usize::from(p) >= count => usize::from(p),
+            _ => count * fallback_cell,
+        };
+        value.min(usize::from(u16::MAX)) as u16
+    }
+    (
+        axis(cols, pixel_width, FALLBACK_CELL_WIDTH),
+        axis(rows, pixel_height, FALLBACK_CELL_HEIGHT),
+    )
+}
+
 /// A single terminal emulator instance owned by the backend.
 ///
 /// Phase 1 only: no IPC coupling, no coalescing, no grid differ. Those land
@@ -66,6 +91,8 @@ pub struct TerminalSession {
     terminal: Terminal,
     cols: u16,
     rows: u16,
+    pixel_width: u16,
+    pixel_height: u16,
     /// Snapshot of the palette at construction time. Used to resolve
     /// `PaletteIndex(n)` cell attributes into concrete RGBA when building
     /// a [`GridSnapshot`] — without this, the frontend would see `None`
@@ -93,17 +120,47 @@ impl TerminalSession {
         Self::with_config(cols, rows, writer, NergalTerminalConfig::new())
     }
 
+    pub fn new_with_pixels(
+        cols: u16,
+        rows: u16,
+        pixel_width: Option<u16>,
+        pixel_height: Option<u16>,
+        writer: Box<dyn Write + Send>,
+    ) -> Self {
+        Self::with_config_and_pixels(
+            cols,
+            rows,
+            pixel_width,
+            pixel_height,
+            writer,
+            NergalTerminalConfig::new(),
+        )
+    }
+
     pub fn with_config(
         cols: u16,
         rows: u16,
         writer: Box<dyn Write + Send>,
         config: NergalTerminalConfig,
     ) -> Self {
+        Self::with_config_and_pixels(cols, rows, None, None, writer, config)
+    }
+
+    pub fn with_config_and_pixels(
+        cols: u16,
+        rows: u16,
+        pixel_width: Option<u16>,
+        pixel_height: Option<u16>,
+        writer: Box<dyn Write + Send>,
+        config: NergalTerminalConfig,
+    ) -> Self {
+        let (pixel_width, pixel_height) =
+            clamp_pixel_geometry(cols, rows, pixel_width, pixel_height);
         let size = TerminalSize {
             rows: rows as usize,
             cols: cols as usize,
-            pixel_width: 0,
-            pixel_height: 0,
+            pixel_width: pixel_width as usize,
+            pixel_height: pixel_height as usize,
             dpi: 0,
         };
         let palette = config.color_palette();
@@ -118,6 +175,8 @@ impl TerminalSession {
             terminal,
             cols,
             rows,
+            pixel_width,
+            pixel_height,
             palette,
             scroll_offset: 0,
             last_scrollback_rows: 0,
@@ -170,19 +229,57 @@ impl TerminalSession {
         self.terminal.advance_bytes(bytes);
     }
 
-    /// Resize the visible area. The PTY resize (ioctl TIOCSWINSZ) stays on
-    /// the `pty.rs` side — this only updates the emulator's internal model.
-    pub fn resize(&mut self, cols: u16, rows: u16) {
+    /// The PTY resize (ioctl TIOCSWINSZ) stays on the `pty.rs` side; this only updates the
+    /// emulator's internal model.
+    ///
+    /// Returns `false` without touching the emulator when the clamped size is unchanged:
+    /// wezterm's resize always resets the scroll margins and cursor, so it is not idempotent.
+    pub fn resize_with_pixels(
+        &mut self,
+        cols: u16,
+        rows: u16,
+        pixel_width: Option<u16>,
+        pixel_height: Option<u16>,
+    ) -> bool {
+        if !self.size_changed(cols, rows, pixel_width, pixel_height) {
+            return false;
+        }
+        self.apply_resize(cols, rows, pixel_width, pixel_height);
+        true
+    }
+
+    pub fn size_changed(
+        &self,
+        cols: u16,
+        rows: u16,
+        pixel_width: Option<u16>,
+        pixel_height: Option<u16>,
+    ) -> bool {
+        let (pw, ph) = clamp_pixel_geometry(cols, rows, pixel_width, pixel_height);
+        (cols, rows, pw, ph) != (self.cols, self.rows, self.pixel_width, self.pixel_height)
+    }
+
+    fn apply_resize(
+        &mut self,
+        cols: u16,
+        rows: u16,
+        pixel_width: Option<u16>,
+        pixel_height: Option<u16>,
+    ) {
+        let (pixel_width, pixel_height) =
+            clamp_pixel_geometry(cols, rows, pixel_width, pixel_height);
         let size = TerminalSize {
             rows: rows as usize,
             cols: cols as usize,
-            pixel_width: 0,
-            pixel_height: 0,
+            pixel_width: pixel_width as usize,
+            pixel_height: pixel_height as usize,
             dpi: 0,
         };
         self.terminal.resize(size);
         self.cols = cols;
         self.rows = rows;
+        self.pixel_width = pixel_width;
+        self.pixel_height = pixel_height;
     }
 
     pub fn cols(&self) -> u16 {
@@ -633,7 +730,7 @@ mod tests {
         let mut s = session(80, 24);
         assert_eq!(s.cols(), 80);
         assert_eq!(s.rows(), 24);
-        s.resize(120, 40);
+        s.resize_with_pixels(120, 40, None, None);
         assert_eq!(s.cols(), 120);
         assert_eq!(s.rows(), 40);
         let grid = s.grid_snapshot();

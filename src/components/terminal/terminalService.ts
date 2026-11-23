@@ -18,12 +18,17 @@ import { open as openShell } from "@tauri-apps/plugin-shell";
 import { readText as readClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import type { CellSnapshot, GridUpdate, TerminalKeyEvent } from "@/lib/types";
 import { appStore } from "@/stores/jotaiStore";
+import { configLoadedAtom } from "@/stores/config";
+import { readingTerminalAtom } from "@/stores/readingMode";
 import { toastsAtom } from "@/stores/toast";
 
 import { FontAtlas, isWideCell, measureFont, type FontMetrics } from "./fontAtlas";
 import { afterResizeFailure, nextResize, pixelGeometry, recordRequest, type Sent } from "./pixelGeometry";
 import { auxButtonToForward, auxPress, auxRelease, type AuxHeld } from "./mouseButtons";
 import { TERM_FONT, TERM_THEME, refreshTermTheme, rgbaToCss } from "./theme";
+import { readingLayout } from "./readingCols";
+import { clampedCell } from "./cellMapping";
+import { refitNeeded, waitUntil } from "./waitUntil";
 import { cssColorToRgb } from "./cssColor";
 import { shouldPassThrough } from "./passThrough";
 
@@ -350,6 +355,7 @@ async function showTerminal(opts: {
     hostElement.appendChild(container);
 
     await waitForLayout(container);
+    if (region === "center") await waitForConfig();
 
     const canvas = document.createElement("canvas");
     canvas.style.cssText = "outline:none;display:block;";
@@ -405,7 +411,9 @@ async function showTerminal(opts: {
     const metrics = measureFont(TERM_FONT.family, TERM_FONT.size, TERM_FONT.lineHeight, dpr);
     const atlas = new FontAtlas(metrics, TERM_FONT.family, TERM_FONT.size, dpr);
 
-    const { cols, rows } = computeCols(container, metrics);
+    const readingUsed = appStore.get(readingTerminalAtom);
+    const { cols, rows, centered } = computeLayout(container, metrics, region);
+    container.style.justifyContent = centered ? "center" : "";
     sizeCanvas(canvas, cols, rows, metrics);
 
     const ctx = canvas.getContext("2d", { alpha: false });
@@ -474,6 +482,8 @@ async function showTerminal(opts: {
 
     paintAll(entry);
     entries.set(key, entry);
+    // fitActive only sees registered entries, so a flag flip during the spawn is applied here.
+    if (refitNeeded(readingUsed, appStore.get(readingTerminalAtom))) fit(entry);
     failureToasted.delete(key);
     if (focus) focusCanvas(entry);
     // wezterm starts out "focused"; align it so an app enabling DECSET 1004
@@ -759,17 +769,19 @@ function wireInput(entry: Entry): void {
     paintAll(entry);
   });
 
-  entry.canvas.addEventListener("mousemove", (e) => {
-    const cell = mouseToCell(entry, e);
-    if (!cell) return;
-
+  // On the container so a drag into the centered canvas's margins keeps extending the selection.
+  entry.container.addEventListener("mousemove", (e) => {
     if (entry.isDragging && entry.selection) {
+      const cell = pointerCell(entry, e);
       const delta = entry.scrollOffset - entry.selectionScrollOffset;
       const head = { row: cell.row - delta, col: cell.col };
       entry.selection = { anchor: entry.selection.anchor, head };
       paintAll(entry);
       return;
     }
+
+    const cell = mouseToCell(entry, e);
+    if (!cell) return;
 
     if (entry.isAltScreen && (e.buttons & 1) === 1) {
       sendMouseButton(entry, "left", "move", cell.col, cell.row, e);
@@ -896,7 +908,7 @@ function wireInput(entry: Entry): void {
   // translate wheel pixels into terminal lines and let the backend route:
   // primary screen → local scrollback navigation, alt screen → mouse
   // report or arrow-key fallback to the running TUI app (claude, vim, …).
-  entry.canvas.addEventListener(
+  entry.container.addEventListener(
     "wheel",
     (e) => {
       e.preventDefault();
@@ -926,7 +938,7 @@ function wireInput(entry: Entry): void {
       const lines = Math.trunc(entry.wheelAccum);
       entry.wheelAccum -= lines;
       if (lines === 0) return;
-      const cell = mouseToCell(entry, e) ?? { col: 0, row: 0 };
+      const cell = pointerCell(entry, e);
       invoke("terminal_scroll", {
         sessionId: entry.sessionId,
         delta: -lines,
@@ -991,6 +1003,18 @@ function wordRangeAt(entry: Entry, cell: CellCoord): { startCol: number; endCol:
     endCol += 1;
   }
   return { startCol, endCol };
+}
+
+function pointerCell(entry: Entry, e: MouseEvent): CellCoord {
+  const rect = entry.canvas.getBoundingClientRect();
+  return clampedCell(
+    e.clientX - rect.left,
+    e.clientY - rect.top,
+    entry.metrics.cssWidth,
+    entry.metrics.cssHeight,
+    entry.cols,
+    entry.rows,
+  );
 }
 
 function mouseToCell(entry: Entry, e: MouseEvent): CellCoord | null {
@@ -1151,17 +1175,9 @@ function focusCanvas(entry: Entry): void {
 
 // ── Private: resize + layout ──
 
-function computeCols(container: HTMLElement, metrics: FontMetrics): { cols: number; rows: number } {
+function computeLayout(container: HTMLElement, metrics: FontMetrics, region: Region) {
   const rect = container.getBoundingClientRect();
-  const rawCols = Math.floor(rect.width / metrics.cssWidth);
-  const rawRows = Math.floor(rect.height / metrics.cssHeight);
-  // Guard against a not-yet-laid-out container. Launching a shell at 1x1
-  // is unrecoverable: many TUIs (including `claude`) cache dimensions at
-  // startup and never reflow properly even after SIGWINCH. Default to a
-  // conventional 80x24 when the measurement looks bogus.
-  const cols = rawCols >= 10 ? rawCols : 80;
-  const rows = rawRows >= 3 ? rawRows : 24;
-  return { cols, rows };
+  return readingLayout(rect.width, rect.height, metrics, region, appStore.get(readingTerminalAtom));
 }
 
 /// Poll the container until it has real dimensions, capped at ~1s. A few
@@ -1174,6 +1190,13 @@ async function waitForLayout(container: HTMLElement): Promise<void> {
     if (rect.width >= 100 && rect.height >= 50) return;
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   }
+}
+
+function waitForConfig(): Promise<void> {
+  return waitUntil(() => appStore.get(configLoadedAtom), 1000, {
+    now: () => performance.now(),
+    nextFrame: () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+  });
 }
 
 function sizeCanvas(
@@ -1209,10 +1232,11 @@ async function sendResize(entry: Entry): Promise<void> {
 }
 
 function fit(entry: Entry): void {
-  // A display:none container measures 0x0; computeCols would size it to its 80x24 fallback.
+  // A display:none container measures 0x0; computeLayout would size it to its 80x24 fallback.
   const rect = entry.container.getBoundingClientRect();
   if (rect.width === 0 || rect.height === 0) return;
-  const { cols, rows } = computeCols(entry.container, entry.metrics);
+  const { cols, rows, centered } = computeLayout(entry.container, entry.metrics, entry.region);
+  entry.container.style.justifyContent = centered ? "center" : "";
   const { pixelWidth, pixelHeight } = pixelGeometry(cols, rows, entry.metrics);
   if (cols !== entry.cols || rows !== entry.rows) {
     entry.cols = cols;

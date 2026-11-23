@@ -238,6 +238,15 @@ pub struct Config {
     /// before this field existed keep showing them.
     #[serde(default = "default_true")]
     pub linear_show_completed: bool,
+    /// Frontend-owned, same reason as `linear_hidden_states`.
+    #[serde(default)]
+    pub reading_mode_terminal: bool,
+    #[serde(default)]
+    pub reading_mode_markdown: bool,
+    /// Defaults on so configs written before this field existed keep
+    /// full-width tables.
+    #[serde(default = "default_true")]
+    pub reading_mode_full_width_tables: bool,
 }
 
 /// Tuning + kill-switch for agent-spawned worktree sessions. All fields have
@@ -436,6 +445,9 @@ impl Default for Config {
             linear_hidden_states: Vec::new(),
             linear_collapsed_groups: Vec::new(),
             linear_show_completed: true,
+            reading_mode_terminal: false,
+            reading_mode_markdown: false,
+            reading_mode_full_width_tables: true,
         }
     }
 }
@@ -764,3 +776,7 @@ mod tests {
         assert_eq!(resolved_a, resolved_b);
     }
 }
+
+#[cfg(test)]
+#[path = "config_reading_mode_tests.rs"]
+mod reading_mode_tests;

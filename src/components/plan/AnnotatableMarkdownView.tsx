@@ -3,6 +3,9 @@ import { useAtomValue, useSetAtom } from "jotai";
 import { activeAnnotationsAtom, annotationMapAtom, annotationScopeAtom, specAnnotationMapAtom, type AnnotationType } from "@/stores/annotations";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { toastsAtom } from "@/stores/toast";
+import { readingMarkdownAtom } from "@/stores/readingMode";
+import { MARKDOWN_CONTAINER_CLASS, markdownWidthClass } from "./readingWidth";
+import { ReadingTable } from "./ReadingTable";
 import { PlanAnnotationToolbar } from "./PlanAnnotationToolbar";
 import { createHighlighter, createTextRange, resolvePinpointTarget, HighlightEvent, type Highlighter, type HighlightSource, type DomMeta } from "@/lib/highlighter";
 import { invoke } from "@/lib/tauri";
@@ -117,13 +120,13 @@ const PlanMarkdown = memo(function PlanMarkdown({ content }: { content: string }
           </div>
         ),
         table: ({ node, ...props }: ComponentPropsWithoutRef<"table"> & { node?: unknown }) => (
-          <table className="my-2 w-full border-collapse text-xs" {...props} />
+          <ReadingTable {...props} />
         ),
         th: ({ node, ...props }: ComponentPropsWithoutRef<"th"> & { node?: unknown }) => (
-          <th className="border border-border bg-surface-raised px-2 py-1 text-left font-medium" {...props} />
+          <th className="border border-border bg-surface-raised px-2 py-1 text-left font-medium [overflow-wrap:anywhere]" {...props} />
         ),
         td: ({ node, ...props }: ComponentPropsWithoutRef<"td"> & { node?: unknown }) => (
-          <td data-annotatable="table-cell" className="annotatable-el border border-border px-2 py-1" {...props} />
+          <td data-annotatable="table-cell" className="annotatable-el border border-border px-2 py-1 [overflow-wrap:anywhere]" {...props} />
         ),
       }}
     >
@@ -133,6 +136,7 @@ const PlanMarkdown = memo(function PlanMarkdown({ content }: { content: string }
 });
 
 export function AnnotatableMarkdownView({ content, annotationsEnabled = true, annotationMode = false }: Props) {
+  const reading = useAtomValue(readingMarkdownAtom);
   const containerRef = useRef<HTMLDivElement>(null);
   const highlighterRef = useRef<Highlighter | null>(null);
   const annotationModeRef = useRef(annotationMode);
@@ -609,12 +613,17 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true, an
   }, [content, annotations.length, addToast]);
 
   return (
-    <div
-      ref={containerRef}
-      className={`annotatable-plan prose-invert max-w-none px-4 py-3 text-[12px] text-text ${annotationMode ? "annotation-mode-active" : ""}`}
-    >
-      <PlanMarkdown content={content} />
+    <>
+      <div className={MARKDOWN_CONTAINER_CLASS}>
+        <div
+          ref={containerRef}
+          className={`annotatable-plan prose-invert ${markdownWidthClass(reading)} px-4 py-3 text-[12px] text-text ${annotationMode ? "annotation-mode-active" : ""}`}
+        >
+          <PlanMarkdown content={content} />
+        </div>
+      </div>
 
+      {/* Outside the @container: a query container may be the containing block of this fixed toolbar. */}
       {toolbar && (
         <div data-annotation-toolbar>
           <PlanAnnotationToolbar
@@ -630,7 +639,7 @@ export function AnnotatableMarkdownView({ content, annotationsEnabled = true, an
           />
         </div>
       )}
-    </div>
+    </>
   );
 }
 

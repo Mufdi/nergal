@@ -2,7 +2,11 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ComponentPropsWithoutRef } from "react";
 import { useEffect, useState } from "react";
+import { useAtomValue } from "jotai";
 import { invoke } from "@/lib/tauri";
+import { readingMarkdownAtom } from "@/stores/readingMode";
+import { MARKDOWN_CONTAINER_CLASS, markdownWidthClass } from "./readingWidth";
+import { ReadingTable } from "./ReadingTable";
 import { useObsidianRemarkPlugin, isObsidianHref, openObsidianHref, obsidianUrlTransform } from "@/lib/markdown/obsidianMarkdown";
 import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
@@ -101,105 +105,108 @@ function GatedImage({ src, alt }: { src?: string; alt?: string }) {
 
 export function MarkdownView({ content, onWikilinkNavigate, gateRemoteImages = false, linearAssets = false }: MarkdownViewProps) {
   const obsidianPlugin = useObsidianRemarkPlugin();
+  const reading = useAtomValue(readingMarkdownAtom);
   return (
-    <div className="prose-invert max-w-none px-4 py-3 text-[12px] text-text">
-      <Markdown
-        remarkPlugins={[remarkGfm, obsidianPlugin]}
-        urlTransform={obsidianUrlTransform}
-        components={{
-          h1: (props: ComponentPropsWithoutRef<"h1">) => (
-            <h1 className="mb-2 mt-4 border-b border-border pb-1 text-lg font-semibold text-text" {...props} />
-          ),
-          h2: (props: ComponentPropsWithoutRef<"h2">) => (
-            <h2 className="mb-2 mt-3 text-base font-semibold text-text" {...props} />
-          ),
-          h3: (props: ComponentPropsWithoutRef<"h3">) => (
-            <h3 className="mb-1 mt-2 text-sm font-semibold text-text" {...props} />
-          ),
-          p: (props: ComponentPropsWithoutRef<"p">) => (
-            <p className="mb-2 leading-relaxed text-text" {...props} />
-          ),
-          ul: (props: ComponentPropsWithoutRef<"ul">) => (
-            <ul className="mb-2 ml-4 list-disc text-text" {...props} />
-          ),
-          ol: (props: ComponentPropsWithoutRef<"ol">) => (
-            <ol className="mb-2 ml-4 list-decimal text-text" {...props} />
-          ),
-          li: (props: ComponentPropsWithoutRef<"li">) => (
-            <li className="mb-0.5 text-text" {...props} />
-          ),
-          code: ({ className, children, ...props }: ComponentPropsWithoutRef<"code">) => {
-            const isBlock = className?.startsWith("language-");
-            if (isBlock) {
+    <div className={MARKDOWN_CONTAINER_CLASS}>
+      <div className={`prose-invert ${markdownWidthClass(reading)} px-4 py-3 text-[12px] text-text`}>
+        <Markdown
+          remarkPlugins={[remarkGfm, obsidianPlugin]}
+          urlTransform={obsidianUrlTransform}
+          components={{
+            h1: (props: ComponentPropsWithoutRef<"h1">) => (
+              <h1 className="mb-2 mt-4 border-b border-border pb-1 text-lg font-semibold text-text" {...props} />
+            ),
+            h2: (props: ComponentPropsWithoutRef<"h2">) => (
+              <h2 className="mb-2 mt-3 text-base font-semibold text-text" {...props} />
+            ),
+            h3: (props: ComponentPropsWithoutRef<"h3">) => (
+              <h3 className="mb-1 mt-2 text-sm font-semibold text-text" {...props} />
+            ),
+            p: (props: ComponentPropsWithoutRef<"p">) => (
+              <p className="mb-2 leading-relaxed text-text" {...props} />
+            ),
+            ul: (props: ComponentPropsWithoutRef<"ul">) => (
+              <ul className="mb-2 ml-4 list-disc text-text" {...props} />
+            ),
+            ol: (props: ComponentPropsWithoutRef<"ol">) => (
+              <ol className="mb-2 ml-4 list-decimal text-text" {...props} />
+            ),
+            li: (props: ComponentPropsWithoutRef<"li">) => (
+              <li className="mb-0.5 text-text" {...props} />
+            ),
+            code: ({ className, children, ...props }: ComponentPropsWithoutRef<"code">) => {
+              const isBlock = className?.startsWith("language-");
+              if (isBlock) {
+                return (
+                  <pre className="my-2 overflow-x-auto bg-surface p-3 font-mono text-xs text-text">
+                    <code className={className} {...props}>
+                      {children}
+                    </code>
+                  </pre>
+                );
+              }
               return (
-                <pre className="my-2 overflow-x-auto bg-surface p-3 font-mono text-xs text-text">
-                  <code className={className} {...props}>
-                    {children}
-                  </code>
-                </pre>
+                <code className="bg-surface-raised px-1 py-0.5 font-mono text-xs text-accent" {...props}>
+                  {children}
+                </code>
               );
-            }
-            return (
-              <code className="bg-surface-raised px-1 py-0.5 font-mono text-xs text-accent" {...props}>
-                {children}
-              </code>
-            );
-          },
-          pre: ({ children }: ComponentPropsWithoutRef<"pre">) => <div>{children}</div>,
-          a: ({ href, children, ...props }: ComponentPropsWithoutRef<"a">) => {
-            if (isObsidianHref(href)) {
+            },
+            pre: ({ children }: ComponentPropsWithoutRef<"pre">) => <div>{children}</div>,
+            a: ({ href, children, ...props }: ComponentPropsWithoutRef<"a">) => {
+              if (isObsidianHref(href)) {
+                return (
+                  <a
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (onWikilinkNavigate && !(e.metaKey || e.ctrlKey)) {
+                        onWikilinkNavigate(href!);
+                      } else {
+                        openObsidianHref(href!);
+                      }
+                    }}
+                    className="text-accent underline cursor-pointer"
+                    role="link"
+                  >
+                    {children}
+                  </a>
+                );
+              }
               return (
-                <a
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (onWikilinkNavigate && !(e.metaKey || e.ctrlKey)) {
-                      onWikilinkNavigate(href!);
-                    } else {
-                      openObsidianHref(href!);
-                    }
-                  }}
-                  className="text-accent underline cursor-pointer"
-                  role="link"
-                >
+                <a href={href} className="text-accent underline" {...props}>
                   {children}
                 </a>
               );
-            }
-            return (
-              <a href={href} className="text-accent underline" {...props}>
-                {children}
-              </a>
-            );
-          },
-          blockquote: (props: ComponentPropsWithoutRef<"blockquote">) => (
-            <blockquote className="my-2 border-l-2 border-accent pl-3 text-text-muted" {...props} />
-          ),
-          table: (props: ComponentPropsWithoutRef<"table">) => (
-            <table className="my-2 w-full border-collapse text-xs" {...props} />
-          ),
-          th: (props: ComponentPropsWithoutRef<"th">) => (
-            <th className="border border-border bg-surface-raised px-2 py-1 text-left font-medium" {...props} />
-          ),
-          td: (props: ComponentPropsWithoutRef<"td">) => (
-            <td className="border border-border px-2 py-1" {...props} />
-          ),
-          ...(gateRemoteImages || linearAssets
-            ? {
-                img: ({ src, alt }: ComponentPropsWithoutRef<"img">) =>
-                  linearAssets && isLinearUpload(src) ? (
-                    <LinearProxyImage src={src} alt={alt} />
-                  ) : gateRemoteImages ? (
-                    <GatedImage src={src} alt={alt} />
-                  ) : (
-                    <img src={src} alt={alt} className="max-w-full rounded" />
-                  ),
-              }
-            : {}),
-        }}
-      >
-        {content}
-      </Markdown>
+            },
+            blockquote: (props: ComponentPropsWithoutRef<"blockquote">) => (
+              <blockquote className="my-2 border-l-2 border-accent pl-3 text-text-muted" {...props} />
+            ),
+            table: (props: ComponentPropsWithoutRef<"table">) => (
+              <ReadingTable {...props} />
+            ),
+            th: (props: ComponentPropsWithoutRef<"th">) => (
+              <th className="border border-border bg-surface-raised px-2 py-1 text-left font-medium [overflow-wrap:anywhere]" {...props} />
+            ),
+            td: (props: ComponentPropsWithoutRef<"td">) => (
+              <td className="border border-border px-2 py-1 [overflow-wrap:anywhere]" {...props} />
+            ),
+            ...(gateRemoteImages || linearAssets
+              ? {
+                  img: ({ src, alt }: ComponentPropsWithoutRef<"img">) =>
+                    linearAssets && isLinearUpload(src) ? (
+                      <LinearProxyImage src={src} alt={alt} />
+                    ) : gateRemoteImages ? (
+                      <GatedImage src={src} alt={alt} />
+                    ) : (
+                      <img src={src} alt={alt} className="max-w-full rounded" />
+                    ),
+                }
+              : {}),
+          }}
+        >
+          {content}
+        </Markdown>
+      </div>
     </div>
   );
 }

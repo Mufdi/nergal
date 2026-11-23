@@ -1,0 +1,6 @@
+c6f31529beb96ce682579cdf284a1bf124f2284d  src/stores/readingMode.test.ts
+bda9b578a64003f41a4c4b4959f0a03a12095f51  src/components/terminal/readingCols.test.ts
+527ace32d0a03bf9bce232d506b27d76c420cf3a  src/components/plan/readingWidth.test.ts
+37614838f9b7412d4a378d31df39c035d4e122e3  src-tauri/src/config_reading_mode_tests.rs
+ef8f43c297056916f073d6b879bfb01a96916dd5  src/components/terminal/cellMapping.test.ts
+984c09b9688e1fc4585172819a9c8f2f065b2f2b  src/components/terminal/waitUntil.test.ts

@@ -214,15 +214,27 @@ impl AgentAdapter for OpenCodeAdapter {
         // turn, so re-submitting it on resume injects a stray turn into the
         // existing conversation (observed to hang the TUI). On resume the
         // context already lives in history from the original spawn.
-        if ctx.resume_from.is_none()
-            && let Some(text) = fold_prompt_preamble(ctx.injected_context, ctx.initial_prompt)
-        {
-            args.push("--prompt".into());
-            args.push(text);
-        }
+        // It stays out of `args`: the PTY layer renders `--prompt=<ref>` as one
+        // word, so the shell never parses the text and a leading `-` is not
+        // read as another option.
+        let prompt = if ctx.resume_from.is_none() {
+            fold_prompt_preamble(ctx.injected_context, ctx.initial_prompt).map(|text| {
+                crate::agents::LaunchPrompt {
+                    text,
+                    attach: crate::agents::PromptAttach::Flag("--prompt"),
+                }
+            })
+        } else {
+            None
+        };
         let mut env = HashMap::new();
         env.insert("NERGAL_SESSION_ID".into(), ctx.session_id.to_string());
-        Ok(SpawnSpec { binary, args, env })
+        Ok(SpawnSpec {
+            binary,
+            args,
+            env,
+            prompt,
+        })
     }
 
     fn permission_presets(&self) -> &'static [crate::models::PermissionPreset] {
@@ -580,6 +592,38 @@ mod tests {
             assert!(spec.args.iter().any(|a| a == "--port"));
             assert!(spec.args.iter().any(|a| a == "--hostname"));
             assert!(spec.args.iter().any(|a| a == "127.0.0.1"));
+        }
+    }
+
+    #[test]
+    fn spawn_carries_folded_preamble_in_spec_prompt_only_on_fresh_launch() {
+        let a = OpenCodeAdapter::new();
+        let cwd = std::path::Path::new("/tmp");
+        let mk = |resume: Option<&'static str>| SpawnContext {
+            session_id: "s",
+            cwd,
+            resume_from: resume,
+            initial_prompt: Some("do the thing"),
+            injected_context: Some("# ctx"),
+            launch_options: None,
+        };
+        if let Ok(spec) = a.spawn(&mk(None)) {
+            assert_eq!(
+                spec.prompt,
+                Some(crate::agents::LaunchPrompt {
+                    text: "# ctx\n\ndo the thing".to_string(),
+                    attach: crate::agents::PromptAttach::Flag("--prompt"),
+                })
+            );
+            assert!(
+                spec.args
+                    .iter()
+                    .all(|x| x != "--prompt" && !x.contains("do the thing"))
+            );
+        }
+        if let Ok(spec) = a.spawn(&mk(Some("continue"))) {
+            assert_eq!(spec.prompt, None);
+            assert!(spec.args.iter().all(|x| x != "--prompt"));
         }
     }
 

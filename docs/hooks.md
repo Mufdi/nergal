@@ -8,7 +8,7 @@ All endpoints live in a per-user IPC directory resolved by `ipc_dir()` (`src-tau
 
 | Subcommand | Mode | Purpose |
 |---|---|---|
-| `nergal hook send <event>` | async | Forward an event payload to the hook socket (`hook.sock` in the per-user IPC dir). |
+| `nergal hook send <event>` | async | Forward an event payload to the hook socket (`hook.sock` in the per-user IPC dir; the same dir holds `launch-prompts/`, 0600 files with a launch prompt between Nergal's write and the shell's read). |
 | `nergal hook inject-edits` | sync | Modify the prompt before submission (used on `UserPromptSubmit`). |
 | `nergal hook plan-review` | blocking, FIFO | Block on the plan-review FIFO (`plan-{pid}.fifo` in the per-user IPC dir) until the GUI returns `allow` / `deny`. |
 | `nergal hook ask-user` | async (notifier) | Fire-and-forget signal that AskUserQuestion is pending. CC's TUI owns the question; nergal only blinks the session tab. |

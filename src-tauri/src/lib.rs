@@ -1147,6 +1147,7 @@ pub fn run() {
 
             // A crashed prior run may have left pinned-note bodies on disk.
             crate::agents::clear_stale_spawn_context();
+            crate::agents::clear_stale_launch_prompts();
 
             // Seed the pinned-notes hot-reload watcher from pins persisted
             // across the last run, so re-launching restores the watch set.

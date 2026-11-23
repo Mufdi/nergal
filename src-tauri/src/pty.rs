@@ -1,9 +1,11 @@
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, State};
 
+use crate::agents::{LaunchPrompt, PromptAttach};
 use crate::platform_spawn::NoWindow;
 use crate::terminal::{NergalTerminalConfig, TerminalHandle, TerminalKeyEvent, TerminalSession};
 
@@ -130,6 +132,10 @@ pub struct PtyManager {
     /// session_id -> prompt to submit at spawn (deep link `session/new`).
     /// Consumed once by `start_claude_session` when it builds the spawn command.
     pending_prompts: Mutex<HashMap<String, String>>,
+    /// pty ids whose launch command reached the PTY. The reader thread's agent
+    /// EOF only finalizes the vault for these, so a launch that was rolled
+    /// back never spends the once-per-process finalization claim.
+    launched_ptys: Mutex<HashSet<String>>,
 }
 
 /// Single construction point for app sessions. Kitty keyboard stays
@@ -186,6 +192,7 @@ impl PtyManager {
             aux_shells: Mutex::new(HashMap::new()),
             aux_line_trackers: Mutex::new(HashMap::new()),
             pending_prompts: Mutex::new(HashMap::new()),
+            launched_ptys: Mutex::new(HashSet::new()),
         }
     }
 
@@ -352,6 +359,7 @@ fn build_launch_command(
     prelude: Option<&str>,
     binary: &std::path::Path,
     args: &[String],
+    prompt: Option<(&PromptRef, &PromptAttach)>,
 ) -> String {
     use crate::config::ShellKind;
     let bin = binary.display().to_string();
@@ -364,10 +372,18 @@ fn build_launch_command(
                 cmd.push_str(p);
             }
             cmd.push_str(" && ");
+            if let Some((PromptRef::File(path), _)) = prompt {
+                cmd.push_str("test -r ");
+                cmd.push_str(&posix_quote(&path.display().to_string()));
+                cmd.push_str(" && ");
+            }
             cmd.push_str(&posix_maybe_quote(&bin));
             for arg in args {
                 cmd.push(' ');
                 cmd.push_str(&posix_maybe_quote(arg));
+            }
+            if let Some((reference, attach)) = prompt {
+                push_prompt(&mut cmd, reference, attach, posix_maybe_quote);
             }
             // POSIX PTY line discipline accepts `\n` as line submit.
             cmd.push('\n');
@@ -389,6 +405,9 @@ fn build_launch_command(
                 cmd.push(' ');
                 cmd.push_str(&ps_maybe_quote(arg));
             }
+            if let Some((reference, attach)) = prompt {
+                push_prompt(&mut cmd, reference, attach, ps_maybe_quote);
+            }
             cmd.push('\r');
             cmd
         }
@@ -405,8 +424,234 @@ fn build_launch_command(
                 cmd.push(' ');
                 cmd.push_str(&cmd_maybe_quote(arg));
             }
+            if let Some((reference, attach)) = prompt {
+                push_prompt(&mut cmd, reference, attach, cmd_maybe_quote);
+            }
             cmd.push('\r');
             cmd
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+// `Inline` is built only on non-unix hosts, `File` only on unix.
+#[allow(dead_code)]
+pub(crate) enum PromptRef {
+    File(PathBuf),
+    Inline(String),
+}
+
+/// Non-POSIX kinds never get a `File`: `resolve_launch_prompt` refuses them on
+/// unix and never writes files elsewhere, so the `$(command cat ...)` form
+/// only ever reaches POSIX shells.
+fn push_prompt(
+    cmd: &mut String,
+    reference: &PromptRef,
+    attach: &PromptAttach,
+    quote: fn(&str) -> String,
+) {
+    match (reference, attach) {
+        (PromptRef::File(path), attach) => {
+            let file = posix_quote(&path.display().to_string());
+            let read = format!("\"$(command cat -- {file}; command rm -f -- {file})\"");
+            match attach {
+                PromptAttach::AfterDoubleDash => {
+                    cmd.push_str(" -- ");
+                    cmd.push_str(&read);
+                }
+                PromptAttach::Flag(flag) => {
+                    cmd.push(' ');
+                    cmd.push_str(flag);
+                    cmd.push('=');
+                    cmd.push_str(&read);
+                }
+            }
+        }
+        (PromptRef::Inline(text), PromptAttach::AfterDoubleDash) => {
+            cmd.push_str(" -- ");
+            cmd.push_str(&quote(text));
+        }
+        (PromptRef::Inline(text), PromptAttach::Flag(flag)) => {
+            cmd.push(' ');
+            cmd.push_str(&quote(&format!("{flag}={text}")));
+        }
+    }
+}
+
+/// NUL cannot travel in an argument and command substitution drops trailing
+/// newlines, so both go before delivery to keep the delivered text predictable.
+pub(crate) fn normalize_launch_prompt(text: &str) -> Option<String> {
+    let cleaned: String = text.chars().filter(|c| *c != '\0').collect();
+    let trimmed = cleaned.trim_end_matches(['\n', '\r']);
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+#[cfg_attr(not(unix), allow(unused_variables))]
+pub(crate) fn resolve_launch_prompt(
+    kind: crate::config::ShellKind,
+    text: &str,
+    dir: std::io::Result<PathBuf>,
+    stem: &str,
+) -> std::io::Result<PromptRef> {
+    match kind {
+        #[cfg(unix)]
+        crate::config::ShellKind::Posix => {
+            crate::agents::write_launch_prompt_file(&dir?, stem, text).map(PromptRef::File)
+        }
+        #[cfg(unix)]
+        _ => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "launch prompts need a POSIX shell on this host",
+        )),
+        #[cfg(not(unix))]
+        _ => Ok(PromptRef::Inline(text.to_string())),
+    }
+}
+
+#[cfg(unix)]
+fn launch_prompt_dir_or_unsupported() -> std::io::Result<PathBuf> {
+    crate::agents::launch_prompt_dir()
+}
+
+#[cfg(not(unix))]
+fn launch_prompt_dir_or_unsupported() -> std::io::Result<PathBuf> {
+    Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
+}
+
+pub(crate) struct PreparedLaunch {
+    pub command: String,
+    pub prompt_file: Option<PathBuf>,
+}
+
+/// Runs before any lock is taken so file I/O never happens under `instances`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prepare_launch(
+    kind: crate::config::ShellKind,
+    cwd: &str,
+    prelude: Option<&str>,
+    binary: &std::path::Path,
+    args: &[String],
+    prompt: Option<&LaunchPrompt>,
+    dir: std::io::Result<PathBuf>,
+    stem: &str,
+) -> Result<PreparedLaunch, String> {
+    let normalized = prompt.and_then(|p| normalize_launch_prompt(&p.text).map(|t| (t, &p.attach)));
+    let Some((text, attach)) = normalized else {
+        return Ok(PreparedLaunch {
+            command: build_launch_command(kind, cwd, prelude, binary, args, None),
+            prompt_file: None,
+        });
+    };
+    let reference = resolve_launch_prompt(kind, &text, dir, stem).map_err(|e| e.to_string())?;
+    let prompt_file = match &reference {
+        PromptRef::File(path) => Some(path.clone()),
+        PromptRef::Inline(_) => None,
+    };
+    Ok(PreparedLaunch {
+        command: build_launch_command(kind, cwd, prelude, binary, args, Some((&reference, attach))),
+        prompt_file,
+    })
+}
+
+/// Never deletes the prompt file: on failure the rollback guard owns that.
+pub(crate) fn send_launch(
+    prepared: &PreparedLaunch,
+    writer: Option<&mut dyn Write>,
+) -> Result<(), String> {
+    let writer = writer.ok_or_else(|| "session closed during PTY startup".to_string())?;
+    writer
+        .write_all(prepared.command.as_bytes())
+        .map_err(|e| e.to_string())?;
+    writer.flush().map_err(|e| e.to_string())
+}
+
+pub(crate) fn take_launched(state: &PtyManager, pty_id: &str) -> bool {
+    state
+        .launched_ptys
+        .lock()
+        .map(|mut set| set.remove(pty_id))
+        .unwrap_or(false)
+}
+
+#[cfg(unix)]
+pub(crate) fn discard_launch_prompt(dir: std::io::Result<PathBuf>, pty_id: &str) {
+    if let Ok(dir) = dir
+        && let Ok(path) = crate::agents::launch_prompt_file_path(&dir, pty_id)
+    {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// Undoes everything `start_claude_session` did after reserving the PTY unless
+/// `disarm` ran, so a failed launch leaves no trace and keeps the prompt.
+/// Declared before any lock guard: on unwind the locks drop first, then this
+/// re-takes `session_ptys`. `Drop` must never panic (a second panic while
+/// unwinding aborts the app), hence `lock().ok()` and ignored I/O errors.
+pub(crate) struct LaunchRollback<'a> {
+    state: &'a PtyManager,
+    agents: &'a crate::agents::state::AgentRuntimeState,
+    session_id: &'a str,
+    pty_id: &'a str,
+    prompt: Option<String>,
+    file: Option<PathBuf>,
+    armed: bool,
+}
+
+impl<'a> LaunchRollback<'a> {
+    pub(crate) fn new(
+        state: &'a PtyManager,
+        agents: &'a crate::agents::state::AgentRuntimeState,
+        session_id: &'a str,
+        pty_id: &'a str,
+    ) -> Self {
+        Self {
+            state,
+            agents,
+            session_id,
+            pty_id,
+            prompt: None,
+            file: None,
+            armed: true,
+        }
+    }
+
+    pub(crate) fn set_prompt(&mut self, prompt: Option<String>) {
+        self.prompt = prompt;
+    }
+
+    pub(crate) fn set_file(&mut self, file: PathBuf) {
+        self.file = Some(file);
+    }
+
+    pub(crate) fn disarm(&mut self) {
+        self.armed = false;
+        if let Ok(mut set) = self.state.launched_ptys.lock() {
+            set.insert(self.pty_id.to_string());
+        }
+    }
+}
+
+impl Drop for LaunchRollback<'_> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        tracing::warn!(session_id = %self.session_id, "launch rolled back");
+        release_session_pty(self.state, self.agents, self.session_id, self.pty_id);
+        let removed = self
+            .state
+            .instances
+            .lock()
+            .ok()
+            .and_then(|mut instances| instances.remove(self.pty_id));
+        drop_off_main_thread(removed);
+        if let Some(file) = &self.file {
+            let _ = std::fs::remove_file(file);
+        }
+        if let Some(prompt) = self.prompt.take()
+            && let Ok(mut pending) = self.state.pending_prompts.lock()
+        {
+            pending.entry(self.session_id.to_string()).or_insert(prompt);
         }
     }
 }
@@ -434,7 +679,22 @@ fn posix_maybe_quote(s: &str) -> String {
 
 /// PowerShell single-quote: wrap in `'…'`, escaping embedded `'` as `''`.
 fn ps_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "''"))
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        out.push(c);
+        if is_ps_single_quote(c) {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+/// PowerShell treats U+2018 to U+201B as single quotes, so they must be
+/// doubled like `'` or a prompt can close the string and run a command.
+fn is_ps_single_quote(c: char) -> bool {
+    matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201a}' | '\u{201b}')
 }
 
 fn ps_maybe_quote(s: &str) -> String {
@@ -444,6 +704,7 @@ fn ps_maybe_quote(s: &str) -> String {
                 c,
                 '"' | '\'' | '`' | '$' | ';' | '&' | '|' | '(' | ')' | '<' | '>' | '@' | '{' | '}'
             )
+            || is_ps_single_quote(c)
     }) {
         ps_quote(s)
     } else {
@@ -574,7 +835,11 @@ fn spawn_pty(
             // PTY closed (shell exited / killed / crashed): a definitive session end
             // that an abnormal exit may have hidden from the SessionEnd hook. Snapshot
             // obsidian once — deduped against the hook by claim_finalization.
-            if let Some(db) = eof_app.try_state::<crate::db::SharedDb>() {
+            let launched = eof_app
+                .try_state::<PtyManager>()
+                .map(|m| take_launched(&m, &eof_pty_id))
+                .unwrap_or(false);
+            if launched && let Some(db) = eof_app.try_state::<crate::db::SharedDb>() {
                 crate::hooks::server::finalize_session_obsidian(db.inner(), Some(&eof_session));
             }
             if let Some(agents) = eof_app.try_state::<crate::agents::state::AgentRuntimeState>() {
@@ -666,7 +931,7 @@ fn resize_pty(
 /// orphan the first as an unkillable zombie. Returns the existing id when
 /// the slot is already taken (caller should early-return without spawning);
 /// `None` once `pty_id` is reserved (caller must spawn and roll back via
-/// `release_session_pty` on failure).
+/// `LaunchRollback` on failure).
 fn reserve_session_pty(
     state: &PtyManager,
     agents: &crate::agents::state::AgentRuntimeState,
@@ -798,10 +1063,11 @@ pub async fn start_claude_session(
             pty_id: existing_id,
         });
     }
+    let mut rollback = LaunchRollback::new(&state, &agents, &session_id, &pty_id);
 
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
 
-    if let Err(e) = spawn_pty(
+    spawn_pty(
         &app,
         &state,
         pty_id.clone(),
@@ -813,10 +1079,7 @@ pub async fn start_claude_session(
         session_id.as_str(),
         true,
         Some(ready_tx),
-    ) {
-        release_session_pty(&state, &agents, &session_id, &pty_id);
-        return Err(e);
-    }
+    )?;
 
     match confirm_reservation_or_extract(&state, &session_id, &pty_id)? {
         ReservationOutcome::Intact => {}
@@ -909,14 +1172,15 @@ pub async fn start_claude_session(
                 other => other.map(|s| s.to_string()),
             }
         };
-        // Deep link `session/new` stashes a prompt for the fresh session; the
-        // adapter folds it into the launch command so it submits on spawn
-        // without a timing race against the agent's REPL coming up.
+        // Deep link `session/new` stashes a prompt for the fresh session. It
+        // rides `SpawnSpec.prompt` and the PTY layer delivers it through a
+        // private file, so it submits on spawn without a REPL timing race.
         let initial_prompt = state
             .pending_prompts
             .lock()
             .ok()
             .and_then(|mut m| m.remove(&session_id));
+        rollback.set_prompt(initial_prompt.clone());
         // Pinned vault notes + bound ClickUp tasks seed the agent's context.
         // Running here covers both fresh and resume spawns through the same
         // path, so resume re-injection (re-reading current mirror content) is
@@ -969,15 +1233,38 @@ pub async fn start_claude_session(
                 crate::config::resolve_pty_shell(&crate::config::Config::load().default_shell);
             crate::config::shell_kind(&shell_path)
         };
-        let cmd = build_launch_command(kind, &cwd_str, prelude, &spec.binary, &spec.args);
+        let prepared = prepare_launch(
+            kind,
+            &cwd_str,
+            prelude,
+            &spec.binary,
+            &spec.args,
+            spec.prompt.as_ref(),
+            launch_prompt_dir_or_unsupported(),
+            &pty_id,
+        )?;
+        if let Some(file) = &prepared.prompt_file {
+            rollback.set_file(file.clone());
+        }
 
         {
+            // Lock order `session_ptys` -> `instances`, as kill_session_aux_shells
+            // takes them. Holding both through the write means a kill lands either
+            // before delivery (no writer, rollback) or after it (normal close).
+            let session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
             let instances = state.instances.lock().map_err(|e| e.to_string())?;
-            if let Some(instance) = instances.get(&pty_id) {
-                let mut w = instance.writer.lock().map_err(|e| e.to_string())?;
-                w.write_all(cmd.as_bytes()).map_err(|e| e.to_string())?;
-                w.flush().map_err(|e| e.to_string())?;
-            }
+            let owns_reservation =
+                session_ptys.get(&session_id).map(String::as_str) == Some(pty_id.as_str());
+            let instance = instances.get(&pty_id).filter(|_| owns_reservation);
+            let mut writer_guard = match instance {
+                Some(instance) => Some(instance.writer.lock().map_err(|e| e.to_string())?),
+                None => None,
+            };
+            let writer = writer_guard
+                .as_mut()
+                .map(|guard| &mut **guard as &mut dyn Write);
+            send_launch(&prepared, writer)?;
+            rollback.disarm();
         }
 
         // Activate the adapter's event pump. CC + Codex are no-ops here
@@ -1030,7 +1317,9 @@ pub async fn start_claude_session(
         }
     }
 
-    Ok(StartClaudeResult { pty_id })
+    Ok(StartClaudeResult {
+        pty_id: pty_id.clone(),
+    })
 }
 
 /// Assemble the spawn-time injected context: pinned vault notes + bound
@@ -1602,6 +1891,8 @@ fn kill_session_pty_inner(
             instances.remove(&id)
         };
         drop_off_main_thread(removed);
+        #[cfg(unix)]
+        discard_launch_prompt(crate::agents::launch_prompt_dir(), &id);
     }
 
     // Drop the ephemeral system-prompt file written for AppendSystemPromptFile
@@ -2132,6 +2423,7 @@ mod tests {
             None,
             Path::new("claude"),
             &["--continue".to_string()],
+            None,
         );
         assert_eq!(cmd, " cd '/home/u/proj' && claude --continue\n");
     }
@@ -2145,6 +2437,7 @@ mod tests {
             None,
             Path::new(r"C:\Users\m\.local\bin\claude.exe"),
             &["--permission-mode".to_string(), "auto".to_string()],
+            None,
         );
         assert_eq!(
             cmd,
@@ -2162,6 +2455,7 @@ mod tests {
             None,
             Path::new(r"C:\bin\claude.exe"),
             &[],
+            None,
         );
         assert_eq!(
             cmd,
@@ -2177,6 +2471,7 @@ mod tests {
             Some("$env:FOO='bar'"),
             Path::new("claude.exe"),
             &[],
+            None,
         );
         assert_eq!(
             cmd,
@@ -2856,3 +3151,11 @@ mod liveness_tests;
 #[cfg(test)]
 #[path = "pty_softclose_tests.rs"]
 mod softclose_tests;
+
+#[cfg(test)]
+#[path = "pty_launch_prompt_tests.rs"]
+mod launch_prompt_tests;
+
+#[cfg(test)]
+#[path = "pty_launch_prompt_ps_tests.rs"]
+mod launch_prompt_ps_tests;

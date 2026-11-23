@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change obsidian-bridge. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: New CLI subcommand `nergal post-session`
 The system SHALL add a new top-level subcommand to the `nergal` CLI binary: `nergal post-session`. The subcommand SHALL acquire a global advisory file lock at `~/.config/nergal/post-session.lock` using `fs2::FileExt::try_lock_exclusive`, drain pending markers from `~/.config/nergal/pending-mocs/`, and exit. If the lock cannot be acquired (sibling already running), the subcommand SHALL exit 0 immediately with no work.
 
@@ -30,7 +32,7 @@ The system SHALL drop a marker file at `~/.config/nergal/pending-mocs/<session_i
 - Explicit user-driven session deletion via `delete_session`.
 - Workspace deletion via `delete_workspace` (one marker per session in the deleted workspace).
 - `WindowEvent::CloseRequested` (one marker per active session).
-- PTY-side session termination (worker thread observes EOF on the PTY).
+- PTY-side session termination (worker thread observes EOF on the PTY), only for a PTY whose launch command was written to it. A PTY whose launch was rolled back, or that was closed before its launch command was written, SHALL NOT drop a marker.
 
 Each marker MUST contain JSON with at minimum: `session_id`, `workspace_id`, `agent_id`, `trigger` (one of the above), `created_at` (unix ms).
 
@@ -55,6 +57,16 @@ The system SHALL write markers atomically (tmp file + rename). The system SHALL 
 
 - **WHEN** SessionEnd fires for a session whose workspace has `vault_root = null`
 - **THEN** no marker SHALL be written (no work to do)
+
+#### Scenario: EOF of a launched PTY drops a marker
+- **GIVEN** a session S whose launch command was written to its PTY P, in a workspace with a non-null `vault_root`
+- **WHEN** the reader thread of P observes EOF
+- **THEN** the system SHALL write `~/.config/nergal/pending-mocs/S.json` unless S was already finalized in this process
+
+#### Scenario: EOF of a PTY that never received its launch command drops nothing
+- **GIVEN** a PTY P of session S whose launch was rolled back, or that was closed during startup
+- **WHEN** the reader thread of P observes EOF
+- **THEN** no marker SHALL be written for S, and a later launched PTY of S SHALL still drop one at its EOF
 
 ### Requirement: Detached spawn on Linux
 The runner spawn helper SHALL use `std::process::Command::new("nergal")` with `pre_exec` invoking `libc::setsid()` to detach from the controlling terminal, AND SHALL null stdin/stdout/stderr so the bg process does not inherit fds the parent will close. The helper SHALL be `#[cfg(target_os = "linux")]` only — Nergal is Linux-only.
@@ -103,4 +115,3 @@ When Nergal next launches, the system SHALL inspect the tail of the log. If the 
 - **AND** the log's last entry contains `ERROR`
 - **THEN** the next Nergal launch SHALL surface the error toast
 - **AND** the markers that did not complete SHALL be retried on the next runner invocation
-

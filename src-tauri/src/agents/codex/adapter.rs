@@ -195,14 +195,26 @@ impl AgentAdapter for CodexAdapter {
         // Codex takes the prompt as a positional `[PROMPT]` arg, which the
         // `resume` subcommand reinterprets as a session id — so the preamble
         // only rides a fresh launch. Re-inject on resume falls to the next turn.
-        if ctx.resume_from.is_none()
-            && let Some(text) = fold_prompt_preamble(ctx.injected_context, ctx.initial_prompt)
-        {
-            args.push(text);
-        }
+        // It stays out of `args` so the PTY layer can hand it over through a
+        // file, after `--`, without the shell parsing it.
+        let prompt = if ctx.resume_from.is_none() {
+            fold_prompt_preamble(ctx.injected_context, ctx.initial_prompt).map(|text| {
+                crate::agents::LaunchPrompt {
+                    text,
+                    attach: crate::agents::PromptAttach::AfterDoubleDash,
+                }
+            })
+        } else {
+            None
+        };
         let mut env = HashMap::new();
         env.insert("NERGAL_SESSION_ID".into(), ctx.session_id.to_string());
-        Ok(SpawnSpec { binary, args, env })
+        Ok(SpawnSpec {
+            binary,
+            args,
+            env,
+            prompt,
+        })
     }
 
     fn permission_presets(&self) -> &'static [crate::models::PermissionPreset] {
@@ -461,6 +473,33 @@ command = "/usr/bin/foo"
                 spec.args,
                 vec!["resume".to_string(), "abc-uuid".to_string()]
             );
+        }
+    }
+
+    #[test]
+    fn spawn_carries_folded_preamble_in_spec_prompt_only_on_fresh_launch() {
+        let a = CodexAdapter::new();
+        let cwd = std::path::Path::new("/tmp");
+        let mk = |resume: Option<&'static str>| SpawnContext {
+            session_id: "s",
+            cwd,
+            resume_from: resume,
+            initial_prompt: Some("do the thing"),
+            injected_context: Some("# ctx"),
+            launch_options: None,
+        };
+        if let Ok(spec) = a.spawn(&mk(None)) {
+            assert_eq!(
+                spec.prompt,
+                Some(crate::agents::LaunchPrompt {
+                    text: "# ctx\n\ndo the thing".to_string(),
+                    attach: crate::agents::PromptAttach::AfterDoubleDash,
+                })
+            );
+            assert!(spec.args.is_empty());
+        }
+        if let Ok(spec) = a.spawn(&mk(Some("continue"))) {
+            assert_eq!(spec.prompt, None);
         }
     }
 

@@ -2,12 +2,14 @@
 
 ## Purpose
 TBD - created by archiving change obsidian-context-injection. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Agent-agnostic context-injection contract
 The system SHALL inject assembled vault-note context into an agent session at spawn through the agent-adapter contract, never by bypassing it. `SpawnContext` SHALL carry an optional `injected_context: Option<&str>` (the assembled pinned-note block). The `AgentAdapter` trait SHALL declare a `context_injection() -> ContextInjection` capability whose variant decides how `injected_context` is folded into the launch command:
 
 - `AppendSystemPromptFile` — write the block to an ephemeral per-session file and pass it via a system-prompt-file flag (Claude Code: `--append-system-prompt-file`).
-- `PromptPreamble` — prepend the block, fenced and labeled, to the agent's launch prompt (Codex positional `PROMPT`, OpenCode `--prompt`).
+- `PromptPreamble` — prepend the block, fenced and labeled, to the agent's launch prompt (delivered as the adapter's `SpawnSpec.prompt`: Codex after `--`, OpenCode as `--prompt=<value>`).
 - `Unsupported` — the agent exposes no clean per-invocation channel; the block is dropped and the UI says so (no silent loss, no PTY-typed fallback).
 
 The default trait impl SHALL be `Unsupported` so adapters that do not opt in are unaffected. When `injected_context` is `None`, `spawn()` SHALL behave exactly as before for every adapter.
@@ -17,7 +19,7 @@ The default trait impl SHALL be `Unsupported` so adapters that do not opt in are
 - **WHEN** a Claude Code session spawns with a non-empty `injected_context`
 - **THEN** the adapter SHALL write the block to a per-session file under `~/.config/nergal/spawn-context/`
 - **AND** push `--append-system-prompt-file <path>` into the launch args
-- **AND** the user's `initial_prompt`, if any, SHALL remain a separate positional argument
+- **AND** the user's `initial_prompt`, if any, SHALL remain separate, carried in `SpawnSpec.prompt` and delivered after `--`
 
 #### Scenario: Prompt-preamble agent folds context into its launch prompt
 
@@ -150,4 +152,3 @@ The context assembled at session spawn/resume SHALL enclose each externally-sour
 - **GIVEN** a pinned vault note whose body (or filename) contains instruction-like text or the literal closing marker
 - **WHEN** the note is re-injected into a live session via the hot-reload action
 - **THEN** the injected block is wrapped in the same neutralized external-reference boundary as the spawn-time path, so nothing reaches the running agent's turn unframed
-

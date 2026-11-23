@@ -1,0 +1,8 @@
+Round 4 changes (addressing every round-3 item):
+1. Obsidian inverted: `PtyManager.launched_ptys` set at `disarm()` (after the PTY write). EOF finalizes only when `take_launched(pty_id)` returns true. Covers rollback, Gone, kill before delivery and failed spawn_pty, with no race and no leak (ids only enter the set on success and leave at EOF). `aborted_launches` removed everywhere. Scenario rewritten ("A launch that never wrote its command writes nothing to the vault").
+2. Kill-path prompt delete goes through `discard_launch_prompt(dir: io::Result<PathBuf>, pty_id)`, tested on a temp dir; the kill path itself is never exercised by tests against the real dir.
+3. Drop contract stated in D3 and implementation: never panics (lock().ok()/into_inner, no fallible indexing, I/O errors ignored); also fires on future drop at shutdown (harmless).
+4. Requirement text narrowed to reservation, live mark, shell, prompt file, vault write and prompt; D3 notes the recorded "running" activity mode stays and the not-live descriptor ignores it (FRI-601).
+5. Delivery passes `None` as writer when `session_ptys[sid]` no longer equals `pty_id` (re-check under the instances lock, keeping existing lock order); the remaining window after the re-check is accepted in Risks (equals closing the tab right after launch; pre-existing).
+6. `launch_prompt_dir()` creates 0700 only when missing and never chmods an existing dir (D4 + implementation). Walk 2.7 now replaces the dir with a regular file and checks Nergal's child count with pgrep.
+7. Retry test renamed to what it proves: the reservation is free after a rollback.

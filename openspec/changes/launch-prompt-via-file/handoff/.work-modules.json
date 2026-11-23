@@ -1,0 +1,31 @@
+{
+  "tier": "S",
+  "ceremony": "quick-fix",
+  "risk_tier": "critical",
+  "spec_target": "agent-adapter",
+  "tracker": {
+    "system": "linear",
+    "id": "FRI-602",
+    "pending": []
+  },
+  "validation": "validated",
+  "planning_only": false,
+  "iprev": {
+    "rounds": 5,
+    "verdict": "APPROVED"
+  },
+  "interview_answers": {
+    "mechanism": "Claude default (reversible): prompt in a 0600 file under ipc_dir/launch-prompts, typed line reads it via double-quoted command substitution with `command cat` / `command rm`",
+    "failure_mode": "USER DECISION 2026-11-23 (convergence rule): any error after the PTY reservation leaves no trace (no reservation, no live mark, no shell, no prompt file, no vault write) and the prompt goes back to the queue; implemented as one drop guard",
+    "frozen_scope": "USER DECISION 2026-11-23: Codex and OpenCode get the same fix (prompt file + -- / --prompt=); only PowerShell/cmd keep the inline argument",
+    "root_cause": "Reproduced 2026-11-23: Space bound to magic-space expands history on continuation lines inside an open single quote",
+    "option_injection": "Claude default: -- before the prompt (claude, codex), --prompt=<value> (opencode); verified on real binaries 2026-11-23"
+  },
+  "events": [
+    {
+      "ts": "2026-11-23T11:48:37",
+      "type": "validated",
+      "note": "iprev opus R5 APPROVED after user invariant (convergence rule at R2); 4 low notes folded into design/implementation"
+    }
+  ]
+}

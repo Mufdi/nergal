@@ -365,6 +365,80 @@ pub fn clear_stale_spawn_context() {
     }
 }
 
+/// Per-user private directory holding launch-prompt files between their write
+/// and the shell's read. Created `0700` only when missing; an existing
+/// directory keeps whatever mode it has.
+#[cfg(unix)]
+pub fn launch_prompt_dir() -> std::io::Result<PathBuf> {
+    use std::os::unix::fs::DirBuilderExt;
+
+    let dir = crate::platform::ipc_dir()?.join("launch-prompts");
+    if !dir.exists() {
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&dir)?;
+    }
+    Ok(dir)
+}
+
+/// The stem is a pty id interpolated into single quotes on the typed line, so
+/// anything that could leave those quotes or the directory is refused.
+pub fn launch_prompt_file_path(dir: &Path, stem: &str) -> std::io::Result<PathBuf> {
+    let unsafe_stem = stem.is_empty()
+        || stem.contains("..")
+        || stem
+            .chars()
+            .any(|c| c == '/' || c == '\'' || c.is_whitespace() || c.is_control());
+    if unsafe_stem {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("invalid launch prompt stem: {stem:?}"),
+        ));
+    }
+    Ok(dir.join(format!("{stem}.txt")))
+}
+
+#[cfg(unix)]
+pub fn write_launch_prompt_file(dir: &Path, stem: &str, text: &str) -> std::io::Result<PathBuf> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let path = launch_prompt_file_path(dir, stem)?;
+    match std::fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)?;
+    if let Err(e) = file.write_all(text.as_bytes()) {
+        let _ = std::fs::remove_file(&path);
+        return Err(e);
+    }
+    Ok(path)
+}
+
+pub fn clear_launch_prompts_in(dir: &Path) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// Startup sweep: a launch that stopped between the write and the shell's read
+/// (failed prelude, crash) would otherwise leave its prompt on disk.
+pub fn clear_stale_launch_prompts() {
+    #[cfg(unix)]
+    if let Ok(dir) = launch_prompt_dir() {
+        clear_launch_prompts_in(&dir);
+    }
+}
+
 /// Combine an already-labeled context block with the user's initial prompt into
 /// one launch-prompt string for [`ContextInjection::PromptPreamble`] adapters.
 /// Returns `None` when neither is present so callers can skip the arg entirely.
@@ -389,6 +463,21 @@ pub struct SpawnSpec {
     pub binary: PathBuf,
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
+    /// Free-text launch prompt. Kept out of `args` so the PTY layer can deliver
+    /// it without the user's shell parsing it.
+    pub prompt: Option<LaunchPrompt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PromptAttach {
+    AfterDoubleDash,
+    Flag(&'static str),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchPrompt {
+    pub text: String,
+    pub attach: PromptAttach,
 }
 
 /// HTTP+SSE auth scheme. Marked `#[non_exhaustive]` so future variants

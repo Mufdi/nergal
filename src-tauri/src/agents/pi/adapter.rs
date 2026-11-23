@@ -174,7 +174,12 @@ impl AgentAdapter for PiAdapter {
         }
         let mut env = HashMap::new();
         env.insert("NERGAL_SESSION_ID".into(), ctx.session_id.to_string());
-        Ok(SpawnSpec { binary, args, env })
+        Ok(SpawnSpec {
+            binary,
+            args,
+            env,
+            prompt: None,
+        })
     }
 
     fn context_injection(&self) -> ContextInjection {

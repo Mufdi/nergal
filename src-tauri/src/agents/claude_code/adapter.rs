@@ -175,7 +175,7 @@ impl AgentAdapter for ClaudeCodeAdapter {
         // `--permission-mode bypassPermissions`, so it is NOT combinable
         // with plan/acceptEdits (bypass silently wins — verified 2026-06-06
         // against the CLI reference). Valid alongside --resume;
-        // must precede the positional prompt below.
+        // the prompt is delivered separately after `--`.
         if let Some(opts) = ctx.launch_options {
             match opts.permission_preset {
                 crate::models::PermissionPreset::Default => {}
@@ -204,8 +204,8 @@ impl AgentAdapter for ClaudeCodeAdapter {
             }
         }
         // Pinned-note context rides as an ephemeral system prompt, kept
-        // distinct from the user's first turn and isolated per session. Flag
-        // must precede the positional prompt below.
+        // distinct from the user's first turn and isolated per session. Flags
+        // must precede the `--` the PTY layer adds for the prompt.
         if let Some(context) = ctx.injected_context.filter(|c| !c.is_empty()) {
             let path = crate::agents::spawn_context_file(ctx.session_id);
             if let Some(parent) = path.parent() {
@@ -215,20 +215,28 @@ impl AgentAdapter for ClaudeCodeAdapter {
             args.push("--append-system-prompt-file".into());
             args.push(path.display().to_string());
         }
-        // `claude [prompt]` starts an interactive session with the prompt
-        // submitted — so a deep-link `session/new` prompt rides the launch
-        // command instead of being typed in after the REPL is up. Resume modes
-        // are mutually exclusive with a fresh prompt in practice (session/new
-        // never resumes), so appending after the resume args is safe.
-        if let Some(prompt) = ctx.initial_prompt.filter(|p| !p.is_empty()) {
-            args.push(prompt.to_string());
-        }
+        // The prompt rides the launch command so it submits on spawn without a
+        // REPL timing race. It stays out of `args`: the PTY layer hands it over
+        // through a file and renders it after `--`, so the shell never parses
+        // it and the agent never reads it as an option.
+        let prompt =
+            ctx.initial_prompt
+                .filter(|p| !p.is_empty())
+                .map(|text| crate::agents::LaunchPrompt {
+                    text: text.to_string(),
+                    attach: crate::agents::PromptAttach::AfterDoubleDash,
+                });
         let mut env = HashMap::new();
         env.insert("NERGAL_SESSION_ID".into(), ctx.session_id.to_string());
         // CC v2.1.233+ drops TodoWrite and the Task* tools on newer models
         // (Opus 5, Sonnet 5, Fable); the Tasks panel is fed by exactly those calls.
         env.insert("CLAUDE_CODE_ENABLE_TODO_TOOLS".into(), "1".into());
-        Ok(SpawnSpec { binary, args, env })
+        Ok(SpawnSpec {
+            binary,
+            args,
+            env,
+            prompt,
+        })
     }
 
     fn permission_presets(&self) -> &'static [crate::models::PermissionPreset] {
@@ -496,7 +504,7 @@ mod tests {
     }
 
     #[test]
-    fn spawn_appends_initial_prompt_as_positional_arg() {
+    fn spawn_carries_initial_prompt_in_spec_prompt_not_args() {
         let a = ClaudeCodeAdapter::new();
         let cwd = Path::new("/tmp");
         let ctx = SpawnContext {
@@ -508,9 +516,15 @@ mod tests {
             launch_options: None,
         };
         if let Ok(spec) = a.spawn(&ctx) {
-            assert_eq!(spec.args, vec!["implement auth".to_string()]);
+            assert_eq!(
+                spec.prompt,
+                Some(crate::agents::LaunchPrompt {
+                    text: "implement auth".to_string(),
+                    attach: crate::agents::PromptAttach::AfterDoubleDash,
+                })
+            );
+            assert!(spec.args.iter().all(|x| x != "implement auth"));
         }
-        // Empty prompt is not appended.
         let empty = SpawnContext {
             session_id: "s",
             cwd,
@@ -520,6 +534,7 @@ mod tests {
             launch_options: None,
         };
         if let Ok(spec) = a.spawn(&empty) {
+            assert_eq!(spec.prompt, None);
             assert!(spec.args.is_empty());
         }
     }

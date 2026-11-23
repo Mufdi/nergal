@@ -753,6 +753,28 @@ pub fn approve_worktree_request(
         );
         return Err(reason);
     }
+    if let RequestKind::Resume { target_session_id } = &req.kind {
+        let (is_live, has_pty) = pty.resume_block_state(&agents, target_session_id);
+        if let Some(reason) = resume_blocked_reason(is_live, has_pty) {
+            gate.resolve(
+                &request_id,
+                WorktreeRequestState::Failed {
+                    reason: reason.clone(),
+                },
+            );
+            notify_outcome(
+                &gate,
+                &bridge,
+                &agents,
+                &req.requesting_session,
+                &request_id,
+                &WorktreeRequestState::Failed {
+                    reason: reason.clone(),
+                },
+            );
+            return Err(reason);
+        }
+    }
     let result = match &req.kind {
         RequestKind::Create => build_worktree_session(
             &req,
@@ -972,6 +994,20 @@ fn build_worktree_session(
     Ok((session, text))
 }
 
+/// Why a resume approval must be refused, or `None` to proceed. A live session
+/// is messaged directly; a not-live one whose PTY slot is still reserved has a
+/// tab open on a dead PTY, and `start_claude_session` would return that PTY, so
+/// the revive would spawn nothing and its queued prompt would never land.
+pub(crate) fn resume_blocked_reason(is_live: bool, has_pty: bool) -> Option<String> {
+    if is_live {
+        Some("session became live before approval — message it directly".into())
+    } else if has_pty {
+        Some("the session's tab is still open; close it, then request the resume again".into())
+    } else {
+        None
+    }
+}
+
 /// Revive an existing inactive session (the gated resume path). Re-validates the
 /// session still exists and is still not live, ensures it is registered + its
 /// plan watcher is wired, and returns it plus the labeled relayed message to
@@ -1011,10 +1047,12 @@ fn resume_session(
         .unwrap_or_else(|_| crate::agents::AgentId::claude_code());
     agents.register_session(&session.id, agent_id);
     crate::commands::extend_plan_watcher_for_session(agents, plan_watcher, &session, &repo_path);
-    // Mark the revived session busy NOW (before the requester can send to it),
+    // Mark the revived session busy (before the requester can send to it),
     // closing the warmup race: until its PTY+TUI come up and it emits its first
     // `Stop`, a `running` mode makes cross-session delivery QUEUE rather than
-    // paste into a not-yet-ready prompt (the stuck-note symptom).
+    // paste into a not-yet-ready prompt (the stuck-note symptom). The session
+    // is only live once the frontend reservation lands, which also sets
+    // `running`; this mark covers the gap before that.
     agents.record_activity(target_session_id, "running", None);
 
     let msg = edited_prompt

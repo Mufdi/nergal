@@ -1,12 +1,15 @@
 //! Runtime state shared between the hook dispatcher, session lifecycle
 //! commands, and (eventually) the frontend bridge: a registry of installed
-//! adapters plus a cache of `nergal_session_id → AgentId` mappings.
+//! adapters plus a cache of `nergal_session_id → AgentId` mappings and the set
+//! of sessions with a live PTY.
 //!
 //! The cache is the hot-path resolution mechanism. Hook events arrive with a
 //! `nergal_session_id` and the dispatcher needs to know which adapter the
 //! session belongs to without round-tripping the DB on every event. The cache
 //! is populated by [`SessionLifecycle::register_session`] **before** the PTY
-//! spawn (Decision 9), so the SessionStart hook never races the entry.
+//! spawn (Decision 9), so the SessionStart hook never races the entry. It says
+//! nothing about liveness: a late hook can register a session whose PTY is
+//! gone. Liveness lives in `live_ptys`, owned by the PTY lifecycle.
 
 use std::sync::Arc;
 
@@ -100,6 +103,10 @@ pub struct AgentRuntimeState {
     /// stays reserved for the phase-6 AI recap. Cleared on
     /// [`Self::forget_session`].
     session_last_message: Arc<DashMap<String, String>>,
+    /// `nergal_session_id → pty id` of the PTY currently backing the session.
+    /// Written only by the PTY lifecycle; the pty id lets a stale teardown
+    /// (older PTY) avoid clearing a newer PTY's entry.
+    live_ptys: Arc<DashMap<String, String>>,
 }
 
 impl AgentRuntimeState {
@@ -123,6 +130,7 @@ impl AgentRuntimeState {
             session_activity: Arc::new(DashMap::new()),
             session_files: Arc::new(DashMap::new()),
             session_last_message: Arc::new(DashMap::new()),
+            live_ptys: Arc::new(DashMap::new()),
         })
     }
 
@@ -150,15 +158,30 @@ impl AgentRuntimeState {
         self.session_activity.remove(nergal_session_id);
         self.session_files.remove(nergal_session_id);
         self.session_last_message.remove(nergal_session_id);
+        self.live_ptys.remove(nergal_session_id);
     }
 
-    /// Snapshot of the live session id set (the directory's liveness source:
-    /// sessions with an entry in the agent cache). Owned, lock-free per entry.
+    /// Overwrites any prior pty id: the newest reservation owns the entry.
+    pub fn mark_live(&self, session_id: &str, pty_id: &str) {
+        self.live_ptys
+            .insert(session_id.to_string(), pty_id.to_string());
+    }
+
+    pub fn mark_dead(&self, session_id: &str) {
+        self.live_ptys.remove(session_id);
+    }
+
+    /// Clear liveness only if `pty_id` is still the session's PTY, so a late
+    /// teardown of an old PTY cannot kill a newer one's entry.
+    pub fn mark_dead_if(&self, session_id: &str, pty_id: &str) {
+        self.live_ptys
+            .remove_if(session_id, |_, current| current == pty_id);
+    }
+
+    /// Snapshot of the live session id set: sessions with a live PTY (`live_ptys`),
+    /// independent of `agent_id_cache`. Owned, lock-free per entry.
     pub fn live_session_ids(&self) -> std::collections::HashSet<String> {
-        self.agent_id_cache
-            .iter()
-            .map(|e| e.key().clone())
-            .collect()
+        self.live_ptys.iter().map(|e| e.key().clone()).collect()
     }
 
     /// Resolve an agent id to its verified headless print command (for the
@@ -278,15 +301,19 @@ impl AgentRuntimeState {
             .insert(cc_session_id.to_string(), nergal_session_id.to_string());
     }
 
-    /// Resolve an MCP-reported env hint to a live `nergal_session_id`. Tries
-    /// the hint as a nergal id (the primary, inherited `NERGAL_SESSION_ID`
-    /// path), then the CC side map. Returns `None` for an unknown id
-    /// (unidentified caller).
+    /// Resolve an MCP-reported env hint to a session with a live PTY (the
+    /// `live_ptys` set, not the adapter cache). Tries the hint as a nergal id
+    /// (the inherited `NERGAL_SESSION_ID` path), then the CC side map. Returns
+    /// `None` for an unknown or not-live id, so a killed session that still has
+    /// an adapter cache entry is unidentified.
     pub fn resolve_session_hint(&self, hint: &str) -> Option<String> {
-        if self.agent_id_cache.contains_key(hint) {
+        if self.live_ptys.contains_key(hint) {
             return Some(hint.to_string());
         }
-        self.cc_session_map.get(hint).map(|r| r.clone())
+        self.cc_session_map
+            .get(hint)
+            .map(|r| r.clone())
+            .filter(|id| self.live_ptys.contains_key(id))
     }
 
     /// Resolve a session to its agent id. Cache-only — the DB-fallback path
@@ -298,6 +325,14 @@ impl AgentRuntimeState {
             .map(|r| r.clone())
     }
 }
+
+#[cfg(test)]
+#[path = "liveness_tests.rs"]
+mod liveness_tests;
+
+#[cfg(test)]
+#[path = "identity_liveness_tests.rs"]
+mod identity_liveness_tests;
 
 #[cfg(test)]
 mod tests {
@@ -334,6 +369,7 @@ mod tests {
     fn hint_resolves_registered_nergal_id() {
         let state = AgentRuntimeState::bootstrap().unwrap();
         state.register_session("clui-1", AgentId::claude_code());
+        state.mark_live("clui-1", "pty-test");
         assert_eq!(
             state.resolve_session_hint("clui-1").as_deref(),
             Some("clui-1")
@@ -350,6 +386,7 @@ mod tests {
     fn cc_side_map_resolves_to_nergal_id() {
         let state = AgentRuntimeState::bootstrap().unwrap();
         state.register_session("clui-1", AgentId::claude_code());
+        state.mark_live("clui-1", "pty-test");
         state.map_cc_session("cc-abc", "clui-1");
         assert_eq!(
             state.resolve_session_hint("cc-abc").as_deref(),
@@ -361,6 +398,7 @@ mod tests {
     fn forget_tears_down_cc_side_map() {
         let state = AgentRuntimeState::bootstrap().unwrap();
         state.register_session("clui-1", AgentId::claude_code());
+        state.mark_live("clui-1", "pty-test");
         state.map_cc_session("cc-abc", "clui-1");
         state.forget_session("clui-1");
         assert!(state.resolve_session_hint("cc-abc").is_none());

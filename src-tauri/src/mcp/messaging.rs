@@ -64,7 +64,7 @@ pub fn send_to_session(
     if !ctx.agents.live_session_ids().contains(to) {
         return Ok(json!({
             "status": "inactive_target",
-            "hint": "target session is not live; use create_worktree_session (agent-spawned-worktrees) to involve it",
+            "hint": "target session is not live; revive it with request_session_resume, or start a new one with create_worktree_session",
         }));
     }
 
@@ -331,7 +331,7 @@ pub fn search_sessions(ctx: &DaemonContext, query: &str) -> Result<Value> {
         .collect();
     Ok(json!({
         "results": matches,
-        "note": "messageable=false sessions are inactive (read-only); revive via create_worktree_session to involve them.",
+        "note": "messageable=false sessions are inactive (read-only); revive via request_session_resume to involve them.",
     }))
 }
 
@@ -432,7 +432,6 @@ pub fn cross_session_unread_counts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agents::AgentId;
     use crate::agents::state::AgentRuntimeState;
     use crate::db::Database;
     use crate::mcp::delivery::NoopDelivery;
@@ -477,7 +476,7 @@ mod tests {
             pinned_linear_issue_ids: Vec::new(),
         };
         ctx.db.lock().unwrap().create_session(&s).unwrap();
-        ctx.agents.register_session(id, AgentId::claude_code());
+        ctx.agents.mark_live(id, &format!("pty-test-{id}"));
     }
 
     fn cfg(max_hops: u32, msg_budget: u32) -> crate::config::CrossSessionConfig {

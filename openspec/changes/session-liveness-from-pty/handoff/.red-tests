@@ -1,0 +1,6 @@
+e89c5470f6d34f0f26d94ca5bc3634f092e68148  src-tauri/src/agents/liveness_tests.rs
+5536745e9a4470276975ffd6d4c8bee46726b12a  src-tauri/src/pty_liveness_tests.rs
+b88eb5513d1dbb20179d4f3f2f5dec7fc0b39eda  src-tauri/src/mcp/liveness_tests.rs
+a29bfcbcdfe4137a78673c2b02e0a26768e9979e  src-tauri/src/agents/identity_liveness_tests.rs
+afddc802447ba8cd5c7c25517728f4f28d2d34ef  src-tauri/src/pty_softclose_tests.rs
+5e691506b3a53ae9c8898590d8b57cc21660ac4f  src-tauri/src/mcp/warmup_liveness_tests.rs

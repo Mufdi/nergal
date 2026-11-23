@@ -219,8 +219,10 @@ pub fn initialize_result() -> Value {
     from its transcript on demand.\n\
     - Field notes: `summary` is an AI recap of what the session did; \
     `last_assistant_message` is the verbatim final message (not a recap); for a \
-    non-live session the live activity fields (mode, recently_touched_files, \
-    background_tasks) are empty — only `summary` and `git_branch` are meaningful.\n\
+    non-live session `mode` is the last persisted value, `background_tasks` and \
+    `session_crons` are empty, and `last_activity`, `last_assistant_message` and \
+    `recently_touched_files` keep their last recorded value (empty when the daemon \
+    never saw the session) — `summary`, `git_branch` and `mode` are meaningful.\n\
     - Working context: `active_clickup_task_id` / `active_linear_issue_id` are the \
     tracker item the session is bound to (what it is working on); \
     `pinned_clickup_task_ids` / `pinned_linear_issue_ids` are extra items kept in \
@@ -259,7 +261,7 @@ pub fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "send_to_session",
-            "description": "Send a message to ANOTHER live nergal session's agent (cross-session messaging). nergal routes and delivers it; the reply arrives asynchronously as a new message you read with read_messages (you are never blocked). Pass thread_id to continue an existing conversation, omit it to start one. Returns a status: delivered/queued (sent), duplicate_suppressed (identical message already sent), hop_limit_reached (too many distinct sessions), inactive_target (session not live — revive via create_worktree_session), or cross_session_disabled. Target must be a live session id (from list_sessions/search_sessions).",
+            "description": "Send a message to ANOTHER live nergal session's agent (cross-session messaging). nergal routes and delivers it; the reply arrives asynchronously as a new message you read with read_messages (you are never blocked). Pass thread_id to continue an existing conversation, omit it to start one. Returns a status: delivered/queued (sent), duplicate_suppressed (identical message already sent), hop_limit_reached (too many distinct sessions), inactive_target (session not live — revive it with request_session_resume, or start a new one with create_worktree_session), or cross_session_disabled. Target must be a live session id (from list_sessions/search_sessions).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -287,7 +289,7 @@ pub fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "search_sessions",
-            "description": "Read-only search across live AND recently-ended nergal sessions by name + summary. Each result carries is_live and messageable; messageable=false means the session is inactive (read-only) — you cannot send_to_session it, you must revive it with create_worktree_session to involve it.",
+            "description": "Read-only search across live AND recently-ended nergal sessions by name + summary. Each result carries is_live and messageable; messageable=false means the session is inactive (read-only) — you cannot send_to_session it, you must revive it with request_session_resume to involve it.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "query": { "type": "string", "description": "Substring to match against session name + summary (empty = all)." } },
@@ -814,6 +816,14 @@ async fn write_response(
     });
     transport::write_frame(stream, &bytes).await
 }
+
+#[cfg(test)]
+#[path = "liveness_tests.rs"]
+mod liveness_tests;
+
+#[cfg(test)]
+#[path = "warmup_liveness_tests.rs"]
+mod warmup_liveness_tests;
 
 #[cfg(test)]
 mod tests {

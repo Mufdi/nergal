@@ -189,6 +189,32 @@ impl PtyManager {
         }
     }
 
+    /// True while a PTY is reserved for the session. A poisoned lock answers
+    /// `true` so callers refuse rather than act on a state they cannot check.
+    pub fn has_session_pty(&self, session_id: &str) -> bool {
+        match self.session_ptys.lock() {
+            Ok(g) => g.contains_key(session_id),
+            Err(_) => true,
+        }
+    }
+
+    /// `(is_live, has_pty)` read under one `session_ptys` lock hold so a
+    /// concurrent reserve/release cannot split the pair. Poisoned lock yields
+    /// `(false, true)`: not provably live, but refuse to resume.
+    pub fn resume_block_state(
+        &self,
+        agents: &crate::agents::state::AgentRuntimeState,
+        session_id: &str,
+    ) -> (bool, bool) {
+        match self.session_ptys.lock() {
+            Ok(g) => (
+                agents.live_session_ids().contains(session_id),
+                g.contains_key(session_id),
+            ),
+            Err(_) => (false, true),
+        }
+    }
+
     pub fn agent_shell_pid(&self, session_id: &str) -> Option<u32> {
         let pty_id = self.session_ptys.lock().ok()?.get(session_id).cloned()?;
         self.instances.lock().ok()?.get(&pty_id)?.child_pid
@@ -518,6 +544,7 @@ fn spawn_pty(
     let ready_tx = Mutex::new(shell_ready_tx);
     let eof_app = app.clone();
     let eof_session = session_id.to_owned();
+    let eof_pty_id = pty_id.clone();
 
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
@@ -549,6 +576,9 @@ fn spawn_pty(
             // obsidian once — deduped against the hook by claim_finalization.
             if let Some(db) = eof_app.try_state::<crate::db::SharedDb>() {
                 crate::hooks::server::finalize_session_obsidian(db.inner(), Some(&eof_session));
+            }
+            if let Some(agents) = eof_app.try_state::<crate::agents::state::AgentRuntimeState>() {
+                on_agent_pty_eof(agents.inner(), &eof_session, &eof_pty_id);
             }
         } else {
             // Emit only for a shell that exited on its own (`exit`, crash):
@@ -639,6 +669,7 @@ fn resize_pty(
 /// `release_session_pty` on failure).
 fn reserve_session_pty(
     state: &PtyManager,
+    agents: &crate::agents::state::AgentRuntimeState,
     session_id: &str,
     pty_id: &str,
 ) -> Result<Option<String>, String> {
@@ -647,14 +678,36 @@ fn reserve_session_pty(
         return Ok(Some(existing_id.clone()));
     }
     session_ptys.insert(session_id.to_string(), pty_id.to_string());
+    agents.mark_live(session_id, pty_id);
+    agents.record_activity(session_id, "running", None);
     Ok(None)
 }
 
 /// Roll back a reservation made by `reserve_session_pty` after a failed spawn.
-fn release_session_pty(state: &PtyManager, session_id: &str) {
+/// Only removes it while `pty_id` still owns the slot, so a stale rollback
+/// cannot clear a newer PTY's reservation or liveness.
+fn release_session_pty(
+    state: &PtyManager,
+    agents: &crate::agents::state::AgentRuntimeState,
+    session_id: &str,
+    pty_id: &str,
+) {
     if let Ok(mut session_ptys) = state.session_ptys.lock() {
-        session_ptys.remove(session_id);
+        if session_ptys.get(session_id).map(String::as_str) == Some(pty_id) {
+            session_ptys.remove(session_id);
+        }
+        agents.mark_dead_if(session_id, pty_id);
     }
+}
+
+/// Reader-thread EOF for an agent PTY. Id-guarded so the EOF of an old PTY
+/// cannot mark a newer PTY of the same session dead.
+fn on_agent_pty_eof(
+    agents: &crate::agents::state::AgentRuntimeState,
+    session_id: &str,
+    pty_id: &str,
+) {
+    agents.mark_dead_if(session_id, pty_id);
 }
 
 /// Outcome of the post-spawn reservation check (`confirm_reservation_or_extract`).
@@ -740,7 +793,7 @@ pub async fn start_claude_session(
             .as_millis()
     );
 
-    if let Some(existing_id) = reserve_session_pty(&state, &session_id, &pty_id)? {
+    if let Some(existing_id) = reserve_session_pty(&state, &agents, &session_id, &pty_id)? {
         return Ok(StartClaudeResult {
             pty_id: existing_id,
         });
@@ -761,7 +814,7 @@ pub async fn start_claude_session(
         true,
         Some(ready_tx),
     ) {
-        release_session_pty(&state, &session_id);
+        release_session_pty(&state, &agents, &session_id, &pty_id);
         return Err(e);
     }
 
@@ -773,6 +826,7 @@ pub async fn start_claude_session(
             // already reaped it — the session is gone either way, so never
             // return a success pty_id here.
             drop(orphan);
+            agents.mark_dead_if(&session_id, &pty_id);
             return Err("session closed during PTY startup".to_string());
         }
     }
@@ -1517,12 +1571,28 @@ pub fn queue_session_prompt(
 
 /// Kill a session's PTY (and its auxiliary shells) and clean up mappings.
 #[tauri::command]
-pub fn kill_session_pty(state: State<'_, PtyManager>, session_id: String) -> Result<(), String> {
-    kill_session_aux_shells(&state, &session_id)?;
+pub fn kill_session_pty(
+    state: State<'_, PtyManager>,
+    agents: State<'_, crate::agents::state::AgentRuntimeState>,
+    session_id: String,
+) -> Result<(), String> {
+    kill_session_pty_inner(&state, &agents, &session_id)
+}
+
+fn kill_session_pty_inner(
+    state: &PtyManager,
+    agents: &crate::agents::state::AgentRuntimeState,
+    session_id: &str,
+) -> Result<(), String> {
+    kill_session_aux_shells(state, session_id)?;
 
     let pty_id = {
         let mut session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
-        session_ptys.remove(&session_id)
+        let removed = session_ptys.remove(session_id);
+        if let Some(id) = &removed {
+            agents.mark_dead_if(session_id, id);
+        }
+        removed
     };
 
     if let Some(id) = pty_id {
@@ -1536,7 +1606,7 @@ pub fn kill_session_pty(state: State<'_, PtyManager>, session_id: String) -> Res
 
     // Drop the ephemeral system-prompt file written for AppendSystemPromptFile
     // adapters; absent (non-CC, or no pins) → harmless no-op.
-    let _ = std::fs::remove_file(crate::agents::spawn_context_file(&session_id));
+    let _ = std::fs::remove_file(crate::agents::spawn_context_file(session_id));
 
     Ok(())
 }
@@ -2302,10 +2372,22 @@ mod tests {
     #[test]
     fn reserve_session_pty_second_caller_gets_first_callers_id_without_spawning() {
         let mgr = PtyManager::new();
-        let first = reserve_session_pty(&mgr, "sess-1", "pty-a").unwrap();
+        let first = reserve_session_pty(
+            &mgr,
+            &crate::agents::state::AgentRuntimeState::bootstrap().unwrap(),
+            "sess-1",
+            "pty-a",
+        )
+        .unwrap();
         assert_eq!(first, None, "first caller reserves the slot");
 
-        let second = reserve_session_pty(&mgr, "sess-1", "pty-b").unwrap();
+        let second = reserve_session_pty(
+            &mgr,
+            &crate::agents::state::AgentRuntimeState::bootstrap().unwrap(),
+            "sess-1",
+            "pty-b",
+        )
+        .unwrap();
         assert_eq!(
             second,
             Some("pty-a".to_string()),
@@ -2321,9 +2403,20 @@ mod tests {
     #[test]
     fn release_session_pty_clears_reservation_so_next_call_succeeds_cleanly() {
         let mgr = PtyManager::new();
-        reserve_session_pty(&mgr, "sess-2", "pty-a").unwrap();
+        reserve_session_pty(
+            &mgr,
+            &crate::agents::state::AgentRuntimeState::bootstrap().unwrap(),
+            "sess-2",
+            "pty-a",
+        )
+        .unwrap();
 
-        release_session_pty(&mgr, "sess-2");
+        release_session_pty(
+            &mgr,
+            &crate::agents::state::AgentRuntimeState::bootstrap().unwrap(),
+            "sess-2",
+            "pty-a",
+        );
         assert!(
             mgr.session_ptys.lock().unwrap().get("sess-2").is_none(),
             "rollback must remove the reservation on spawn failure"
@@ -2331,7 +2424,13 @@ mod tests {
 
         // A subsequent reservation for the same session must succeed as if
         // it were the first — not treated as an existing session.
-        let retry = reserve_session_pty(&mgr, "sess-2", "pty-c").unwrap();
+        let retry = reserve_session_pty(
+            &mgr,
+            &crate::agents::state::AgentRuntimeState::bootstrap().unwrap(),
+            "sess-2",
+            "pty-c",
+        )
+        .unwrap();
         assert_eq!(retry, None);
         assert_eq!(
             mgr.session_ptys.lock().unwrap().get("sess-2"),
@@ -2386,7 +2485,13 @@ mod tests {
     #[test]
     fn confirm_reservation_returns_intact_when_reservation_holds() {
         let mgr = PtyManager::new();
-        reserve_session_pty(&mgr, "sess-4", "pty-y").unwrap();
+        reserve_session_pty(
+            &mgr,
+            &crate::agents::state::AgentRuntimeState::bootstrap().unwrap(),
+            "sess-4",
+            "pty-y",
+        )
+        .unwrap();
 
         let result = confirm_reservation_or_extract(&mgr, "sess-4", "pty-y").unwrap();
         assert!(
@@ -2398,7 +2503,13 @@ mod tests {
     #[test]
     fn confirm_reservation_reports_gone_even_when_kill_already_extracted() {
         let mgr = PtyManager::new();
-        reserve_session_pty(&mgr, "sess-6", "pty-w").unwrap();
+        reserve_session_pty(
+            &mgr,
+            &crate::agents::state::AgentRuntimeState::bootstrap().unwrap(),
+            "sess-6",
+            "pty-w",
+        )
+        .unwrap();
 
         // Kill arrived AFTER spawn_pty's insert: the normal kill path removed
         // BOTH maps' entries and reaped the instance itself. confirm must
@@ -2416,7 +2527,13 @@ mod tests {
     #[test]
     fn confirm_reservation_extracts_and_reaps_orphan_when_killed_mid_spawn() {
         let mgr = PtyManager::new();
-        reserve_session_pty(&mgr, "sess-5", "pty-z").unwrap();
+        reserve_session_pty(
+            &mgr,
+            &crate::agents::state::AgentRuntimeState::bootstrap().unwrap(),
+            "sess-5",
+            "pty-z",
+        )
+        .unwrap();
 
         // Simulate spawn_pty's own insert landing after a concurrent
         // kill_session_pty already removed the reservation — having found
@@ -2731,3 +2848,11 @@ mod pixel_tests;
 #[cfg(test)]
 #[path = "pty_zero_size_tests.rs"]
 mod zero_size_tests;
+
+#[cfg(test)]
+#[path = "pty_liveness_tests.rs"]
+mod liveness_tests;
+
+#[cfg(test)]
+#[path = "pty_softclose_tests.rs"]
+mod softclose_tests;

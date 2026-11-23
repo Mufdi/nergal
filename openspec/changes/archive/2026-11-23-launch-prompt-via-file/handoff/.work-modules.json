@@ -26,6 +26,11 @@
       "ts": "2026-11-23T11:48:37",
       "type": "validated",
       "note": "iprev opus R5 APPROVED after user invariant (convergence rule at R2); 4 low notes folded into design/implementation"
+    },
+    {
+      "ts": "2026-11-23T17:00:00-03:00",
+      "type": "yield",
+      "note": "iprev 5 rounds (R1 12 findings, convergence rule at R2); adversarial 3 Important + security 1 acted on; walks 3.3-3.9 pass, 3.9 walk text corrected; vault log/MOC problems found in walk deferred to FRI-467 by user"
     }
   ]
 }

@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change nergal-mcp-server. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: MCP daemon owned by the nergal process
 
 The system SHALL run a single MCP server as part of the nergal application process, holding the global view of all live sessions across every open workspace. The daemon SHALL be the sole authority for the session directory. A "live session" SHALL be defined as a session with an active PTY child tracked by the daemon.
@@ -56,7 +58,7 @@ The MCP socket SHALL be the only access boundary, enforced by uid: mode `0600` i
 
 ### Requirement: Cooperative identity from the env hint
 
-The system SHALL identify a caller by the `NERGAL_SESSION_ID` (and `CLAUDE_CODE_SESSION_ID`) it reports, validated against the daemon's live session registry. Identity is cooperative (the env value is trusted within the uid boundary, not adversarially authenticated). An id that does not match a live session SHALL leave the caller unidentified. Identity SHALL be re-validated lazily on each tool call to survive a connect-before-register race, and the binding SHALL be torn down on disconnect.
+The system SHALL identify a caller by the `NERGAL_SESSION_ID` (and `CLAUDE_CODE_SESSION_ID`) it reports, validated against the daemon's live session registry (the live set of `session-directory`, not the adapter cache). Identity is cooperative (the env value is trusted within the uid boundary, not adversarially authenticated). An id that does not match a live session SHALL leave the caller unidentified. Identity SHALL be re-validated lazily on each tool call to survive a connect-before-register race, and the binding SHALL be torn down on disconnect.
 
 #### Scenario: Valid env id resolves
 
@@ -77,6 +79,12 @@ The system SHALL identify a caller by the `NERGAL_SESSION_ID` (and `CLAUDE_CODE_
 
 - **WHEN** a shim disconnects (peer close)
 - **THEN** the daemon SHALL drop the connection→session binding and any associated side-map entries
+
+#### Scenario: A killed session's id is unidentified
+
+- **GIVEN** session S had its agent PTY killed, but S is still in the adapter cache
+- **WHEN** a shim reports `NERGAL_SESSION_ID=S`, or a `CLAUDE_CODE_SESSION_ID` that maps to S
+- **THEN** the caller SHALL be unidentified (null `whoami`)
 
 ### Requirement: Directory is global-read within the uid
 
@@ -208,4 +216,3 @@ The subprocess-backed MCP tools (`get_pr_status`/`get_git_status`, which shell o
 - **GIVEN** a `gh`/`git` call that completes normally within the timeout
 - **WHEN** the tool runs
 - **THEN** it returns the same rollup it does today, with no observable change
-

@@ -2089,6 +2089,20 @@ function AppearanceSection({
           <span className="text-xs text-muted-foreground">Wrap the active panel border with a soft accent-color halo (Hyprland-style).</span>
         </label>
       </div>
+
+      <div className="flex items-start gap-3 text-sm">
+        <Switch
+          id="setting-reading_mode_full_width_tables"
+          checked={config.reading_mode_full_width_tables}
+          onCheckedChange={(v) => handleToggleChange("reading_mode_full_width_tables", v)}
+          aria-label="Full-width tables in reading mode"
+          className="mt-0.5"
+        />
+        <label htmlFor="setting-reading_mode_full_width_tables" className="flex flex-col gap-0.5 cursor-pointer">
+          <span className="font-medium">Full-width tables in reading mode</span>
+          <span className="text-xs text-muted-foreground">Markdown tables in the right panel use the whole panel width while reading mode narrows the text. The terminal is not affected.</span>
+        </label>
+      </div>
     </div>
   );
 }
@@ -2145,7 +2159,7 @@ const SECTION_KEYWORDS: Record<SectionId, string> = {
   paths: "binary shell transcripts directory claude path openspec plans",
   agents: "agent codex gemini opencode default cli detect binary",
   editor: "editor ide vscode open external",
-  appearance: "theme color colour appearance dark light palette custom accent",
+  appearance: "theme color colour appearance dark light palette custom accent reading table",
   keymap: "keyboard shortcut keybinding keymap leader ownership override reset",
   mcp: "mcp server cross-session summary worktree messaging",
   scratchpad: "scratchpad notes temp draft",

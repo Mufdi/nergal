@@ -1,0 +1,37 @@
+{
+  "tier": "M",
+  "ceremony": "standard",
+  "risk_tier": "low",
+  "spec_target": "reading-mode",
+  "tracker": {
+    "system": "linear",
+    "id": "FRI-494",
+    "pending": []
+  },
+  "validation": "validated",
+  "planning_only": false,
+  "iprev": {
+    "rounds": 1,
+    "verdict": "APPROVED"
+  },
+  "interview_answers": {
+    "widths": "Markdown max-width 72ch centered; terminal capped at 100 columns centered, the PTY gets those columns so the agent wraps there (agreed 2026-11-19)",
+    "shortcut": "leader f, one key acting on the focused surface (terminal zone -> terminal flag, panel zone -> markdown flag)",
+    "state": "Global per surface: one flag for the terminal, one for markdown, persisted in the config file like linear_hidden_states",
+    "terminal_scope": "Main terminal only, never the quake terminal",
+    "markdown_scope": "All right-panel markdown: Plan, Spec, Obsidian note, Linear and ClickUp descriptions and comments (MarkdownView + AnnotatableMarkdownView)",
+    "docs_shortcuts_md": "docs/shortcuts.md is never edited or committed in this change (unrelated pending user edit)"
+  },
+  "events": [
+    {
+      "ts": "2026-11-23T17:40:00-03:00",
+      "type": "validated",
+      "note": "openspec validate passed; iprev R1 APPROVED (opus) with 3 medium + 4 low; folded: config-load wait for the first center spawn and toggle no-op before load, type-only import to avoid shortcuts->terminalService->readingMode cycle, readingLayout pure helper + nextResize test, refit subscription moved to TerminalManager, hidden sessions adopt on show, info toast per flip, walk covers ClickUp and comments"
+    },
+    {
+      "ts": "2026-11-23T19:30:00-03:00",
+      "type": "yield",
+      "note": "walks passed; user asked for 100ch, full-width tables and an Appearance switch during the walk; FRI-604 and FRI-605 filed"
+    }
+  ]
+}

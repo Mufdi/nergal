@@ -9,6 +9,8 @@ import {
   sessionLaunchModeAtom,
   freshSessionsAtom,
 } from "@/stores/workspace";
+import { appStore } from "@/stores/jotaiStore";
+import { readingTerminalAtom } from "@/stores/readingMode";
 import { focusZoneAtom } from "@/stores/shortcuts";
 import { confirmAndDeleteSession, deleteSessionWithGraceAction } from "@/stores/pendingDeletes";
 import { launchAndConsume } from "@/lib/launchMode";
@@ -80,6 +82,11 @@ export function TerminalManager() {
     observer.observe(host);
     return () => observer.disconnect();
   }, []);
+
+  useEffect(
+    () => appStore.sub(readingTerminalAtom, () => requestAnimationFrame(() => terminalService.fitActive())),
+    [],
+  );
 
   // When the global focus zone flips to "terminal" (e.g. Ctrl+Ñ toggle,
   // pane cycle), snap focus back into the terminal's input surface so the

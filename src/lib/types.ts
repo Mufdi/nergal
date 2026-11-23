@@ -74,6 +74,9 @@ export interface Config {
   linear_hidden_states?: string[];
   linear_collapsed_groups?: string[];
   linear_show_completed?: boolean;
+  reading_mode_terminal?: boolean;
+  reading_mode_markdown?: boolean;
+  reading_mode_full_width_tables: boolean;
 }
 
 export interface CrossSessionConfig {

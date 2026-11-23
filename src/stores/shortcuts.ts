@@ -25,6 +25,7 @@ import { conflictsZenOpenAtom, selectedConflictFileMapAtom } from "./conflict";
 import { gitChipModeAtom } from "./git";
 import { triggerShipAtom } from "./ship";
 import { toastsAtom } from "./toast";
+import { toggleReadingMode } from "./readingMode";
 import { focusWorktreeGateAtom, worktreeRequestsAtom } from "./worktreeGate";
 import { softCloseSessionAction, undoSessionCloseAction, hasPendingSessionCloseAtom } from "./sessionTabs";
 import { invoke as invokeCmd } from "@/lib/tauri";
@@ -455,6 +456,7 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
     s.set(portsPopoverOpenAtom, (p) => !p);
   } },
   { id: "toggle-notifications", label: "Toggle Notification History", keys: "leader h", category: "navigation", group: "surfaces", keywords: ["notifications", "history", "toasts", "alerts", "log", "bell"], handler: () => store().set(notificationHistoryOpenAtom, (p) => !p) },
+  { id: "toggle-reading-mode", label: "Toggle Reading Mode", keys: "leader f", category: "navigation", group: "surfaces", keywords: ["reading", "read", "focus", "width", "narrow", "column", "zen"], handler: () => toggleReadingMode(store(), store().get(focusZoneAtom)) },
   { id: "nav-up", label: "Navigate Up", keys: "alt+arrowup", category: "navigation", keywords: ["navigate", "up", "item"], scope: "app", handler: () => navigateItems("up") },
   { id: "nav-down", label: "Navigate Down", keys: "alt+arrowdown", category: "navigation", keywords: ["navigate", "down", "item"], scope: "app", handler: () => navigateItems("down") },
 

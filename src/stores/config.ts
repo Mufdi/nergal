@@ -29,4 +29,9 @@ export const configAtom = atom<Config>({
   linear_hidden_states: [],
   linear_collapsed_groups: [],
   linear_show_completed: true,
+  reading_mode_terminal: false,
+  reading_mode_markdown: false,
+  reading_mode_full_width_tables: true,
 });
+
+export const configLoadedAtom = atom(false);

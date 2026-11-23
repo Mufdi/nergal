@@ -9,7 +9,7 @@ import { setupObsidianListeners } from "./stores/obsidian";
 import { setupClickUpListeners } from "./stores/clickup";
 import { setupLinearListeners } from "./stores/linear";
 import { setupCrossSessionListeners } from "./stores/crossSession";
-import { configAtom, settingsOpenAtom, settingsRequestedSectionAtom } from "./stores/config";
+import { configAtom, configLoadedAtom, settingsOpenAtom, settingsRequestedSectionAtom } from "./stores/config";
 import { toastsAtom } from "./stores/toast";
 import { droppedKeymapOverridesAtom } from "./stores/keymapMigration";
 import { shortcutRegistryAtom } from "./stores/shortcuts";
@@ -125,6 +125,7 @@ export function App() {
     invoke<Config>("get_config", {})
       .then((cfg) => {
         setConfig(cfg);
+        store.set(configLoadedAtom, true);
         // One-pass keymap_overrides cleanup after the restructure: drop
         // overrides for removed ids and overrides that now collide with a
         // NEW default binding on a different id. Idempotent — an

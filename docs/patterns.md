@@ -599,6 +599,14 @@ Two indeterminate indicators; **never a raw lucide `Loader2` spinner**.
 Rule of thumb: if it fills a region while content loads → ProgressBar; if it
 sits inline next to (or replaces) a glyph while an action runs → PulseDots.
 
+## 15. Terminal mouse
+
+When the running app enables mouse tracking (`?1000h`/`?1002h`/`?1003h`), middle
+and right clicks go to the app and the native context menu is suppressed.
+Shift bypasses reporting and opens the context menu (wezterm/xterm convention).
+A view scrolled back into history sends no press: its rows are not the live
+screen. The release of a button pressed at the live bottom still goes out. Canonical: `reportsMouse` + `auxReduce` in `mouseButtons.ts`.
+
 ---
 
 ## Maintenance

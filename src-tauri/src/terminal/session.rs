@@ -389,22 +389,12 @@ impl TerminalSession {
         self.terminal.is_alt_screen_active()
     }
 
-    /// Hand a wheel tick to wezterm-term's mouse pipeline. wezterm picks
-    /// the encoding based on what the running app requested:
-    /// SGR mouse report, X10/UTF-8 mouse report, or — when no mouse mode
-    /// is enabled but the alt screen is active — synthetic arrow-key
-    /// presses (xterm's "alternateScroll" emulation). When neither
-    /// applies it's a no-op.
-    ///
-    /// `delta_lines` follows the rest of the scroll API: positive = up,
-    /// negative = down. `col`/`row` are cell coordinates of the cursor
-    /// at the time of the wheel event; many apps ignore them but mouse
-    /// reports need them for correctness.
-    /// Forward a primary mouse button event to wezterm-term. wezterm emits
-    /// the encoded mouse report when the running app has enabled a mouse
-    /// mode (`?1000h`, `?1002h`, `?1006h`); without an enabled mode this is
-    /// a no-op. CC's TUI relies on this to detect clicks on interactive
-    /// menus / lists; without forwarding the panel stays inert.
+    /// Forward a mouse button event to wezterm-term. wezterm emits the
+    /// encoded mouse report when the running app has enabled a mouse mode
+    /// (`?1000h`, `?1002h`, `?1003h`; `?1006h` only selects the SGR
+    /// encoding); without an enabled mode this is a no-op. CC's TUI relies
+    /// on this to detect clicks on interactive menus / lists; without
+    /// forwarding the panel stays inert.
     pub fn mouse_button(
         &mut self,
         button: PrimaryButton,
@@ -414,6 +404,15 @@ impl TerminalSession {
         mods: MouseMods,
     ) -> Result<()> {
         use wezterm_term::input::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        // The viewport shows history rows, so the app would receive a click on
+        // a row it never drew there. Releases still go out: a button pressed at
+        // the live bottom must not stay held in the app after a scroll.
+        if matches!(kind, PrimaryKind::Press)
+            && !self.terminal.is_alt_screen_active()
+            && self.scroll_offset > 0
+        {
+            return Ok(());
+        }
         let mut modifiers = KeyModifiers::default();
         if mods.shift {
             modifiers |= KeyModifiers::SHIFT;
@@ -446,6 +445,17 @@ impl TerminalSession {
         })
     }
 
+    /// Hand a wheel tick to wezterm-term's mouse pipeline. wezterm picks
+    /// the encoding based on what the running app requested:
+    /// SGR mouse report, X10/UTF-8 mouse report, or — when no mouse mode
+    /// is enabled but the alt screen is active — synthetic arrow-key
+    /// presses (xterm's "alternateScroll" emulation). When neither
+    /// applies it's a no-op.
+    ///
+    /// `delta_lines` follows the rest of the scroll API: positive = up,
+    /// negative = down. `col`/`row` are cell coordinates of the cursor
+    /// at the time of the wheel event; many apps ignore them but mouse
+    /// reports need them for correctness.
     pub fn mouse_wheel(&mut self, delta_lines: i32, col: u16, row: u16) -> Result<()> {
         use wezterm_term::input::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
         let count = delta_lines.unsigned_abs() as usize;
@@ -553,6 +563,7 @@ impl TerminalSession {
             title,
             scroll_offset: self.scroll_offset,
             is_alt_screen,
+            mouse_tracking: self.terminal.is_mouse_grabbed(),
         }
     }
 }
@@ -1016,3 +1027,11 @@ mod tests {
 #[cfg(test)]
 #[path = "session_compat_tests.rs"]
 mod compat_tests;
+
+#[cfg(test)]
+#[path = "mouse_tracking_tests.rs"]
+mod mouse_tracking_tests;
+
+#[cfg(test)]
+#[path = "mouse_scroll_gate_tests.rs"]
+mod mouse_scroll_gate_tests;

@@ -1,0 +1,5 @@
+f5c1577da4e7dced56b7e81f1ecac5bfcb56d4d6  src-tauri/src/terminal/mouse_tracking_tests.rs
+e679767f5fedbbe479bf7126f77a695e0aecc166  src-tauri/src/terminal/differ_mouse_tracking_tests.rs
+a9c4e9624dd1cdadf8c9d18f5e62a4184ed5aa41  src-tauri/src/terminal/emitter_mouse_tracking_tests.rs
+c517a8fa83b2e3a9ebfaf314a50cb81a040b4cc0  src/components/terminal/mouseButtons.test.ts
+57b90318cbd54893c018ebe79ba5d910f6d56970  src-tauri/src/terminal/mouse_scroll_gate_tests.rs

@@ -50,6 +50,7 @@ pub struct GridSnapshot {
     pub title: Option<String>,
     pub scroll_offset: usize,
     pub is_alt_screen: bool,
+    pub mouse_tracking: bool,
 }
 
 /// Delta-ish payload sent over each terminal's attached grid-update channel.
@@ -58,9 +59,6 @@ pub struct GridSnapshot {
 /// with their visible-row index. `cursor` and `title` always reflect the
 /// current state (they are cheap to send and the frontend needs them every
 /// tick to render the caret and the tab label).
-///
-/// `scroll_offset` is reserved for Phase 3 scrollback support; Phase 2 emits
-/// `0` since the viewport is always pinned to the bottom.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GridUpdate {
@@ -72,6 +70,7 @@ pub struct GridUpdate {
     pub title: Option<String>,
     pub scroll_offset: usize,
     pub is_alt_screen: bool,
+    pub mouse_tracking: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

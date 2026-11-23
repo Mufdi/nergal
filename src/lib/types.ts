@@ -149,6 +149,7 @@ export interface GridUpdate {
   title: string | null;
   scrollOffset: number;
   isAltScreen: boolean;
+  mouseTracking: boolean;
 }
 
 export interface TerminalKeyEvent {

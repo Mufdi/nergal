@@ -239,15 +239,27 @@ fn descriptor_from(
     last_stop_at: Option<u64>,
     is_live: bool,
 ) -> SessionDescriptor {
-    let (background_tasks, session_crons) = agents.session_background(&s.id);
-    // Live mode + last_activity + waiting_for come from the runtime side-map the
-    // hook dispatcher feeds; the DB row's status/updated_at only move on
-    // lifecycle mutations, so fall back to them only when no event has been seen
-    // for this session since the daemon started.
-    let (mode, last_activity, waiting_for) = match agents.session_activity(&s.id) {
-        Some(a) => (a.mode, a.last_activity, a.waiting_for),
-        None => (s.status.as_str().to_string(), s.updated_at, None),
+    // The side-maps outlive the PTY. A not-live session drops present-tense claims
+    // (mode, waiting_for, background work) because the agent that made them is gone,
+    // but keeps past facts (last activity, touched files, last message).
+    let (mode, last_activity, waiting_for) = if is_live {
+        match agents.session_activity(&s.id) {
+            Some(a) => (a.mode, a.last_activity, a.waiting_for),
+            None => (s.status.as_str().to_string(), s.updated_at, None),
+        }
+    } else {
+        let last_activity = agents
+            .session_activity(&s.id)
+            .map_or(s.updated_at, |a| a.last_activity);
+        (s.status.as_str().to_string(), last_activity, None)
     };
+    let (background_tasks, session_crons) = if is_live {
+        agents.session_background(&s.id)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let recently_touched_files = agents.session_files(&s.id);
+    let last_assistant_message = agents.session_last_message(&s.id);
     // Stale when newer activity postdates the served summary's covered-through.
     let summary_stale = match (summary, last_stop_at) {
         (Some(sm), Some(ls)) => ls > sm.updated_at,
@@ -264,10 +276,10 @@ fn descriptor_from(
         mode,
         waiting_for,
         last_activity,
-        recently_touched_files: agents.session_files(&s.id),
+        recently_touched_files,
         background_tasks,
         session_crons,
-        last_assistant_message: agents.session_last_message(&s.id),
+        last_assistant_message,
         summary: summary.map(|sm| sm.summary.clone()),
         is_live,
         summary_stale,
@@ -282,7 +294,7 @@ fn descriptor_from(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agents::{AgentId, state::AgentRuntimeState};
+    use crate::agents::state::AgentRuntimeState;
     use crate::db::Database;
     use crate::models::{Session, SessionStatus};
     use std::sync::{Arc, Mutex};
@@ -334,7 +346,7 @@ mod tests {
     }
 
     fn make_live(ctx: &DaemonContext, id: &str) {
-        ctx.agents.register_session(id, AgentId::claude_code());
+        ctx.agents.mark_live(id, &format!("pty-test-{id}"));
     }
 
     #[test]

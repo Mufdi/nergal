@@ -1,0 +1,38 @@
+{
+  "tier": "M",
+  "ceremony": "standard",
+  "risk_tier": "medium",
+  "spec_target": "session-directory",
+  "tracker": {
+    "system": "linear",
+    "id": "FRI-601",
+    "pending": []
+  },
+  "validation": "validated",
+  "planning_only": false,
+  "iprev": {
+    "rounds": 3,
+    "verdict": "REVISE (cap reached; R3 findings applied, no design change)"
+  },
+  "interview_answers": {
+    "liveness_definition": "Live = the app holds a running agent PTY for the session (tab open or inside the 5 s soft-close window). An agent that exited to the shell in an open tab stays live; out of scope. User reported: closing the tab should stop the session (2026-11-22).",
+    "late_events": "A late hook event or a late end-of-file of a replaced PTY must not change liveness."
+  },
+  "events": [
+    {
+      "ts": "2026-11-22T23:40:00-03:00",
+      "type": "iprev-cap",
+      "note": "medium risk cap of 3 rounds; R3 found spec wording (marker visibility) and two lows, all applied"
+    },
+    {
+      "ts": "2026-11-22T23:40:00-03:00",
+      "type": "validated",
+      "note": "openspec validate passed after R3 fixes"
+    },
+    {
+      "ts": "2026-11-23T01:45:00-03:00",
+      "type": "yield",
+      "note": "iprev 3 rounds (R1: 2 high, 3 medium, 4 low); adversarial PASS with 3 Important (compliance) + 5 nits, all confirmed and fixed; walk defects 2 (C3 false alarm from an incomplete step, descriptor fields regressing -> user decision + re-locked test); Red conflicts 1 (descriptor test, ruled test wrong by user decision); gate failures 0"
+    }
+  ]
+}

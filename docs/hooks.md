@@ -10,7 +10,7 @@ All endpoints live in a per-user IPC directory resolved by `ipc_dir()` (`src-tau
 |---|---|---|
 | `nergal hook send <event>` | async | Forward an event payload to the hook socket (`hook.sock` in the per-user IPC dir; the same dir holds `launch-prompts/`, 0600 files with a launch prompt between Nergal's write and the shell's read). |
 | `nergal hook inject-edits` | sync | Modify the prompt before submission (used on `UserPromptSubmit`). |
-| `nergal hook plan-review` | blocking, FIFO | Block on the plan-review FIFO (`plan-{pid}.fifo` in the per-user IPC dir) until the GUI returns `allow` / `deny`. |
+| `nergal hook plan-review` | blocking, FIFO | Block on the plan-review FIFO (`plan-{pid}-{nonce}.fifo` in the per-user IPC dir) until the GUI returns `allow` / `deny`. |
 | `nergal hook ask-user` | async (notifier) | Fire-and-forget signal that AskUserQuestion is pending. CC's TUI owns the question; nergal only blinks the session tab. |
 | `nergal hook notification` | async | Forward `Notification` payloads (matcher `permission_prompt\|agent_needs_input\|agent_completed`). `permission_prompt` and `agent_needs_input` light the session attention tint (`attention:pending`); `agent_needs_input` also marks the MCP descriptor as waiting on a "background agent". `agent_completed` emits `agent:background-completed`, logs "Background agent finished" in Activities and clears the tint only when it came from `agent_needs_input`. |
 | `nergal hook send subagent-start` / `subagent-stop` | async | Forward `SubagentStart` / `SubagentStop` (matcher `.+`). Events without an `agent_type` are dropped in `process_event`. The frontend pairs them by `agent_id` into one sky-400 "Subagent: <type>" Activities row (claiming the pending `Agent`/`Task` tool row), with duration, last message and effort on stop. |
@@ -25,12 +25,12 @@ A user-installed shell wrapper at `~/.claude/hooks/nergal-conditional.sh` inspec
 ## Plan review flow (blocking via PermissionRequest)
 
 1. Claude calls `ExitPlanMode`. The `PermissionRequest[ExitPlanMode]` hook fires.
-2. `nergal hook plan-review` blocks on `plan-{pid}.fifo` in the per-user IPC dir.
-3. The GUI loads the plan in `AnnotatableMarkdownView`. The user can add inline annotations while `planReviewStatusMapAtom` is in `pending_review`.
+2. `nergal hook plan-review` blocks on `plan-{pid}-{nonce}.fifo` in the per-user IPC dir (the nonce is a v4 UUID, so a later review that reuses the pid never matches a stale registration).
+3. The GUI loads the plan in `AnnotatableMarkdownView`. The review opens only from the `PlanReview` event, which carries the decision path; a plan preview alone never opens it. The user can add inline annotations while `planReviewStatusMapAtom` is in `pending_review` and the open document's decision path matches the session's (`isLiveReview`).
 4. Accept → GUI writes `allow` to the FIFO → Claude proceeds.
 5. Reject → GUI writes `deny` with a Plannotator-style message that points Claude back to the edited plan file → Claude re-reads and re-plans.
 
-State machine: `idle → pending_review → submitted` in `src/stores/plan.ts`.
+State machine in `src/stores/plan.ts`: `idle → pending_review → submitted | idle`. A decision that cannot be delivered (Claude Code is no longer waiting, e.g. answered in the terminal or timed out) moves the status to `undelivered`: the decision controls hide and the header reads `Not delivered. Answer in the terminal.`. The annotations stay visible and clearable. It lasts until a new review, new plan content, or the session stops.
 
 ## AskUserQuestion attention
 

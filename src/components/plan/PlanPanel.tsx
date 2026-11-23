@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { useAtomValue, useSetAtom, useAtom } from "jotai";
-import { planDocumentsAtom, defaultPlanState, activePlanReviewStatusAtom, planReviewStatusMapAtom } from "@/stores/plan";
+import { planDocumentsAtom, planStateMapAtom, defaultPlanState, activePlanReviewStatusAtom, planReviewStatusMapAtom, planDecisionInFlightAtom } from "@/stores/plan";
 import { activeSessionIdAtom } from "@/stores/workspace";
 import { activeAnnotationsAtom, clearAnnotationsAtom, addAnnotationAtom, serializeAnnotations, annotationModeAtom, annotationScopeAtom, canEnterAnnotationModeAtom } from "@/stores/annotations";
 import { hasCapabilityAtom } from "@/stores/agent";
+import { decisionGuard, isLiveReview, isReviewDocument, showReviewAnnotations } from "@/stores/planReady";
 import { toastsAtom } from "@/stores/toast";
 import { invoke } from "@/lib/tauri";
 import { confirm } from "@/lib/confirm";
@@ -20,6 +21,10 @@ import {
   TooltipProvider,
 } from "@/components/ui/tooltip";
 
+function isRepeat(e: Event): boolean {
+  return (e as CustomEvent<{ repeat?: boolean } | null>).detail?.repeat === true;
+}
+
 interface PlanPanelProps {
   path: string;
 }
@@ -35,11 +40,20 @@ export function PlanPanel({ path }: PlanPanelProps) {
   const reviewStatus = useAtomValue(activePlanReviewStatusAtom);
   const setReviewStatusMap = useSetAtom(planReviewStatusMapAtom);
   const sessionId = useAtomValue(activeSessionIdAtom);
-  const canAnnotate = reviewStatus === "pending_review";
+  const planStateMap = useAtomValue(planStateMapAtom);
+  const inFlightMap = useAtomValue(planDecisionInFlightAtom);
+  const setInFlightMap = useSetAtom(planDecisionInFlightAtom);
+  const canEnterAnnotationMode = useAtomValue(canEnterAnnotationModeAtom);
+  const docPlan = path ? docs[path] : undefined;
+  const sessionPlan = sessionId ? planStateMap[sessionId] : undefined;
+  const canAnnotate = isLiveReview(docPlan, sessionPlan, reviewStatus);
+  const showAnnotations = showReviewAnnotations(docPlan, sessionPlan, reviewStatus);
+  const canToggleAnnotationMode = canEnterAnnotationMode && isReviewDocument(docPlan, sessionPlan);
   const isSubmitted = reviewStatus === "submitted";
+  const isUndelivered = reviewStatus === "undelivered";
+  const decisionBusy = sessionId ? inFlightMap[sessionId] === true : false;
   const [annotationMode, setAnnotationMode] = useAtom(annotationModeAtom);
   const setScope = useSetAtom(annotationScopeAtom);
-  const canEnterAnnotationMode = useAtomValue(canEnterAnnotationModeAtom);
   const setSettingsOpen = useSetAtom(settingsOpenAtom);
 
   // Claim plan scope while mounted; release on unmount so other panels' scope
@@ -52,8 +66,8 @@ export function PlanPanel({ path }: PlanPanelProps) {
 
   // Auto-exit annotation mode when review status changes away from pending_review
   useEffect(() => {
-    if (!canEnterAnnotationMode && annotationMode) setAnnotationMode(false);
-  }, [canEnterAnnotationMode, annotationMode, setAnnotationMode]);
+    if (!canToggleAnnotationMode && annotationMode) setAnnotationMode(false);
+  }, [canToggleAnnotationMode, annotationMode, setAnnotationMode]);
 
   const [showGlobalInput, setShowGlobalInput] = useState(false);
   const [globalComment, setGlobalComment] = useState("");
@@ -88,16 +102,48 @@ export function PlanPanel({ path }: PlanPanelProps) {
 
   useEffect(() => {
     function handleToggleAnnotationMode() {
-      if (!canEnterAnnotationMode) return;
+      if (!canToggleAnnotationMode) return;
       setAnnotationMode((prev) => !prev);
     }
     document.addEventListener("nergal:toggle-annotation-mode", handleToggleAnnotationMode);
     return () => document.removeEventListener("nergal:toggle-annotation-mode", handleToggleAnnotationMode);
-  }, [canEnterAnnotationMode, setAnnotationMode]);
+  }, [canToggleAnnotationMode, setAnnotationMode]);
 
-  function handleRevise() {
+  function setInFlight(sid: string, value: boolean) {
+    setInFlightMap((prev) => ({ ...prev, [sid]: value }));
+  }
+
+  function failDecision(action: "Approve" | "Revise", err?: unknown) {
+    addToast({
+      message: `${action} failed`,
+      description:
+        "Claude Code is not waiting for this plan in Nergal. Answer in the terminal."
+        + (err ? ` (${String(err)})` : ""),
+      type: "error",
+    });
+    if (sessionId) setReviewStatusMap((prev) => ({ ...prev, [sessionId]: "undelivered" }));
+  }
+
+  function guardDecision(action: "Approve" | "Revise", repeat: boolean): boolean {
+    const verdict = decisionGuard({
+      repeat,
+      inFlight: sessionId ? appStore.get(planDecisionInFlightAtom)[sessionId] === true : false,
+      decisionPath,
+      sessionId: backendSessionId,
+      status: sessionId ? (appStore.get(planReviewStatusMapAtom)[sessionId] ?? "idle") : "idle",
+    });
+    if (verdict === "fail") failDecision(action);
+    return verdict === "send";
+  }
+
+  function handleRevise(repeat = false) {
+    if (!guardDecision("Revise", repeat) || !sessionId) return;
     const feedback = serializeAnnotations(annotations, plan.path ?? path);
-    if (!backendSessionId || !feedback || !decisionPath) return;
+    if (!feedback) {
+      failDecision("Revise");
+      return;
+    }
+    setInFlight(sessionId, true);
     invoke("submit_plan_decision", {
       sessionId: backendSessionId,
       decisionPath,
@@ -105,26 +151,30 @@ export function PlanPanel({ path }: PlanPanelProps) {
       feedback,
     })
       .then(() => {
-        if (sessionId) setReviewStatusMap((prev) => ({ ...prev, [sessionId]: "submitted" }));
+        setReviewStatusMap((prev) => ({ ...prev, [sessionId]: "submitted" }));
         clearAnnotations();
         addToast({ message: "Annotations sent", description: "Claude will revise the plan", type: "success" });
       })
-      .catch((err: unknown) => addToast({ message: "Revise Failed", description: String(err), type: "error" }));
+      .catch((err: unknown) => failDecision("Revise", err))
+      .finally(() => setInFlight(sessionId, false));
   }
 
-  function handleApprove() {
-    if (!backendSessionId || !decisionPath) {
-      clearAnnotations();
-      if (sessionId) setReviewStatusMap((prev) => ({ ...prev, [sessionId]: "idle" }));
-      return;
-    }
+  function handleApprove(repeat = false) {
+    if (!guardDecision("Approve", repeat) || !sessionId) return;
+    setInFlight(sessionId, true);
     invoke("submit_plan_decision", { sessionId: backendSessionId, decisionPath, approved: true })
       .then(() => {
         clearAnnotations();
-        if (sessionId) setReviewStatusMap((prev) => ({ ...prev, [sessionId]: "idle" }));
+        setReviewStatusMap((prev) => ({ ...prev, [sessionId]: "idle" }));
       })
-      .catch((err: unknown) => addToast({ message: "Approve Failed", description: String(err), type: "error" }));
+      .catch((err: unknown) => failDecision("Approve", err))
+      .finally(() => setInFlight(sessionId, false));
   }
+
+  // The document listeners outlive renders; reading handlers through a ref
+  // keeps them from sending annotations, session id or plan path captured earlier.
+  const latestHandlers = useRef({ handleApprove, handleRevise, annotationCount: annotations.length });
+  latestHandlers.current = { handleApprove, handleRevise, annotationCount: annotations.length };
 
   function handleGlobalComment() {
     if (showGlobalInput) {
@@ -146,24 +196,31 @@ export function PlanPanel({ path }: PlanPanelProps) {
 
   // Plan review actions via custom events (dispatched from shortcuts registry)
   useEffect(() => {
-    if (!canAnnotate) return;
+    if (!showAnnotations) return;
 
     function onClear() {
       clearAnnotations();
       addToast({ message: "Cleared", description: "All annotations removed", type: "info" });
     }
-    function onApprove() { handleApprove(); }
-    function onRevise() { if (annotations.length > 0) handleRevise(); }
-
     document.addEventListener("nergal:clear-annotations", onClear);
+    return () => document.removeEventListener("nergal:clear-annotations", onClear);
+  }, [showAnnotations]);
+
+  useEffect(() => {
+    if (!canAnnotate) return;
+
+    function onApprove(e: Event) { latestHandlers.current.handleApprove(isRepeat(e)); }
+    function onRevise(e: Event) {
+      if (latestHandlers.current.annotationCount > 0) latestHandlers.current.handleRevise(isRepeat(e));
+    }
+
     document.addEventListener("nergal:approve-plan", onApprove);
     document.addEventListener("nergal:revise-plan", onRevise);
     return () => {
-      document.removeEventListener("nergal:clear-annotations", onClear);
       document.removeEventListener("nergal:approve-plan", onApprove);
       document.removeEventListener("nergal:revise-plan", onRevise);
     };
-  }, [canAnnotate, annotations.length, backendSessionId, decisionPath]);
+  }, [canAnnotate]);
 
   // Bare-letter verbs scoped to the plan surface (patterns.md §1/§8): with the
   // panel zone focused during review, A/R/C/X act without a modifier — they
@@ -172,7 +229,7 @@ export function PlanPanel({ path }: PlanPanelProps) {
   // engaged state. X is confirm-gated because a bare letter is easy to hit by
   // accident.
   useEffect(() => {
-    if (!canAnnotate) return;
+    if (!canAnnotate && !showAnnotations) return;
     function onKey(e: KeyboardEvent) {
       if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
       if (!["KeyA", "KeyR", "KeyC", "KeyX"].includes(e.code)) return;
@@ -191,17 +248,19 @@ export function PlanPanel({ path }: PlanPanelProps) {
         && appStore.get(focusZoneAtom) !== "panel"
       ) return;
       if (e.code === "KeyA") {
+        if (!canAnnotate) return;
         e.preventDefault();
-        document.dispatchEvent(new CustomEvent("nergal:approve-plan"));
+        document.dispatchEvent(new CustomEvent("nergal:approve-plan", { detail: { repeat: e.repeat } }));
       } else if (e.code === "KeyC") {
+        if (!canAnnotate) return;
         e.preventDefault();
         document.dispatchEvent(new CustomEvent("nergal:toggle-global-comment"));
       } else if (e.code === "KeyR") {
-        if (annotations.length === 0) return;
+        if (!canAnnotate || annotations.length === 0) return;
         e.preventDefault();
-        document.dispatchEvent(new CustomEvent("nergal:revise-plan"));
+        document.dispatchEvent(new CustomEvent("nergal:revise-plan", { detail: { repeat: e.repeat } }));
       } else if (e.code === "KeyX") {
-        if (annotations.length === 0) return;
+        if (!showAnnotations || annotations.length === 0) return;
         e.preventDefault();
         void confirm({
           kind: "warning",
@@ -216,7 +275,7 @@ export function PlanPanel({ path }: PlanPanelProps) {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [canAnnotate, annotations.length]);
+  }, [canAnnotate, showAnnotations, annotations.length]);
 
   if (!hasPlan) {
     return (
@@ -261,6 +320,10 @@ export function PlanPanel({ path }: PlanPanelProps) {
             <span className="text-[10px] text-muted-foreground">Waiting for revision...</span>
           )}
 
+          {isUndelivered && (
+            <span className="text-[10px] text-muted-foreground">Not delivered. Answer in the terminal.</span>
+          )}
+
           {canAnnotate && (
             <>
               <span className="text-[10px] text-muted-foreground tabular-nums">
@@ -303,8 +366,10 @@ export function PlanPanel({ path }: PlanPanelProps) {
               <Tooltip>
                 <TooltipTrigger>
                   <button
-                    onClick={handleApprove}
-                    className="h-5 rounded border border-border px-2 text-[10px] text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                    onClick={() => handleApprove()}
+                    disabled={decisionBusy}
+                    aria-busy={decisionBusy}
+                    className="h-5 rounded border border-border px-2 text-[10px] text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Approve
                   </button>
@@ -314,10 +379,11 @@ export function PlanPanel({ path }: PlanPanelProps) {
               <Tooltip>
                 <TooltipTrigger>
                   <button
-                    onClick={handleRevise}
-                    disabled={annotations.length === 0}
+                    onClick={() => handleRevise()}
+                    disabled={annotations.length === 0 || decisionBusy}
+                    aria-busy={decisionBusy}
                     className={`h-5 rounded px-2 text-[10px] font-medium transition-colors ${
-                      annotations.length > 0
+                      annotations.length > 0 && !decisionBusy
                         ? "bg-primary text-primary-foreground hover:bg-primary/90"
                         : "bg-secondary text-muted-foreground cursor-not-allowed"
                     }`}
@@ -366,7 +432,7 @@ export function PlanPanel({ path }: PlanPanelProps) {
       <div className="relative flex-1 overflow-y-auto">
         <AnnotatableMarkdownView
           content={plan.content}
-          annotationsEnabled={canAnnotate}
+          annotationsEnabled={showAnnotations}
           annotationMode={annotationMode}
         />
       </div>

@@ -1,0 +1,11 @@
+Changes after round 1:
+- #1 (high) D2 fallback to the current plan DROPPED (design D1 alternatives records why). Group 2 of tasks removed.
+- #2 (high) Root cause documented in design Context and implementation facts (PreToolUse async:true + spawn per connection). New scenarios: preview after its review with same path and with another path, asserting the session plan AND the document for the preview's path; applyPlanReady applied to both atoms.
+- #3 (medium) Command becomes async + spawn_blocking; helper writes non-blocking with poll(POLLOUT) and a 5 s deadline; EPIPE is an error.
+- #4 (medium) Registry check against pending_plan_fifos before any open; O_NOFOLLOW | O_CLOEXEC; scenario for an unregistered path and a symlink.
+- #5 (medium) D1 now ties a preview to its cycle by content: same content keeps decision path and state; new content clears the decision path and sets idle. Remaining same-content case documented in Risks.
+- #6 (medium) Verified: only the active tab's DocumentContent renders (RightPanel.tsx:219-221). Recorded in Risks and implementation facts.
+- #7 (low) A failed Revise keeps annotations: requirement text, scenario, task 2.3.
+- #8 (low) Test reader opens first and reads to EOF (task 1.1); payload raised to 100000 bytes to exceed the pipe buffer.
+- #9 (low) Task 1.4 rewrites the adapter test with mkfifo + reader and adds the regular-file case; adapter keeps remove-before-write (implementation risk note).
+- #10 (low) Empty plan path: explicit non-goal, unchanged behavior.

@@ -111,14 +111,14 @@ fn save_plan_edits_if_dirty(runtime: &mut PlanManager) -> Result<(), String> {
 
 /// Writes approval/denial decision to the FIFO, unblocking the plan-review CLI.
 #[tauri::command]
-pub fn submit_plan_decision(
+pub async fn submit_plan_decision(
     session_id: String,
     decision_path: String,
     approved: bool,
     feedback: Option<String>,
     state: State<'_, SharedPlanState>,
+    agent_state: State<'_, AgentRuntimeState>,
 ) -> Result<(), String> {
-    // If plan was edited, save to disk first
     if let Ok(mut mgr) = state.lock() {
         let runtime = mgr.get_or_create(&session_id);
         save_plan_edits_if_dirty(runtime)?;
@@ -141,10 +141,26 @@ pub fn submit_plan_decision(
 
     let payload = serde_json::to_string(&decision).map_err(|e| e.to_string())?;
 
-    // Unix: write the decision into the FIFO the hook CLI is reading.
     #[cfg(unix)]
-    std::fs::write(&decision_path, &payload)
+    {
+        let fifo = std::path::PathBuf::from(&decision_path);
+        if !agent_state
+            .claude_code
+            .claim_pending_plan_fifo(&session_id, &fifo)
+        {
+            return Err("no pending plan review for this decision path".to_string());
+        }
+        tokio::task::spawn_blocking(move || {
+            crate::plan_fifo::write_plan_decision(
+                &fifo,
+                payload.as_bytes(),
+                std::time::Duration::from_secs(5),
+            )
+        })
+        .await
+        .map_err(|e| format!("plan decision task failed: {e}"))?
         .map_err(|e| format!("writing decision to FIFO: {e}"))?;
+    }
 
     // Windows: connect to the CLI's gate pipe at submit time (single
     // invocation, no held state — Decision 6) and write the decision. The
@@ -154,6 +170,7 @@ pub fn submit_plan_decision(
     #[cfg(windows)]
     {
         use std::io::Write;
+        let _ = &agent_state;
         let mut stream = crate::platform::sync_connect(std::path::Path::new(&decision_path))
             .map_err(|e| format!("connecting to plan-review gate pipe: {e}"))?;
         stream

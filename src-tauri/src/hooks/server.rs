@@ -1242,17 +1242,37 @@ fn process_event(
         } => {
             tracing::debug!("PlanReview: fifo_path={fifo_path}");
 
-            // Hand the FIFO path to the CC adapter so future
-            // adapter.submit_plan_decision() calls know where to unblock the
-            // plan-review CLI. Today the production path still goes through
-            // the legacy commands::submit_plan_decision (which receives the
-            // FIFO from the frontend); this registration is the seam used
-            // when the call site flips to the trait method.
-            if let Some(csid) = nergal_session_id {
-                agent_state
-                    .claude_code
-                    .register_pending_plan_fifo(csid, std::path::PathBuf::from(fifo_path));
-            }
+            #[cfg(unix)]
+            let decision_path = {
+                let ipc = match crate::platform::ipc_dir() {
+                    Ok(dir) => Some(dir),
+                    Err(e) => {
+                        tracing::warn!("PlanReview: cannot resolve the IPC dir: {e}");
+                        None
+                    }
+                };
+                let decision = crate::plan_fifo::review_decision_path(fifo_path, ipc.as_deref());
+                if decision.is_none() && ipc.is_some() {
+                    tracing::warn!(
+                        "PlanReview: FIFO {fifo_path} is outside the IPC dir, not registering"
+                    );
+                }
+                if let (Some(path), Some(csid)) = (&decision, nergal_session_id) {
+                    agent_state
+                        .claude_code
+                        .register_pending_plan_fifo(csid, std::path::PathBuf::from(path));
+                }
+                decision.unwrap_or_default()
+            };
+            #[cfg(not(unix))]
+            let decision_path = {
+                if let Some(csid) = nergal_session_id {
+                    agent_state
+                        .claude_code
+                        .register_pending_plan_fifo(csid, std::path::PathBuf::from(fifo_path));
+                }
+                fifo_path.clone()
+            };
 
             if let Ok(mut state) = plan_state.lock() {
                 let mut dirs = cc_plan_dirs(db, nergal_session_id);
@@ -1279,8 +1299,12 @@ fn process_event(
                             path: path.display().to_string(),
                             content,
                             session_id: nergal_session_id.unwrap_or(session_id).to_string(),
-                            decision_path: fifo_path.clone(),
+                            decision_path,
                         },
+                    );
+                } else {
+                    tracing::warn!(
+                        "PlanReview: no active plan resolved, the hook waits with no review in the panel"
                     );
                 }
             }

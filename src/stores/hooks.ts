@@ -1,3 +1,4 @@
+import { applyPlanReady, documentBase } from "@/stores/planReady";
 import { type getDefaultStore } from "jotai";
 import { invoke, listen } from "@/lib/tauri";
 import type { HookEvent, CostSummary, Task, ActivityEntry } from "@/lib/types";
@@ -276,19 +277,20 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
     await listen<{ path: string; content: string; session_id: string; decision_path?: string }>("plan:ready", (payload) => {
       const sid = payload.session_id;
       if (!sid) return;
-      const planData = {
-        content: payload.content,
-        original: payload.content,
-        path: payload.path,
-        mode: "view" as const,
-        diff: [] as never[],
-        claudeSessionId: payload.session_id,
-        decisionPath: payload.decision_path ?? "",
-      };
-      set(planStateMapAtom, (prev) => ({ ...prev, [sid]: planData }));
-      set(planDocumentsAtom, (prev) => withBoundedEntry(prev, payload.path, planData, PLAN_DOCUMENTS_MAX));
+      const applied = applyPlanReady(
+        get(planStateMapAtom)[sid],
+        get(planReviewStatusMapAtom)[sid],
+        payload,
+      );
+      const docApplied = applyPlanReady(
+        documentBase(get(planDocumentsAtom)[payload.path], get(planStateMapAtom)[sid], payload),
+        applied.status,
+        payload,
+      );
+      set(planStateMapAtom, (prev) => ({ ...prev, [sid]: applied.plan }));
+      set(planDocumentsAtom, (prev) => withBoundedEntry(prev, payload.path, docApplied.plan, PLAN_DOCUMENTS_MAX));
       set(registerPlanAtom, { sessionId: sid, path: payload.path });
-      set(planReviewStatusMapAtom, (prev) => ({ ...prev, [sid]: "pending_review" }));
+      set(planReviewStatusMapAtom, (prev) => ({ ...prev, [sid]: applied.status }));
       set(addActivityAtom, { sessionId: sid, entry: createActivity("plan", "Plan ready for review") });
 
       // Only open plan tab + expand panel if this is the active session

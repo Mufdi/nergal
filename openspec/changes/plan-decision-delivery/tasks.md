@@ -1,0 +1,32 @@
+## 1. Decision delivery to the registered, live FIFO
+
+- [x] 1.1 Test (Red): `src-tauri/src/plan_fifo_tests.rs` (`#[cfg(unix)]`). `write_plan_decision`: a missing path returns `Err` and leaves no file; a regular file with content `x` returns `Err` and keeps `x`; a symlink to a live FIFO returns `Err`; a FIFO with no reader returns `Err` within 1 s; a FIFO whose reader thread opened it first (`O_RDONLY | O_NONBLOCK`) and reads to EOF receives a 100000-byte JSON value whole; a FIFO with a reader that never reads returns `Err` within 1 s for 100000 bytes and a 200 ms deadline; a reader that opens 100 ms after the write starts still receives the payload with a 1 s deadline (`ENXIO` retry). Adapter test (in a `#[path]` file next to `adapter.rs`): `claim_pending_plan_fifo` with nothing registered → false; with another path → false and the entry stays; with the same path → true and the entry is gone; two threads claiming the same entry → exactly one true.
+- [x] 1.2 Create `src-tauri/src/plan_fifo.rs` with `write_plan_decision` per design D2 and register the module in `src-tauri/src/lib.rs`.
+- [x] 1.3 Add `claim_pending_plan_fifo` to `ClaudeCodeAdapter`. Make `submit_plan_decision` in `src-tauri/src/commands/plans.rs` `async`: claim, then the helper in `spawn_blocking` with a 5 s deadline. In the `PlanReview` handler (Unix), register only a FIFO whose parent is `platform::ipc_dir()`, emit an empty `decision_path` with a warning when it rejects one, and log a warning when no plan resolves. Windows branches stay as they are.
+- [x] 1.4 Use the helper inside `spawn_blocking` in `ClaudeCodeAdapter::submit_plan_decision` (Unix) and rewrite `submit_plan_decision_writes_to_registered_fifo` with `mkfifo` and a reader thread; add a regular-file case that returns `AdapterError::Io`.
+
+## 2. The panel opens and ends reviews honestly
+
+- [x] 2.1 Test (Red): `src/stores/planReady.test.ts` for `applyPlanReady(prevPlan, prevStatus, payload)`: a payload with `decision_path` returns the new plan with that path and `pending_review`; a payload without it whose content equals the stored `original` keeps decision path, session id, status, and the stored `content` and `mode` (an edited `content` survives), with the payload's path; a stored `content` edited away from `original` does not make an equal-to-`original` preview a new cycle; a payload without it and with new content returns the new content, an empty decision path and `idle`; a payload without it and no stored plan returns `idle`. `decisionGuard`: `repeat` → ignore; `inFlight` → ignore; empty decision path or session id → fail; otherwise → send.
+- [x] 2.2 Create `src/stores/planReady.ts` and use it in the `plan:ready` listener in `src/stores/hooks.ts` for `planStateMapAtom[sid]`, `planDocumentsAtom[payload.path]` and `planReviewStatusMapAtom[sid]`.
+- [x] 2.3 In `src/components/plan/PlanPanel.tsx`, use `decisionGuard`: the `A`/`R` key handler passes `e.repeat`, and an in-flight ref blocks a second `handleApprove`/`handleRevise` while one is pending. `handleApprove` and `handleRevise`: an empty decision path or session id, or a rejected `submit_plan_decision`, shows the error toast "Claude Code is not waiting for this plan in Nergal. Answer in the terminal." (backend error text as description) and sets the review state to `idle`. A failed Revise keeps the annotations.
+
+## 3. Review follow-ups (Revision 1, user: fix every finding)
+
+- [x] 3.1 Test (Red): Rust `write_plan_decision` on a FIFO with no reader and a 5 s deadline returns `Err` within 1.5 s; `fifo_in_ipc_dir` returns true for a FIFO whose parent is the IPC dir, false for another dir and for `None`; `plan_review_fifo_path(42)` called twice gives two different paths in the IPC dir starting with `plan-42-`. Vitest `isLiveReview`: true only for `pending_review` with a non-empty document decision path equal to the session's; false for an old document with an empty or different path, and for `submitted`, `undelivered`, `idle`; `applyPlanReady` keeps `undelivered` on a same-cycle preview and returns `pending_review` for a payload with a decision path.
+- [x] 3.2 Rust: 1 s `ENXIO` budget, `fifo_in_ipc_dir` used by the `PlanReview` handler with a distinct `ipc_dir()` error log, UUID nonce in `plan_review_fifo_path` (Unix).
+- [x] 3.3 Frontend: `"undelivered"` status and its header label, `isLiveReview` gating, `planDecisionInFlightAtom` with disabled + `aria-busy` buttons, toast copy `Approve failed` / `Revise failed`, empty Revise feedback fails visibly, handler ref for the document listeners.
+- [x] 3.4 Docs: `docs/hooks.md` plan review section matches the new names and states.
+
+- [x] 3.5 Test (Red): vitest `isReviewDocument` (equal non-empty paths → true; empty or different → false; undefined → false), `showReviewAnnotations` (true for `pending_review` and `undelivered` on the review document; false for `submitted`, `idle` and an old document), `decisionGuard` with `status` (`submitted`, `idle`, `undelivered` → ignore; `pending_review` keeps the existing outcomes). Rust `review_decision_path`: FIFO in the IPC dir → `Some(path)`; other dir → `None`; IPC dir `None` → `None`.
+- [x] 3.6 Implement Revision 2 (design.md "Revision 2", implementation.md "Revision 2 plan").
+
+## 4. Verification
+
+- [x] 4.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check`, then `npx tsc --noEmit` and `pnpm test`.
+- [x] 4.2 `~/.claude/skills/work/scripts/work-gates.sh main plan-decision-delivery` passes.
+- [ ] 4.3 Manual walk: in plan mode, Claude Code proposes a plan; with focus in the plan panel, `A` approves it and Claude Code starts working. Repeat with the Approve button on a second plan.
+- [ ] 4.4 Manual walk: annotate a plan and press `R`; Claude Code receives the annotations and proposes a revised plan; Approve on the revised plan reaches Claude Code.
+- [ ] 4.5 Manual walk: with a plan pending in the panel, answer in the terminal instead; Approve in the panel afterwards shows `Approve failed` and the header reads `Not delivered. Answer in the terminal.`
+- [ ] 4.6 Manual walk: annotate a plan, answer in the terminal, then press `R` in the panel; `Revise failed` shows, the annotations stay highlighted, and `X` clears them. Hold `A` on a new plan: Claude Code receives one approval, and the buttons show disabled while it sends.
+- [ ] 4.7 Manual walk: with a review pending, open an earlier plan from the plan list; its tab shows no Approve or Revise, and the live plan's tab still does.

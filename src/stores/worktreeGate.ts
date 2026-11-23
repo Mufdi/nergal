@@ -44,6 +44,7 @@ export interface WorktreeRequestView {
 }
 
 export const worktreeRequestsAtom = atom<WorktreeRequestView[]>([]);
+export const focusWorktreeGateAtom = atom(0);
 
 /// Re-fetch the pending queue. Called on mount + on every `worktree:request` /
 /// `worktree:resolved` event (the events only signal "queue changed").

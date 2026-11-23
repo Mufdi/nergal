@@ -3,11 +3,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Check, GitBranch, Pencil, RefreshCw, X } from "lucide-react";
 import {
   worktreeRequestsAtom,
+  focusWorktreeGateAtom,
   approveWorktreeRequest,
   denyWorktreeRequest,
   type WorktreeRequestView,
 } from "@/stores/worktreeGate";
 import { workspacesAtom } from "@/stores/workspace";
+import { resolvedShortcutsAtom } from "@/stores/shortcuts";
+import { consumeCounterSignal } from "@/stores/shortcutSignals";
+import { chordContinuation } from "@/lib/keymap";
 import * as terminalService from "@/components/terminal/terminalService";
 import { invoke } from "@/lib/tauri";
 import type { AvailableAgent } from "@/lib/types";
@@ -175,9 +179,9 @@ function GatePicker({
 /// sessions (create) and reviving inactive ones (resume). One solid floating
 /// panel (work continues behind it) that captures keyboard focus when a request
 /// arrives — its border turns accent while focused. ↑/↓ select, A approve,
-/// E edit, D deny, Esc returns focus to the terminal (patterns.md §5/§8). Every
-/// agent-chosen escalation input (agent, permission preset, startup_command,
-/// bypass-in-cycle) is shown flagged.
+/// E edit, D deny, Esc returns focus to the terminal and `leader g` brings it
+/// back (patterns.md §5/§8). Every agent-chosen escalation input (agent,
+/// permission preset, startup_command, bypass-in-cycle) is shown flagged.
 export function WorktreeGate() {
   const requests = useAtomValue(worktreeRequestsAtom);
   const workspaces = useAtomValue(workspacesAtom);
@@ -188,6 +192,9 @@ export function WorktreeGate() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [agents, setAgents] = useState<AvailableAgent[]>([]);
   const prevCount = useRef(0);
+  const [focused, setFocused] = useState(false);
+  const focusSignal = useAtomValue(focusWorktreeGateAtom);
+  const shortcuts = useAtomValue(resolvedShortcutsAtom);
 
   // The installed agents the human can pick at the gate, plus a "default"
   // (keep the requested/project default). Fetched lazily on first request.
@@ -260,6 +267,10 @@ export function WorktreeGate() {
     if (requests.length > prev) focusGate();
     else if (requests.length === 0 && prev > 0) terminalService.focusActive();
   }, [requests.length, focusGate]);
+
+  useEffect(() => {
+    if (consumeCounterSignal(store, focusWorktreeGateAtom, requests.length > 0)) focusGate();
+  }, [focusSignal, requests.length, store, focusGate]);
 
   const approve = useCallback(
     async (req: WorktreeRequestView, useDraft: boolean) => {
@@ -363,6 +374,10 @@ export function WorktreeGate() {
 
   if (requests.length === 0) return null;
 
+  const leaderKeys = shortcuts.find((a) => a.id === "leader")?.keys ?? "ctrl+space";
+  const gateKeys = shortcuts.find((a) => a.id === "focus-worktree-gate")?.keys;
+  const continuation = gateKeys ? chordContinuation(gateKeys) : null;
+
   return (
     <TooltipProvider delay={0}>
       <div
@@ -370,12 +385,22 @@ export function WorktreeGate() {
         data-focus-zone="worktree-gate"
         tabIndex={0}
         onMouseDown={focusGate}
-        className="pointer-events-auto fixed bottom-3 right-3 z-[60] flex max-h-[80vh] w-[368px] flex-col overflow-hidden rounded-lg border-2 border-border bg-card text-card-foreground shadow-2xl outline-none focus-within:border-primary"
+        onFocus={() => setFocused(true)}
+        onBlur={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false);
+        }}
+        className="pointer-events-auto fixed bottom-3 right-3 z-[60] flex max-h-[80vh] w-[clamp(368px,40vw,760px)] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-lg border-2 border-border bg-card text-card-foreground shadow-2xl outline-none focus-within:border-primary"
       >
         <div className="flex items-center gap-2 border-b border-border/60 bg-card px-3 py-2 text-[11px] font-medium">
           <GitBranch size={13} className="text-primary" />
           Worktree request{requests.length === 1 ? "" : "s"}
-          <span className="ml-auto rounded bg-primary/15 px-1.5 text-[10px] text-primary">
+          {!focused && continuation && (
+            <span className="ml-auto flex items-center gap-1">
+              <Kbd keys={leaderKeys} />
+              <Kbd keys={continuation} />
+            </span>
+          )}
+          <span className={`${!focused && continuation ? "" : "ml-auto "}rounded bg-primary/15 px-1.5 text-[10px] text-primary`}>
             {requests.length}
           </span>
         </div>
@@ -492,11 +517,11 @@ function RequestRow({
           value={draft.prompt}
           onChange={(e) => onDraftChange({ prompt: e.target.value })}
           rows={4}
-          className="w-full resize-y rounded border border-border/50 bg-background px-2 py-1 text-[12px] leading-snug outline-none focus:border-primary/60"
+          className="w-full min-h-[20vh] max-h-[40vh] resize-y rounded border border-border/50 bg-background px-2 py-1 text-[12px] leading-snug outline-none focus:border-primary/60"
           aria-label="Edit prompt"
         />
       ) : req.prompt ? (
-        <p className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words rounded border border-border/50 bg-muted/40 px-2 py-1 text-[12px] leading-snug">
+        <p className="max-h-[40vh] overflow-y-auto whitespace-pre-wrap break-words rounded border border-border/50 bg-muted/40 px-2 py-1 text-[12px] leading-snug">
           {req.prompt}
         </p>
       ) : (

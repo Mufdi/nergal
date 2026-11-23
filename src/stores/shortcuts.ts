@@ -25,6 +25,7 @@ import { conflictsZenOpenAtom, selectedConflictFileMapAtom } from "./conflict";
 import { gitChipModeAtom } from "./git";
 import { triggerShipAtom } from "./ship";
 import { toastsAtom } from "./toast";
+import { focusWorktreeGateAtom, worktreeRequestsAtom } from "./worktreeGate";
 import { softCloseSessionAction, undoSessionCloseAction, hasPendingSessionCloseAtom } from "./sessionTabs";
 import { invoke as invokeCmd } from "@/lib/tauri";
 import { scratchpadOpenAtom } from "./scratchpad";
@@ -468,6 +469,10 @@ export const shortcutRegistryAtom = atom<ShortcutAction[]>([
   { id: "session-8", label: "Switch to Session 8", keys: "ctrl+8", category: "session", keywords: ["session", "switch"], handler: () => switchToSession(7) },
   { id: "session-9", label: "Switch to Session 9", keys: "ctrl+9", category: "session", keywords: ["session", "switch"], handler: () => switchToSession(8) },
   { id: "new-session", label: "New Session", keys: "leader n", category: "session", group: "session", keywords: ["create", "session", "new"], handler: () => store().set(triggerNewSessionAtom, (p: number) => p + 1) },
+  { id: "focus-worktree-gate", label: "Focus Worktree Request", keys: "leader g", category: "navigation", group: "session", keywords: ["worktree", "request", "gate", "approve", "focus", "popup"], handler: () => {
+    const s = store();
+    if (s.get(worktreeRequestsAtom).length > 0) s.set(focusWorktreeGateAtom, (p: number) => p + 1);
+  } },
   { id: "close-session", label: "Close Active Session", keys: "leader w", category: "session", group: "session", keywords: ["session", "close", "soft-close"], handler: () => {
     const s = store();
     const sid = s.get(activeSessionIdAtom);

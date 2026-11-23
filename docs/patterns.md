@@ -69,7 +69,8 @@ Surfaces slot: integrations (ClickUp `leader c`, Linear `leader l`, browser
 `leader b`, cross-session `leader x`), git actions (`leader p/m/r`), session
 lifecycle (`leader n/w`, `leader shift+w`), vault (`leader q/v`), and misc
 (`leader s` scratchpad, `leader o` ports, `leader h` notifications, `leader d`
-annotations, `leader t` clear tasks, `leader 0` zen, `leader e` open in IDE).
+annotations, `leader t` clear tasks, `leader 0` zen, `leader e` open in IDE,
+`leader g` focus the worktree-request popup).
 New features are **born in the leader**; promotion to `Ctrl+Shift` requires
 daily-use evidence (see `docs/shortcuts.md`).
 

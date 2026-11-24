@@ -1,0 +1,33 @@
+{
+  "tier": "S",
+  "ceremony": "quick-fix",
+  "risk_tier": "low",
+  "spec_target": "terminal-wezterm",
+  "tracker": {
+    "system": "linear",
+    "id": "FRI-506",
+    "pending": []
+  },
+  "validation": "validated",
+  "planning_only": false,
+  "iprev": {
+    "rounds": 2,
+    "verdict": "APPROVED"
+  },
+  "interview_answers": {
+    "scope": "Only middle/right forwarding and the context-menu suppression move to mouse tracking (issue acceptance criteria); wheel, left drag and selection keep their alternate-screen rules.",
+    "run_plan": "Stacked on mufdidev/fri-604-plan-approve-key; checkpoint 1 .deb after FRI-604, 506, 507, 473."
+  },
+  "events": [
+    {
+      "ts": "2026-11-23T20:37:50-03:00",
+      "type": "validated",
+      "note": "iprev R1 REVISE (1 high scrolled-back coordinates, 1 medium CC walk, 6 low), R2 APPROVED; R2 lows folded"
+    },
+    {
+      "ts": "2026-11-23T20:59:54-03:00",
+      "type": "yield",
+      "note": "iprev 2 rounds (R1: 1 high, 1 medium, 6 low); adversarial 6 Important + 4 nits, frontend 2 Important + 5 nits, re-review 1 Important + 5 nits, all fixed (user preference); orchestrator found 1 defect (backend gate dropped releases); gate failures 0; walks pending checkpoint 1"
+    }
+  ]
+}

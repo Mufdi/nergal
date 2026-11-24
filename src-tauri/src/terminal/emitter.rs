@@ -209,3 +209,7 @@ mod sync_tests;
 #[cfg(test)]
 #[path = "emitter_review_tests.rs"]
 mod review_tests;
+
+#[cfg(test)]
+#[path = "emitter_mouse_tracking_tests.rs"]
+mod mouse_tracking_tests;

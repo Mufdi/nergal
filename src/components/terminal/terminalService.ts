@@ -24,7 +24,7 @@ import { toastsAtom } from "@/stores/toast";
 
 import { FontAtlas, isWideCell, measureFont, type FontMetrics } from "./fontAtlas";
 import { afterResizeFailure, nextResize, pixelGeometry, recordRequest, type Sent } from "./pixelGeometry";
-import { auxButtonToForward, auxPress, auxRelease, type AuxHeld } from "./mouseButtons";
+import { auxButtonToForward, keyboardMenuKey, releasePointerCell, reportsMouse, suppressContextMenu, auxReduce, type AuxHeld, type KeyboardMenuKey } from "./mouseButtons";
 import { TERM_FONT, TERM_THEME, refreshTermTheme, rgbaToCss } from "./theme";
 import { readingLayout } from "./readingCols";
 import { clampedCell } from "./cellMapping";
@@ -85,6 +85,7 @@ interface Entry {
   title: string | null;
   scrollOffset: number;
   isAltScreen: boolean;
+  mouseTracking: boolean;
   unlisten: () => void;
   selection: Selection | null;
   // scrollOffset at selection time, used by the primary-screen delta sync.
@@ -111,6 +112,7 @@ interface Entry {
   /// scroll loses most of its travel.
   wheelAccum: number;
   auxHeld: AuxHeld | null;
+  pendingKeyboardMenu: KeyboardMenuKey | null;
 }
 
 // ── Module state ──
@@ -146,15 +148,13 @@ void syncDefaultColors();
 if (typeof window !== "undefined") {
   window.addEventListener("mouseup", (e) => {
     for (const entry of entries.values()) {
-      const { held, release } = auxRelease(entry.auxHeld, e.button);
+      const { held, send } = auxReduce(entry.auxHeld, { type: "release", button: e.button, cell: releasePointerCell(mouseToCell(entry, e), entry.scrollOffset) });
       entry.auxHeld = held;
-      if (!release) continue;
-      const cell = mouseToCell(entry, e) ?? release;
-      sendMouseButton(entry, release.aux, "release", cell.col, cell.row, e);
+      if (send) sendMouseButton(entry, send.aux, send.kind, send.col, send.row, e);
     }
   });
   window.addEventListener("blur", () => {
-    for (const entry of entries.values()) entry.auxHeld = null;
+    for (const entry of entries.values()) entry.auxHeld = auxReduce(entry.auxHeld, { type: "blur" }).held;
   });
 }
 
@@ -439,6 +439,7 @@ async function showTerminal(opts: {
       title: null,
       scrollOffset: 0,
       isAltScreen: false,
+      mouseTracking: false,
       unlisten: () => {},
       selection: null,
       selectionScrollOffset: 0,
@@ -450,6 +451,7 @@ async function showTerminal(opts: {
       lastComposed: null,
       wheelAccum: 0,
       auxHeld: null,
+      pendingKeyboardMenu: null,
     };
 
     wireInput(entry);
@@ -621,7 +623,7 @@ function hasInputFocus(entry: Entry): boolean {
 // wezterm synthesizes a release for every held button on focus loss, so the
 // held slot must be dropped with it or the real release would act twice.
 function sendFocus(entry: Entry, focused: boolean): void {
-  if (!focused) entry.auxHeld = null;
+  if (!focused) entry.auxHeld = auxReduce(entry.auxHeld, { type: "blur" }).held;
   invoke("terminal_focus", { sessionId: entry.sessionId, focused }).catch(
     (err: unknown) => console.error("terminal_focus failed", err),
   );
@@ -694,6 +696,12 @@ function wireInput(entry: Entry): void {
       return;
     }
 
+    const menuKey = keyboardMenuKey(e);
+    if (menuKey) {
+      entry.pendingKeyboardMenu = menuKey;
+      return;
+    }
+
     if (shouldPassThrough(e)) return;
 
     // Any typing implicitly commits the selection — matches every mainstream
@@ -709,6 +717,13 @@ function wireInput(entry: Entry): void {
     // under our canvas nor accumulates stale state.
     entry.textarea.value = "";
   });
+
+  // A real right click always passes mousedown before contextmenu, so this
+  // drops a stale keyboard mark; clearing on keyup instead would race engines
+  // that fire the keyboard contextmenu after the key is released.
+  entry.container.addEventListener("mousedown", () => {
+    entry.pendingKeyboardMenu = null;
+  }, { capture: true });
 
   entry.textarea.addEventListener("compositionstart", () => {
     entry.composing = true;
@@ -739,15 +754,15 @@ function wireInput(entry: Entry): void {
   // ── Mouse: lives on the visible canvas ──
 
   entry.canvas.addEventListener("mousedown", (e) => {
-    const aux = auxButtonToForward(e.button, entry.isAltScreen);
+    const aux = auxButtonToForward(e.button, reportsMouse(entry.mouseTracking, entry.scrollOffset, e.shiftKey));
     if (aux) {
       e.preventDefault();
       focusCanvas(entry);
       const cell = mouseToCell(entry, e);
       if (!cell) return;
-      const { held, sendPress } = auxPress(entry.auxHeld, { button: e.button, aux, ...cell });
+      const { held, send } = auxReduce(entry.auxHeld, { type: "press", press: { button: e.button, aux, ...cell } });
       entry.auxHeld = held;
-      if (sendPress) sendMouseButton(entry, aux, "press", cell.col, cell.row, e);
+      if (send) sendMouseButton(entry, send.aux, send.kind, send.col, send.row, e);
       return;
     }
     if (e.button !== 0) return;
@@ -859,10 +874,20 @@ function wireInput(entry: Entry): void {
     finishSelectionDrag(e);
   });
 
-  // A right click forwarded to the TUI (paste on release) must not also open
-  // the webview's native context menu over it.
-  entry.canvas.addEventListener("contextmenu", (e) => {
-    if (entry.isAltScreen) e.preventDefault();
+  // A right click forwarded to the app (paste on release) must not also open
+  // the webview's native context menu over it. Shift is the escape hatch, as
+  // in wezterm/xterm: it bypasses reporting and keeps the native menu. On the
+  // container because the keyboard-opened menu fires on the focused textarea,
+  // a sibling of the canvas.
+  entry.container.addEventListener("contextmenu", (e) => {
+    const suppress = suppressContextMenu({
+      tracking: entry.mouseTracking,
+      offset: entry.scrollOffset,
+      shift: e.shiftKey,
+      keyboard: entry.pendingKeyboardMenu,
+    });
+    entry.pendingKeyboardMenu = null;
+    if (suppress) e.preventDefault();
   });
 
   // A drag can end with the pointer off the canvas (selecting to the bottom/right
@@ -1316,6 +1341,7 @@ function applyUpdate(entry: Entry, update: GridUpdate): void {
     entry.scrollIndicator.style.display = update.scrollOffset > 0 ? "block" : "none";
   }
   entry.isAltScreen = update.isAltScreen;
+  entry.mouseTracking = update.mouseTracking;
   syncSelectionToContent(entry);
 
   // The cursor area needs repainting whenever the cursor moves, even if the

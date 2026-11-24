@@ -10,6 +10,7 @@ pub struct GridDiffer {
     row_hashes: Vec<u64>,
     last_cursor: Option<CursorSnapshot>,
     last_title: Option<String>,
+    last_mouse_tracking: Option<bool>,
     emitted_first: bool,
 }
 
@@ -19,6 +20,7 @@ impl GridDiffer {
             row_hashes: Vec::new(),
             last_cursor: None,
             last_title: None,
+            last_mouse_tracking: None,
             emitted_first: false,
         }
     }
@@ -30,6 +32,7 @@ impl GridDiffer {
         self.row_hashes.clear();
         self.last_cursor = None;
         self.last_title = None;
+        self.last_mouse_tracking = None;
         self.emitted_first = false;
     }
 
@@ -60,10 +63,17 @@ impl GridDiffer {
 
         let cursor_changed = self.last_cursor.as_ref() != Some(&snapshot.cursor);
         let title_changed = self.last_title != snapshot.title;
+        let mouse_tracking_changed = self.last_mouse_tracking != Some(snapshot.mouse_tracking);
 
-        if !self.emitted_first || !changed_rows.is_empty() || cursor_changed || title_changed {
+        if !self.emitted_first
+            || !changed_rows.is_empty()
+            || cursor_changed
+            || title_changed
+            || mouse_tracking_changed
+        {
             self.last_cursor = Some(snapshot.cursor);
             self.last_title = snapshot.title.clone();
+            self.last_mouse_tracking = Some(snapshot.mouse_tracking);
             self.emitted_first = true;
             Some(GridUpdate {
                 session_id: session_id.to_owned(),
@@ -74,6 +84,7 @@ impl GridDiffer {
                 title: snapshot.title.clone(),
                 scroll_offset: snapshot.scroll_offset,
                 is_alt_screen: snapshot.is_alt_screen,
+                mouse_tracking: snapshot.mouse_tracking,
             })
         } else {
             None
@@ -122,6 +133,7 @@ mod tests {
             title: None,
             scroll_offset: 0,
             is_alt_screen: false,
+            mouse_tracking: false,
         }
     }
 
@@ -207,3 +219,7 @@ mod tests {
         assert_eq!(update.total_rows, 3);
     }
 }
+
+#[cfg(test)]
+#[path = "differ_mouse_tracking_tests.rs"]
+mod mouse_tracking_tests;

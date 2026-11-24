@@ -26,6 +26,11 @@
       "ts": "2026-11-24",
       "type": "validated",
       "note": "iprev opus 3 rounds: r1 11 (1 high), r2 7 (3 medium), r3 APPROVED with 5 low folded into tasks/implementation"
+    },
+    {
+      "ts": "2026-11-24",
+      "type": "yield",
+      "note": "iprev 3 rounds (r1 11 findings, 1 high); adversarial 3 Important + 5 nits; frontend 4 Important + 5 nits; walk pending; Red conflicts 0; gate failures 0"
     }
   ]
 }

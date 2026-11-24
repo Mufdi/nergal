@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change ship-flow. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Conflict tab type with three-panel layout
 The right panel tab system SHALL support a `conflict` tab type that renders three panels side-by-side for a single conflicted file: ours (read-only, base branch version with conflict markers highlighted), theirs (read-only, incoming branch version with conflict markers highlighted), and merged (editable, the working copy the user will commit). Conflict tabs SHALL be singleton per `(session, file path)` pair.
 
@@ -19,7 +21,7 @@ The right panel tab system SHALL support a `conflict` tab type that renders thre
 - **THEN** session B's tab bar reflects its own conflict tabs; session A's tab remains in memory per existing `tabStateMapAtom` behavior
 
 ### Requirement: Conflict tab toolbar actions
-The conflict tab SHALL expose four toolbar actions: Accept Ours, Accept Theirs, Ask Claude to Resolve, Save Resolution.
+The conflict tab SHALL expose four toolbar actions: Accept Ours, Accept Theirs, Ask Agent, Save Resolution. The intent field above Ask Agent is labelled "Intent for the agent (optional)".
 
 #### Scenario: Accept ours copies ours to merged
 - **WHEN** user clicks "Accept Ours"
@@ -30,8 +32,10 @@ The conflict tab SHALL expose four toolbar actions: Accept Ours, Accept Theirs, 
 - **THEN** the merged panel contents are replaced with the theirs panel contents
 
 #### Scenario: Ask Claude to resolve injects context and switches focus
-- **WHEN** user clicks "Ask Claude to Resolve"
-- **THEN** the backend records a pending annotation-style payload containing `{ path, ours, theirs, merged, instruction }` to be appended to the next user prompt via the existing `inject-edits` hook, and focus switches to the terminal
+- **WHEN** user clicks "Ask Agent" (or presses `Ctrl+Shift+R`) with an optional intent
+- **THEN** the backend builds the conflict prompt from `{ path, ours, theirs, merged, intent }` (`build_conflict_prompt`)
+- **AND** `deliver_prompt_to_session` pastes it into the session as one bracketed paste and submits it, so a multi-line prompt arrives as one turn
+- **AND** focus switches to the terminal and a toast reads "Sent to agent"
 
 #### Scenario: Save resolution writes, stages, closes, re-checks
 - **WHEN** user clicks "Save Resolution"
@@ -79,7 +83,7 @@ The shortcut currently bound to revise-plan SHALL be converted to a contextual d
 
 #### Scenario: Active tab is conflict type
 - **WHEN** user presses the contextual shortcut while a `conflict` tab is active
-- **THEN** the system emits `nergal:resolve-conflict-active-tab` (triggers "Ask Claude to resolve" on the active tab)
+- **THEN** the system emits `nergal:resolve-conflict-active-tab` (triggers "Ask Agent" on the active tab)
 
 #### Scenario: Git panel with conflicts but no conflict tab active
 - **WHEN** user presses the contextual shortcut while the git panel is the active tab and the session has one or more conflicted files
@@ -133,4 +137,3 @@ The conflict resolution view SHALL separate its stateful resolution logic (regio
 
 - **WHEN** unit tests exercise region navigation and choice application through the hook's returned API (views absent/null)
 - **THEN** the logic is testable headlessly (no EditorView mount required) for its non-editor state transitions
-

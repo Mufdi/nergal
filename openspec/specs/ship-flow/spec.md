@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change ship-flow. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Ship action composes commit, push, and PR atomically
 The system SHALL expose a single Ship action that, given a session context, performs (conditionally) commit of staged changes, push to remote, and creation of a pull request in one atomic operation. Ship SHALL be implemented as a single Tauri command that emits progress events per stage.
 
@@ -137,7 +139,7 @@ The PR Viewer SHALL render inside the `PRs` chip's body when a PR is selected fr
 - **THEN** it relies on its `isActive` prop (default true) to gate the body keydown listener; the previous `activeTabAtom`/`tabId` checks are removed
 
 ### Requirement: Apply-with-Claude tooltip explains the disabled state
-The Apply-with-Claude button SHALL surface its disabled-state reason via a Tooltip component (not a native browser title). The button label SHALL include the annotation count inline (`Apply with Claude (N)`).
+The Apply-with-Agent button SHALL surface its disabled-state reason via a Tooltip component (not a native browser title). The button label SHALL include the annotation count inline (`Apply with Agent (N)`).
 
 #### Scenario: Tooltip on no matching session
 - **WHEN** no local session has a worktree branch matching the PR's `head_ref_name`
@@ -184,4 +186,3 @@ When `gh_pr_merge` returns `mergeable=false`, PrViewer SHALL flip the workspace'
 - **GIVEN** a previous process died leaving a `_merge_tmp.*` worktree
 - **WHEN** a new merge runs
 - **THEN** the stale leftover is swept (it belongs to no live merge) and the new merge proceeds
-

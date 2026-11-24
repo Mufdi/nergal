@@ -94,30 +94,7 @@ export function showReviewAnnotations(
   );
 }
 
-export function applyReviewClosed(
-  status: PlanReviewStatus,
-  inFlight = false,
-): { status: PlanReviewStatus; toast: string | null } {
-  if (inFlight || status === "idle") return { status, toast: null };
+export function applyReviewClosed(status: PlanReviewStatus): { status: PlanReviewStatus; toast: string | null } {
+  if (status === "idle") return { status, toast: null };
   return { status: "answered", toast: status === "submitted" ? "Revise not delivered" : null };
-}
-
-export function shouldRestoreAnnotations(prev: PlanReviewStatus, next: PlanReviewStatus): boolean {
-  return prev === "submitted" && next === "answered";
-}
-
-// `answered` survives Stop so the terminal answer stays visible until the next review.
-export function statusOnStop(status: PlanReviewStatus): PlanReviewStatus {
-  return status === "answered" ? status : "idle";
-}
-
-export function applyReviewUnresolved(status: PlanReviewStatus): PlanReviewStatus {
-  return status === "submitted" ? "idle" : status;
-}
-
-export function shouldClearAnnotationsOnReview(
-  prevDecisionPath: string | undefined,
-  nextDecisionPath: string | undefined,
-): boolean {
-  return !!nextDecisionPath && nextDecisionPath !== prevDecisionPath;
 }

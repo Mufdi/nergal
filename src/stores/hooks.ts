@@ -1,20 +1,11 @@
-import {
-  applyPlanReady,
-  applyReviewClosed,
-  applyReviewUnresolved,
-  documentBase,
-  shouldClearAnnotationsOnReview,
-  shouldRestoreAnnotations,
-  statusOnStop,
-} from "@/stores/planReady";
-import { annotationMapAtom, sentAnnotationsStashAtom } from "./annotations";
+import { applyPlanReady, applyReviewClosed, documentBase } from "@/stores/planReady";
 import { type getDefaultStore } from "jotai";
 import { invoke, listen } from "@/lib/tauri";
 import type { HookEvent, CostSummary, Task, ActivityEntry } from "@/lib/types";
 import { costMapAtom, modeMapAtom, cwdMapAtom, agentStatusMapAtom, activeSessionIdAtom, lastResponseEffortMapAtom, type AgentStatus } from "./workspace";
 import { taskMapAtom } from "./tasks";
 import { fileMapAtom, type ModifiedFile } from "./files";
-import { planStateMapAtom, planDocumentsAtom, PLAN_DOCUMENTS_MAX, registerPlanAtom, planReviewStatusMapAtom, planDecisionInFlightAtom } from "./plan";
+import { planStateMapAtom, planDocumentsAtom, PLAN_DOCUMENTS_MAX, registerPlanAtom, planReviewStatusMapAtom } from "./plan";
 import { withBoundedEntry } from "@/lib/boundedRecord";
 import { pendingAsksAtom, pendingAttentionAtom } from "./askUser";
 import { openTabAction, expandRightPanelAtom, activePanelViewAtom } from "./rightPanel";
@@ -140,7 +131,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
         }
         case "stop": {
           set(modeMapAtom, (prev) => ({ ...prev, [sid]: "idle" }));
-          set(planReviewStatusMapAtom, (prev) => ({ ...prev, [sid]: statusOnStop(prev[sid] ?? "idle") }));
+          set(planReviewStatusMapAtom, (prev) => (prev[sid] === "answered" ? prev : { ...prev, [sid]: "idle" }));
           set(closeUnclaimedSubagentRowsAtom, sid);
           set(closeMainToolRowsAtom, sid);
           if (shouldClearOnTurnEvent(get(pendingAttentionAtom)[sid])) {
@@ -286,13 +277,8 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
     await listen<{ session_id: string }>("plan:review-closed", (payload) => {
       const sid = payload.session_id;
       if (!sid) return;
-      const prevStatus = get(planReviewStatusMapAtom)[sid] ?? "idle";
-      const closed = applyReviewClosed(prevStatus, get(planDecisionInFlightAtom)[sid] === true);
+      const closed = applyReviewClosed(get(planReviewStatusMapAtom)[sid] ?? "idle");
       set(planReviewStatusMapAtom, (prev) => ({ ...prev, [sid]: closed.status }));
-      if (shouldRestoreAnnotations(prevStatus, closed.status)) {
-        const stashed = get(sentAnnotationsStashAtom)[sid] ?? [];
-        set(annotationMapAtom, (prev) => ({ ...prev, [sid]: stashed }));
-      }
       if (closed.toast) {
         set(toastsAtom, {
           message: closed.toast,
@@ -304,25 +290,9 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
   );
 
   unlisteners.push(
-    await listen<{ session_id: string }>("plan:review-unresolved", (payload) => {
-      const sid = payload.session_id;
-      if (!sid) return;
-      set(planReviewStatusMapAtom, (prev) => ({
-        ...prev,
-        [sid]: applyReviewUnresolved(prev[sid] ?? "idle"),
-      }));
-    }),
-  );
-
-  unlisteners.push(
     await listen<{ path: string; content: string; session_id: string; decision_path?: string }>("plan:ready", (payload) => {
       const sid = payload.session_id;
       if (!sid) return;
-      if (shouldClearAnnotationsOnReview(get(planStateMapAtom)[sid]?.decisionPath, payload.decision_path)) {
-        set(annotationMapAtom, (prev) => ({ ...prev, [sid]: [] }));
-        set(sentAnnotationsStashAtom, (prev) => ({ ...prev, [sid]: [] }));
-        invoke("clear_annotations", { sessionId: sid }).catch(console.error);
-      }
       const applied = applyPlanReady(
         get(planStateMapAtom)[sid],
         get(planReviewStatusMapAtom)[sid],

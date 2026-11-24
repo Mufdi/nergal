@@ -296,3 +296,103 @@ Scope: `git show d10e5bc`, design Revision 3 (D4-D6), the three new cc-adapter r
 **14. Task drift.** Tasks 5.1, 6.1 and 6.2 stay `[ ]`. `handoff/evidence.md` records the Red tests and both gates as done.
 
 Verdict: D4 and the hook output are sound. Gate the release on `top_level` before the walk. Then close the terminal-deny gap and add the wiring tests.
+
+## Verification Revision 4
+
+Scope: `git show c247d3a`, design "Revision 4", the delta spec, evidence "Revision 4", and the current files. Read-only; no tests run. The accepted terminal deny/Esc gap is not re-reported.
+
+### Findings 1-14
+
+| # | Status | Evidence |
+|---|--------|----------|
+| 1 | NOT RESOLVED | The gate exists (`server.rs:908-911`, `:948-950`), but its input is wrong. The CLI attaches `agent_chain` only to `SessionStart` and `Stop` (`cli.rs:62-67`). Without a chain, `is_top_level_chain` returns true (`server.rs:858-861`). So a nested `SessionEnd`, `PostToolUse[ExitPlanMode]` and `PlanReview` still count as top-level. A nested `claude -p` exit still releases the live review through `SessionEnd`. See New 1 and New 2. |
+| 2 | RESOLVED | Accepted gap, named in design Revision 4, spec `:142`, `docs/hooks.md:37`. Stale text remains (Nit 9). |
+| 3 | PARTIAL | Pure matrices are tested: `server_review_close_tests.rs`, `server_review_emit_tests.rs`, `adapter_plan_owner_tests.rs`, `cli_plan_review_rev4_tests.rs:110`. `release_plan_review` runs against a real reader (`server_review_close_tests.rs:133`). The `process_event` wiring stays untested: how `top_level` is computed, the owner lookup, the same-path filter (`server.rs:1353`). New 1 hides in that gap. |
+| 4 | PARTIAL | `approved` now fails closed (`cli.rs:318-330`). A missing `tool_input` still defaults to `{}` (`cli.rs:247-250`). `{}` is an object, so Allow prints `updatedInput: {}`. Spec scenario "An approval without tool input prints nothing" fails for a missing key. The test passes only `null` and `"x"` (`cli_plan_review_rev4_tests.rs:79-86`). |
+| 5 | PARTIAL | The hook override works (`cli.rs:333-339`, `:812-816`). The command cannot detect an edit in production. `PlanReview` stores the plan under the CC session id (`server.rs:1380-1383`). `submit_plan_decision` reads it under the Nergal id (`plans.rs:126`; the panel sends the Nergal id, `PlanPanel.tsx:93`). `current_plan` is `None` there, so `plan` is never sent. Latent: no UI edits content yet. |
+| 6 | RESOLVED | `hooks.ts:290` passes the in-flight flag; `planReady.ts:97-102` returns the status unchanged. See New 3 for its side effect. |
+| 7 | RESOLVED | Delivered Revise stashes the batch (`PlanPanel.tsx:158`). `submitted → answered` restores it (`hooks.ts:292-295`). Caveats in New 3 and New 4. |
+| 8 | RESOLVED | A new decision path clears memory, stash and DB (`hooks.ts:321-325`, `planReady.ts:117-122`). |
+| 9 | RESOLVED | All three labels require `isReviewDocument` (`PlanPanel.tsx:53-56`, `:323-333`). |
+| 10 | PARTIAL | The backend stores and checks the owner (`cli.rs:259-261`, `events.rs:118-119`, `adapter.rs:80-93`, `server.rs:912-924`). The panel ignores it: the frontend `stop` sets `pending_review` to `idle` for any Stop (`hooks.ts:143`). A main-turn Stop hides a live subagent review's buttons. A `SubagentStop` release tells the panel nothing (New 5). |
+| 11 | RESOLVED | The emit uses `csid` (`server.rs:1048`). |
+| 12 | RESOLVED | WHY comment at `cli.rs:793-796`; the stale enum doc is gone (`cli.rs:304-311`). It sits on the wrong function (Nit 9). |
+| 13 | RESOLVED | An unresolved `PlanReview` emits `plan:review-unresolved` (`server.rs:1402-1413`). `applyReviewUnresolved` moves `submitted` to `idle` (`planReady.ts:113-115`). |
+| 14 | RESOLVED | Only walks 7.3-7.7 stay open in `tasks.md:42-46`. |
+
+### New findings
+
+**New 1. Important. `top_level` is always true for the events the gate relies on.**
+- `wants_agent_chain` returns true only for `SessionStart` and `Stop` (`cli.rs:62-67`).
+- The `plan-review` socket message carries no chain either (`cli.rs:252-261`).
+- `parse_agent_chain` then returns `None`, and `is_top_level_chain(None, _)` returns true (`server.rs:402-417`, `:858-861`).
+- Scenario: a review is live. A background Bash runs `claude -p`, which exits.
+- Its `SessionEnd` carries the parent's `NERGAL_SESSION_ID` and counts as top-level.
+- `closes_review` returns true for `SessionEnd` (`server.rs:920`). The live hook gets released and prints nothing.
+- A panel Approve then fails with `Approve failed`.
+- A nested `PlanReview` still replaces the parent's registration (`server.rs:1346-1353`).
+- Spec scenario "A nested agent CLI touches no review" fails at runtime. Its unit tests pass `false` by hand.
+- Fix: attach the chain for `SessionEnd`, `SubagentStop`, and `PostToolUse` with `tool_name == "ExitPlanMode"`. Add it to the `plan-review` socket message.
+- Add a wiring test that feeds raw JSON lines through the `top_level` computation.
+
+**New 2. Important. The panel's `stop` and `session_end` reset a review the backend keeps.**
+- `hook:event` is emitted for every event, nested or not (`server.rs:1124`).
+- The `stop` case sets any status except `answered` to `idle` (`hooks.ts:143`, `planReady.ts:110-112`). `session_end` sets `idle` (`hooks.ts:189-191`).
+- Scenario A: a nested `claude -p` ends during a live review. The backend keeps the registration after New 1 is fixed. The panel still hides Approve and Revise.
+- Scenario B: a background subagent's review is live. The main turn ends. `closes_review` keeps it (`server.rs:917`), but the panel goes `idle`.
+- The user must answer in the terminal while the panel could still deliver.
+- Fix: let the backend drive the status. Emit a `plan:review-released` event from the release branch (`server.rs:1035-1039`). Drop the plan-status write from the frontend `stop` case.
+
+**New 3. Minor. The in-flight skip drops `plan:review-closed` instead of deferring it.**
+- `applyReviewClosed` returns the status unchanged while a decision is in flight (`planReady.ts:101`). Nothing replays the event.
+- Scenario A: the user presses `R`. The terminal approval's `PostToolUse` lands before the invoke resolves.
+- `.then` then sets `submitted`, clears the annotations and toasts `Annotations sent` (`PlanPanel.tsx:156-160`).
+- No `Revise not delivered` toast follows, and the stash never comes back. Scenario "A Revise that lost the race" fails.
+- Scenario B: the server releases first, then the panel's Approve claim fails. The status ends `undelivered`, not `answered`.
+- Fix: record a per-session "closed while in flight" flag. Apply `applyReviewClosed` in `finally` when it is set.
+
+**New 4. Minor. Restored annotations vanish on the next mount.**
+- The Revise clears the DB rows (`annotations.ts:122-123`). The restore writes memory only (`hooks.ts:292-295`).
+- `AnnotatableMarkdownView` reloads annotations from the DB on each mount (`AnnotatableMarkdownView.tsx:594-600`).
+- Only the active tab renders, so a tab switch remounts the view.
+- Scenario: a Revise loses the race. The annotations return. The user opens another tab and comes back. The annotations are gone.
+- Evidence lists "in memory only" as accepted, but not this consequence. Spec requires the annotations to stay.
+- Fix: re-save the stashed annotations through `save_annotation` when restoring.
+
+**New 5. Minor. A `SubagentStop` release leaves the panel live.**
+- `closes_review` releases the owner's review on `SubagentStop` (`server.rs:918-920`).
+- No event reaches the panel; `emits_review_closed` ignores `SubagentStop` (`server.rs:930-946`).
+- Scenario: a subagent's review is live. The subagent ends. The panel still shows Approve.
+- Approve fails the claim and shows `Approve failed` for a review that no longer exists.
+- Fix: the release event from New 2 covers this case.
+
+**New 6. Minor (latent until New 1 is fixed). A nested `PlanReview` still resets the parent's panel.**
+- `review_decision_for(false, _)` returns `None` (`server.rs:948-950`). The handler still emits `plan:ready` with an empty path (`server.rs:1385-1398`).
+- `applyPlanReady` treats the new content as a new cycle and sets `idle` (`planReady.ts:37-46`). The parent's live tab loses its controls.
+- `plan:review-unresolved` also fires for the parent session (`server.rs:1402-1413`).
+- Nothing registers or releases the nested FIFO. The nested hook blocks until its 30-minute backstop.
+- Fix: on a non-top-level `PlanReview`, release its FIFO at once and skip both emits.
+
+**New 7. Nit. The owner lookup and the release race.**
+- `pending_plan_owner` reads the owner; `release_pending_plan_fifo` then removes unconditionally (`server.rs:1034-1038`).
+- A concurrent `PlanReview` task can register a new FIFO between the two calls. The release then frees the new review.
+- Connections run on separate tasks (`server.rs:370`), so the window exists, though it is narrow.
+- Fix: release with `remove_if` on the path and owner read in the same step.
+
+**New 8. Nit. Comment and doc drift.**
+- The WHY comment sits on the test-only `plan_review_output` shim (`cli.rs:793-804`). Production calls `plan_review_output_with_plan`. Move it there.
+- `docs/hooks.md:37` says the gap lasts until "the turn's `Stop`". A subagent-owned review survives that Stop.
+- Design D5 still says a dialog deny "is covered by the next `PlanReview` or `Stop`" (`design.md:87`). Revision 4 supersedes it; mark it superseded.
+
+### Checked, no issue
+
+- Panel Approve, then `PostToolUse`: the claim leaves no owner, so `emits_review_closed` fires for the main agent (`server.rs:941-944`). Status `idle` yields `idle` with no toast. In flight, the status stays unchanged (`planReady.ts:101`).
+- `undelivered` after a consumed claim moves to `answered` on a terminal approval, as the spec says.
+- `review_decision_for` gates both cfg branches the same way (`server.rs:1346`, `:1360`). The Windows release is a no-op stub.
+- `agent_id` travels from stdin (`cli.rs:259-261`) to `HookEvent::PlanReview` (`events.rs:118-119`, `#[serde(default)]`) to the registry (`server.rs:1349-1353`).
+- Hook sentinels carry `approved: false` (`cli.rs:1075`, `:1084`, `:1096`), so they still deny. The fail-closed parse changes nothing for them.
+- `plan:ready` reads the old decision path before `applyPlanReady` runs (`hooks.ts:321`), so the clear compares the right values.
+- The DB clear cannot wipe a new review's fresh annotations. `clear_annotations` and `save_annotation` are sync commands and run in arrival order.
+- A late async preview has no decision path, so it never clears annotations.
+
+Verdict: findings 6-9 and 11-14 hold. Fix New 1 and New 2 before the walk; walk 7.5 and any nested-`claude` run will hit them.

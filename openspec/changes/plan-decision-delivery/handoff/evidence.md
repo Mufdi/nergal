@@ -144,3 +144,8 @@ Verify:
 | 2. Red locks | PASS | 11 locked file(s) unchanged |
 
 - clippy clean; cargo test `ok. 1304 passed; 0 failed; 1 ignored`; tsc clean; vitest 588 passed (53 files).
+
+## Revision 4 reverted (2026-11-24, user decision)
+
+- Verification of `c247d3a` (REVIEW.md "Verification Revision 4"): 9 resolved, 4 partial, 1 not resolved, 8 new; root limit: `top_level` is only known on `SessionStart`/`Stop`. Third round of new cases in the release mechanism; user chose to revert to Revision 3 and document the rest as known situations (design.md "Revision 4 (reverted)", `docs/hooks.md`). `git revert --no-commit c247d3a`, keeping REVIEW.md and evidence.md history.
+- After the revert: clippy clean; cargo test `ok. 1268 passed; 0 failed; 1 ignored`; rustfmt OK; gates all PASS (6 locks); tsc clean; vitest 559 passed.

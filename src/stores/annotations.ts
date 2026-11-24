@@ -32,8 +32,6 @@ export const canEnterAnnotationModeAtom = atom((get) => {
 });
 
 export const annotationMapAtom = sessionScopedMapAtom<Annotation[]>();
-// Annotations a delivered Revise sent, kept so they come back if the terminal answered first.
-export const sentAnnotationsStashAtom = sessionScopedMapAtom<Annotation[]>();
 // Keyed by specPath, not sessionId — plain atom (out of the session-prune registry).
 export const specAnnotationMapAtom = atom<Record<string, Annotation[]>>({});
 

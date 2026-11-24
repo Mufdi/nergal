@@ -30,15 +30,21 @@ A user-installed shell wrapper at `~/.claude/hooks/nergal-conditional.sh` inspec
 4. Accept → GUI writes `allow` to the FIFO → the hook prints `allow` with `updatedInput` set to the `tool_input` it received (CC ignores a bare `allow` for `ExitPlanMode` and keeps its own dialog open) → Claude proceeds.
 5. Reject → GUI writes `deny` with a Plannotator-style message that points Claude back to the edited plan file → Claude re-reads and re-plans.
 
-Release: when the review is resolved outside the panel, the GUI writes `{"released":true}` to the registered FIFO (1 s budget, on a blocking thread) and the hook exits printing nothing; CC already has its answer, so nothing is left blocked. Only top-level events register, release or close a review (a nested `claude -p` inherits `NERGAL_SESSION_ID` and must not touch the parent's review). The hook forwards the stdin `agent_id` in the `PlanReview` message and the registration stores it as the owner. Triggers: `PostToolUse[ExitPlanMode]` whose `agent_id` equals the owner's, a new `PlanReview` for the same session (releases the replaced FIFO), `Stop` when the owner is the main agent, `SubagentStop` of the owning subagent, and `SessionEnd`. A matching `PostToolUse[ExitPlanMode]` also emits `plan:review-closed`, which needs `ExitPlanMode` in the `PostToolUse` matcher of the `tool-done` entry in `HOOKS`; setup upgrades an existing entry's matcher in place.
-
-Fail closed: only `approved: true` approves; a payload without `approved` is a release and prints nothing, and an approval without an object `tool_input` prints nothing. When the user edited the plan in the panel, the approval carries `plan` and the hook overrides `updatedInput.plan` with it. A `PlanReview` whose plan cannot be resolved emits `plan:review-unresolved`, which returns `submitted` to `idle`.
-
-Accepted gap: a deny or Esc answered in Claude Code's own dialog emits no event Nergal registers, and Claude Code does not stop a pending hook when its own dialog is answered. The panel keeps showing the review as live until the next `PlanReview` or the turn's `Stop`; a panel decision in that window reaches a hook Claude Code no longer reads.
+Release: when the review is resolved outside the panel, the GUI writes `{"released":true}` to the registered FIFO (1 s budget, on a blocking thread) and the hook exits printing nothing; CC already has its answer, so nothing is left blocked. Triggers: `PostToolUse[ExitPlanMode]` (top-level only), a new `PlanReview` for the same session (releases the replaced FIFO), `Stop` and `SessionEnd`. `PostToolUse[ExitPlanMode]` also emits `plan:review-closed`, which needs `ExitPlanMode` in the `PostToolUse` matcher of the `tool-done` entry in `HOOKS`; setup upgrades an existing entry's matcher in place.
 
 State machine in `src/stores/plan.ts`: `idle → pending_review → submitted | idle`. A decision that cannot be delivered (Claude Code is no longer waiting, e.g. answered in the terminal or timed out) moves the status to `undelivered`: the decision controls hide and the header reads `Not delivered. Answer in the terminal.`. The annotations stay visible and clearable. It lasts until a new review, new plan content, or the session stops.
 
 `plan:review-closed` moves `pending_review`, `undelivered` and `submitted` to `answered`: the header reads `Answered in the terminal.` (plus ` Annotations were not sent.` when annotations exist), the decision controls stay hidden and the annotations stay visible and clearable. From `submitted` it also raises the error toast `Revise not delivered`. `Stop` keeps `answered`; `SessionEnd`, a new review or new plan content reset it.
+
+Known situations (accepted, 2026-11-24):
+
+- A deny or Esc answered in Claude Code's own dialog emits nothing Nergal registers, and Claude Code does not stop the pending hook. The panel keeps showing the review as live until the next `PlanReview` or the turn's `Stop`; a panel decision in that window reaches a hook Claude Code no longer reads.
+- A nested agent CLI that inherits `NERGAL_SESSION_ID` (for example a `claude -p` the agent starts from Bash) can release or close the parent's review: its `Stop`, `SessionEnd`, `PlanReview` or `PostToolUse[ExitPlanMode]` act on the same session. Nergal tells nested events apart only on `SessionStart` and `Stop`.
+- A plan review requested by a subagent shares the session's single registration: the main turn's `Stop` releases it, and its terminal approval (a `PostToolUse` with `agent_id`) does not close it in the panel.
+- A Revise sent in the moment between a terminal answer and its `PostToolUse` shows `Revise not delivered`, but its annotations were already cleared.
+- The hook approves any decision payload without `approved: false` (only Nergal writes to the FIFO), and an input without `tool_input` approves with `updatedInput: {}`.
+- Panel edits of the plan text are not sent in `updatedInput`; no panel action edits plan text today.
+- Annotations kept in `answered` carry over to the next review of the session, and the `answered`/`submitted`/`undelivered` header labels show on any plan tab of that session.
 
 ## AskUserQuestion attention
 

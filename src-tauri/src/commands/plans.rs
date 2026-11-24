@@ -97,19 +97,16 @@ pub fn reject_plan(session_id: String, state: State<'_, SharedPlanState>) -> Res
 
 /// Persists in-place edits to disk if the plan was modified, mirroring
 /// `save_plan`'s propagation so a failed write aborts the caller before a
-/// decision is sent for the still-stale-on-disk content. Returns the saved
-/// content so an approval can carry it to the hook.
-fn save_plan_edits_if_dirty(runtime: &mut PlanManager) -> Result<Option<String>, String> {
+/// decision is sent for the still-stale-on-disk content.
+fn save_plan_edits_if_dirty(runtime: &mut PlanManager) -> Result<(), String> {
     if let Some(plan) = &runtime.current_plan
         && plan.content != plan.original
     {
-        let edited = plan.content.clone();
         runtime
-            .save_edits(edited.clone())
+            .save_edits(plan.content.clone())
             .map_err(|e| e.to_string())?;
-        return Ok(Some(edited));
     }
-    Ok(None)
+    Ok(())
 }
 
 /// Writes approval/denial decision to the FIFO, unblocking the plan-review CLI.
@@ -122,16 +119,13 @@ pub async fn submit_plan_decision(
     state: State<'_, SharedPlanState>,
     agent_state: State<'_, AgentRuntimeState>,
 ) -> Result<(), String> {
-    let edited_plan = match state.lock() {
-        Ok(mut mgr) => save_plan_edits_if_dirty(mgr.get_or_create(&session_id))?,
-        Err(_) => None,
-    };
+    if let Ok(mut mgr) = state.lock() {
+        let runtime = mgr.get_or_create(&session_id);
+        save_plan_edits_if_dirty(runtime)?;
+    }
 
     let decision = if approved {
-        match edited_plan {
-            Some(plan) => serde_json::json!({ "approved": true, "plan": plan }),
-            None => serde_json::json!({ "approved": true }),
-        }
+        serde_json::json!({ "approved": true })
     } else {
         let msg = feedback.unwrap_or_else(|| "Plan changes requested".to_string());
         let deny_msg = format!(

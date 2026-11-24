@@ -41,7 +41,7 @@ use super::plans_path::resolve_cc_plans_directory;
 /// Wrapper around CC's hooks/transcript/plan/tasks behavior.
 pub struct ClaudeCodeAdapter {
     capabilities: AgentCapabilities,
-    pending_plan_fifos: Arc<DashMap<String, (PathBuf, Option<String>)>>,
+    pending_plan_fifos: Arc<DashMap<String, PathBuf>>,
 }
 
 impl Default for ClaudeCodeAdapter {
@@ -72,40 +72,20 @@ impl ClaudeCodeAdapter {
     /// Record the FIFO path for a session's pending plan-review. Called by
     /// the hook dispatcher when a `PlanReview` hook event arrives.
     pub fn register_pending_plan_fifo(&self, session_id: &str, path: PathBuf) -> Option<PathBuf> {
-        self.register_pending_plan_fifo_owned(session_id, path, None)
-    }
-
-    /// `owner_agent` is the subagent that raised the review (`None` = main
-    /// agent); only that agent's `ExitPlanMode` completion may close it.
-    pub fn register_pending_plan_fifo_owned(
-        &self,
-        session_id: &str,
-        path: PathBuf,
-        owner_agent: Option<String>,
-    ) -> Option<PathBuf> {
-        self.pending_plan_fifos
-            .insert(session_id.to_string(), (path, owner_agent))
-            .map(|(replaced, _)| replaced)
-    }
-
-    /// Outer `None` = no pending review; inner `None` = owned by the main agent.
-    pub fn pending_plan_owner(&self, session_id: &str) -> Option<Option<String>> {
-        self.pending_plan_fifos
-            .get(session_id)
-            .map(|entry| entry.1.clone())
+        self.pending_plan_fifos.insert(session_id.to_string(), path)
     }
 
     pub fn release_pending_plan_fifo(&self, session_id: &str) -> Option<PathBuf> {
         self.pending_plan_fifos
             .remove(session_id)
-            .map(|(_, (path, _))| path)
+            .map(|(_, path)| path)
     }
 
     /// Atomically consumes the registration only when it names `requested`,
     /// so two submits for one review cannot both write into the pipe.
     pub fn claim_pending_plan_fifo(&self, session_id: &str, requested: &Path) -> bool {
         self.pending_plan_fifos
-            .remove_if(session_id, |_, (registered, _)| registered == requested)
+            .remove_if(session_id, |_, registered| registered == requested)
             .is_some()
     }
 }
@@ -316,7 +296,7 @@ impl AgentAdapter for ClaudeCodeAdapter {
         session_id: &str,
         decision: PlanDecision,
     ) -> Result<(), AdapterError> {
-        let Some((_, (fifo_path, _))) = self.pending_plan_fifos.remove(session_id) else {
+        let Some((_, fifo_path)) = self.pending_plan_fifos.remove(session_id) else {
             return Err(AdapterError::SessionLocked);
         };
         let body = if decision.approved {
@@ -356,10 +336,6 @@ mod args_tests;
 #[cfg(test)]
 #[path = "adapter_plan_fifo_tests.rs"]
 mod plan_fifo_tests;
-
-#[cfg(test)]
-#[path = "adapter_plan_owner_tests.rs"]
-mod plan_owner_tests;
 
 #[cfg(test)]
 mod tests {

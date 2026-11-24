@@ -30,8 +30,7 @@ impl std::fmt::Display for ImageFetchError {
 
 impl std::error::Error for ImageFetchError {}
 
-/// Maps image hashes to the images the emulator still holds. Weak entries so a
-/// registered image never outlives wezterm's own LRU.
+/// Weak entries so a registered image never outlives wezterm's own LRU.
 #[derive(Default)]
 pub struct ImageRegistry {
     images: HashMap<[u8; 32], Weak<ImageData>>,
@@ -104,10 +103,14 @@ pub fn payload_for(image: &ImageData) -> Result<Vec<u8>, ImageFetchError> {
             out.extend_from_slice(data);
             Ok(out)
         }
-        ImageDataType::EncodedFile(bytes) if is_allowed_encoding(bytes) => {
+        data @ ImageDataType::EncodedFile(bytes) if is_allowed_encoding(bytes) => {
+            let (width, height) = data
+                .dimensions()
+                .map_err(|_| ImageFetchError::UnsupportedFormat)?;
             let mut out = Vec::with_capacity(HEADER_LEN + bytes.len());
             out.push(KIND_ENCODED);
-            out.extend_from_slice(&[0; 8]);
+            out.extend_from_slice(&width.to_le_bytes());
+            out.extend_from_slice(&height.to_le_bytes());
             out.extend_from_slice(bytes);
             Ok(out)
         }

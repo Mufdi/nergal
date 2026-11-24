@@ -25,7 +25,7 @@ Each `GridRow` of a `GridUpdate` SHALL list the image runs it shows, read from t
 - **THEN** the next grid update includes that row with image B's hash
 
 ### Requirement: Image bytes are fetched once per terminal
-The backend SHALL keep, per terminal, a registry from image hash to the wezterm image data that visible rows reference, without extending the image's lifetime. A command `terminal_image(session_id, hash)` SHALL return that image as a raw IPC response: a header of 1 kind byte (0 = RGBA pixels, 1 = encoded file), a little-endian u32 width and a little-endian u32 height, then the bytes. Image bytes SHALL never be part of a `GridUpdate`. The command SHALL serve encoded files only when their magic bytes are PNG, JPEG or GIF. It SHALL return an error for an unknown or malformed hash, for an image no longer held by the emulator, and for any other encoded format. It SHALL NOT block the main thread or hold the global PTY maps while it copies bytes.
+The backend SHALL keep, per terminal, a registry from image hash to the wezterm image data that visible rows reference, without extending the image's lifetime. A command `terminal_image(session_id, hash)` SHALL return that image as a raw IPC response: a header of 1 kind byte (0 = RGBA pixels, 1 = encoded file), a little-endian u32 width and a little-endian u32 height (the image's pixel size for both kinds), then the bytes. Image bytes SHALL never be part of a `GridUpdate`. The command SHALL serve encoded files only when their magic bytes are PNG, JPEG or GIF. It SHALL return an error for an unknown or malformed hash, for an image no longer held by the emulator, and for any other encoded format. It SHALL NOT block the main thread or hold the global PTY maps while it copies bytes.
 
 #### Scenario: Fetch a sixel image
 - **GIVEN** a visible row shows a 64x48 sixel image with hash H
@@ -35,7 +35,7 @@ The backend SHALL keep, per terminal, a registry from image hash to the wezterm 
 #### Scenario: Fetch an iTerm2 PNG
 - **GIVEN** a visible row shows an iTerm2 PNG with hash H
 - **WHEN** the frontend calls `terminal_image(session, H)`
-- **THEN** the response starts with kind 1 and is followed by the PNG file bytes
+- **THEN** the response starts with kind 1, width 64 and height 48, and is followed by the PNG file bytes
 
 #### Scenario: Unsupported encoded format
 - **GIVEN** a visible row shows an iTerm2 image whose bytes are not PNG, JPEG or GIF
@@ -66,12 +66,23 @@ The canvas SHALL draw each image run of a painted row inside its cells: the sour
 - **THEN** the image is drawn in the rows it occupies
 
 ### Requirement: Each terminal caps its decoded images
-Each terminal's frontend image cache SHALL hold at most 256 MB of decoded image data, counted as width × height × 4 bytes per bitmap. When an insertion exceeds the budget, the cache SHALL drop the least recently drawn images until it fits, releasing their bitmaps, but SHALL NOT drop an image that a current row references; the cache may exceed the budget while referenced images alone exceed it. A decode failure SHALL be permanent for that hash; a fetch failure SHALL be retried at most twice. Above a hard ceiling of 512 MB the cache SHALL NOT decode a new image even when a row references it; its cells show text until the cache shrinks. A dropped image's cells SHALL show text only until a row referencing it is painted again, which fetches it again. Closing a terminal, including a quake shell, SHALL release all its bitmaps, and afterwards a completing fetch SHALL skip the decode and a completing decode SHALL release its bitmap, both without drawing.
+Each terminal's frontend image cache SHALL hold at most 256 MB of decoded image data, counted as width × height × 4 bytes per bitmap from the response header, reserved when its decode starts and released if the decode fails. When an insertion exceeds the budget, the cache SHALL drop the least recently drawn images until it fits, releasing their bitmaps, but SHALL NOT drop an image that a current row references; the cache may exceed the budget while referenced images alone exceed it. A decode failure SHALL be permanent for that hash; a fetch failure SHALL be retried at most twice, at most once per grid update. With 512 MB or more held (decoded plus reserved), the cache SHALL NOT start decoding a new image even when a row references it; while another decode is in flight, it SHALL NOT start one that would take the total past 512 MB. Such an image's cells show text until the cache shrinks. A single decode started below the ceiling may cross it by at most one image (wezterm caps one image at 100 MB). A dropped image's cells SHALL show text only until a row referencing it is painted again, which fetches it again. A terminal that is hidden (another session or shell shown in its place) SHALL release its bitmaps and fetch them again when shown. Closing a terminal, including a quake shell, SHALL release all its bitmaps, and afterwards a completing fetch SHALL skip the decode and a completing decode SHALL release its bitmap, both without drawing.
 
 #### Scenario: Budget evicts the least recently drawn image
 - **GIVEN** a cache with a 256 MB budget holding images A (drawn first) and B (drawn later), 100 MB each, neither referenced by a current row
 - **WHEN** image C of 100 MB is decoded
 - **THEN** A is dropped and B and C stay
+
+#### Scenario: Concurrent decodes count toward the ceiling
+- **GIVEN** a cache holding 500 MB of referenced images
+- **WHEN** two referenced 10 MB images finish fetching before either decode resolves
+- **THEN** only the first is decoded and the second waits for room
+
+#### Scenario: Hidden terminal releases its images
+- **GIVEN** a terminal showing an image
+- **WHEN** the user switches to another session
+- **THEN** the hidden terminal's bitmaps are released
+- **AND** switching back fetches and draws the image again
 
 #### Scenario: Referenced images are never evicted
 - **GIVEN** rows reference images A and B of 150 MB each, both cached

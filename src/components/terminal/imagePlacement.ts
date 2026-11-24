@@ -11,6 +11,8 @@ export interface RunRects {
   dh: number;
 }
 
+const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
+
 export function runRects(
   run: ImageRun,
   imgW: number,
@@ -18,16 +20,25 @@ export function runRects(
   cellW: number,
   cellH: number,
   rowY: number,
-): RunRects {
+): RunRects | null {
+  const u0 = clamp01(run.u0);
+  const u1 = clamp01(run.u1);
+  const v0 = clamp01(run.v0);
+  const v1 = clamp01(run.v1);
+  const sw = (u1 - u0) * imgW;
+  const sh = (v1 - v0) * imgH;
+  const dw = run.span * cellW - run.padLeft - run.padRight;
+  const dh = cellH - run.padTop - run.padBottom;
+  if (sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return null;
   return {
-    sx: run.u0 * imgW,
-    sy: run.v0 * imgH,
-    sw: (run.u1 - run.u0) * imgW,
-    sh: (run.v1 - run.v0) * imgH,
+    sx: u0 * imgW,
+    sy: v0 * imgH,
+    sw,
+    sh,
     dx: run.col * cellW + run.padLeft,
     dy: rowY + run.padTop,
-    dw: run.span * cellW - run.padLeft - run.padRight,
-    dh: cellH - run.padTop - run.padBottom,
+    dw,
+    dh,
   };
 }
 

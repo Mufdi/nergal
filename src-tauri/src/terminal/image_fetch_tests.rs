@@ -99,6 +99,18 @@ fn iterm2_png_payload_is_kind_one_with_the_file_bytes() {
 }
 
 #[test]
+fn encoded_payload_header_carries_the_image_dimensions() {
+    let mut s = session_800x480();
+    s.advance_bytes(&iterm("", &png_bytes()));
+    let hash = shown_hash(&mut s);
+
+    let payload = fetch(&s, &hash).expect("visible png is fetchable");
+
+    assert_eq!(&payload[1..5], &64u32.to_le_bytes());
+    assert_eq!(&payload[5..9], &48u32.to_le_bytes());
+}
+
+#[test]
 fn downscaled_png_keeps_its_native_size_bytes_when_the_geometry_is_tiny() {
     let mut s = session(80, 24);
     s.advance_bytes(&iterm("", &png_bytes()));

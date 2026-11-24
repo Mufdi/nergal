@@ -83,9 +83,8 @@ pub struct GridRow {
     pub images: Vec<ImageRun>,
 }
 
-/// A horizontal strip of one inline image on a single row. `col` is the
-/// terminal column (wezterm's `cell_index()`), not an index into the row's
-/// `cells`, which skips wide-character continuation cells.
+/// `col` is the terminal column (wezterm's `cell_index()`), not an index into
+/// the row's `cells`, which skips wide-character continuation cells.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageRun {

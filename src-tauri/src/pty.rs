@@ -2455,9 +2455,8 @@ pub fn terminal_attach(
         .ok_or_else(|| "differ produced no update after invalidate (unreachable)".to_string())
 }
 
-/// Raw bytes of an inline image the grid referenced by hash. Async so the
-/// payload copy never runs on the main thread; the global PTY maps are
-/// released before the first await.
+/// Async so the payload copy never runs on the main thread; the global PTY
+/// maps are released before the first await.
 #[tauri::command]
 pub async fn terminal_image(
     state: State<'_, PtyManager>,

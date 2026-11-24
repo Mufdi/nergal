@@ -28,7 +28,7 @@ import { auxButtonToForward, keyboardMenuKey, releasePointerCell, reportsMouse, 
 import { TERM_FONT, TERM_THEME, refreshTermTheme, rgbaToCss } from "./theme";
 import { readingLayout } from "./readingCols";
 import { clampedCell } from "./cellMapping";
-import { createImageCache, type ImageCache } from "./imageCache";
+import { createImageCache, headerBlob, headerPixels, type ImageCache } from "./imageCache";
 import { applyRowImages, runRects } from "./imagePlacement";
 import { refitNeeded, waitUntil } from "./waitUntil";
 import { cssColorToRgb } from "./cssColor";
@@ -59,6 +59,7 @@ type BitmapCache = ImageCache<ImageBitmap>;
 interface Entry {
   images: BitmapCache;
   rowImages: ImageRun[][];
+  rowsByHash: Map<string, number[]>;
   /// Terminal key used in every backend invoke. The agent terminal's key is
   /// its session id; an aux shell's key is `${sessionId}::${shellId}` (the
   /// backend registers both in the same PTY key space).
@@ -251,9 +252,15 @@ export function hideAll(region: Region = "center"): void {
   activeIds.set(region, null);
   for (const [, entry] of entries) {
     if (entry.region !== region) continue;
-    if (entry.container.style.display !== "none") reportUnfocused(entry);
-    entry.container.style.display = "none";
+    hideEntry(entry);
   }
+}
+
+function hideEntry(entry: Entry): void {
+  if (entry.container.style.display === "none") return;
+  reportUnfocused(entry);
+  entry.container.style.display = "none";
+  entry.images.releaseAll();
 }
 
 export async function show(
@@ -331,8 +338,8 @@ async function showTerminal(opts: {
 
   for (const [id, entry] of entries) {
     if (entry.region !== region) continue;
-    if (id !== key && entry.container.style.display !== "none") reportUnfocused(entry);
-    entry.container.style.display = id === key ? "flex" : "none";
+    if (id === key) entry.container.style.display = "flex";
+    else hideEntry(entry);
   }
 
   if (entries.has(key)) {
@@ -431,14 +438,14 @@ async function showTerminal(opts: {
         fetch: (imageKey, hash) => invoke<ArrayBuffer>("terminal_image", { sessionId: imageKey, hash }),
         decode: (header) => {
           if (header.kind === 0) {
-            const pixels = new Uint8ClampedArray(header.body.buffer as ArrayBuffer, header.body.byteOffset, header.body.byteLength);
-            return createImageBitmap(new ImageData(pixels, header.width, header.height));
+            return createImageBitmap(new ImageData(headerPixels(header), header.width, header.height));
           }
-          return createImageBitmap(new Blob([header.body as BlobPart]), { imageOrientation: "none" });
+          return createImageBitmap(headerBlob(header), { imageOrientation: "none" });
         },
         onReady: (hash) => repaintImageRows(entry, hash),
       }),
       rowImages: [],
+      rowsByHash: new Map(),
       sessionId: key,
       region,
       ownerSessionId,
@@ -1355,8 +1362,12 @@ function applyUpdate(entry: Entry, update: GridUpdate): void {
     touchedRows.add(row.index);
   }
 
-  entry.rowImages = applyRowImages(entry.rowImages, update);
-  entry.images.setVisible(new Set(entry.rowImages.flatMap((runs) => runs.map((r) => r.hash))));
+  const incomingImages = update.rows.some((row) => row.images !== undefined && row.images.length > 0);
+  if (entry.rowsByHash.size > 0 || incomingImages) {
+    entry.rowImages = applyRowImages(entry.rowImages, update);
+    entry.rowsByHash = indexRowsByHash(entry.rowImages);
+    entry.images.setVisible(new Set(entry.rowsByHash.keys()));
+  }
 
   entry.cursor = update.cursor;
   entry.title = update.title;
@@ -1460,22 +1471,40 @@ function paintRow(entry: Entry, y: number): void {
   drawImageRuns(entry, runs, y, (z) => z >= 0);
 }
 
+function indexRowsByHash(rowImages: ImageRun[][]): Map<string, number[]> {
+  const byHash = new Map<string, number[]>();
+  rowImages.forEach((runs, y) => {
+    for (const run of runs) {
+      const rows = byHash.get(run.hash);
+      if (!rows) byHash.set(run.hash, [y]);
+      else if (rows[rows.length - 1] !== y) rows.push(y);
+    }
+  });
+  return byHash;
+}
+
 function drawImageRuns(entry: Entry, runs: ImageRun[], y: number, layer: (z: number) => boolean): void {
+  if (runs.length === 0 || entry.container.style.display === "none") return;
   const { ctx, metrics, images } = entry;
+  ctx.imageSmoothingEnabled = false;
   for (const run of runs) {
     if (!layer(run.z)) continue;
     const bitmap = images.get(run.hash);
     if (!bitmap) continue;
-    images.touch(run.hash);
     const r = runRects(run, bitmap.width, bitmap.height, metrics.cellWidth, metrics.cellHeight, y * metrics.cellHeight);
+    if (!r) continue;
+    images.touch(run.hash);
     ctx.drawImage(bitmap, r.sx, r.sy, r.sw, r.sh, r.dx, r.dy, r.dw, r.dh);
   }
+  ctx.imageSmoothingEnabled = true;
 }
 
 function repaintImageRows(entry: Entry, hash: string): void {
+  const rows = entry.rowsByHash.get(hash);
+  if (!rows) return;
   let touched = false;
-  for (let y = 0; y < entry.rows; y += 1) {
-    if (!entry.rowImages[y]?.some((r) => r.hash === hash)) continue;
+  for (const y of rows) {
+    if (y >= entry.rows) continue;
     paintRow(entry, y);
     touched = true;
   }

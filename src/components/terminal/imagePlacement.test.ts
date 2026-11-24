@@ -31,14 +31,15 @@ describe("runRects", () => {
       2,
     );
 
-    expect(rects.sx).toBeCloseTo(20);
-    expect(rects.sy).toBeCloseTo(0);
-    expect(rects.sw).toBeCloseTo(70);
-    expect(rects.sh).toBeCloseTo(20);
-    expect(rects.dx).toBeCloseTo(30);
-    expect(rects.dy).toBeCloseTo(2);
-    expect(rects.dw).toBeCloseTo(66);
-    expect(rects.dh).toBeCloseTo(20);
+    expect(rects).not.toBeNull();
+    expect(rects?.sx).toBeCloseTo(20);
+    expect(rects?.sy).toBeCloseTo(0);
+    expect(rects?.sw).toBeCloseTo(70);
+    expect(rects?.sh).toBeCloseTo(20);
+    expect(rects?.dx).toBeCloseTo(30);
+    expect(rects?.dy).toBeCloseTo(2);
+    expect(rects?.dw).toBeCloseTo(66);
+    expect(rects?.dh).toBeCloseTo(20);
   });
 
   it("shrinks the destination by the left, top and bottom padding too", () => {
@@ -51,10 +52,36 @@ describe("runRects", () => {
       2,
     );
 
-    expect(rects.dx).toBeCloseTo(33);
-    expect(rects.dy).toBeCloseTo(7);
-    expect(rects.dw).toBeCloseTo(63);
-    expect(rects.dh).toBeCloseTo(13);
+    expect(rects?.dx).toBeCloseTo(33);
+    expect(rects?.dy).toBeCloseTo(7);
+    expect(rects?.dw).toBeCloseTo(63);
+    expect(rects?.dh).toBeCloseTo(13);
+  });
+
+  it("returns null when horizontal padding consumes the whole span", () => {
+    expect(runRects(run({ span: 1, padLeft: 6, padRight: 4 }), 100, 50, 10, 20, 0)).toBeNull();
+    expect(runRects(run({ span: 1, padLeft: 8, padRight: 8 }), 100, 50, 10, 20, 0)).toBeNull();
+  });
+
+  it("returns null when vertical padding consumes the whole cell height", () => {
+    expect(runRects(run({ padTop: 12, padBottom: 8 }), 100, 50, 10, 20, 0)).toBeNull();
+    expect(runRects(run({ padTop: 15, padBottom: 15 }), 100, 50, 10, 20, 0)).toBeNull();
+  });
+
+  it("returns null for a non-positive source size", () => {
+    expect(runRects(run({ u0: 0.5, u1: 0.5 }), 100, 50, 10, 20, 0)).toBeNull();
+    expect(runRects(run({ v0: 0.8, v1: 0.2 }), 100, 50, 10, 20, 0)).toBeNull();
+    expect(runRects(run(), 0, 50, 10, 20, 0)).toBeNull();
+  });
+
+  it("clamps u and v to 0..1 before mapping to source pixels", () => {
+    const rects = runRects(run({ u0: -0.5, u1: 1.5, v0: -1, v1: 2 }), 100, 50, 10, 20, 0);
+
+    expect(rects).not.toBeNull();
+    expect(rects?.sx).toBeCloseTo(0);
+    expect(rects?.sy).toBeCloseTo(0);
+    expect(rects?.sw).toBeCloseTo(100);
+    expect(rects?.sh).toBeCloseTo(50);
   });
 });
 

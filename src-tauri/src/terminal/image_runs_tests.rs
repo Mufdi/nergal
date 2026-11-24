@@ -156,3 +156,62 @@ fn text_over_the_middle_splits_the_run_and_keeps_slices_contiguous() {
     assert!(close(right.u0, before.u0 + 4.0 * cell_u));
     assert!(close(right.u1, before.u1));
 }
+
+fn padded_slice(
+    data: &std::sync::Arc<termwiz::image::ImageData>,
+    u: (f32, f32),
+    pad_left: u16,
+    pad_top: u16,
+) -> termwiz::image::ImageCell {
+    use termwiz::image::{ImageCell, TextureCoordinate};
+    ImageCell::with_z_index(
+        TextureCoordinate::new_f32(u.0, 0.0),
+        TextureCoordinate::new_f32(u.1, 1.0),
+        data.clone(),
+        0,
+        pad_left,
+        pad_top,
+        0,
+        0,
+        None,
+        None,
+    )
+}
+
+fn pixel_data() -> std::sync::Arc<termwiz::image::ImageData> {
+    use termwiz::image::{ImageData, ImageDataType};
+    std::sync::Arc::new(ImageData::with_data(ImageDataType::new_single_frame(
+        2,
+        2,
+        vec![255; 16],
+    )))
+}
+
+#[test]
+fn adjacent_slices_with_different_left_padding_form_two_runs() {
+    let data = pixel_data();
+    let mut runs = Vec::new();
+    super::push_image_cell(&mut runs, 0, &padded_slice(&data, (0.0, 0.5), 0, 0));
+    super::push_image_cell(&mut runs, 1, &padded_slice(&data, (0.5, 1.0), 3, 0));
+    assert_eq!(runs.len(), 2);
+}
+
+#[test]
+fn adjacent_slices_with_different_top_padding_form_two_runs() {
+    let data = pixel_data();
+    let mut runs = Vec::new();
+    super::push_image_cell(&mut runs, 0, &padded_slice(&data, (0.0, 0.5), 0, 0));
+    super::push_image_cell(&mut runs, 1, &padded_slice(&data, (0.5, 1.0), 0, 2));
+    assert_eq!(runs.len(), 2);
+}
+
+#[test]
+fn adjacent_slices_with_equal_padding_form_one_run() {
+    let data = pixel_data();
+    let mut runs = Vec::new();
+    super::push_image_cell(&mut runs, 0, &padded_slice(&data, (0.0, 0.5), 3, 2));
+    super::push_image_cell(&mut runs, 1, &padded_slice(&data, (0.5, 1.0), 3, 2));
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].span, 2);
+    assert_eq!(runs[0].pad_left, 3);
+}

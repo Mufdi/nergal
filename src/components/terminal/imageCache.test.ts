@@ -274,21 +274,169 @@ describe("failures", () => {
     expect(t.ready).toEqual([]);
   });
 
-  it("retries a fetch failure at most twice", async () => {
+  it("retries a fetch failure at most twice, each from setVisible", async () => {
     const t = harness();
-    for (let attempt = 0; attempt < 3; attempt++) {
-      t.cache.get("a");
+    t.cache.get("a");
+    t.fetchesFor("a")[0].d.reject(new Error("gone"));
+    await flush();
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      expect(t.cache.setVisible(new Set(["a"]))).toEqual(["a"]);
       expect(t.fetchesFor("a")).toHaveLength(attempt + 1);
       t.fetchesFor("a")[attempt].d.reject(new Error("gone"));
       await flush();
     }
 
-    for (let i = 0; i < 3; i++) {
+    expect(t.cache.setVisible(new Set(["a"]))).toEqual([]);
+    expect(t.fetchesFor("a")).toHaveLength(3);
+    expect(t.ready).toEqual([]);
+  });
+
+  it("never retries a fetch failure from repeated get calls", async () => {
+    const t = harness();
+    t.cache.get("a");
+    t.fetchesFor("a")[0].d.reject(new Error("gone"));
+    await flush();
+
+    for (let i = 0; i < 5; i++) {
       expect(t.cache.get("a")).toBeUndefined();
       await flush();
     }
-    expect(t.fetchesFor("a")).toHaveLength(3);
-    expect(t.ready).toEqual([]);
+    expect(t.fetchesFor("a")).toHaveLength(1);
+
+    expect(t.cache.setVisible(new Set(["a"]))).toEqual(["a"]);
+    expect(t.fetchesFor("a")).toHaveLength(2);
+  });
+
+  it("marks the entry failed for good when decode throws synchronously", async () => {
+    const fetches: { d: ReturnType<typeof deferred<ArrayBuffer>> }[] = [];
+    const ready: string[] = [];
+    const cache = createImageCache<Bitmap>({
+      key: "k",
+      fetch: () => {
+        const d = deferred<ArrayBuffer>();
+        fetches.push({ d });
+        return d.promise;
+      },
+      decode: () => {
+        throw new Error("zero dimension");
+      },
+      onReady: (hash) => ready.push(hash),
+    });
+
+    cache.get("a");
+    fetches[0].d.resolve(sizedBuf(1));
+    await flush();
+
+    expect(cache.get("a")).toBeUndefined();
+    expect(cache.setVisible(new Set(["a"]))).toEqual([]);
+    expect(fetches).toHaveLength(1);
+    expect(cache.bytes()).toBe(0);
+    expect(ready).toEqual([]);
+  });
+});
+
+describe("byte reservation", () => {
+  it("decodes only the first of two referenced fetches that resolve before either decode when the second would pass the ceiling", async () => {
+    const t = harness();
+    t.cache.setVisible(new Set(["a", "b", "c", "d"]));
+    await t.load("a", 250);
+    await t.load("b", 250);
+
+    t.cache.get("c");
+    t.cache.get("d");
+    t.fetchesFor("c")[0].d.resolve(sizedBuf(10));
+    t.fetchesFor("d")[0].d.resolve(sizedBuf(10));
+    await flush();
+
+    expect(t.decodes.filter((x) => !x.done)).toHaveLength(1);
+    expect(t.decodes).toHaveLength(3);
+  });
+
+  it("returns the blocked hash from setVisible once the visible set shrinks, and repaints it through ready", async () => {
+    const t = harness();
+    t.cache.setVisible(new Set(["a", "b", "c", "d"]));
+    await t.load("a", 250);
+    await t.load("b", 250);
+    t.cache.get("c");
+    t.cache.get("d");
+    t.fetchesFor("c")[0].d.resolve(sizedBuf(10));
+    t.fetchesFor("d")[0].d.resolve(sizedBuf(10));
+    await flush();
+
+    const unblocked = t.cache.setVisible(new Set(["a", "c", "d"]));
+    expect(unblocked).toEqual(["d"]);
+    expect(t.fetchesFor("d")).toHaveLength(2);
+
+    t.fetchesFor("d")[1].d.resolve(sizedBuf(10));
+    await flush();
+    const open = t.decodes.filter((x) => !x.done);
+    open[open.length - 1].d.resolve({ width: 1024, height: 2560, close: vi.fn<() => void>() });
+    await flush();
+    expect(t.ready).toContain("d");
+  });
+
+  it("returns an empty list when nothing was blocked or failed", async () => {
+    const t = harness();
+    await t.load("a", 1);
+    expect(t.cache.setVisible(new Set(["a"]))).toEqual([]);
+  });
+
+  it("counts an encoded image as width x height x 4 bytes from its header", async () => {
+    const t = harness();
+    t.cache.get("a");
+    t.fetchesFor("a")[0].d.resolve(buf(1, 1024, 25600, new Uint8Array([1, 2, 3])));
+    await flush();
+    t.decodes[0].d.resolve({ width: 1024, height: 25600, close: vi.fn<() => void>() });
+    await flush();
+
+    expect(t.cache.bytes()).toBe(100 * MB);
+  });
+
+  it("evicts unreferenced images to make room for an encoded one by its header size", async () => {
+    const t = harness();
+    t.cache.setVisible(new Set(["b"]));
+    const a = await t.load("a", 200);
+    t.cache.touch("a");
+
+    t.cache.get("b");
+    t.fetchesFor("b")[0].d.resolve(buf(1, 1024, 25600, new Uint8Array([1])));
+    await flush();
+    t.decodes[t.decodes.length - 1].d.resolve({
+      width: 1024,
+      height: 25600,
+      close: vi.fn<() => void>(),
+    });
+    await flush();
+
+    expect(a.close).toHaveBeenCalledTimes(1);
+    expect(t.cache.bytes()).toBe(100 * MB);
+  });
+});
+
+describe("releaseAll", () => {
+  it("closes every bitmap and fetches again on the next get, staying usable", async () => {
+    const t = harness();
+    t.cache.setVisible(new Set(["a", "b"]));
+    const a = await t.load("a", 1);
+    const b = await t.load("b", 1);
+
+    t.cache.releaseAll();
+
+    expect(a.close).toHaveBeenCalledTimes(1);
+    expect(b.close).toHaveBeenCalledTimes(1);
+    expect(t.cache.bytes()).toBe(0);
+
+    expect(t.cache.get("a")).toBeUndefined();
+    expect(t.fetchesFor("a")).toHaveLength(2);
+
+    t.fetchesFor("a")[1].d.resolve(sizedBuf(1));
+    await flush();
+    const open = t.decodes.filter((x) => !x.done);
+    const bitmap = { width: 1024, height: 256, close: vi.fn<() => void>() };
+    open[open.length - 1].d.resolve(bitmap);
+    await flush();
+    expect(t.cache.get("a")).toBe(bitmap);
   });
 });
 

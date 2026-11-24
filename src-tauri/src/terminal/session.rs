@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -524,6 +525,7 @@ impl TerminalSession {
         let mut rows: Vec<Vec<CellSnapshot>> = Vec::with_capacity(visible.len());
         let mut images: Vec<Vec<ImageRun>> = Vec::with_capacity(visible.len());
         self.image_registry.prune();
+        let mut hex_by_image: HashMap<*const termwiz::image::ImageData, String> = HashMap::new();
 
         for line in &visible {
             let mut row_cells: Vec<CellSnapshot> = Vec::with_capacity(cols);
@@ -532,8 +534,12 @@ impl TerminalSession {
                 let attrs = cell.attrs();
                 if let Some(cell_images) = attrs.images() {
                     for image in &cell_images {
-                        push_image_cell(&mut runs, cell.cell_index(), image);
-                        self.image_registry.insert(image.image_data());
+                        let data = image.image_data();
+                        let hex = hex_by_image.entry(Arc::as_ptr(data)).or_insert_with(|| {
+                            self.image_registry.insert(data);
+                            hash_to_hex(&data.hash())
+                        });
+                        push_image_cell_hashed(&mut runs, cell.cell_index(), image, hex);
                     }
                 }
                 let snap = CellSnapshot {
@@ -590,16 +596,24 @@ impl TerminalSession {
     }
 }
 
-/// Extends the open run this slice continues (same image, same vertical range,
-/// contiguous horizontal range) or starts a new one. wezterm hands out slices
-/// of one placement with `x` fractions that chain exactly, so equality is safe.
+#[cfg(test)]
 fn push_image_cell(runs: &mut Vec<ImageRun>, col: usize, image: &termwiz::image::ImageCell) {
+    push_image_cell_hashed(runs, col, image, &hash_to_hex(&image.image_data().hash()));
+}
+
+/// wezterm hands out slices of one placement with `x` fractions that chain
+/// exactly, so comparing them with equality is safe.
+fn push_image_cell_hashed(
+    runs: &mut Vec<ImageRun>,
+    col: usize,
+    image: &termwiz::image::ImageCell,
+    hash: &str,
+) {
     let top_left = image.top_left();
     let bottom_right = image.bottom_right();
     let (u0, v0) = (top_left.x.into_inner(), top_left.y.into_inner());
     let (u1, v1) = (bottom_right.x.into_inner(), bottom_right.y.into_inner());
     let (pad_left, pad_top, pad_right, pad_bottom) = image.padding();
-    let hash = hash_to_hex(&image.image_data().hash());
     let z = image.z_index();
 
     let continues = |run: &ImageRun| {
@@ -620,7 +634,7 @@ fn push_image_cell(runs: &mut Vec<ImageRun>, col: usize, image: &termwiz::image:
         return;
     }
     runs.push(ImageRun {
-        hash,
+        hash: hash.to_owned(),
         col,
         span: 1,
         u0,

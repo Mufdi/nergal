@@ -381,6 +381,10 @@ impl TerminalSession {
         self.scroll_offset = 0;
     }
 
+    pub fn bracketed_paste_enabled(&self) -> bool {
+        self.terminal.bracketed_paste_enabled()
+    }
+
     /// True when the underlying terminal is rendering on the alternate
     /// screen (TUI apps like vim, less, claude in fullscreen). Local
     /// scrollback is unavailable there, so wheel events should be

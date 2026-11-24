@@ -498,7 +498,7 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
       `Once you've pushed, I'll refresh the PR Viewer and resolve the annotations.`,
     ].join("\n");
 
-    invoke("terminal_paste", { sessionId: sid, text: prompt })
+    invoke("terminal_deliver", { sessionId: sid, text: prompt })
       .then(() => {
         addToast({
           message: "Apply with Claude",

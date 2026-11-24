@@ -1068,15 +1068,23 @@ function ConflictView({
         </div>
       </div>
 
-      {regions.length > 0 && (
+      {(regions.length > 0 || files.length > 0) && (
         <HintBar>
-          <Hint keys={["arrowup", "arrowdown", "j", "k"]}>region</Hint>
-          <Hint keys={["o", "t", "b"]}>ours/theirs/both</Hint>
-          <Hint keys={["ctrl+shift+o", "ctrl+shift+t"]}>all</Hint>
-          <Hint keys="s">sync</Hint>
-          <Hint keys="ctrl+shift+k">picker</Hint>
-          <Hint keys="ctrl+shift+enter">save</Hint>
-          <Hint keys="ctrl+shift+r">ask agent</Hint>
+          {regions.length > 0 && (
+            <>
+              <Hint keys={["arrowup", "arrowdown", "j", "k"]}>region</Hint>
+              <Hint keys={["o", "t", "b"]}>ours/theirs/both</Hint>
+              <Hint keys={["ctrl+shift+o", "ctrl+shift+t"]}>all</Hint>
+              <Hint keys="s">sync</Hint>
+            </>
+          )}
+          {files.length > 0 && <Hint keys="ctrl+shift+k">picker</Hint>}
+          {regions.length > 0 && (
+            <>
+              <Hint keys="ctrl+shift+enter">save</Hint>
+              <Hint keys="ctrl+shift+r">ask agent</Hint>
+            </>
+          )}
         </HintBar>
       )}
 

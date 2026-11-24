@@ -13,7 +13,7 @@
 
 ## 3. Shared hint bar
 
-- [ ] 3.1 Screenshot check: each git panel view against `Git panel hint bars share one standard` and `The PR viewer lists its keys` (walk 6.4).
+- [x] 3.1 Screenshot check: each git panel view against `Git panel hint bars share one standard` and `The PR viewer lists its keys` (walk 6.4).
 - [x] 3.2 `src/components/ui/kbd.tsx`: add `size?: "sm" | "md"` (`sm` = 9px default, `md` = 10px).
 - [x] 3.3 Add `src/components/ui/hint-bar.tsx` (`HintBar` + `Hint`) with the classes from design D2.
 - [x] 3.4 PR viewer: a `HintBar` below the diff with `j/k` hunk, `a` annotate, `Ctrl+←/→` file, `M` merge; the file picker hint moves to a `HintBar` at the picker bottom.
@@ -39,13 +39,14 @@
 - [x] 7.4 `ConflictsPanel.tsx`: the second "region" hint reads "ours/theirs/both"; the inline "Ctrl+Shift+R sends" hint is removed (the bar lists it); `useConflictResolution.ts` bare `O`/`T` handler returns on `e.defaultPrevented` or a pending leader chord.
 - [x] 7.5 `kbd.tsx`: `aria-label` reads the key as words ("Shortcut: Ctrl+Up arrow"), not the raw id.
 - [x] 7.6 Docs: `docs/design.md` §3.4 states the single placement rule and the PR viewer bar position; `docs/patterns.md` §8 contract adds the bail on `e.defaultPrevented` or a pending leader chord, and notes that the PR viewer `A`/`M` also accept Shift (their chips render upper-case).
+- [x] 7.7 Walk follow-up (user, 2026-11-24): the file picker key `Ctrl+Shift+K` appears in the PR viewer hint bar (with PR files) and in the Conflicts hint bar (with conflicted files, even without regions).
 
 ## 6. Verification
 
-- [ ] 6.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check`, then `npx tsc --noEmit` and `pnpm test`.
-- [ ] 6.2 `~/.claude/skills/work/scripts/work-gates.sh main git-panel-agent-actions` passes; grep finds no `terminal_deliver`, `applyWithClaude`, `askClaude` or `handleSendToClaude` in `src/` or `src-tauri/src/`.
-- [ ] 6.3 Manual walk: in the PR viewer of an open PR, `M` opens "Merge PR #N?"; Cancel merges nothing; holding `M` opens one dialog; `Ctrl+Enter` toggles the fullscreen terminal and opens no merge confirmation; `Ctrl+Space` then `m` opens no merge confirmation.
-- [ ] 6.4 Manual walk: every git panel view (Files, History, Branches, Stashes, PRs list, PR viewer, PR file picker, Conflicts, Conflicts file picker) shows the same bottom hint bar with 10px chips; the PR viewer bar lists `j/k`, `a`, `Ctrl+←/→` and `M`; a narrow panel wraps the Branches bar.
-- [ ] 6.5 Manual walk: clicking "Merge into <base>" opens the same confirmation; the Files view with 2 files keeps its hint bar at the bottom edge; `M` on a merged PR opens nothing and its hint is hidden; with focus in the terminal, `m` types into the terminal; with 2 annotations, the confirmation body says 2 annotations are unresolved; with a leader chord pending, `o` in Conflicts does not accept ours.
-- [ ] 6.6 Manual walk: annotate a PR hunk and press "Apply with Agent": the agent receives the multi-line prompt as one turn and starts without an Enter; a double click, or `Ctrl+Shift+R` twice in a row, sends it once. In a conflict, "Ask Agent" with an intent does the same.
-- [ ] 6.7 Manual walk: the SpecPanel button reads "Send to Agent"; a plan Revise shows "The agent will revise the plan".
+- [x] 6.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check`, then `npx tsc --noEmit` and `pnpm test`.
+- [x] 6.2 `~/.claude/skills/work/scripts/work-gates.sh main git-panel-agent-actions` passes; grep finds no `terminal_deliver`, `applyWithClaude`, `askClaude` or `handleSendToClaude` in `src/` or `src-tauri/src/`.
+- [x] 6.3 Manual walk: in the PR viewer of an open PR, `M` opens "Merge PR #N?"; Cancel merges nothing; holding `M` opens one dialog; `Ctrl+Enter` toggles the fullscreen terminal and opens no merge confirmation; `Ctrl+Space` then `m` opens no merge confirmation.
+- [x] 6.4 Manual walk: every git panel view (Files, History, Branches, Stashes, PRs list, PR viewer, PR file picker, Conflicts, Conflicts file picker) shows the same bottom hint bar with 10px chips; the PR viewer bar lists `j/k`, `a`, `Ctrl+←/→` and `M`; a narrow panel wraps the Branches bar.
+- [x] 6.5 Manual walk: clicking "Merge into <base>" opens the same confirmation; the Files view with 2 files keeps its hint bar at the bottom edge; `M` on a merged PR opens nothing and its hint is hidden; with focus in the terminal, `m` types into the terminal; with 2 annotations, the confirmation body says 2 annotations are unresolved; with a leader chord pending, `o` in Conflicts does not accept ours.
+- [x] 6.6 Manual walk: annotate a PR hunk and press "Apply with Agent": the agent receives the multi-line prompt as one turn and starts without an Enter; a double click, or `Ctrl+Shift+R` twice in a row, sends it once. In a conflict, "Ask Agent" with an intent does the same.
+- [x] 6.7 Manual walk: the SpecPanel button reads "Send to Agent"; a plan Revise shows "The agent will revise the plan".

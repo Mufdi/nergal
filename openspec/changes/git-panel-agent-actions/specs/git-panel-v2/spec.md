@@ -71,7 +71,7 @@ Every keyboard hint bar in the git panel SHALL use one shared hint bar: a row at
 - **THEN** the hints wrap onto a second row instead of being clipped
 
 ### Requirement: The PR viewer lists its keys
-The PR viewer hint bar SHALL list `j/k` (hunks), `a` (annotate the hunk), `Ctrl+←/→` (files) and `M` (merge), and SHALL hide `j/k` and `a` when the PR has no hunks and `M` when the PR is not open. A hint beside a single control in the git panel (a pane header or a field label) MAY stay inline and SHALL use 10px text.
+The PR viewer hint bar SHALL list `j/k` (hunks), `a` (annotate the hunk), `Ctrl+←/→` (files), `Ctrl+Shift+K` (file picker) and `M` (merge), and SHALL hide `j/k` and `a` when the PR has no hunks, `Ctrl+Shift+K` when it has no files, and `M` when the PR is not open. The Conflicts hint bar SHALL list `Ctrl+Shift+K` (file picker) whenever there are conflicted files, even before a file shows regions. A hint beside a single control in the git panel (a pane header or a field label) MAY stay inline and SHALL use 10px text.
 
 #### Scenario: PR viewer shows its keys
 - **GIVEN** the PR viewer shows an open PR with at least one hunk

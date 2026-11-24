@@ -1148,6 +1148,7 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
         {visibleHunks.length > 0 && <Hint keys={["j", "k"]}>hunk</Hint>}
         {visibleHunks.length > 0 && <Hint keys="a">annotate</Hint>}
         <Hint keys={["ctrl+arrowleft", "ctrl+arrowright"]}>file</Hint>
+        {prFiles.length > 0 && <Hint keys="ctrl+shift+k">picker</Hint>}
         {state === "OPEN" && <Hint keys="m">merge</Hint>}
       </HintBar>
 

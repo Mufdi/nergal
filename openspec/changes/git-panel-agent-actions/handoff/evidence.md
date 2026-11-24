@@ -43,3 +43,9 @@ Final verification on the branch (2026-11-24):
 - grep: no `terminal_deliver`, `applyWithClaude`, `askClaude`, `onAskClaude`, `handleSendToClaude` in `src/` or `src-tauri/src/`.
 
 Reviewers: adversarial (opus) PASS, 3 Important + 5 nits; frontend (sonnet) PASS, 4 Important + 5 nits. Resolution in REVIEW.md.
+
+## Walk (user, 2026-11-24)
+
+Table E1–E9 approved on the installed `.deb` (`163f68a`). Follow-up from the walk: the `Ctrl+Shift+K` file picker hint was missing; added to the PR viewer bar (with PR files) and the Conflicts bar (with conflicted files, even without regions), task 7.7. The user waived a walk for that hint.
+
+Final check after the follow-up: clippy clean; cargo test 1314 passed, 1 ignored; tsc clean; pnpm test 56 files, 652 tests; work-gates 6a/6b/6c PASS, Red locks PASS.

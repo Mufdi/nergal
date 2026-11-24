@@ -330,8 +330,8 @@ pub fn plan_review_fifo_path(pid: u32) -> io::Result<PathBuf> {
     #[cfg(unix)]
     {
         let dir = ipc_dir()?;
-        // Not a socket, so sun_path limit does not apply; keep it readable.
-        Ok(dir.join(format!("plan-{pid}.fifo")))
+        let nonce = uuid::Uuid::new_v4().simple();
+        Ok(dir.join(format!("plan-{pid}-{nonce}.fifo")))
     }
     #[cfg(windows)]
     {
@@ -1602,3 +1602,7 @@ fn main() {
         eprintln!("Test socket would be at: {}", sock_path.display());
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "plan_fifo_path_tests.rs"]
+mod plan_fifo_path_tests;

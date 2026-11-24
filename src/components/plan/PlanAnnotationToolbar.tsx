@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { useSetAtom, useAtomValue } from "jotai";
 import { addAnnotationAtom, activeAnnotationsAtom, clearAnnotationsAtom, serializeAnnotations, type AnnotationType } from "@/stores/annotations";
 import { toastsAtom } from "@/stores/toast";
+import type { PlanReviewStatus } from "@/stores/plan";
 import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import type { DomMeta } from "@/lib/highlighter";
 import { MessageSquare, Replace, Trash2, Copy, X } from "lucide-react";
@@ -329,7 +330,7 @@ export function PlanAnnotationToolbar({ position, targetText, highlightId, start
 
 interface PlanAnnotationFooterProps {
   planPath: string;
-  reviewStatus: "idle" | "pending_review" | "submitted";
+  reviewStatus: PlanReviewStatus;
   onRevise: (feedback: string) => void;
   onApprove: () => void;
   onAddGlobalComment?: (comment: string) => void;

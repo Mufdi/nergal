@@ -15,6 +15,8 @@ mod models;
 mod notify;
 pub mod obsidian;
 mod openspec;
+#[cfg(unix)]
+mod plan_fifo;
 mod plan_state;
 pub mod platform;
 mod platform_proc;

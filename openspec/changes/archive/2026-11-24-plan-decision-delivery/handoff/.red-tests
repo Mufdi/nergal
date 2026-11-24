@@ -1,0 +1,6 @@
+6e590cf4642081e88da8ef429d30820a5f9e82c2  src-tauri/src/plan_fifo_tests.rs
+96450268743e72e79ee6eb671ccc62e931e42fdf  src-tauri/src/platform/plan_fifo_path_tests.rs
+1ea56c47ab8a26510cb537cc4827225472460bcc  src-tauri/src/hooks/cli_plan_review_output_tests.rs
+b9070dfe21b1df127767e556de3d03cff75fee60  src-tauri/src/agents/claude_code/adapter_plan_fifo_tests.rs
+e770e27e3209b4e8ef63b207ddcc9bca9bec23fe  src-tauri/src/setup_status_tests.rs
+9661006ea1794904f76a12796e2e2a5e5abfefd5  src/stores/planReady.test.ts

@@ -71,8 +71,22 @@ impl ClaudeCodeAdapter {
 
     /// Record the FIFO path for a session's pending plan-review. Called by
     /// the hook dispatcher when a `PlanReview` hook event arrives.
-    pub fn register_pending_plan_fifo(&self, session_id: &str, path: PathBuf) {
-        self.pending_plan_fifos.insert(session_id.to_string(), path);
+    pub fn register_pending_plan_fifo(&self, session_id: &str, path: PathBuf) -> Option<PathBuf> {
+        self.pending_plan_fifos.insert(session_id.to_string(), path)
+    }
+
+    pub fn release_pending_plan_fifo(&self, session_id: &str) -> Option<PathBuf> {
+        self.pending_plan_fifos
+            .remove(session_id)
+            .map(|(_, path)| path)
+    }
+
+    /// Atomically consumes the registration only when it names `requested`,
+    /// so two submits for one review cannot both write into the pipe.
+    pub fn claim_pending_plan_fifo(&self, session_id: &str, requested: &Path) -> bool {
+        self.pending_plan_fifos
+            .remove_if(session_id, |_, registered| registered == requested)
+            .is_some()
     }
 }
 
@@ -293,6 +307,21 @@ impl AgentAdapter for ClaudeCodeAdapter {
                 .unwrap_or_else(|| "Plan changes requested".to_string());
             serde_json::json!({ "approved": false, "message": msg })
         };
+        #[cfg(unix)]
+        {
+            let payload = body.to_string();
+            tokio::task::spawn_blocking(move || {
+                crate::plan_fifo::write_plan_decision(
+                    &fifo_path,
+                    payload.as_bytes(),
+                    std::time::Duration::from_secs(5),
+                )
+            })
+            .await
+            .map_err(|e| AdapterError::Io(std::io::Error::other(e)))?
+            .map_err(AdapterError::Io)?;
+        }
+        #[cfg(not(unix))]
         tokio::fs::write(&fifo_path, body.to_string())
             .await
             .map_err(AdapterError::Io)?;
@@ -303,6 +332,10 @@ impl AgentAdapter for ClaudeCodeAdapter {
 #[cfg(test)]
 #[path = "adapter_args_tests.rs"]
 mod args_tests;
+
+#[cfg(test)]
+#[path = "adapter_plan_fifo_tests.rs"]
+mod plan_fifo_tests;
 
 #[cfg(test)]
 mod tests {
@@ -608,29 +641,76 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn submit_plan_decision_writes_to_registered_fifo() {
-        // Use a regular file (not a FIFO) — tokio::fs::write doesn't care; the
-        // production code path uses an actual FIFO created by `mkfifo`.
+        use std::io::Read;
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::OpenOptionsExt;
+
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("plan-decision");
+        let c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+
+        let mut reader = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&path)
+            .unwrap();
+        let handle = std::thread::spawn(move || {
+            let mut out = Vec::new();
+            let mut buf = [0u8; 256];
+            let give_up = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while std::time::Instant::now() < give_up {
+                match reader.read(&mut buf) {
+                    Ok(0) if !out.is_empty() => break,
+                    Ok(0) => std::thread::sleep(std::time::Duration::from_millis(1)),
+                    Ok(n) => out.extend_from_slice(&buf[..n]),
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(1))
+                    }
+                    Err(e) => panic!("reader error: {e}"),
+                }
+            }
+            out
+        });
+
         let a = ClaudeCodeAdapter::new();
         a.register_pending_plan_fifo("s1", path.clone());
         a.submit_plan_decision(
             "s1",
             PlanDecision {
-                approved: false,
-                message: Some("revise step 3".into()),
+                approved: true,
+                message: None,
             },
         )
         .await
         .unwrap();
-        let body = std::fs::read_to_string(&path).unwrap();
-        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(v.get("approved").and_then(|v| v.as_bool()), Some(false));
-        assert_eq!(
-            v.get("message").and_then(|v| v.as_str()),
-            Some("revise step 3")
-        );
+        let got = handle.join().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&got).unwrap();
+        assert_eq!(v, serde_json::json!({ "approved": true }));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn submit_plan_decision_to_regular_file_is_io_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("plain");
+        std::fs::write(&path, "x").unwrap();
+        let a = ClaudeCodeAdapter::new();
+        a.register_pending_plan_fifo("s1", path.clone());
+        let err = a
+            .submit_plan_decision(
+                "s1",
+                PlanDecision {
+                    approved: true,
+                    message: None,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AdapterError::Io(_)), "got {err:?}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "x");
     }
 }

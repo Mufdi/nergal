@@ -61,3 +61,32 @@ export function auxReduce(held: AuxHeld | null, event: AuxEvent): { held: AuxHel
       return { held: null, send: null };
   }
 }
+
+export type KeyboardMenuKey = "shift-f10" | "menu";
+
+interface KeyLike {
+  code: string;
+  shiftKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  metaKey: boolean;
+}
+
+export function keyboardMenuKey(e: KeyLike): KeyboardMenuKey | null {
+  if (e.ctrlKey || e.altKey || e.metaKey) return null;
+  if (e.code === "F10" && e.shiftKey) return "shift-f10";
+  if (e.code === "ContextMenu" && !e.shiftKey) return "menu";
+  return null;
+}
+
+// Shift+F10 is the keyboard escape hatch to the native menu, so it is never
+// suppressed; the Menu key carries no Shift, so it follows the right-click rule.
+export function suppressContextMenu(args: {
+  tracking: boolean;
+  offset: number;
+  shift: boolean;
+  keyboard: KeyboardMenuKey | null;
+}): boolean {
+  if (args.keyboard === "shift-f10") return false;
+  return reportsMouse(args.tracking, args.offset, args.keyboard === "menu" ? false : args.shift);
+}

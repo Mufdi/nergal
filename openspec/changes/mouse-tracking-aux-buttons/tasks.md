@@ -16,10 +16,15 @@
 - [x] 3.3 Test (Red): vitest `releasePointerCell(cell, scrollOffset)`: returns the cell at offset 0, null at offset 30, null when the cell is null. Rust: a press dropped while scrolled back, followed by its release (still scrolled back), writes nothing.
 - [x] 3.4 Implement Revision 2 (implementation.md "Revision 2 plan").
 
+## 5. Walk findings (Revision 3)
+
+- [x] 5.1 Test (Red): vitest `keyboardMenu.test.ts`: `keyboardMenuKey` (Shift+F10 → `shift-f10`; Ctrl/Alt/Meta+Shift+F10 → null; plain F10 → null; `ContextMenu` → `menu`; other keys → null); `suppressContextMenu` (`shift-f10` → false with tracking at offset 0; `menu` → true with tracking at offset 0, false without tracking, false when scrolled back; `null` follows `reportsMouse` with shift).
+- [x] 5.2 Implement per design "Revision 3" and implementation.md "Revision 3 plan".
+
 ## 4. Verification
 
 - [x] 4.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check`, then `npx tsc --noEmit` and `pnpm test`.
 - [x] 4.2 `~/.claude/skills/work/scripts/work-gates.sh main mouse-tracking-aux-buttons` passes.
 - [ ] 4.3 Manual walk: in a shell, run `printf '\e[?1000h\e[?1006h'; cat -v`; a right click prints an SGR report like `^[[<2;…M` and no context menu opens. Press Ctrl+C, run `printf '\e[?1000l'`, then right-click: no report, and the context menu opens.
 - [ ] 4.4 Manual walk: open `less` on a long file (alternate screen, no mouse tracking); a right click opens the context menu. In `htop`, or `vim` with `:set mouse=a`, a right or middle click reaches the app.
-- [ ] 4.5 Manual walk: in a Claude Code session (default renderer), a right click pastes the clipboard once on release and no context menu opens; a middle click reaches Claude Code (record what it does) and no context menu opens. Scroll the terminal up into history and right-click: nothing is sent to Claude Code and the context menu opens. Back at the bottom, Shift+right-click opens the context menu; with focus in the terminal, the Menu key opens no menu while Claude Code runs, and Shift+F10 opens it. (Left clicks keep their alternate-screen rule.)
+- [ ] 4.5 Manual walk: in a Claude Code session, a right click pastes the clipboard once and no context menu opens; a middle click reaches Claude Code and no context menu opens. With Claude Code on the primary screen (`tui` not fullscreen), scroll the terminal up into history and right-click: nothing is sent and the context menu opens (with `tui: fullscreen` the scroll is Claude Code's own and the click still reaches it). At the live bottom, Shift+right-click opens the context menu; with focus in the terminal, the Menu key opens no menu while Claude Code runs, and Shift+F10 opens it. (Left clicks keep their alternate-screen rule.)

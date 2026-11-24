@@ -33,6 +33,14 @@ While the running app has mouse tracking enabled (DECSET 1000, 1002 or 1003) and
 - **WHEN** the user presses the middle button
 - **THEN** the canvas SHALL NOT forward the middle press
 
+#### Scenario: Keyboard context menu over the terminal
+- **GIVEN** the running app has mouse tracking enabled and the view sits at the live bottom, with focus in the terminal
+- **WHEN** the user presses Shift+F10
+- **THEN** no byte SHALL reach the PTY and the context menu SHALL NOT be suppressed
+- **AND WHEN** the user presses the Menu key
+- **THEN** no byte SHALL reach the PTY and the context menu SHALL be suppressed
+- **AND** without mouse tracking the Menu key SHALL NOT suppress the context menu
+
 #### Scenario: Mouse tracking on the primary screen
 - **GIVEN** the app wrote `ESC[?1000h` and the alternate screen is not active
 - **WHEN** the user presses the right button

@@ -27,3 +27,13 @@ The frontend `scrollOffset` lags the backend by one update, so a right click rig
 - Synchronized output can hold a mode change up to `SYNC_OUTPUT_CAP`; a right click in that window shows the context menu once. Accepted.
 - A crashed app can leave tracking on; a right click then types a report at the shell. xterm and wezterm behave the same.
 - Left clicks on the primary screen with tracking on still do not reach the app (out of scope; walk notes say so).
+
+## Revision 3: walk findings (2026-11-24, checkpoint 1)
+
+The walk showed that Shift+F10 opens no context menu over the terminal, which the spec promises. The terminal's `keydown` listener on the hidden textarea forwards every key to the PTY and calls `preventDefault()` (`src/components/terminal/terminalService.ts:706`), which cancels the browser's keyboard context menu. A keyboard-opened `contextmenu` event also carries no `shiftKey` in the Shift+F10 sense, so the container filter (`terminalService.ts:867`) would suppress it under mouse tracking anyway.
+
+Fix: Shift+F10 (no Ctrl/Alt/Meta) and the Menu key (`code === "ContextMenu"`) are not sent to the PTY and keep their default action. The keydown marks the entry with the key that asked for the menu; the container's `contextmenu` handler consumes that mark: Shift+F10 always shows the menu (the Shift exception), the Menu key follows the mouse rule without Shift (suppressed while the app tracks the mouse at the live bottom). Pure helpers `keyboardMenuKey(e)` and `suppressContextMenu({ tracking, offset, shift, keyboard })` hold the rule.
+- Alternative: open a custom menu from JavaScript on Shift+F10. Rejected: the terminal has no custom context menu today; the native one is the contract.
+- Alternative: forward the Menu key to the PTY. Rejected: terminal apps do not read it, and xterm/wezterm do not send it either.
+
+The walk also showed that Claude Code with `tui: fullscreen` runs on the alternate screen with mouse tracking: scrolling up there scrolls Claude Code's own view, Nergal's scroll offset stays 0, and a right click reaches Claude Code (which pastes). That is the spec'd behavior; walk 4.5 assumed the primary-screen renderer and is rewritten.

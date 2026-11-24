@@ -24,7 +24,7 @@ import { toastsAtom } from "@/stores/toast";
 
 import { FontAtlas, isWideCell, measureFont, type FontMetrics } from "./fontAtlas";
 import { afterResizeFailure, nextResize, pixelGeometry, recordRequest, type Sent } from "./pixelGeometry";
-import { auxButtonToForward, releasePointerCell, reportsMouse, auxReduce, type AuxHeld } from "./mouseButtons";
+import { auxButtonToForward, keyboardMenuKey, releasePointerCell, reportsMouse, suppressContextMenu, auxReduce, type AuxHeld, type KeyboardMenuKey } from "./mouseButtons";
 import { TERM_FONT, TERM_THEME, refreshTermTheme, rgbaToCss } from "./theme";
 import { readingLayout } from "./readingCols";
 import { clampedCell } from "./cellMapping";
@@ -112,6 +112,7 @@ interface Entry {
   /// scroll loses most of its travel.
   wheelAccum: number;
   auxHeld: AuxHeld | null;
+  pendingKeyboardMenu: KeyboardMenuKey | null;
 }
 
 // ── Module state ──
@@ -450,6 +451,7 @@ async function showTerminal(opts: {
       lastComposed: null,
       wheelAccum: 0,
       auxHeld: null,
+      pendingKeyboardMenu: null,
     };
 
     wireInput(entry);
@@ -694,6 +696,12 @@ function wireInput(entry: Entry): void {
       return;
     }
 
+    const menuKey = keyboardMenuKey(e);
+    if (menuKey) {
+      entry.pendingKeyboardMenu = menuKey;
+      return;
+    }
+
     if (shouldPassThrough(e)) return;
 
     // Any typing implicitly commits the selection — matches every mainstream
@@ -709,6 +717,13 @@ function wireInput(entry: Entry): void {
     // under our canvas nor accumulates stale state.
     entry.textarea.value = "";
   });
+
+  // A real right click always passes mousedown before contextmenu, so this
+  // drops a stale keyboard mark; clearing on keyup instead would race engines
+  // that fire the keyboard contextmenu after the key is released.
+  entry.container.addEventListener("mousedown", () => {
+    entry.pendingKeyboardMenu = null;
+  }, { capture: true });
 
   entry.textarea.addEventListener("compositionstart", () => {
     entry.composing = true;
@@ -865,7 +880,14 @@ function wireInput(entry: Entry): void {
   // container because the keyboard-opened menu fires on the focused textarea,
   // a sibling of the canvas.
   entry.container.addEventListener("contextmenu", (e) => {
-    if (reportsMouse(entry.mouseTracking, entry.scrollOffset, e.shiftKey)) e.preventDefault();
+    const suppress = suppressContextMenu({
+      tracking: entry.mouseTracking,
+      offset: entry.scrollOffset,
+      shift: e.shiftKey,
+      keyboard: entry.pendingKeyboardMenu,
+    });
+    entry.pendingKeyboardMenu = null;
+    if (suppress) e.preventDefault();
   });
 
   // A drag can end with the pointer off the canvas (selecting to the bottom/right

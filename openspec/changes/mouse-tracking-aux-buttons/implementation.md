@@ -45,3 +45,9 @@
 - `releasePointerCell(cell, scrollOffset)` in `mouseButtons.ts`: the pointer cell at the live bottom, `null` when scrolled back, so `auxReduce` falls back to the press cell instead of a history row; used by the window mouseup (`terminalService.ts:150`).
 - `docs/patterns.md` terminal-mouse note: a scrolled-back view sends no press; a release of a button pressed at the bottom still goes out.
 - `src-tauri/src/terminal/session.rs:392-402`: move the wheel doc block onto `mouse_wheel` (`:459`).
+
+## Revision 3 plan (walk findings)
+
+- `src/components/terminal/mouseButtons.ts`: add `keyboardMenuKey(e: { code: string; shiftKey: boolean; ctrlKey: boolean; altKey: boolean; metaKey: boolean }): "shift-f10" | "menu" | null` and `suppressContextMenu(args: { tracking: boolean; offset: number; shift: boolean; keyboard: "shift-f10" | "menu" | null }): boolean` (keyboard `shift-f10` → false; `menu` → `reportsMouse(tracking, offset, false)`; `null` → `reportsMouse(tracking, offset, shift)`).
+- `src/components/terminal/terminalService.ts`: in the textarea `keydown` (`:649`), before `shouldPassThrough`, when `keyboardMenuKey(e)` is non-null set `entry.pendingKeyboardMenu` and return without `preventDefault` or `sendKeyEvent`. The container `contextmenu` listener (`:867`) calls `suppressContextMenu` with that mark and clears it. Add `pendingKeyboardMenu` to the `Entry` type.
+- Tests in a new `src/components/terminal/keyboardMenu.test.ts` (the existing `mouseButtons.test.ts` is locked).

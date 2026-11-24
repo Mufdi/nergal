@@ -62,3 +62,19 @@
 
 - clippy clean; `cargo test` 1273 passed, 0 failed; fmt clean; tsc clean; `pnpm test` 561 passed; work-gates: 5 locks unchanged, gitleaks clean. Comment audit: WHY-only (doc blocks moved, not new).
 - Walks 4.3-4.5 wait for the checkpoint-1 `.deb`.
+
+## Revision 3 (walk findings, 2026-11-24)
+
+- Walk: Shift+F10 opened no menu. Cause: the textarea keydown sends every key to the PTY with `preventDefault()`, and a keyboard `contextmenu` would hit the Shift-less tracking filter anyway. Claude Code with `tui: fullscreen` runs on the alternate screen, so its scroll is its own and a right click reaches it (spec'd); walk 4.5 rewritten.
+- Red (test-writer): `src/components/terminal/keyboardMenu.test.ts` (19 cases, Red: missing exports). Locked.
+- Builder: `keyboardMenuKey`, `suppressContextMenu` (`mouseButtons.ts`), `pendingKeyboardMenu` mark in `terminalService.ts`. Main thread: the stale mark is cleared on container `mousedown` (capture) instead of `keyup`, since an engine may fire the keyboard `contextmenu` after the key is released; one comment corrected; indentation fix.
+
+| Gate | Result | Detail |
+|------|--------|--------|
+| 5. Deps | SKIP | no manifest or lockfile changed |
+| 6a. Placeholders | PASS | none |
+| 6b. Bar weakening | PASS | none |
+| 6c. Secrets | PASS | gitleaks clean |
+| 2. Red locks | PASS | 6 locked file(s) unchanged |
+
+- tsc clean; vitest 588 passed. WebKitGTK firing `contextmenu` for Shift+F10 is verified only by walk 4.5.

@@ -66,17 +66,18 @@ The canvas SHALL draw each image run of a painted row inside its cells: the sour
 - **THEN** the image is drawn in the rows it occupies
 
 ### Requirement: Each terminal caps its decoded images
-Each terminal's frontend image cache SHALL hold at most 256 MB of decoded image data, counted as width × height × 4 bytes per bitmap. When an insertion exceeds the budget, the cache SHALL drop the least recently drawn images until it fits, releasing their bitmaps, but SHALL NOT drop an image drawn in the current paint pass; the cache may exceed the budget until that pass ends. A decode failure SHALL be permanent for that hash; a fetch failure SHALL be retried at most twice. A dropped image's cells SHALL show text only until a row referencing it is painted again, which fetches it again. Closing a terminal, including a quake shell, SHALL release all its bitmaps, and a fetch or decode that completes afterwards SHALL release its bitmap without drawing.
+Each terminal's frontend image cache SHALL hold at most 256 MB of decoded image data, counted as width × height × 4 bytes per bitmap. When an insertion exceeds the budget, the cache SHALL drop the least recently drawn images until it fits, releasing their bitmaps, but SHALL NOT drop an image that a current row references; the cache may exceed the budget while referenced images alone exceed it. A decode failure SHALL be permanent for that hash; a fetch failure SHALL be retried at most twice. Above a hard ceiling of 512 MB the cache SHALL NOT decode a new image even when a row references it; its cells show text until the cache shrinks. A dropped image's cells SHALL show text only until a row referencing it is painted again, which fetches it again. Closing a terminal, including a quake shell, SHALL release all its bitmaps, and afterwards a completing fetch SHALL skip the decode and a completing decode SHALL release its bitmap, both without drawing.
 
 #### Scenario: Budget evicts the least recently drawn image
-- **GIVEN** a cache with a 256 MB budget holding images A (drawn first) and B (drawn later), 100 MB each
+- **GIVEN** a cache with a 256 MB budget holding images A (drawn first) and B (drawn later), 100 MB each, neither referenced by a current row
 - **WHEN** image C of 100 MB is decoded
 - **THEN** A is dropped and B and C stay
 
-#### Scenario: Images drawn in the same pass do not evict each other
-- **GIVEN** two visible images of 150 MB each are drawn in one paint pass
-- **WHEN** the second is inserted
-- **THEN** neither is dropped during that pass
+#### Scenario: Referenced images are never evicted
+- **GIVEN** rows reference images A and B of 150 MB each, both cached
+- **WHEN** a 10 MB image C, also referenced, finishes decoding during an update that repaints none of A's or B's rows
+- **THEN** A, B and C stay cached
+- **AND** once A is no longer referenced, the next insertion drops A
 
 #### Scenario: Evicted image is fetched again when it comes back
 - **GIVEN** image A was dropped by the budget

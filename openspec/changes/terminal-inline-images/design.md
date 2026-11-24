@@ -64,21 +64,21 @@ Alternatives:
 
 ### D3. Sixel pixels travel as raw RGBA
 
-Sixel images are `Rgba8` in wezterm. They are sent as raw RGBA; iTerm2 images stay in their encoded form (`EncodedFile`) and the WebView decodes them. Encoded bytes come from any process that writes to the PTY (a `cat` of a hostile file, output over ssh), and they now reach WebKit's native decoders. The backend sniffs magic bytes and serves only PNG, JPEG and GIF; any other encoded format returns an error and its cells show text. This narrows the decoder surface to the three formats terminal image tools send.
+Sixel images are `Rgba8` in wezterm. They are sent as raw RGBA; iTerm2 images stay in their encoded form (`EncodedFile`) and the WebView decodes them. Encoded bytes come from any process that writes to the PTY (a `cat` of a hostile file, output over ssh), and they now reach WebKit's native decoders. The backend sniffs magic bytes and serves only PNG, JPEG and GIF (a WebP, which wezterm keeps encoded even when it downscales, returns an error; a JPEG or BMP that wezterm downscales arrives already decoded as `Rgba8`, kind 0); any other encoded format returns an error and its cells show text. This narrows the decoder surface to the three formats terminal image tools send.
 
 Alternatives:
 - PNG-encode sixel pixels in the backend. Rejected: a new direct dependency and CPU spent while holding the emulator lock, for a one-time transfer.
 
 ### D4. The frontend cache is per terminal, LRU by last draw, 256 MB
 
-A pure module `imageCache.ts` owns: in-flight dedupe (one fetch per hash), the decoded bitmap map, byte accounting (`w*h*4`), a last-drawn tick per hash, and eviction of the least recently drawn entries past 256 MB (`bitmap.close()`). The cache is per terminal (the user set the budget per terminal), so closing a terminal releases its bitmaps at once. A decode failure is permanent for that hash while the cache lives: the hash is content-addressed, so the same bytes fail the same way. A transport failure (the command errors, e.g. the image is no longer held) is retried at most twice more, on later paints, then becomes permanent. Eviction never drops a hash drawn in the current paint pass; the cache may overshoot the budget until that pass ends, so two large visible images cannot evict each other in turn. A fetch or decode that resolves after `dispose()` closes its bitmap and notifies nobody.
+A pure module `imageCache.ts` owns: in-flight dedupe (one fetch per hash), the decoded bitmap map, byte accounting (`w*h*4`), a last-drawn tick per hash, and eviction of the least recently drawn entries past 256 MB (`bitmap.close()`). The cache is per terminal (the user set the budget per terminal), so closing a terminal releases its bitmaps at once. A decode failure is permanent for that hash while the cache lives: the hash is content-addressed, so the same bytes fail the same way. A transport failure (the command errors, e.g. the image is no longer held) is retried at most twice more, on later paints, then becomes permanent. Eviction never drops a hash that the current rows reference: the terminal passes the set of hashes in `rowImages` to the cache after every grid update (`setVisible`). Only unreferenced entries are evicted, least recently drawn first; while the visible set alone exceeds 256 MB the cache overshoots, and it trims as soon as an image stops being referenced. Paint passes are partial (`applyUpdate` repaints only touched rows), so "drawn in this pass" cannot stand for "on screen". An entry enters with the current draw tick, even when no row references it any more by the time its decode resolves. A hard ceiling of 512 MB (2× the budget) stops decoding new images even when referenced. After `dispose()`, a fetch that resolves skips the decode, and a decode that resolves closes its bitmap; neither notifies.
 
 Alternatives:
 - One global cache shared by all terminals. Rejected: the budget is per terminal, and per-terminal ownership makes release on close trivial.
 
 ### D5. Drawing order and decode
 
-Runs with `z >= 0` are drawn after the glyphs and the underline of their row and before the selection and the cursor; runs with `z < 0` (kitty only, FRI-613) before the glyphs. Encoded files decode with `createImageBitmap(new Blob([bytes]))`, RGBA with `createImageBitmap(new ImageData(...))`; both resolve off the paint path. When a bitmap is ready, the terminal repaints the rows whose runs reference it, then the selection and the cursor.
+Runs with `z >= 0` are drawn after the glyphs and the underline of their row and before the selection and the cursor; runs with `z < 0` (kitty only, FRI-613) before the glyphs. Encoded files decode with `createImageBitmap(new Blob([bytes]), { imageOrientation: "none" })` (wezterm sized the cell span from the raw dimensions, so EXIF rotation would stretch the slices), RGBA with `createImageBitmap(new ImageData(...))`; both resolve off the paint path. When a bitmap is ready, the terminal repaints the rows whose runs reference it, then the selection and the cursor.
 
 ### D6. The sent-image state resets only on attach
 
@@ -86,7 +86,8 @@ The frontend cache lives with the terminal entry; the backend registry is per te
 
 ## Risks / Trade-offs
 
-- [Visible images alone exceed 256 MB] → the cache overshoots until the paint pass ends and evicts only images not drawn in that pass.
+- [Visible images alone exceed 256 MB] → the cache overshoots while referenced images alone exceed the budget and evicts only unreferenced entries.
+- [Hostile output references many 100 MB images at once (e.g. one-row-tall, very wide images)] → hard ceiling of 2× the budget (512 MB): above it a new image is not decoded even when referenced; it counts as a transport failure (retryable once the visible set shrinks) and its cells show text.
 - [Padding semantics] → runs carry wezterm's per-cell padding values and merge only cells whose left/top padding match; the destination uses the first cell's left padding and the last cell's right padding. Sixel and iTerm2 use zero padding. Kitty offsets (FRI-613) may need per-cell drawing; FRI-613 decides that.
 - [Padding is fixed in pixels at placement time] → after a font zoom or a DPR change the padding no longer matches the new cell size; zero for sixel and iTerm2, so accepted; walk 4.5 zooms with an image on screen.
 - [Wide characters before an image on the same row] → `col` is the terminal column (`cell_index()`), while `cells` skips wide-char continuations; the frontend positions runs by terminal column. Text and image positions on such rows follow the existing wide-char painting.

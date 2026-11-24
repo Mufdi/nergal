@@ -8,11 +8,11 @@
     "id": "FRI-611",
     "pending": []
   },
-  "validation": "pending",
+  "validation": "validated",
   "planning_only": false,
   "iprev": {
-    "rounds": 0,
-    "verdict": null
+    "rounds": 3,
+    "verdict": "APPROVED"
   },
   "interview_answers": {
     "split": "FRI-600 split into FRI-611 (static sixel+iTerm2), FRI-612 (animated GIF), FRI-613 (kitty) (user, 2026-11-24)",
@@ -23,5 +23,11 @@
     "scrollback": "images show in the scrollback (orchestrator default, reversible)",
     "sixel_transport": "raw RGBA, no new dependency (orchestrator default, reversible)"
   },
-  "events": []
+  "events": [
+    {
+      "ts": "2026-11-24",
+      "type": "validated",
+      "note": "iprev opus 3 rounds: r1 14 (2 high), r2 5 (1 medium blocking: pass-based eviction), r3 APPROVED with 5 items (1-3 required) applied before build"
+    }
+  ]
 }

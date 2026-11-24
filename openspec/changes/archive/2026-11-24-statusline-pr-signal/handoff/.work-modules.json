@@ -1,0 +1,39 @@
+{
+  "tier": "S",
+  "ceremony": "quick-fix",
+  "risk_tier": "low",
+  "spec_target": "agent-status-telemetry, git-panel-v2",
+  "tracker": {
+    "system": "linear",
+    "id": "FRI-473",
+    "pending": []
+  },
+  "validation": "validated",
+  "planning_only": false,
+  "iprev": {
+    "rounds": 3,
+    "verdict": "REVISE (cap)"
+  },
+  "interview_answers": {
+    "approach": "Issue: complement, not replace, gh pr view; the status line pr object is an invalidation signal.",
+    "fallback_poll": "Reversible default (documented): 60 s fallback for get_pr_status, matching the existing list_prs poll.",
+    "run_plan": "Stacked on mufdidev/fri-507-bracketed-paste-gate; last item before the checkpoint-1 .deb."
+  },
+  "events": [
+    {
+      "ts": "2026-11-23T21:31:48-03:00",
+      "type": "iprev-cap",
+      "note": "R3 REVISE (2 medium, 2 low) at the 3-round cap for medium risk; all four folded into design D6 and the spec without a 4th round"
+    },
+    {
+      "ts": "2026-11-23T21:31:48-03:00",
+      "type": "validated",
+      "note": "R1 REVISE (1 high ship/merge staleness, 5 medium, 4 low), R2 REVISE (2 medium, 3 low), R3 REVISE cap (2 medium, 2 low, folded)"
+    },
+    {
+      "ts": "2026-11-23T21:54:25-03:00",
+      "type": "yield",
+      "note": "iprev 3 rounds, cap (R1: 1 high, 5 medium, 4 low); adversarial 2 Important bugs + 3 compliance + 5 nits, frontend 2 Important + 5 nits, re-review 1 Important + 5 nits; all fixed except 1 nit filed as FRI-606; Red conflicts 1 (obsolete reverse-order test, ruled and removed); gate failures 0; walks pending checkpoint 1"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+Changes after round 1 (design rewritten; see design.md D1-D5):
+- #1 (high) D3: Ship and PR-viewer merge call a shared refreshPrInfoAction right after success; scenario "Ship refreshes without waiting"; walk 3.4.
+- #2 (medium) Field is github_pr (snake_case, AgentStatus in src/stores/workspace.ts:196-224 + defaultAgentStatus); paths fixed.
+- #3 (medium) All AgentStatus literal sites listed (pi, opencode, codex + tests, server test) in Impact, implementation facts and task 1.2.
+- #4 (medium) D1: baseline+nonce replaced by signal-at-fetch + pure shouldRefreshPr(entry, signal, now), checked on mount, on signal change and every 60 s; scenario "A change while the panel showed another session".
+- #5 (medium) D4: backend per-session dedup map, info level (default filter), cleared at SessionEnd; walk 3.3 matches.
+- #6 (medium) D5: CI effect keyed on number+state; cadence change declared in proposal and walk 3.5.
+- #7 (low) Fallback rationale corrected (title edits, idle CC, custom status line, old CC).
+- #8 (low) D2: signature = PR number or none; review_state dropped; kind mr -> none; scenario added.
+- #9 (low) prSignalMapAtom is sessionScopedMapAtom; signal lives in PrInfoCacheEntry (already session-scoped).
+- #10 (low) shouldRefreshPr and refreshPrInfoAction covered by vitest; PR -> none scenario added.

@@ -131,6 +131,7 @@ impl StatusAcc {
             rate_7d_resets_at: None,
             effort_level: self.effort.clone(),
             prompt_cache: None,
+            github_pr: None,
         }
     }
 }

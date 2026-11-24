@@ -11,17 +11,19 @@ import {
   stashCountMapAtom,
   gitHeaderMapAtom,
   prInfoMapAtom,
+  prSignalMapAtom,
+  refreshPrInfoAction,
   pendingMergeMapAtom,
   PRS_CACHE_TTL_MS,
   STASH_CACHE_TTL_MS,
   SESSION_GIT_TTL_MS,
-  PR_INFO_TTL_MS,
   transitionAfterCleanupAction,
   gitChipModeAtom,
   type ChipMode,
   type PrChecks,
   type PrSummary,
 } from "@/stores/git";
+import { shouldRefreshPr } from "@/stores/prSignal";
 import { triggerMergeAtom, expandGitZen } from "@/stores/shortcuts";
 import { toastsAtom } from "@/stores/toast";
 import { selectedConflictFileMapAtom } from "@/stores/conflict";
@@ -85,7 +87,12 @@ export function GitPanel({ sessionId }: GitPanelProps) {
   const gitHeaderMap = useAtomValue(gitHeaderMapAtom);
   const setGitHeaderMap = useSetAtom(gitHeaderMapAtom);
   const prInfoMap = useAtomValue(prInfoMapAtom);
-  const setPrInfoMap = useSetAtom(prInfoMapAtom);
+  const prSignalMap = useAtomValue(prSignalMapAtom);
+  const refreshPrInfo = useSetAtom(refreshPrInfoAction);
+  const prInfoMapRef = useRef(prInfoMap);
+  prInfoMapRef.current = prInfoMap;
+  const prSignalMapRef = useRef(prSignalMap);
+  prSignalMapRef.current = prSignalMap;
   const pendingMergeMap = useAtomValue(pendingMergeMapAtom);
   const setPendingMergeMap = useSetAtom(pendingMergeMapAtom);
   const [renamingBranch, setRenamingBranch] = useState(false);
@@ -114,6 +121,8 @@ export function GitPanel({ sessionId }: GitPanelProps) {
   const branch = headerEntry?.branch ?? "";
   const ahead = headerEntry?.ahead ?? 0;
   const prInfo: PrInfo | null = prInfoMap[sessionId]?.data ?? null;
+  const prInfoNumber = prInfo?.number;
+  const prInfoState = prInfo?.state;
   const pendingMerge = pendingMergeMap[sessionId]?.pending ?? false;
   const prCount = workspaceId
     ? (prsCacheMap[workspaceId]?.data.filter((p) => p.state === "OPEN").length ?? 0)
@@ -132,16 +141,6 @@ export function GitPanel({ sessionId }: GitPanelProps) {
       })
       .catch(() => {});
   }, [sessionId, setGitHeaderMap]);
-
-  const refreshPr = useCallback(() => {
-    invoke<PrInfo | null>("get_pr_status", { sessionId })
-      .then((data) => {
-        setPrInfoMap((prev) => ({ ...prev, [sessionId]: { data, fetchedAt: Date.now() } }));
-      })
-      .catch(() => {
-        setPrInfoMap((prev) => ({ ...prev, [sessionId]: { data: null, fetchedAt: Date.now() } }));
-      });
-  }, [sessionId, setPrInfoMap]);
 
   const refreshPendingMerge = useCallback(() => {
     invoke<boolean>("has_pending_merge", { sessionId })
@@ -167,7 +166,7 @@ export function GitPanel({ sessionId }: GitPanelProps) {
       .catch(() => {});
   }, [setPrsCacheMap]);
 
-  /// Session-scoped fetches: per-session git/PR status + stash count. All
+  /// Session-scoped fetches: per-session git status + stash count. All
   /// cache-gated on mount — switching to a session whose cache is still
   /// fresh skips the round-trip entirely. Background polling (5s) and the
   /// `files:modified` listener keep caches warm. Conflicts always refresh
@@ -177,8 +176,6 @@ export function GitPanel({ sessionId }: GitPanelProps) {
     const now = Date.now();
     const headerEntry = gitHeaderMap[sessionId];
     if (!headerEntry || now - headerEntry.fetchedAt > SESSION_GIT_TTL_MS) refreshHeader();
-    const prEntry = prInfoMap[sessionId];
-    if (!prEntry || now - prEntry.fetchedAt > PR_INFO_TTL_MS) refreshPr();
     const mergeEntry = pendingMergeMap[sessionId];
     if (!mergeEntry || now - mergeEntry.fetchedAt > SESSION_GIT_TTL_MS) refreshPendingMerge();
     const stashEntry = stashCountMap[sessionId];
@@ -193,7 +190,6 @@ export function GitPanel({ sessionId }: GitPanelProps) {
     });
     const id = setInterval(() => {
       refreshHeader();
-      refreshPr();
       refreshPendingMerge();
     }, 5000);
     return () => { unlisten(); clearInterval(id); };
@@ -201,7 +197,22 @@ export function GitPanel({ sessionId }: GitPanelProps) {
     // gate but the effect must not re-run on every cache mutation (would
     // create a refresh loop).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshHeader, refreshPr, refreshConflicts, refreshPendingMerge, refreshStashCount, sessionId]);
+  }, [refreshHeader, refreshConflicts, refreshPendingMerge, refreshStashCount, sessionId]);
+
+  const currentPrSignal = prSignalMap[sessionId];
+
+  /// One rule for mount, signal change and the 10 s check: Claude Code's status
+  /// line signals PR changes, the 60 s age in `shouldRefreshPr` is the fallback.
+  useEffect(() => {
+    const check = () => {
+      if (shouldRefreshPr(prInfoMapRef.current[sessionId], prSignalMapRef.current[sessionId], Date.now())) {
+        void refreshPrInfo(sessionId);
+      }
+    };
+    check();
+    const id = setInterval(check, 10_000);
+    return () => clearInterval(id);
+  }, [sessionId, currentPrSignal, refreshPrInfo]);
 
   /// Workspace-scoped fetch: `gh pr list` is a network round-trip, so it's
   /// keyed by workspaceId (not sessionId), cached for PRS_CACHE_TTL_MS, and
@@ -234,8 +245,7 @@ export function GitPanel({ sessionId }: GitPanelProps) {
 
   useEffect(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-    if (prInfo && prInfo.state !== "OPEN") { setCiChecks(null); return; }
-    if (!prInfo) { setCiChecks(null); return; }
+    if (prInfoNumber === undefined || prInfoState !== "OPEN") { setCiChecks(null); return; }
     const tick = () => {
       invoke<PrChecks | null>("poll_pr_checks", { sessionId })
         .then((result) => {
@@ -247,7 +257,7 @@ export function GitPanel({ sessionId }: GitPanelProps) {
     tick();
     pollRef.current = setInterval(tick, 20000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [prInfo, sessionId, setPrChecksMap]);
+  }, [prInfoNumber, prInfoState, sessionId, setPrChecksMap]);
 
   /// Routes the user to the Conflicts chip with the given file pre-selected.
   /// Replaces the legacy `openConflictsTab` flow now that conflicts live in

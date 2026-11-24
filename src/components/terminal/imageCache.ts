@@ -117,6 +117,28 @@ export function createImageCache<B extends CachedBitmap>(opts: ImageCacheOptions
     return sum;
   }
 
+  function retryBlocked(): void {
+    if (retryable === 0) return;
+    requestRetries(visible, false);
+  }
+
+  function requestRetries(hashes: ReadonlySet<string>, includeFailed: boolean): string[] {
+    let held = total - unreferencedBytes();
+    const requested: string[] = [];
+    for (const [hash, e] of [...entries]) {
+      if (!hashes.has(hash)) continue;
+      if (includeFailed && e.state === "failed" && isRetryable(e)) {
+        startFetch(hash);
+        requested.push(hash);
+      } else if (e.state === "blocked" && !overCeiling(e.size, held)) {
+        held += e.size;
+        startFetch(hash);
+        requested.push(hash);
+      }
+    }
+    return requested;
+  }
+
   function startFetch(hash: string): void {
     put(hash, { state: "loading" });
     const startedIn = epoch;
@@ -160,6 +182,7 @@ export function createImageCache<B extends CachedBitmap>(opts: ImageCacheOptions
       decoding -= 1;
       total -= size;
       put(hash, { state: "dead" });
+      retryBlocked();
     };
 
     let decoded: Promise<B>;
@@ -177,6 +200,7 @@ export function createImageCache<B extends CachedBitmap>(opts: ImageCacheOptions
       decoding -= 1;
       put(hash, { state: "ready", bitmap, size, lastDrawn: tick });
       opts.onReady(hash);
+      retryBlocked();
     }, fail);
   }
 
@@ -199,19 +223,7 @@ export function createImageCache<B extends CachedBitmap>(opts: ImageCacheOptions
     setVisible(hashes) {
       visible = hashes;
       if (disposed || retryable === 0) return [];
-      const unreferenced = unreferencedBytes();
-      const requested: string[] = [];
-      for (const [hash, e] of [...entries]) {
-        if (!hashes.has(hash)) continue;
-        if (e.state === "failed" && isRetryable(e)) {
-          startFetch(hash);
-          requested.push(hash);
-        } else if (e.state === "blocked" && !overCeiling(e.size, total - unreferenced)) {
-          startFetch(hash);
-          requested.push(hash);
-        }
-      }
-      return requested;
+      return requestRetries(hashes, true);
     },
     releaseAll() {
       epoch += 1;

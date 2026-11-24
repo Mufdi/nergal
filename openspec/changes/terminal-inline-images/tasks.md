@@ -28,6 +28,13 @@
 - [x] 5.5 `terminalService.ts`: `imageSmoothingEnabled = false` around image draws; skip runs without a rect; short-circuit `applyRowImages`/`setVisible` work when neither the old nor the new rows hold runs; a hash-to-rows lookup for `onReady` repaints; call `releaseAll()` when a terminal is hidden and repaint on show.
 - [x] 5.6 Docs: `implementation.md` and `design.md` match the code (done with this group's artifact edits).
 
+## 6. Re-review nits
+
+- [x] 6.1 Test (Red): `imageCache.test.ts` — with several hashes blocked by the ceiling, `setVisible` re-requests only as many as fit (one when only one fits), and when a decode finishes and frees or reserves room the cache re-checks blocked hashes without waiting for a grid update. `imagePlacement.test.ts` (or a new pure helper test) — smoothing is chosen by scale: off when the destination is the source size within 1%, on otherwise, and the source rect is snapped to whole pixels when smoothing is on.
+- [x] 6.2 `imageCache.ts`: limit unblocking to what fits; re-check blocked hashes after each decode settles.
+- [x] 6.3 `terminalService.ts`: smoothing chosen per run by scale with a pixel-snapped source rect; a terminal created hidden releases its bitmaps (or never fetches) until shown; a region-visibility hook (`setRegionVisible("quake", open)`) called by `QuakeTerminal.tsx` on open/close releases quake shell bitmaps and suppresses their image draws while closed, and repaints on open.
+- [x] 6.4 `implementation.md` Builder coordination lists `releaseAll()` and `setVisible(): string[]`.
+
 ## 4. Verification
 
 - [x] 4.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check`, then `npx tsc --noEmit` and `pnpm test`.

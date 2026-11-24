@@ -29,7 +29,7 @@ import { TERM_FONT, TERM_THEME, refreshTermTheme, rgbaToCss } from "./theme";
 import { readingLayout } from "./readingCols";
 import { clampedCell } from "./cellMapping";
 import { createImageCache, headerBlob, headerPixels, type ImageCache } from "./imageCache";
-import { applyRowImages, runRects } from "./imagePlacement";
+import { applyRowImages, drawParams, runRects } from "./imagePlacement";
 import { refitNeeded, waitUntil } from "./waitUntil";
 import { cssColorToRgb } from "./cssColor";
 import { shouldPassThrough } from "./passThrough";
@@ -142,6 +142,7 @@ async function syncDefaultColors(): Promise<void> {
 const failureToasted = new Set<string>();
 const hosts = new Map<Region, HTMLDivElement | null>();
 const activeIds = new Map<Region, string | null>();
+const hiddenRegions = new Set<Region>();
 
 // Prime TERM_THEME from CSS tokens before the first session can paint.
 // The atlas keys glyphs by `(ch, fg, …)` so a later color flip lazily
@@ -253,6 +254,20 @@ export function hideAll(region: Region = "center"): void {
   for (const [, entry] of entries) {
     if (entry.region !== region) continue;
     hideEntry(entry);
+  }
+}
+
+/// The quake overlay hides with `visibility`, so its shell containers keep
+/// `display: flex` and would keep decoding images nobody can see.
+export function setRegionVisible(region: Region, visible: boolean): void {
+  const wasHidden = hiddenRegions.has(region);
+  if (visible) hiddenRegions.delete(region);
+  else hiddenRegions.add(region);
+  if (wasHidden === !visible) return;
+  for (const entry of entries.values()) {
+    if (entry.region !== region) continue;
+    if (!visible) entry.images.releaseAll();
+    else if (entry.container.style.display !== "none") paintAll(entry);
   }
 }
 
@@ -1485,8 +1500,9 @@ function indexRowsByHash(rowImages: ImageRun[][]): Map<string, number[]> {
 
 function drawImageRuns(entry: Entry, runs: ImageRun[], y: number, layer: (z: number) => boolean): void {
   if (runs.length === 0 || entry.container.style.display === "none") return;
+  if (hiddenRegions.has(entry.region) || activeIds.get(entry.region) !== entry.sessionId) return;
   const { ctx, metrics, images } = entry;
-  ctx.imageSmoothingEnabled = false;
+  const smoothingBefore = ctx.imageSmoothingEnabled;
   for (const run of runs) {
     if (!layer(run.z)) continue;
     const bitmap = images.get(run.hash);
@@ -1494,9 +1510,11 @@ function drawImageRuns(entry: Entry, runs: ImageRun[], y: number, layer: (z: num
     const r = runRects(run, bitmap.width, bitmap.height, metrics.cellWidth, metrics.cellHeight, y * metrics.cellHeight);
     if (!r) continue;
     images.touch(run.hash);
-    ctx.drawImage(bitmap, r.sx, r.sy, r.sw, r.sh, r.dx, r.dy, r.dw, r.dh);
+    const p = drawParams(r);
+    ctx.imageSmoothingEnabled = p.smooth;
+    ctx.drawImage(bitmap, p.sx, p.sy, p.sw, p.sh, r.dx, r.dy, r.dw, r.dh);
   }
-  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingEnabled = smoothingBefore;
 }
 
 function repaintImageRows(entry: Entry, hash: string): void {

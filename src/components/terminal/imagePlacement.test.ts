@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ImageRun } from "../../lib/types";
-import { applyRowImages, runRects } from "./imagePlacement";
+import { applyRowImages, drawParams, runRects } from "./imagePlacement";
 
 function run(over: Partial<ImageRun> = {}): ImageRun {
   return {
@@ -142,5 +142,54 @@ describe("applyRowImages", () => {
     });
 
     expect(next[0]).toEqual([inside]);
+  });
+});
+
+describe("drawParams", () => {
+  const rect = (over: Partial<Parameters<typeof drawParams>[0]> = {}) => ({
+    sx: 10.4,
+    sy: 20.6,
+    sw: 100.3,
+    sh: 50.2,
+    dx: 5,
+    dy: 7,
+    dw: 100.3,
+    dh: 50.2,
+    ...over,
+  });
+
+  it("turns smoothing off at 1:1 and leaves the source rect untouched", () => {
+    const r = rect();
+    expect(drawParams(r)).toEqual({ smooth: false, sx: 10.4, sy: 20.6, sw: 100.3, sh: 50.2 });
+  });
+
+  it("treats a scale within 1% on both axes as 1:1", () => {
+    const r = rect({ dw: 100.3 * 1.009, dh: 50.2 * 0.991 });
+    expect(drawParams(r).smooth).toBe(false);
+  });
+
+  it("turns smoothing on when the width is off by more than 1%", () => {
+    expect(drawParams(rect({ dw: 100.3 * 1.02 })).smooth).toBe(true);
+  });
+
+  it("turns smoothing on when only the height is off by more than 1%", () => {
+    expect(drawParams(rect({ dh: 50.2 * 0.98 })).smooth).toBe(true);
+  });
+
+  it("turns smoothing on when downscaling", () => {
+    expect(drawParams(rect({ dw: 50, dh: 25 })).smooth).toBe(true);
+  });
+
+  it("snaps the source rect outward to whole pixels when smoothing", () => {
+    const p = drawParams(rect({ dw: 50, dh: 25 }));
+    expect(p).toEqual({ smooth: true, sx: 10, sy: 20, sw: 101, sh: 51 });
+    // 10.4 + 100.3 and 20.6 + 50.2 round up to the next whole pixel edge
+    expect(p.sx + p.sw).toBe(111);
+    expect(p.sy + p.sh).toBe(71);
+  });
+
+  it("keeps a source rect that is already whole", () => {
+    const p = drawParams({ sx: 4, sy: 8, sw: 40, sh: 16, dx: 0, dy: 0, dw: 20, dh: 8 });
+    expect(p).toEqual({ smooth: true, sx: 4, sy: 8, sw: 40, sh: 16 });
   });
 });

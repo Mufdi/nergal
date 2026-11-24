@@ -77,3 +77,59 @@ reviewer: adversarial · reviewed_at: 2026-11-24 · scope: `git diff main -- src
 - New dependencies: none.
 
 Verdict: FAIL — three Important bugs and one Important compliance gap. Kind 1 images escape the budget entirely. The ceiling ignores concurrent decodes. Per-cell hex formatting stalls the session mutex while an image is on screen. All three ship a defect a user or hostile output can hit.
+
+## Re-review (fix delta)
+
+reviewer: adversarial · reviewed_at: 2026-11-24 · scope: `git diff 71ee2b9 f2db630 -- src src-tauri/src`. Ran `vitest` on imageCache and imagePlacement (36 pass) and `cargo test --lib image` (34 pass).
+
+### Prior findings, fixed
+
+- FE Important 1, clamp and skip: `imagePlacement.ts:24-32`; `terminalService.ts:1495` skips a null rect.
+- FE Important 2, smoothing: `terminalService.ts:1489` and `:1499`; recorded in design D5.
+- FE Important 3 and Adversarial Pass 2, in-flight bytes: reserved at `imageCache.ts:153-155`, ceiling at `:107-110`.
+- Reservation release on failure: `imageCache.ts:158-163`, covering both sync throw and rejection.
+- FE Important 4, hidden terminals: `terminalService.ts:259-263` calls `releaseAll` (`imageCache.ts:216-226`); show repaints at `:345-349`.
+- FE Important 5, hot path: `terminalService.ts:1365-1370` skips all image work when no rows hold runs.
+- FE Important 6, paint-path retries: `get` no longer fetches non-empty entries (`imageCache.ts:191`); retries live in `setVisible`.
+- FE nits: `retryable` counter at `imageCache.ts:64,79-88,201`; typed helpers at `:47-54`; hash index at `terminalService.ts:1474-1511`.
+- FE nit, cursor over images: D5 (`design.md:81`) states the cursor draws last, so it is intended.
+- Adversarial Pass 1, kind 1 size: `image_fetch.rs:106-113` sends `dimensions()`; test at `image_fetch_tests.rs:102`.
+- Adversarial Pass 1, snapshot cost: per-snapshot pointer map at `session.rs:528,537-541`.
+- Adversarial Pass 3, padding: `image_runs_tests.rs:191-217` covers left, top and equal padding.
+- Adversarial nits: sync throw at `imageCache.ts:165-171`; unblocked rows repaint through `onReady` (`:209`, `:179`).
+- Adversarial nits: WHAT first sentences dropped at `pty.rs:2458`, `image_fetch.rs:33`, `session.rs:603`, `types.rs:86`.
+
+### Important
+
+- None.
+
+### Nits
+
+- [Nit] `QuakeTerminal.tsx:66-77` — Closing quake only hides the overlay; the shell container stays `flex`. It keeps its bitmaps and keeps fetching while closed. This contradicts D4 "a hidden terminal releases its bitmaps". Bounded to one shell. → Record the exception in D4, or release on close and repaint on reopen (`:100-104`).
+- [Nit] `terminalService.ts:522` — A terminal created while another became active hides itself without `releaseAll`. Its first `paintAll` (`:511`) already started fetches. `hideEntry` then early-returns (`:260`). → Call `hideEntry`-style release there.
+- [Nit] `imageCache.ts:204-212` — `decoding` stays 0 during the loop, so every blocked hash refetches at once. Only one decodes; the rest re-block, each after a full payload copy. Also, a blocked hash waits for the next grid update after a decode settles. → Unblock one hash per pass when `decoding === 0`.
+- [Nit] `terminalService.ts:1489` — Smoothing is off for every image, including downscaled iTerm2 photos. Nearest-neighbour downscaling aliases visibly. → Check a large photo in walk 4.3, or enable smoothing when the scale is below 1.
+- [Nit] `implementation.md:39` — The cache interface omits `releaseAll` and the `string[]` return of `setVisible`. → Align the interface line with `imageCache.ts:28-35`.
+
+Checked and fine:
+
+- Counters: `put`/`drop` keep `retryable` exact; `total` never goes negative.
+- Eviction touches only `ready` entries, so reservations stay.
+- `releaseAll` bumps `epoch`; late fetches are ignored and late bitmaps are closed.
+- No entry stays `loading` or `decoding`.
+- Hidden paints skip `get` (`terminalService.ts:1487`); after `releaseAll`, `setVisible` has nothing to retry.
+- The short-circuit cannot skip clearing: `rowsByHash` is rebuilt from `rowImages`, so a removed last run still runs `applyRowImages`.
+- Smoothing is restored after the loop, and no `drawImage` can throw on a closed bitmap.
+- Pointer keys: `lines_in_phys_range` returns owned lines, so every `Arc` outlives the snapshot. No address is reused.
+- The `#[cfg(test)]` wrapper derives the same hex as production, so the two cannot diverge.
+- `dimensions()` reads only the header. A failure maps to `UnsupportedFormat`, retried twice like any fetch error.
+- iTerm2 input is capped by wezterm's `check_image_dimensions`, so the lone-decode overshoot stays one image.
+
+Verdict: PASS
+
+
+## Resolution (orchestrator, 2026-11-24)
+
+- Frontend review: all 6 Important and 4 nits fixed in group 5 (`f2db630`), confirmed by the re-review.
+- Adversarial review: the 3 Important bugs (kind 1 sizes, concurrent decodes past the ceiling, per-cell hex formatting), the compliance gap (padding merge tests) and the 5 nits fixed in group 5, confirmed by the re-review. `docs/shortcuts.md` stays out of every commit.
+- Re-review nits 1–5 fixed in group 6: quake overlay region visibility, terminals created hidden, unblocking only what fits plus a re-check after each decode, smoothing by scale with snapped source rects, and the interface list in implementation.md.

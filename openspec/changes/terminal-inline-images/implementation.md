@@ -36,7 +36,7 @@
 
 ## Builder coordination
 
-- Interface fixed for the test-writer and both builders: Rust `ImageRun { hash, col, span, u0, v0, u1, v1, pad_left, pad_top, pad_right, pad_bottom, z }` (camelCase JSON); new module `src-tauri/src/terminal/image_fetch.rs` with `parse_hash_hex`, `image_payload(&TerminalSession, &[u8;32])`, `ImageFetchError { MalformedHash, UnknownHash, Dropped, UnsupportedFormat }` and `ImageRegistry { insert, get }` (the registry lives in `TerminalSession`). TS `ImageRun` in `src/lib/types.ts`; `imagePlacement.ts` (`runRects`, `applyRowImages`); `imageCache.ts` (`IMAGE_BUDGET_BYTES`, `IMAGE_CEILING_BYTES`, `parseImageHeader`, `createImageCache({ key, fetch, decode, onReady })` → `{ get, touch, setVisible, dispose, bytes }`).
+- Interface fixed for the test-writer and both builders: Rust `ImageRun { hash, col, span, u0, v0, u1, v1, pad_left, pad_top, pad_right, pad_bottom, z }` (camelCase JSON); new module `src-tauri/src/terminal/image_fetch.rs` with `parse_hash_hex`, `image_payload(&TerminalSession, &[u8;32])`, `ImageFetchError { MalformedHash, UnknownHash, Dropped, UnsupportedFormat }` and `ImageRegistry { insert, get }` (the registry lives in `TerminalSession`). TS `ImageRun` in `src/lib/types.ts`; `imagePlacement.ts` (`runRects`, `applyRowImages`); `imageCache.ts` (`IMAGE_BUDGET_BYTES`, `IMAGE_CEILING_BYTES`, `parseImageHeader`, `createImageCache({ key, fetch, decode, onReady })` → `{ get, touch, setVisible(hashes): string[] /* hashes re-requested */, releaseAll, dispose, bytes }`).
 - Group 1+2 (Rust) and group 3 (frontend) touch disjoint files and may run in parallel; the JSON shape above is their only contract.
 
 ## Per-phase risk

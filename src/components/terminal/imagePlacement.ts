@@ -42,6 +42,32 @@ export function runRects(
   };
 }
 
+export interface DrawParams {
+  smooth: boolean;
+  sx: number;
+  sy: number;
+  sw: number;
+  sh: number;
+}
+
+const UNIT_SCALE_TOLERANCE = 0.01;
+
+export function drawParams(r: RunRects): DrawParams {
+  const nearUnit = (d: number, s: number) => Math.abs(d / s - 1) <= UNIT_SCALE_TOLERANCE;
+  if (nearUnit(r.dw, r.sw) && nearUnit(r.dh, r.sh)) {
+    return { smooth: false, sx: r.sx, sy: r.sy, sw: r.sw, sh: r.sh };
+  }
+  const sx = Math.floor(r.sx);
+  const sy = Math.floor(r.sy);
+  return {
+    smooth: true,
+    sx,
+    sy,
+    sw: Math.ceil(r.sx + r.sw) - sx,
+    sh: Math.ceil(r.sy + r.sh) - sy,
+  };
+}
+
 interface RowImagesUpdate {
   cols: number;
   totalRows: number;

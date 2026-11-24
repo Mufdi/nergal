@@ -376,6 +376,68 @@ describe("byte reservation", () => {
     expect(t.ready).toContain("d");
   });
 
+  async function blockedBehindDecode(bMb: number, sparedMb: number) {
+    const t = harness();
+    const all = new Set(["a", "b", "x", "c", "d", "e", "f"]);
+    t.cache.setVisible(all);
+    await t.load("a", 250);
+    await t.load("b", bMb);
+    await t.load("x", sparedMb);
+    t.cache.get("c");
+    t.fetchesFor("c")[0].d.resolve(sizedBuf(10));
+    await flush();
+    for (const h of ["d", "e", "f"]) {
+      t.cache.get(h);
+      t.fetchesFor(h)[0].d.resolve(sizedBuf(10));
+    }
+    await flush();
+    return t;
+  }
+
+  it("re-requests only the blocked hashes that fit under the ceiling, counting those it just requested", async () => {
+    const t = await blockedBehindDecode(240, 10);
+
+    const unblocked = t.cache.setVisible(new Set(["a", "b", "c", "d", "e", "f"]));
+
+    expect(unblocked).toEqual(["d"]);
+    expect(t.fetchesFor("d")).toHaveLength(2);
+    expect(t.fetchesFor("e")).toHaveLength(1);
+    expect(t.fetchesFor("f")).toHaveLength(1);
+  });
+
+  it("re-requests as many blocked hashes as fit and no more", async () => {
+    const t = await blockedBehindDecode(230, 30);
+
+    const unblocked = t.cache.setVisible(new Set(["a", "b", "c", "d", "e", "f"]));
+
+    expect(unblocked).toEqual(["d", "e"]);
+    expect(t.fetchesFor("d")).toHaveLength(2);
+    expect(t.fetchesFor("e")).toHaveLength(2);
+    expect(t.fetchesFor("f")).toHaveLength(1);
+  });
+
+  it("re-checks blocked hashes by itself when the decode in flight succeeds", async () => {
+    const t = await blockedBehindDecode(240, 10);
+    expect(t.fetchesFor("d")).toHaveLength(1);
+
+    const open = t.decodes.filter((x) => !x.done);
+    open[open.length - 1].d.resolve({ width: 1024, height: 2560, close: vi.fn<() => void>() });
+    await flush();
+
+    expect(t.fetchesFor("d")).toHaveLength(2);
+  });
+
+  it("re-checks blocked hashes by itself when the decode in flight fails", async () => {
+    const t = await blockedBehindDecode(240, 10);
+    expect(t.fetchesFor("d")).toHaveLength(1);
+
+    const open = t.decodes.filter((x) => !x.done);
+    open[open.length - 1].d.reject(new Error("decode failed"));
+    await flush();
+
+    expect(t.fetchesFor("d")).toHaveLength(2);
+  });
+
   it("returns an empty list when nothing was blocked or failed", async () => {
     const t = harness();
     await t.load("a", 1);

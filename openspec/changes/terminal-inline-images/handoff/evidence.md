@@ -24,3 +24,17 @@ Builder deviations: `GridSnapshot`/`GridUpdate`/`GridRow` lost `Eq` (f32 fields)
 Gate 6b WARN: one line, `image_runs_tests.rs:76` `.iter().enumerate().skip(3)` — an iterator adaptor, not a skipped test. No suppression added.
 
 Verification (2026-11-24): clippy clean; `cargo test` 1339 passed, 1 ignored; rustfmt check clean; tsc clean; `pnpm test` 58 files, 676 tests; work-gates 6a PASS, 6b WARN (justified above), 6c PASS, Red locks PASS (5 files).
+
+## Review fixes (groups 5 and 6)
+
+Reviewers: adversarial (opus) FAIL with 3 Important bugs + 1 compliance gap + 5 nits; frontend (sonnet) PASS with 6 Important + 4 nits. All fixed in group 5 (`f2db630`). Focused opus re-review of the fix delta: PASS, 0 Important, 5 nits, all fixed in group 6.
+
+Red conflicts and rulings:
+- Group 5: the locked ceiling tests disagreed under a plain `total + size > 512 MB` rule. Ruling: the rule is "no decode starts at ≥ 512 MB held; with a decode in flight, none starts that would pass 512 MB"; a lone decode may cross by at most one image. Recorded in design D4 and the spec.
+- Group 6: the two-fit case of "re-requests as many blocked hashes as fit" could not pass (the unreferenced image is excluded from `held`, so both cases had the same `held`). Ruling: the test was wrong; the test-writer varied a referenced size instead and re-locked.
+
+Builder deviations: a terminal created in the background skips image draws through the region's active-id check instead of releasing after its first paint; `setRegionVisible(region, visible)` added for the quake overlay, which hides with `visibility`.
+
+Gate 6b WARN (unchanged): `image_runs_tests.rs` `.iter().enumerate().skip(3)` is an iterator adaptor, not a skipped test.
+
+Verification (2026-11-24): clippy clean; `cargo test` 1343 passed, 1 ignored; tsc clean; `pnpm test` 58 files, 699 tests; work-gates 6a/6c PASS, 6b WARN (justified), Red locks PASS (5 files).

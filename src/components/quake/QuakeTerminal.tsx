@@ -90,6 +90,10 @@ export function QuakeTerminal() {
   }, []);
 
   useLayoutEffect(() => {
+    terminalService.setRegionVisible("quake", open);
+  }, [open]);
+
+  useLayoutEffect(() => {
     if (!open || !activeSessionId || !cwd) return;
     if (!activeShellId) {
       terminalService.hideAll("quake");

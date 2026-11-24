@@ -221,6 +221,7 @@ fn wrap(session_id: &str, cwd: &Path, ev: TranscriptEvent) -> Option<HookEvent> 
                 rate_7d_resets_at: None,
                 effort_level: None,
                 prompt_cache: None,
+                github_pr: None,
             })
         }
         TranscriptEvent::Message { .. } | TranscriptEvent::Other(_) => None,

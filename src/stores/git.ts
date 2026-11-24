@@ -167,8 +167,81 @@ export const gitHeaderMapAtom = sessionScopedMapAtom<GitHeaderCacheEntry>();
 export interface PrInfoCacheEntry {
   data: { number: number; title: string; state: string; url: string } | null;
   fetchedAt: number;
+  signal?: string;
 }
 export const prInfoMapAtom = sessionScopedMapAtom<PrInfoCacheEntry>();
+
+export const prSignalMapAtom = sessionScopedMapAtom<string>();
+const prFetchSeqMapAtom = sessionScopedMapAtom<number>();
+
+export const prInFlightMapAtom = sessionScopedMapAtom<number>();
+
+/// `gh` is the authority: a PR in the response is cached whatever the signal.
+/// A failure, or an empty answer under a `pr:N` signal, keeps the cached data
+/// and stamps the current signal so the next try waits for the fallback age
+/// instead of retrying on every status tick.
+export const refreshPrInfoAction = atom(
+  null,
+  async (get, set, arg: string | { sessionId: string; force?: boolean }) => {
+    const { sessionId, force } = typeof arg === "string" ? { sessionId: arg, force: false } : arg;
+    const sessionExists = (): boolean =>
+      get(workspacesAtom).some((w) => w.sessions.some((s) => s.id === sessionId));
+    if (!sessionExists()) return;
+    if (!force && get(prInFlightMapAtom)[sessionId] !== undefined) return;
+    const seq = (get(prFetchSeqMapAtom)[sessionId] ?? 0) + 1;
+    set(prFetchSeqMapAtom, (prev) => ({ ...prev, [sessionId]: seq }));
+    set(prInFlightMapAtom, (prev) => ({ ...prev, [sessionId]: seq }));
+    const signal = get(prSignalMapAtom)[sessionId];
+
+    try {
+      let data: PrInfoCacheEntry["data"] = null;
+      let failed = false;
+      try {
+        data = await invoke<PrInfoCacheEntry["data"]>("get_pr_status", { sessionId });
+      } catch {
+        failed = true;
+      }
+      if (get(prFetchSeqMapAtom)[sessionId] !== seq || !sessionExists()) return;
+
+      const keepPrevious = !data && (failed || (signal !== undefined && signal.startsWith("pr:")));
+      set(prInfoMapAtom, (prev) => ({
+        ...prev,
+        [sessionId]: {
+          data: keepPrevious ? (prev[sessionId]?.data ?? null) : data,
+          fetchedAt: Date.now(),
+          signal,
+        },
+      }));
+    } finally {
+      // A forced call owns the entry after it overwrites the sequence; the older
+      // call's settle must not clear it.
+      set(prInFlightMapAtom, (prev) => {
+        if (prev[sessionId] !== seq) return prev;
+        const { [sessionId]: _done, ...rest } = prev;
+        return rest;
+      });
+    }
+  },
+);
+
+/// Ship already returns the PR it created, so it writes it directly; bumping
+/// the sequence drops any older in-flight `gh` response.
+export const setPrInfoFromShip = atom(
+  null,
+  (get, set, args: { sessionId: string; prInfo: PrInfoCacheEntry["data"] }) => {
+    const { sessionId, prInfo } = args;
+    if (prInfo && prInfo.number === 0) {
+      void set(refreshPrInfoAction, { sessionId, force: true });
+      return;
+    }
+    const seq = (get(prFetchSeqMapAtom)[sessionId] ?? 0) + 1;
+    set(prFetchSeqMapAtom, (prev) => ({ ...prev, [sessionId]: seq }));
+    set(prInfoMapAtom, (prev) => ({
+      ...prev,
+      [sessionId]: { data: prInfo, fetchedAt: Date.now(), signal: get(prSignalMapAtom)[sessionId] },
+    }));
+  },
+);
 
 /// Per-session cached `has_pending_merge` flag. Local git check, but cached
 /// for symmetry — keeps the green "in-progress merge" banner stable across
@@ -182,10 +255,6 @@ export const pendingMergeMapAtom = sessionScopedMapAtom<PendingMergeCacheEntry>(
 /// TTL shared by header + pendingMerge. Short because these reflect local
 /// git state that the user can change between switches.
 export const SESSION_GIT_TTL_MS = 5_000;
-
-/// TTL for `gh pr view`. Same workspace-network class as `gh pr list`; the
-/// PR's title/state rarely flip in seconds.
-export const PR_INFO_TTL_MS = 30_000;
 
 /// Cached unified-diff text from `gh pr diff <number>`. Without this every
 /// re-open of the same PR within the PrsChip refetched the diff (a network

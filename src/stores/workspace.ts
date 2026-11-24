@@ -1,4 +1,5 @@
 import { atom } from "jotai";
+import type { GithubPr } from "./prSignal";
 import type { CostSummary } from "@/lib/types";
 import type { PromptCacheStatus } from "@/lib/agentTelemetry";
 import { sessionScopedMapAtom } from "./sessionScope";
@@ -206,6 +207,7 @@ export interface AgentStatus {
   rate_7d_resets_at: number | null;
   effort_level: string | null;
   prompt_cache: PromptCacheStatus | null;
+  github_pr: GithubPr | null;
 }
 
 const defaultAgentStatus: AgentStatus = {
@@ -221,6 +223,7 @@ const defaultAgentStatus: AgentStatus = {
   rate_7d_resets_at: null,
   effort_level: null,
   prompt_cache: null,
+  github_pr: null,
 };
 
 export const agentStatusMapAtom = sessionScopedMapAtom<AgentStatus>();

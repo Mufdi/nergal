@@ -18,7 +18,7 @@ import {
   type PrChecks,
 } from "@/stores/git";
 import { activeSessionIdAtom, workspacesAtom } from "@/stores/workspace";
-import { gitInfoMapAtom } from "@/stores/git";
+import { gitInfoMapAtom, refreshPrInfoAction } from "@/stores/git";
 import type { Tab } from "@/stores/rightPanel";
 import { toastsAtom } from "@/stores/toast";
 import { selectedConflictFileMapAtom, conflictsZenOpenAtom } from "@/stores/conflict";
@@ -240,6 +240,7 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
   const addToast = useSetAtom(toastsAtom);
   const setSelectedConflictMap = useSetAtom(selectedConflictFileMapAtom);
   const setChipModeMap = useSetAtom(gitChipModeAtom);
+  const refreshPrInfo = useSetAtom(refreshPrInfoAction);
   const transitionAfterCleanup = useSetAtom(transitionAfterCleanupAction);
   const zenState = useAtomValue(zenModeAtom);
   const conflictsZen = useAtomValue(conflictsZenOpenAtom);
@@ -537,6 +538,7 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
               archivedPlansPath: res.archived_plans_path,
             }))
             .catch((err: unknown) => {
+              void refreshPrInfo({ sessionId: owningSessionId, force: true });
               addToast({
                 message: "Cleanup failed",
                 description: String(err),
@@ -578,7 +580,7 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
         }
       })
       .finally(() => setMerging(false));
-  }, [workspaceId, prNumber, baseRefName, owningSessionId, addToast, setChipModeMap, setSelectedConflictMap, transitionAfterCleanup]);
+  }, [workspaceId, prNumber, baseRefName, owningSessionId, addToast, setChipModeMap, setSelectedConflictMap, transitionAfterCleanup, refreshPrInfo]);
 
   function handleMergeClick() {
     if (state !== "OPEN") return;

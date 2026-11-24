@@ -1,0 +1,4 @@
+82ed1946f37544cb8a65717df1efe975357d57e4  src-tauri/src/hooks/statusline_pr_tests.rs
+dc8df6d2afa2fd8bd021f2e8748519a0283031d9  src-tauri/src/hooks/pr_signature_tests.rs
+00a9682e8846146883c1ef6636419f164d118c86  src/stores/prSignal.test.ts
+1de42aa8d8f21e9c180276f3795491166059f633  src/stores/prInfoRefresh.test.ts

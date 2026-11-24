@@ -27,6 +27,18 @@ pub struct PromptCacheStatus {
     pub last_miss_causes: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GithubPr {
+    #[serde(default)]
+    pub number: Option<u64>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub review_state: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
 /// One explicit `null` would otherwise fail the whole `AgentStatus` and drop
 /// the status update silently.
 fn null_as_empty_vec<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
@@ -244,7 +256,9 @@ pub enum HookEvent {
         #[serde(default)]
         effort_level: Option<String>,
         #[serde(default)]
-        prompt_cache: Option<PromptCacheStatus>,
+        prompt_cache: Option<Box<PromptCacheStatus>>,
+        #[serde(default)]
+        github_pr: Option<GithubPr>,
     },
 }
 
@@ -678,7 +692,7 @@ mod tests {
         match ev {
             HookEvent::AgentStatus { prompt_cache, .. } => {
                 assert_eq!(
-                    prompt_cache,
+                    prompt_cache.map(|b| *b),
                     Some(PromptCacheStatus {
                         warm: Some(true),
                         caching_observed: Some(true),

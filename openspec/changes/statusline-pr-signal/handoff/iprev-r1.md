@@ -1,0 +1,37 @@
+## Revisión: statusline-pr-signal (FRI-473)
+
+Verifiqué el plan contra el código en `mufdidev/fri-473-statusline-pr-signal` y contra la doc de CC (`code.claude.com/docs/en/statusline`, que confirma `pr.number/url/review_state/kind`, el debounce de 300 ms y que los triggers "can go quiet when the main session is idle").
+
+1. **high: los cambios de PR que hace el propio Nergal dejan de verse durante hasta 60 s.** `ShipDialog` crea la PR con `git_ship` (`src/components/git/ShipDialog.tsx:301-314`) y después solo llama `refreshGit` (`refreshGitInfoAtom`, `src/stores/git.ts:49-56`), que no toca `prInfoMapAtom`. `PrViewer` mergea con `gh_pr_merge` (`src/components/git/PrViewer.tsx:520`), y tampoco toca ese map. Hoy el poll de 5 s cubre los dos casos. Con el plan, ambos dependen de que CC vuelva a renderizar su status line, y según la doc eso no pasa mientras la sesión está idle. Justo después de shippear desde Nergal la sesión de CC suele estar idle. Resultado: después del Ship el pill sigue en "sin PR" y el indicador de CI no aparece por hasta 60 s. Es el flujo principal de creación de PR. Ni proposal §What Changes ni la spec delta de git-panel-v2 lo cubren. Fix: después de un `git_ship` o `gh_pr_merge` exitoso, invalidar la entrada de `prInfoMap` de esa sesión (o subir el mismo nonce), y agregar un scenario "PR creada desde Ship refresca sin esperar al status line".
+
+2. **medium: si el campo TS se llama `githubPr`, la feature muere sin que nada avise, y el path citado está mal.** implementation.md §Execution order 2 propone `githubPr?: …` y ubica el tipo en `src/lib/types.ts`. En realidad `AgentStatus` vive en `src/stores/workspace.ts:196-209`, con `defaultAgentStatus` en `:211-224`. El listener (`src/stores/hooks.ts:350-356`) hace spread del payload crudo, así que la key en runtime es `github_pr` (snake_case, igual que `prompt_cache`). Con `githubPr`, `tsc` pasa, los tests de los helpers puros pasan y la firma queda en `none` para siempre. Fix: fijar `github_pr: GithubPr | null` en el plan (también en `defaultAgentStatus`), corregir el path en Impact y sumar un test con un payload de fixture que pase por el mapeo del listener.
+
+3. **medium: Impact y Execution order omiten sitios que construyen `HookEvent::AgentStatus` con struct literal.** Son `src-tauri/src/agents/pi/jsonl_tail.rs:210`, `src-tauri/src/agents/opencode/sse_client.rs:253`, `src-tauri/src/agents/codex/rollout_tail.rs:120` (más los tests en `:425`, `:444`, `:464`) y el test de `src-tauri/src/hooks/server.rs:2065`. Agregar el campo rompe la compilación en todos. El cambio es mecánico (`github_pr: None`) y compatible con el Focus freeze, pero el plan dice que solo toca `cli.rs/events.rs/server.rs`. Además, `HookEvent::AgentStatus` tampoco trae hoy `..` en el destructuring de `server.rs:1418-1432`, así que también hay que sumar el campo ahí. Fix: listar estos archivos en Impact y en la tarea 1.2.
+
+4. **medium: el baseline de la primera observación pierde PRs y no cubre el remount.** La spec (scenario "First observation sets the baseline") supone que el fetch de mount ya vio el mismo estado. Hay dos huecos:
+   - (a) Nergal reinicia, el panel hace fetch (sin PR), la PR se crea mientras CC está idle, y el primer update de CC trae `PR 12`. Queda como baseline y no hay refresh: 60 s de pill stale.
+   - (b) El listener sube el nonce mientras el panel de S no está montado (el user está en la sesión T). Al volver a S, el mount salta el fetch por `PR_INFO_TTL_MS = 30_000` (`src/stores/git.ts:188`) y el effect del nonce "not on mount" tampoco dispara.
+
+   Fix: guardar en `PrInfoCacheEntry` la firma vigente al momento del fetch (`signalAtFetch`) y refrescar cada vez que la firma actual difiera de ella, tanto en un update como en el mount. Eso reemplaza el baseline y el nonce con una sola regla y se testea como helper puro `shouldRefreshPr(entry, signal, now)`.
+
+5. **medium: el debug log se contradice con el walk.** Execution order 1 dice "`tracing::debug!` the signature in the server arm (cheap; the frontend dedups)", es decir, un log por cada tick. La tarea 3.3 espera que la firma aparezca "once, not on every status line tick" en `nergal.log`. Tal como está planeado, el walk 3.3 falla. Tampoco dice cómo poner debug level para el walk. Fix: o dedup en backend con un map por sesión y su limpieza al cerrar la sesión, o loggear al detectar el cambio en el frontend por un canal que llegue a `nergal.log`. Y documentar cómo se activa el nivel debug.
+
+6. **medium: hay un cambio de cadencia de CI que el plan no declara.** `prInfo = prInfoMap[sessionId]?.data` (`src/components/git/GitPanel.tsx:116`) es un objeto nuevo en cada refresh. El effect de checks (`GitPanel.tsx:236-251`) depende de `[prInfo]` y llama `tick()` de inmediato, así que hoy `poll_pr_checks` corre cada ~5 s, no cada 20 s. implementation.md §Per-phase risk ("CI checks keep their own 20 s poll") describe mal el estado actual. Con el plan, la latencia del indicador de CI pasa de ~5 s a 20 s y el intervalo se reinicia con cada fallback de 60 s. Queda alineado con `openspec/specs/ship-flow/spec.md:88` (20 s), pero es visible para el user. Fix: declararlo en el proposal y en el walk, y hacer que el effect dependa de `prInfo?.number`/`prInfo?.state` en vez de la identidad del objeto.
+
+7. **low: el rationale del fallback está mal.** El proposal dice que el fallback de 60 s queda para "mergeability, conflicts, a push to an open PR". Pero `get_pr_status` solo pide `number,title,state,url` (`src-tauri/src/worktree.rs:1154`): nunca reportó nada de eso. Lo que de verdad cubre el fallback:
+   - edición de título;
+   - cambios externos con CC idle;
+   - users con su propio `statusLine` (`merge_statusline` nunca lo pisa, `src-tauri/src/setup.rs:552-555`);
+   - versiones de CC sin `pr`.
+
+   Fix: corregir el texto del proposal y de la spec delta para que el trade-off quede bien documentado.
+
+8. **low: `review_state` y `kind: mr` provocan refreshes que no cambian nada.** `PrInfo` no tiene estado de review, así que el scenario "The review state changes" gasta un `gh pr view` sin cambio visible. Con `kind: "mr"` (GitLab), `gh pr view` falla y el `.catch` escribe `data: null` (`GitPanel.tsx:141-143`). Es inofensivo, pero el proposal debería justificar `review_state` en la firma o sacarlo, y saltar el refresh cuando `kind === "mr"`.
+
+9. **low: el lifecycle del map no está fijado.** implementation.md dice "a session-scoped map" sin nombrar `sessionScopedMapAtom`, que la convención exige (`src/stores/sessionScope.ts:3-7`) para que `pruneSessionStateAction` lo limpie al borrar la sesión. Fix: nombrarlo explícitamente para el map de firmas y para el del nonce (o para `signalAtFetch` dentro de `PrInfoCacheEntry`, que ya está registrado, si se adopta el punto 4).
+
+10. **low: cobertura de tests y spec.** El wiring de GitPanel (sacar `refreshPr` del intervalo de 5 s, el de 60 s, el refresh por señal) no tiene test determinista; con el helper puro del punto 4 queda cubierto en vitest. A la spec delta de git-panel-v2 le falta el scenario PR → `none` (merge o cierre). Es el path que sostiene "Poll stops when PR merges or closes" de `ship-flow/spec.md:102-104` y solo aparece en la tarea 2.1. Hay que agregarlo junto con el scenario del punto 1.
+
+**Rollback:** sin problemas. El campo Rust es aditivo con `serde(default)` y volver al poll de 5 s es una línea en `GitPanel.tsx:194-198`.
+
+VERDICT: REVISE

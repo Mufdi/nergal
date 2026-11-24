@@ -5,7 +5,7 @@ use anyhow::Result;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::AsyncBufReadExt;
 
-use super::events::{BACKGROUND_INPUT_WAITING_PREFIX, HookEvent, PromptCacheStatus};
+use super::events::{BACKGROUND_INPUT_WAITING_PREFIX, GithubPr, HookEvent, PromptCacheStatus};
 use crate::agents::AgentId;
 use crate::agents::claude_code::subagent_transcript::read_subagent_summary;
 use crate::agents::state::AgentRuntimeState;
@@ -598,6 +598,38 @@ fn cache_model(csid: Option<&str>, model_name: &Option<String>) {
     }
 }
 
+/// Mirrors the frontend `prSignature`: a GitLab merge request cannot be
+/// fetched by `gh`, so it maps to "none" like an absent PR.
+pub(crate) fn pr_signature(pr: &Option<GithubPr>) -> String {
+    match pr {
+        Some(GithubPr {
+            number: Some(n),
+            kind: None,
+            ..
+        }) => format!("pr:{n}"),
+        _ => "none".to_string(),
+    }
+}
+
+fn pr_signature_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
+    static C: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> =
+        std::sync::OnceLock::new();
+    C.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// The status line ticks far more often than the PR changes, so only a
+/// signature change is worth a log line.
+fn log_pr_signature_change(session_id: &str, pr: &Option<GithubPr>) {
+    let signature = pr_signature(pr);
+    let Ok(mut c) = pr_signature_cache().lock() else {
+        return;
+    };
+    if c.get(session_id) != Some(&signature) {
+        tracing::info!(session_id, %signature, "statusline PR signature changed");
+        c.insert(session_id.to_string(), signature);
+    }
+}
+
 fn cached_model(csid: &str) -> Option<String> {
     model_cache().lock().ok().and_then(|c| c.get(csid).cloned())
 }
@@ -645,6 +677,9 @@ pub(crate) fn write_footer(
 /// hook and the PTY-EOF trigger produce exactly one snapshot per session.
 pub(crate) fn finalize_session_obsidian(db: &SharedDb, csid: Option<&str>) {
     let Some(csid) = csid else { return };
+    if let Ok(mut c) = pr_signature_cache().lock() {
+        c.remove(csid);
+    }
     if !crate::obsidian::post_session::claim_finalization(csid) {
         return;
     }
@@ -1466,6 +1501,7 @@ fn process_event(
                     rate_7d_resets_at: *rate_7d_resets_at,
                     effort_level: None,
                     prompt_cache: None,
+                    github_pr: None,
                 },
             );
         }
@@ -1484,8 +1520,10 @@ fn process_event(
             rate_7d_resets_at,
             effort_level,
             prompt_cache,
+            github_pr,
         } => {
             cache_model(nergal_session_id, model_name);
+            log_pr_signature_change(nergal_session_id.unwrap_or(session_id), github_pr);
             emit_agent_status(
                 app,
                 AgentStatusEmit {
@@ -1501,7 +1539,8 @@ fn process_event(
                     rate_7d_pct: *rate_7d_pct,
                     rate_7d_resets_at: *rate_7d_resets_at,
                     effort_level: effort_level.clone(),
-                    prompt_cache: prompt_cache.clone(),
+                    prompt_cache: prompt_cache.as_deref().cloned(),
+                    github_pr: github_pr.clone(),
                 },
             );
         }
@@ -1589,46 +1628,51 @@ pub(crate) struct AgentStatusEmit<'a> {
     pub rate_7d_resets_at: Option<u64>,
     pub effort_level: Option<String>,
     pub prompt_cache: Option<PromptCacheStatus>,
+    pub github_pr: Option<GithubPr>,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub(crate) struct AgentStatusPayload {
+    session_id: String,
+    agent_id: Option<String>,
+    model_id: Option<String>,
+    model_name: Option<String>,
+    session_started_at: Option<u64>,
+    context_used_pct: Option<f64>,
+    context_window_size: Option<u64>,
+    rate_5h_pct: Option<f64>,
+    rate_5h_resets_at: Option<u64>,
+    rate_7d_pct: Option<f64>,
+    rate_7d_resets_at: Option<u64>,
+    effort_level: Option<String>,
+    prompt_cache: Option<PromptCacheStatus>,
+    github_pr: Option<GithubPr>,
+}
+
+pub(crate) fn agent_status_payload(status: AgentStatusEmit<'_>) -> AgentStatusPayload {
+    AgentStatusPayload {
+        session_id: status.session_id.to_string(),
+        agent_id: status.agent_id.map(str::to_string),
+        model_id: status.model_id,
+        model_name: status.model_name,
+        session_started_at: status.session_started_at,
+        context_used_pct: status.context_used_pct,
+        context_window_size: status.context_window_size,
+        rate_5h_pct: status.rate_5h_pct,
+        rate_5h_resets_at: status.rate_5h_resets_at,
+        rate_7d_pct: status.rate_7d_pct,
+        rate_7d_resets_at: status.rate_7d_resets_at,
+        effort_level: status.effort_level,
+        prompt_cache: status.prompt_cache,
+        github_pr: status.github_pr,
+    }
 }
 
 /// Emit `agent:status-update` to the frontend. Single emit path so every
 /// adapter (CC statusline script, Pi/Codex Cost translation, future
 /// OpenCode SSE) reaches the frontend through the same listener.
 pub(crate) fn emit_agent_status(app: &AppHandle, status: AgentStatusEmit<'_>) {
-    #[derive(Clone, serde::Serialize)]
-    struct AgentStatusPayload {
-        session_id: String,
-        agent_id: Option<String>,
-        model_id: Option<String>,
-        model_name: Option<String>,
-        session_started_at: Option<u64>,
-        context_used_pct: Option<f64>,
-        context_window_size: Option<u64>,
-        rate_5h_pct: Option<f64>,
-        rate_5h_resets_at: Option<u64>,
-        rate_7d_pct: Option<f64>,
-        rate_7d_resets_at: Option<u64>,
-        effort_level: Option<String>,
-        prompt_cache: Option<PromptCacheStatus>,
-    }
-    let _ = app.emit(
-        "agent:status-update",
-        AgentStatusPayload {
-            session_id: status.session_id.to_string(),
-            agent_id: status.agent_id.map(str::to_string),
-            model_id: status.model_id,
-            model_name: status.model_name,
-            session_started_at: status.session_started_at,
-            context_used_pct: status.context_used_pct,
-            context_window_size: status.context_window_size,
-            rate_5h_pct: status.rate_5h_pct,
-            rate_5h_resets_at: status.rate_5h_resets_at,
-            rate_7d_pct: status.rate_7d_pct,
-            rate_7d_resets_at: status.rate_7d_resets_at,
-            effort_level: status.effort_level,
-            prompt_cache: status.prompt_cache,
-        },
-    );
+    let _ = app.emit("agent:status-update", agent_status_payload(status));
 }
 
 /// The file a tool's input names, if any. Permissive across the common key
@@ -1883,6 +1927,10 @@ fn process_task_event(
 mod identity_tests;
 
 #[cfg(test)]
+#[path = "pr_signature_tests.rs"]
+mod pr_signature_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
@@ -2131,6 +2179,7 @@ mod tests {
                     rate_7d_resets_at: None,
                     effort_level: None,
                     prompt_cache: None,
+                    github_pr: None,
                 },
                 "agent_status",
             ),

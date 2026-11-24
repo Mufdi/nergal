@@ -713,6 +713,18 @@ fn prompt_cache_status(cc: &serde_json::Value) -> serde_json::Value {
     })
 }
 
+fn github_pr_status(cc: &serde_json::Value) -> serde_json::Value {
+    let Some(pr) = cc.get("pr").and_then(|v| v.as_object()) else {
+        return serde_json::Value::Null;
+    };
+    serde_json::json!({
+        "number": pr.get("number").and_then(serde_json::Value::as_u64),
+        "url": pr.get("url").and_then(|v| v.as_str()),
+        "review_state": pr.get("review_state").and_then(|v| v.as_str()),
+        "kind": pr.get("kind").and_then(|v| v.as_str()),
+    })
+}
+
 fn statusline_to_agent_status(cc: &serde_json::Value, nergal_id: &str) -> serde_json::Value {
     let model = cc.get("model");
     let ctx = cc.get("context_window");
@@ -746,6 +758,7 @@ fn statusline_to_agent_status(cc: &serde_json::Value, nergal_id: &str) -> serde_
             .and_then(serde_json::Value::as_u64),
         "effort_level": cc.get("effort").and_then(|e| e.get("level")).and_then(|v| v.as_str()),
         "prompt_cache": prompt_cache_status(cc),
+        "github_pr": github_pr_status(cc),
         "nergal_session_id": nergal_id,
     })
 }
@@ -1079,3 +1092,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "statusline_pr_tests.rs"]
+mod statusline_pr_tests;

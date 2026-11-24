@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import { shipDialogAtom, triggerShipAtom, type ShipProgressEvent } from "@/stores/ship";
 import { toastsAtom } from "@/stores/toast";
-import { refreshGitInfoAtom } from "@/stores/git";
+import { refreshGitInfoAtom, setPrInfoFromShip } from "@/stores/git";
 import { activeWorkspaceAtom, workspacesAtom } from "@/stores/workspace";
 import {
   clickupBindingMapAtom,
@@ -104,6 +104,7 @@ export function ShipDialog() {
   const trigger = useAtomValue(triggerShipAtom);
   const addToast = useSetAtom(toastsAtom);
   const refreshGit = useSetAtom(refreshGitInfoAtom);
+  const setPrInfoFromShipAction = useSetAtom(setPrInfoFromShip);
   const workspace = useAtomValue(activeWorkspaceAtom);
   const workspaces = useAtomValue(workspacesAtom);
   const bindingMap = useAtomValue(clickupBindingMapAtom);
@@ -312,6 +313,7 @@ export function ShipDialog() {
         type: "success",
       });
       refreshGit(state.sessionId);
+      setPrInfoFromShipAction({ sessionId: state.sessionId, prInfo: result.pr_info });
       // Offer ClickUp closure for the SHIPPED session's bound task (Revision 1,
       // task 5.2a). Use the shipped sessionId — never the active session, which
       // may differ (e.g. user switched tabs while shipping).
@@ -340,7 +342,7 @@ export function ShipDialog() {
     } finally {
       setShipping(false);
     }
-  }, [state.sessionId, state.inlineMessage, preview, ghOk, title, body, targetBranch, toStage, applyStageSelection, addToast, refreshGit, close, workspaces, bindingMap, setClosureOffer, linearBindingMap, setLinearClosureOffer]);
+  }, [state.sessionId, state.inlineMessage, preview, ghOk, title, body, targetBranch, toStage, applyStageSelection, addToast, refreshGit, setPrInfoFromShipAction, close, workspaces, bindingMap, setClosureOffer, linearBindingMap, setLinearClosureOffer]);
 
   const pushOnly = useCallback(async () => {
     if (!state.sessionId || pushing) return;

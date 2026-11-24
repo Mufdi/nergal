@@ -9,7 +9,8 @@ import { planStateMapAtom, planDocumentsAtom, PLAN_DOCUMENTS_MAX, registerPlanAt
 import { withBoundedEntry } from "@/lib/boundedRecord";
 import { pendingAsksAtom, pendingAttentionAtom } from "./askUser";
 import { openTabAction, expandRightPanelAtom, activePanelViewAtom } from "./rightPanel";
-import { refreshGitInfoAtom } from "./git";
+import { refreshGitInfoAtom, prSignalMapAtom } from "./git";
+import { prSignature } from "./prSignal";
 import {
   addActivityAtom,
   completeToolActivityAtom,
@@ -368,6 +369,8 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
       if (!sid) return;
       const { session_id: _, ...data } = payload;
       set(agentStatusMapAtom, (prev) => ({ ...prev, [sid]: data }));
+      const signature = prSignature(payload.github_pr);
+      set(prSignalMapAtom, (prev) => (prev[sid] === signature ? prev : { ...prev, [sid]: signature }));
     }),
   );
 

@@ -1,0 +1,31 @@
+{
+  "tier": "S",
+  "ceremony": "quick-fix",
+  "risk_tier": "low",
+  "spec_target": "git-panel-v2, terminal-wezterm, conflict-resolution, spec-annotations, ship-flow",
+  "tracker": {
+    "system": "linear",
+    "id": "FRI-609",
+    "pending": []
+  },
+  "validation": "validated",
+  "planning_only": false,
+  "iprev": {
+    "rounds": 3,
+    "verdict": "APPROVED"
+  },
+  "interview_answers": {
+    "merge_key": "M with a confirmation dialog in the PR viewer; Ctrl+Enter only toggles fullscreen (user, 2026-11-24)",
+    "hint_bars": "Kbd chips at 10px in a sticky bottom bar with background; update docs/patterns.md section 4 to bless it (user, 2026-11-24)",
+    "labels": "Claude -> Agent on agent-facing actions; product names (Claude Code) and the Claude status provider stay (user, 2026-11-24)",
+    "apply_submit": "Apply with Agent submits immediately, like Linear/ClickUp send-to-session (user, 2026-11-24). Mechanism refined in iprev r1: an awaited deliver_prompt_to_session (paste, 250 ms settle, CR, resolve after CR) instead of the fire-and-forget paste_and_submit_settled, so in-flight guards and error toasts are truthful.",
+    "worktree_for_pr": "out of scope, FRI-610"
+  },
+  "events": [
+    {
+      "ts": "2026-11-24",
+      "type": "validated",
+      "note": "iprev opus 3 rounds: r1 11 (1 high), r2 7 (3 medium), r3 APPROVED with 5 low folded into tasks/implementation"
+    }
+  ]
+}

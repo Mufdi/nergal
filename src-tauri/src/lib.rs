@@ -530,7 +530,7 @@ pub fn run() {
             pty::terminal_mouse_button,
             pty::terminal_focus,
             pty::terminal_paste,
-            pty::terminal_deliver,
+            pty::deliver_prompt_to_session,
             pty::terminal_clipboard_write,
             // Config commands
             commands::get_config,

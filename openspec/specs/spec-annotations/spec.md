@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change spec-annotation-mode. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Default read-only mode
 
 The `SpecPanel` SHALL open every active spec file in read-only mode by default. No inline editing, text selection popovers, or pinpoint hover targeting SHALL be active until the user explicitly enables annotation mode.
@@ -89,11 +91,11 @@ This requirement supersedes the MVP "in-memory only" intent in the original prop
 
 ### Requirement: Send annotations to Claude via chat injection
 
-The `SpecPanel` SHALL provide a "Send to Claude" action in the annotation toolbar that serializes all annotations for the currently viewed spec (or other artifact) and queues them into `HookState.pending_annotations` via the `set_pending_annotations` Tauri command. The serialized payload SHALL include the artifact's repo-relative path so Claude can read the file directly. Delivery SHALL happen via the existing `inject-edits` (`UserPromptSubmit`) hook — NOT via the plan-review FIFO.
+The `SpecPanel` SHALL provide a "Send to Agent" action in the annotation toolbar that serializes all annotations for the currently viewed spec (or other artifact) and queues them into `HookState.pending_annotations` via the `set_pending_annotations` Tauri command. The serialized payload SHALL include the artifact's repo-relative path so Claude can read the file directly. Delivery SHALL happen via the existing `inject-edits` (`UserPromptSubmit`) hook — NOT via the plan-review FIFO.
 
 #### Scenario: Send to Claude queues feedback
 
-- **WHEN** user has one or more annotations on a spec and clicks "Send to Claude" (or presses `Ctrl+Shift+R`)
+- **WHEN** user has one or more annotations on a spec and clicks "Send to Agent" (or presses `Ctrl+Shift+R`)
 - **THEN** the system SHALL call `serializeSpecAnnotations(annotations, { changeName, artifactPath, isMaster })`
 - **AND** the serialized result SHALL be passed to `set_pending_annotations`
 - **AND** the local annotations for that scope SHALL be cleared (in-memory atom + SQLite for that `spec_key`)
@@ -155,7 +157,6 @@ The active artifact SHALL be visually distinguished and switching artifacts SHAL
 - **THEN** the proposal tab SHALL render its count badge
 - **AND** the specs tab SHALL render its aggregate count badge (summed across all spec files in the change)
 - **AND** counts SHALL update reactively when annotations are added or removed
-
 
 ### Requirement: OpenSpec directory is configurable per workspace
 

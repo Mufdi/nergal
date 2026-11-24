@@ -93,7 +93,7 @@ Toggle it in Settings → Keymap.
 
 Single letters, no modifier, that act on the focused surface's current item.
 This is §8 — see there for the full guard contract. Used by ClickUp
-(`S/W/P/B/R/C/O/T`), Conflicts (`O/T`), PrViewer (`A`), Obsidian note
+(`S/W/P/B/R/C/O/T`), Conflicts (`O/T`), PrViewer (`A`, `M` merge, confirm-gated), Obsidian note
 (`P` pin · `O` open in Obsidian), and plan/spec review
 (`A` approve · `R` revise · `C` comment · `X` clear, confirm-gated). Bare-letter
 verbs are **NOT** registry entries; their affordance is the tooltip advertising
@@ -212,6 +212,10 @@ cancel`). Rules:
   — never as always-visible labels next to the input.
 - Use the glyphs `↑↓ ← →` plus key names; `Kbd` chips are for buttons and
   tooltips, not placeholders.
+- Hint **bars** (a standing key legend at the bottom of a view: git chips, PR
+  viewer, Conflicts, their file pickers) use `HintBar` + `Hint`
+  (`@/components/ui/hint-bar`): sticky bottom, 10px labels, 10px `Kbd` chips,
+  wraps when narrow. Placeholders keep the plain glyph text above.
 
 ## 5. Keyboard navigation primitives
 
@@ -403,7 +407,7 @@ own bubble handler otherwise, so the field can't intercept it without this.
 
 A focused panel/surface exposes its actions as **single bare letters** (no
 modifier) that act on the current item, scoped to that zone so they don't fire
-globally. Precedents: ConflictsPanel (`O`/`T`), PrViewer (`A`),
+globally. Precedents: ConflictsPanel (`O`/`T`), PrViewer (`A`, `M` merge, confirm-gated),
 ClickUpPanel + ClickUpTaskDetail (`S`/`W`/`P`/`B`/`R`/`C`/`O`/`T` — send / spawn /
 pin / bind / reinject / close-out / open / open-as-tab). These are
 **component-local window handlers**, not entries in `shortcuts.ts` (the binding
@@ -416,6 +420,10 @@ Contract:
   and bail unless the event target is inside the owning
   `data-focus-zone` (`target.closest("[data-focus-zone='…']")`). Copy the guard
   from `ClickUpTaskDetail.tsx`'s verb handler.
+- Also bail when `e.defaultPrevented` or a leader chord is pending
+  (`appStore.get(leaderPendingAtom)`), so a verb never steals the second key
+  of a chord. PrViewer `A`/`M` also accept Shift (their chips render
+  upper-case); every other verb keeps the no-Shift rule.
 - Resolve the target item the same way the surface shows its cursor: the open
   floating detail's task wins; otherwise the panel's `data-nav-selected` row
   (`[data-focus-zone='…'] [data-nav-selected][data-task-id]`).

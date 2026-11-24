@@ -8,6 +8,7 @@ import { zenModeAtom, prZenAtom } from "@/stores/zenMode";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
 import { Textarea } from "@/components/ui/textarea";
 import { Kbd } from "@/components/ui/kbd";
+import { Hint, HintBar } from "@/components/ui/hint-bar";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { PulseDots } from "@/components/ui/PulseDots";
 import {
@@ -416,12 +417,17 @@ export function StashesChip({ sessionId }: StashesChipProps) {
           {creating ? <PulseDots count={1} dotClassName="size-1" /> : <Archive size={10} />}
           Save stash <Kbd keys="ctrl+enter" />
         </button>
-        {stashes.length > 0 && (
-          <div className="mt-1 flex flex-wrap items-center gap-1 text-[9px] text-muted-foreground/60">
-            <Kbd keys="enter" /> apply · <Kbd keys="p" /> pop · <Kbd keys="d" /> drop · <Kbd keys="b" /> branch · <Kbd keys="space" /> expand
-          </div>
-        )}
       </div>
+
+      {stashes.length > 0 && (
+        <HintBar>
+          <Hint keys="enter">apply</Hint>
+          <Hint keys="p">pop</Hint>
+          <Hint keys="d">drop</Hint>
+          <Hint keys="b">branch</Hint>
+          <Hint keys="space">expand</Hint>
+        </HintBar>
+      )}
     </div>
   );
 }

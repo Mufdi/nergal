@@ -7,7 +7,7 @@ import { historyTreeItems, historyTreeKeyAction } from "@/lib/historyTree";
 import { focusZoneAtom } from "@/stores/shortcuts";
 import { openZenModeAtom, zenModeAtom, zenActiveZoneAtom, prZenAtom } from "@/stores/zenMode";
 import { conflictsZenOpenAtom } from "@/stores/conflict";
-import { Kbd } from "@/components/ui/kbd";
+import { Hint, HintBar } from "@/components/ui/hint-bar";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 
 interface CommitEntry {
@@ -136,7 +136,7 @@ export function HistoryChip({ sessionId, inZen = false }: HistoryChipProps) {
           History ({commits.length})
         </span>
       </div>
-      <div className="flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {commits.map((c) => {
           const isExpanded = expandedCommit === c.hash;
           const commitKey = `c:${c.hash}`;
@@ -191,10 +191,13 @@ export function HistoryChip({ sessionId, inZen = false }: HistoryChipProps) {
             </div>
           );
         })}
-        <div className="sticky bottom-0 flex items-center gap-1 border-t border-border/40 bg-card/95 px-3 py-1 text-[9px] text-muted-foreground/60">
-          <Kbd keys="arrowup" /><Kbd keys="arrowdown" /> · <Kbd keys="j" /><Kbd keys="k" /> move · <Kbd keys="space" /> expand · <Kbd keys="enter" /> open file
-        </div>
       </div>
+
+      <HintBar>
+        <Hint keys={["arrowup", "arrowdown", "j", "k"]}>move</Hint>
+        <Hint keys="space">expand</Hint>
+        <Hint keys="enter">open file</Hint>
+      </HintBar>
     </div>
   );
 }

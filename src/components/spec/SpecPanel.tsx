@@ -244,7 +244,7 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
       if (isAnnotatingThis) handleClearAnnotations();
     }
     function handleRevise() {
-      if (isAnnotatingThis && annotations.length > 0) handleSendToClaude();
+      if (isAnnotatingThis && annotations.length > 0) handleSendToAgent();
     }
 
     document.addEventListener("nergal:toggle-annotation-mode", handleToggleAnnotation);
@@ -336,7 +336,7 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
     }
   }
 
-  function handleSendToClaude() {
+  function handleSendToAgent() {
     if (!specScopeKey || !currentArtifactPath || annotations.length === 0) return;
     const feedback = serializeSpecAnnotations(annotations, {
       changeName,
@@ -548,7 +548,7 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
                 <Tooltip>
                   <TooltipTrigger>
                     <button
-                      onClick={handleSendToClaude}
+                      onClick={handleSendToAgent}
                       disabled={annotations.length === 0}
                       className={`h-5 rounded px-2 text-[10px] font-medium transition-colors ${
                         annotations.length > 0
@@ -556,7 +556,7 @@ export function SpecPanel({ changeName, sessionId, initialSpecPath, onDirtyChang
                           : "bg-secondary text-muted-foreground cursor-not-allowed"
                       }`}
                     >
-                      Send to Claude
+                      Send to Agent
                     </button>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" className="text-[10px]">

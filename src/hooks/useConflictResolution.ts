@@ -1,3 +1,5 @@
+import { appStore } from "@/stores/jotaiStore";
+import { leaderPendingAtom } from "@/stores/leader";
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 
 export interface Region {
@@ -78,7 +80,7 @@ export interface UseConflictResolutionArgs {
   toggleSyncScroll: () => void;
   onSave: () => void;
   onReset: () => void;
-  onAskClaude: () => void;
+  onAskAgent: () => void;
   onAcceptAll: (choice: RegionChoice, regionCount: number) => void;
 }
 
@@ -114,7 +116,7 @@ export function useConflictResolution({
   toggleSyncScroll,
   onSave,
   onReset,
-  onAskClaude,
+  onAskAgent,
   onAcceptAll,
 }: UseConflictResolutionArgs): UseConflictResolutionResult {
   const [focusedRegion, setFocusedRegion] = useState<number>(0);
@@ -235,7 +237,7 @@ export function useConflictResolution({
           return;
         }
       }
-      if (!inEditor && regions.length > 0) {
+      if (!inEditor && regions.length > 0 && !e.defaultPrevented && !appStore.get(leaderPendingAtom)) {
         // Arrow or J/K navigation between regions (parity with DiffView hunk nav).
         if ((e.key === "ArrowDown" || e.key === "j" || e.key === "J") && !(e.ctrlKey || e.metaKey) && !e.shiftKey) {
           e.preventDefault();
@@ -262,14 +264,14 @@ export function useConflictResolution({
       else if (e.code === "KeyZ") { e.preventDefault(); onReset(); }
       else if (e.key === "Enter") { e.preventDefault(); onSave(); }
     }
-    function onResolveActive() { onAskClaude(); }
+    function onResolveActive() { onAskAgent(); }
     window.addEventListener("keydown", onKey, true);
     document.addEventListener("nergal:resolve-conflict-active-tab", onResolveActive);
     return () => {
       window.removeEventListener("keydown", onKey, true);
       document.removeEventListener("nergal:resolve-conflict-active-tab", onResolveActive);
     };
-  }, [regions, focusedRegion, applyRegion, acceptAll, onReset, onSave, onAskClaude, listenerActive, onNavFile, pickerOpen, pickerCursor, files, onPickFile, toggleSyncScroll]);
+  }, [regions, focusedRegion, applyRegion, acceptAll, onReset, onSave, onAskAgent, listenerActive, onNavFile, pickerOpen, pickerCursor, files, onPickFile, toggleSyncScroll]);
 
   return {
     regions,

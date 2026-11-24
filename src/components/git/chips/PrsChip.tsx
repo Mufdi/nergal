@@ -8,6 +8,7 @@ import type { PrSummary } from "@/stores/git";
 import { prsCacheMapAtom, PRS_CACHE_TTL_MS, activePrInChipMapAtom } from "@/stores/git";
 import { PrViewer } from "@/components/git/PrViewer";
 import { Kbd } from "@/components/ui/kbd";
+import { Hint, HintBar } from "@/components/ui/hint-bar";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { zenModeAtom, prZenAtom } from "@/stores/zenMode";
@@ -255,9 +256,6 @@ export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
         <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
           PRs ({prs.length})
         </span>
-        <span className="text-[9px] text-muted-foreground/50">
-          <Kbd keys="enter" /> open
-        </span>
       </div>
 
       <div className="flex-1 overflow-y-auto">
@@ -312,9 +310,11 @@ export function PrsChip({ sessionId: _sessionId, workspaceId }: PrsChipProps) {
         })}
       </div>
 
-      <div className="shrink-0 border-t border-border/40 px-3 py-1 text-[9px] text-muted-foreground/60">
-        <Kbd keys="arrowup" /><Kbd keys="arrowdown" /> · <Kbd keys="j" /><Kbd keys="k" /> move · <Kbd keys="enter" /> open · <Kbd keys="backspace" /> back
-      </div>
+      <HintBar>
+        <Hint keys={["arrowup", "arrowdown", "j", "k"]}>move</Hint>
+        <Hint keys="enter">open</Hint>
+        <Hint keys="backspace">back</Hint>
+      </HintBar>
     </div>
   );
 }

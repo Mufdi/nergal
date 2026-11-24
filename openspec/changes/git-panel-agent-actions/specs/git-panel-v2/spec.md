@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: PR viewer merges with M after a confirmation
-In the PR viewer, `M` (with or without Shift, and without Ctrl, Alt or Meta) SHALL open a confirmation dialog for merging the displayed PR, and SHALL merge only when the user confirms. The PR viewer SHALL NOT handle `Ctrl+Enter`; `Ctrl+Enter` keeps its global meaning (toggle the fullscreen terminal). The Merge button SHALL show `M` as its shortcut chip.
+In the PR viewer, `M` (with or without Shift, and without Ctrl, Alt or Meta) SHALL open a confirmation dialog for merging the displayed PR, and SHALL merge only when the user confirms. The PR viewer SHALL NOT handle `Ctrl+Enter`; `Ctrl+Enter` keeps its global meaning (toggle the fullscreen terminal). The Merge button SHALL show `M` as its shortcut chip, and a click on it SHALL open the same confirmation.
 
 #### Scenario: M asks before merging
 - **GIVEN** the PR viewer shows open PR #7 into `main` with no annotations
@@ -44,17 +44,26 @@ In the PR viewer, `M` (with or without Shift, and without Ctrl, Alt or Meta) SHA
 - **WHEN** the viewer switches to PR #9 and the user then confirms
 - **THEN** no merge request is sent for #7 or #9
 
+#### Scenario: The Merge button asks too
+- **GIVEN** the PR viewer shows open PR #7 with no annotations
+- **WHEN** the user clicks "Merge into main"
+- **THEN** the "Merge PR #7?" confirmation opens and nothing merges until the user confirms
+
 #### Scenario: M is inert when the PR is closed
 - **GIVEN** the PR viewer shows a merged or closed PR
 - **WHEN** the user presses `M`
 - **THEN** no confirmation opens
 
 ### Requirement: Git panel hint bars share one standard
-Every keyboard hint bar in the git panel SHALL use one shared hint bar: a row pinned to the bottom of its view (sticky, with an opaque card background and a top border) that wraps when narrow, with 10px labels and 10px `Kbd` chips. This SHALL apply to the bottom hint row of the Files, History, Branches, Stashes, PRs list, Conflicts and PR viewer views and of the PR viewer and Conflicts file pickers.
+Every keyboard hint bar in the git panel SHALL use one shared hint bar: a row at the bottom of its view, below the scroll area, with an opaque card background and a top border, that wraps when narrow, with 10px labels and 10px `Kbd` chips. This SHALL apply to the bottom hint row of the Files, History, Branches, Stashes, PRs list, Conflicts and PR viewer views and of the PR viewer and Conflicts file pickers.
 
 #### Scenario: PRs list footer matches the other views
 - **WHEN** the PRs list renders its footer
 - **THEN** the footer is the shared hint bar, with 10px text and chips, pinned to the bottom of the list
+
+#### Scenario: Short list keeps the bar at the bottom
+- **GIVEN** the Files view lists 2 files in a tall panel
+- **THEN** the hint bar sits at the bottom edge of the view, not under the last row
 
 #### Scenario: Narrow panel wraps the hint bar
 - **GIVEN** the Branches view hint bar holds 7 hints
@@ -62,7 +71,7 @@ Every keyboard hint bar in the git panel SHALL use one shared hint bar: a row pi
 - **THEN** the hints wrap onto a second row instead of being clipped
 
 ### Requirement: The PR viewer lists its keys
-The PR viewer hint bar SHALL list `j/k` (hunks), `a` (annotate the hunk), `Ctrl+←/→` (files) and `M` (merge). A hint beside a single control in the git panel (a pane header or a field label) MAY stay inline and SHALL use 10px text.
+The PR viewer hint bar SHALL list `j/k` (hunks), `a` (annotate the hunk), `Ctrl+←/→` (files) and `M` (merge), and SHALL hide `j/k` and `a` when the PR has no hunks and `M` when the PR is not open. A hint beside a single control in the git panel (a pane header or a field label) MAY stay inline and SHALL use 10px text.
 
 #### Scenario: PR viewer shows its keys
 - **GIVEN** the PR viewer shows an open PR with at least one hunk

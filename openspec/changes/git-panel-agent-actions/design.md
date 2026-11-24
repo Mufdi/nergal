@@ -30,7 +30,9 @@ Guards, all in the viewer handler or the merge request:
 - The request reads `state`, `merging` and `performMerge` through refs that always hold the latest render's values, and checks `state === "OPEN" && !merging` before opening the dialog and again after the user confirms. It also captures `{ workspaceId, prNumber }` when the dialog opens and aborts if the viewer shows another PR when the user confirms: the viewer is not remounted per PR (`PrsChip.tsx:234`), so the latest `performMerge` would target the new PR. The keydown effect does not list these values in its deps, so a closure would see stale ones.
 - The pure helper `prViewerKeyAction` receives `canMerge` (PR open and no merge running) so the gate is unit-tested.
 
-The Merge button keeps its click flow. A click without annotations merges at once. A click with annotations shows the inline "merge anyway" strip. A click is deliberate, and the button text names the target branch.
+Revision 1 (adversarial review): the Merge button click opens the same confirmation as `M`. Its chip names `M`, so a click that merged at once while the key asked first would give one chip two safety levels. The inline "merge anyway" strip goes away: the dialog already states the unresolved annotation count. One merge flow remains.
+
+The decision after the dialog lives in a pure helper, `mergeAfterConfirm`, so the re-checks (state still open, no merge running, same `{ workspaceId, prNumber }`) are unit-tested.
 
 Alternatives:
 - Keep `Ctrl+Enter` and call `stopImmediatePropagation` in the viewer. Rejected: `Ctrl+Enter` would mean two things depending on the panel, and the viewer cannot rely on running before the global listener.
@@ -39,6 +41,8 @@ Alternatives:
 - Reject `Shift+M`. Rejected: the chip renders an upper-case `M`, and `a` already accepts Shift.
 
 ### D2. One shared `HintBar` with 10px `Kbd` chips
+
+Placement (revision 1): in a view, the bar is a `shrink-0` sibling after the scroll container, so it sits at the bottom even when the list is short. A `sticky bottom-0` last child only reaches the bottom when the list overflows. Inside a self-sizing picker card, the bar is the last child of the card. The PR viewer bar sits between the diff and the footer buttons. The bar hides a hint whose key does nothing in the current state (`M` on a PR that is not open, `j/k` and `a` with no hunks).
 
 Scope: the key-hint row at the bottom of each git panel view and of each file picker (the PR viewer picker and the Conflicts picker). Inline hints beside one control stay inline but move to 10px: the Conflicts pane headers (`ConflictsPanel.tsx:1456`) and the intent field's `Ctrl+Shift+R sends` (`ConflictsPanel.tsx:1057`).
 

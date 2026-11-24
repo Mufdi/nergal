@@ -298,8 +298,20 @@ OS-aware (Mac glyphs `⌃⇧⌥⌘` vs `Ctrl+Shift+Alt+Super`). Two tones:
 - `subtle` (default) — `border-border/40 bg-background/40 text-muted-foreground/70`
 - `onPrimary` — for chips inside a saturated orange button.
 
-`h-4 px-1 font-mono text-[9px]`. Always pair with the actual keybinding string
-from `stores/shortcuts.ts` so the registry is the single source of truth.
+`h-4 px-1 font-mono`. The `size` prop picks the glyph size: `sm` (default,
+`text-[9px]`) for chips inside buttons and tooltips, `md` (`text-[10px]`) for
+hint bars. Always pair with the actual keybinding string from
+`stores/shortcuts.ts` so the registry is the single source of truth.
+
+**`HintBar` / `Hint`** (`@/components/ui/hint-bar.tsx`): the shared key-hint
+strip for git panel views. `HintBar` wraps (`flex-wrap`), `text-[10px]`
+labels at full `text-muted-foreground` with `border-t border-border/40
+bg-card/95`; `Hint keys={...}` renders one `Kbd size="md"` per key plus its
+label. Placement rule: a `shrink-0` sibling placed after the scroll container
+inside a flex-column root, so it sits at the bottom edge even with a short
+list. Only a picker card (a scrolling overlay with no flex-column root) passes
+`className="sticky bottom-0"`. In the PR viewer the bar sits between the diff
+and the footer.
 
 The `CommandPalette` renders its own KeyBadges inline — they should migrate
 to `Kbd` (open follow-up).

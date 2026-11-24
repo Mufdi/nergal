@@ -2001,16 +2001,28 @@ pub fn terminal_paste(
     Ok(())
 }
 
-/// Programmatic delivery to an agent session (e.g. the PR viewer's "Apply
-/// with Claude"): always a bracketed paste, so a multi-line prompt lands as
-/// one turn regardless of the DECSET 2004 state a user paste follows.
+/// Programmatic delivery to an agent session (the PR viewer's "Apply with
+/// Agent", conflicts "Ask Agent"): a bracketed paste so a multi-line prompt
+/// lands as one turn, then the CR after the settle. Resolves only after the
+/// CR is written so callers' in-flight guards and error toasts are truthful.
+pub(crate) async fn deliver_prompt(
+    pty: &PtyManager,
+    session_id: &str,
+    text: &str,
+    settle: std::time::Duration,
+) -> Result<(), String> {
+    paste_to_session(pty, session_id, text, false)?;
+    tokio::time::sleep(settle).await;
+    submit_to_session(pty, session_id)
+}
+
 #[tauri::command]
-pub fn terminal_deliver(
+pub async fn deliver_prompt_to_session(
     state: State<'_, PtyManager>,
     session_id: String,
     text: String,
 ) -> Result<(), String> {
-    paste_to_session(&state, &session_id, &text, false)
+    deliver_prompt(&state, &session_id, &text, PASTE_SUBMIT_SETTLE).await
 }
 
 fn encode_user_paste(text: &str, bracketed: bool) -> String {
@@ -2112,6 +2124,8 @@ pub(crate) fn submit_to_session(state: &PtyManager, session_id: &str) -> Result<
     w.flush().map_err(|e| e.to_string())
 }
 
+const PASTE_SUBMIT_SETTLE: std::time::Duration = std::time::Duration::from_millis(250);
+
 /// Paste `text` to an agent session's PTY, then submit it as a turn after a
 /// short settle. Splitting the Enter from the bracketed-paste end marker is the
 /// same race fix cross-session delivery uses: an Enter in the same write burst
@@ -2132,7 +2146,7 @@ pub(crate) fn paste_and_submit_settled(
     let app = app.clone();
     let sid = session_id.to_string();
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        tokio::time::sleep(PASTE_SUBMIT_SETTLE).await;
         if let Some(pty) = app.try_state::<PtyManager>() {
             let _ = submit_to_session(pty.inner(), &sid);
         }
@@ -3209,3 +3223,7 @@ mod launch_prompt_ps_tests;
 #[cfg(test)]
 #[path = "pty_user_paste_tests.rs"]
 mod user_paste_tests;
+
+#[cfg(test)]
+#[path = "pty_deliver_prompt_tests.rs"]
+mod deliver_prompt_tests;

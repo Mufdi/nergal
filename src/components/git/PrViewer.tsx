@@ -41,6 +41,12 @@ import {
   FolderOpen,
 } from "lucide-react";
 import { Kbd } from "@/components/ui/kbd";
+import { Hint, HintBar } from "@/components/ui/hint-bar";
+import { confirm } from "@/lib/confirm";
+import { escapeHtml } from "@/lib/escapeHtml";
+import { mergeAfterConfirm, prViewerKeyAction } from "@/lib/prViewerKeys";
+import { appStore } from "@/stores/jotaiStore";
+import { leaderPendingAtom } from "@/stores/leader";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { PulseDots } from "@/components/ui/PulseDots";
 
@@ -205,7 +211,7 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
   const [annotating, setAnnotating] = useState(false);
   const [annotationDraft, setAnnotationDraft] = useState("");
   const [merging, setMerging] = useState(false);
-  const [mergeAnywayConfirm, setMergeAnywayConfirm] = useState(false);
+  const [applying, setApplying] = useState(false);
   /// Per-PR active file. Lifted to a global atom keyed by PR identity so the
   /// Zen sidebar can show the same file list and stay in sync with the
   /// viewer's selection. PrViewer mirrors the Diff panel's "one file at a
@@ -231,6 +237,14 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
   const scrollRef = useRef<HTMLDivElement>(null);
   const hunkRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const annotationInputRef = useRef<HTMLTextAreaElement>(null);
+  const stateRef = useRef(state);
+  const mergingRef = useRef(false);
+  const performMergeRef = useRef<() => void>(() => {});
+  const prIdentityRef = useRef({ workspaceId, prNumber });
+  const applyRef = useRef<() => void>(() => {});
+  const applyingRef = useRef(false);
+  const mergeConfirmOpenRef = useRef(false);
+  const requestMergeRef = useRef<() => Promise<void>>(async () => {});
 
   const annotationsMap = useAtomValue(prAnnotationsMapAtom);
   const setAnnotationsMap = useSetAtom(prAnnotationsMapAtom);
@@ -261,7 +275,7 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
   );
 
   /// Find the session in the workspace whose worktree branch matches the PR's
-  /// head ref. Used to gate Apply-with-Claude (so we don't write a prompt
+  /// head ref. Used to gate Apply with Agent (so we don't write a prompt
   /// into a session whose worktree has nothing to do with the PR).
   const owningSessionId = useMemo<string | null>(() => {
     const ws = workspaces.find((w) => w.id === workspaceId);
@@ -475,10 +489,13 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
     });
   }
 
-  function applyWithClaude() {
+  function applyWithAgent() {
     if (!isOwningSessionActive || annotations.length === 0) return;
     const sid = owningSessionId;
     if (!sid) return;
+    if (applyingRef.current) return;
+    applyingRef.current = true;
+    setApplying(true);
 
     const sorted = [...annotations].sort((a, b) => a.hunkIndex - b.hunkIndex);
     const blocks = sorted.map((a) => {
@@ -499,10 +516,10 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
       `Once you've pushed, I'll refresh the PR Viewer and resolve the annotations.`,
     ].join("\n");
 
-    invoke("terminal_deliver", { sessionId: sid, text: prompt })
+    invoke("deliver_prompt_to_session", { sessionId: sid, text: prompt })
       .then(() => {
         addToast({
-          message: "Apply with Claude",
+          message: "Apply with Agent",
           description: `Sent ${annotations.length} annotation${annotations.length === 1 ? "" : "s"} to the session terminal.`,
           type: "success",
         });
@@ -513,12 +530,15 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
           description: String(err),
           type: "error",
         });
+      })
+      .finally(() => {
+        applyingRef.current = false;
+        setApplying(false);
       });
   }
 
   const performMerge = useCallback(() => {
     setMerging(true);
-    setMergeAnywayConfirm(false);
     invoke<void>("gh_pr_merge", { workspaceId, prNumber })
       .then(() => {
         addToast({
@@ -582,14 +602,38 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
       .finally(() => setMerging(false));
   }, [workspaceId, prNumber, baseRefName, owningSessionId, addToast, setChipModeMap, setSelectedConflictMap, transitionAfterCleanup, refreshPrInfo]);
 
-  function handleMergeClick() {
-    if (state !== "OPEN") return;
-    if (annotations.length > 0 && !mergeAnywayConfirm) {
-      setMergeAnywayConfirm(true);
-      return;
+  stateRef.current = state;
+  mergingRef.current = merging;
+  performMergeRef.current = performMerge;
+  prIdentityRef.current = { workspaceId, prNumber };
+  applyRef.current = applyWithAgent;
+
+  async function requestMergeConfirm() {
+    if (mergeConfirmOpenRef.current) return;
+    if (stateRef.current !== "OPEN" || mergingRef.current) return;
+    mergeConfirmOpenRef.current = true;
+    const requested = prIdentityRef.current;
+    let confirmed = false;
+    try {
+      confirmed = await confirm({
+        title: `Merge PR #${prNumber}?`,
+        body: `Merge into <b>${escapeHtml(baseRefName)}</b>.` +
+          (annotations.length > 0 ? ` ${annotations.length} annotation${annotations.length === 1 ? "" : "s"} unresolved.` : ""),
+        confirmLabel: "Merge",
+        destructive: true,
+      });
+    } finally {
+      mergeConfirmOpenRef.current = false;
     }
-    performMerge();
+    const now = prIdentityRef.current;
+    if (!mergeAfterConfirm({
+      confirmed,
+      captured: requested,
+      current: { ...now, state: stateRef.current, merging: mergingRef.current },
+    })) return;
+    performMergeRef.current();
   }
+  requestMergeRef.current = requestMergeConfirm;
 
   // Keyboard handling at window level, gated by `isActive` and Zen state.
   // State-based gating (no DOM focus dependency): exactly one PrViewer
@@ -606,31 +650,28 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
         || !!target?.closest(".cm-editor")
         || target?.getAttribute("contenteditable") === "true";
       if (inField) return;
+      if (e.defaultPrevented || appStore.get(leaderPendingAtom)) return;
 
-      // Picker open: j/k drives the picker cursor, Enter commits, Esc closes.
-      if (pickerOpen) {
-        if (e.code === "Escape") {
-          e.preventDefault();
-          e.stopPropagation();
+      const action = prViewerKeyAction(e, {
+        pickerOpen,
+        hunkCount: visibleHunks.length,
+        fileCount: prFiles.length,
+        canMerge: stateRef.current === "OPEN" && !mergingRef.current,
+      });
+      if (!action) return;
+      e.preventDefault();
+      e.stopPropagation();
+      switch (action) {
+        case "picker-close":
           setPickerOpen(false);
           return;
-        }
-        if (prFiles.length === 0) return;
-        if (e.code === "KeyJ" || e.code === "ArrowDown") {
-          e.preventDefault();
-          e.stopPropagation();
+        case "picker-next":
           setPickerCursor((i) => (i + 1) % prFiles.length);
           return;
-        }
-        if (e.code === "KeyK" || e.code === "ArrowUp") {
-          e.preventDefault();
-          e.stopPropagation();
+        case "picker-prev":
           setPickerCursor((i) => (i - 1 + prFiles.length) % prFiles.length);
           return;
-        }
-        if (e.code === "Enter") {
-          e.preventDefault();
-          e.stopPropagation();
+        case "picker-pick": {
           const pick = prFiles[pickerCursor];
           if (pick) {
             setSelectedFile(pick);
@@ -638,56 +679,33 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
           }
           return;
         }
-        return;
-      }
-
-      if (e.code === "KeyJ" || e.code === "ArrowDown") {
-        if (visibleHunks.length === 0) return;
-        e.preventDefault();
-        e.stopPropagation();
-        navigateHunk(1);
-        return;
-      }
-      if (e.code === "KeyK" || e.code === "ArrowUp") {
-        if (visibleHunks.length === 0) return;
-        e.preventDefault();
-        e.stopPropagation();
-        navigateHunk(-1);
-        return;
-      }
-      if (e.code === "Space" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
-        if (visibleHunks.length === 0) return;
-        e.preventDefault();
-        e.stopPropagation();
-        toggleCollapse(activeHunk);
-        return;
-      }
-      if (e.code === "KeyA" && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        if (visibleHunks.length === 0) return;
-        e.preventDefault();
-        e.stopPropagation();
-        startAnnotating();
-        return;
-      }
-      if (e.code === "Enter" && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        e.stopPropagation();
-        handleMergeClick();
-        return;
-      }
-      // Ctrl+←/→ — file prev/next within the PR's file list.
-      if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.code === "ArrowLeft" || e.code === "ArrowRight")) {
-        if (prFiles.length < 2 || !selectedFile) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const idx = prFiles.indexOf(selectedFile);
-        if (idx === -1) return;
-        const nextIdx = e.code === "ArrowRight"
-          ? (idx + 1) % prFiles.length
-          : (idx - 1 + prFiles.length) % prFiles.length;
-        const next = prFiles[nextIdx];
-        if (next) setSelectedFile(next);
-        return;
+        case "hunk-next":
+          navigateHunk(1);
+          return;
+        case "hunk-prev":
+          navigateHunk(-1);
+          return;
+        case "toggle-collapse":
+          toggleCollapse(activeHunk);
+          return;
+        case "annotate":
+          startAnnotating();
+          return;
+        case "merge":
+          void requestMergeRef.current();
+          return;
+        case "file-prev":
+        case "file-next": {
+          if (!selectedFile) return;
+          const idx = prFiles.indexOf(selectedFile);
+          if (idx === -1) return;
+          const nextIdx = action === "file-next"
+            ? (idx + 1) % prFiles.length
+            : (idx - 1 + prFiles.length) % prFiles.length;
+          const next = prFiles[nextIdx];
+          if (next) setSelectedFile(next);
+          return;
+        }
       }
     }
     window.addEventListener("keydown", handleKeyDown, true);
@@ -713,12 +731,12 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
   }, [isActive, listenerActive, selectedFile, prFiles]);
 
   // Ctrl+Shift+R routes here when the user is on the PRs chip (see the
-  // revise-or-resolve handler in shortcuts.ts). applyWithClaude is the same
+  // revise-or-resolve handler in shortcuts.ts). applyWithAgent is the same
   // path the footer button uses; it no-ops when there are no annotations or
   // the owning session isn't active, so the shortcut is safe to fire blind.
   useEffect(() => {
     if (!isActive || !listenerActive) return;
-    function onApply() { applyWithClaude(); }
+    function onApply() { applyRef.current(); }
     document.addEventListener("nergal:apply-pr-annotations", onApply);
     return () => document.removeEventListener("nergal:apply-pr-annotations", onApply);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1084,9 +1102,6 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
                   <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                     PR files ({prFiles.length})
                   </span>
-                  <span className="text-[9px] text-muted-foreground/60">
-                    j/k move · Enter pick · Esc close
-                  </span>
                 </div>
                 {prFiles.map((fp, i) => {
                   const isCursor = pickerCursor === i;
@@ -1118,11 +1133,23 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
                     </button>
                   );
                 })}
+                <HintBar className="sticky bottom-0">
+                  <Hint keys={["j", "k"]}>move</Hint>
+                  <Hint keys="enter">pick</Hint>
+                  <Hint keys="esc">close</Hint>
+                </HintBar>
               </div>
             </div>
           </>
         )}
       </div>
+
+      <HintBar>
+        {visibleHunks.length > 0 && <Hint keys={["j", "k"]}>hunk</Hint>}
+        {visibleHunks.length > 0 && <Hint keys="a">annotate</Hint>}
+        <Hint keys={["ctrl+arrowleft", "ctrl+arrowright"]}>file</Hint>
+        {state === "OPEN" && <Hint keys="m">merge</Hint>}
+      </HintBar>
 
       {/* Footer */}
       <div className="flex shrink-0 items-center gap-2 border-t border-border/50 px-3 py-1.5">
@@ -1153,11 +1180,11 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
             <TooltipTrigger>
               <span className={!isOwningSessionActive ? "inline-block" : "inline-block"}>
                 <button
-                  onClick={applyWithClaude}
-                  disabled={!isOwningSessionActive}
+                  onClick={applyWithAgent}
+                  disabled={!isOwningSessionActive || applying}
                   className="flex h-6 items-center gap-1.5 rounded bg-amber-500/15 px-2 text-[10px] font-medium text-amber-300 hover:bg-amber-500/25 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <Sparkles size={10} /> Apply with Claude ({annotations.length})
+                  <Sparkles size={10} /> {applying ? "Sending…" : `Apply with Agent (${annotations.length})`}
                   <Kbd keys="ctrl+shift+r" />
                 </button>
               </span>
@@ -1178,44 +1205,22 @@ export function PrViewer({ data, isActive = true, inZen = false, defaultPickerOp
               PR is {state.toLowerCase()}
             </span>
           )}
-          {mergeAnywayConfirm ? (
-            <>
-              <span className="text-[10px] text-amber-400">
-                {annotations.length} unresolved — merge anyway?
-              </span>
-              <button
-                onClick={() => setMergeAnywayConfirm(false)}
-                className="flex h-6 items-center rounded px-2 text-[10px] text-muted-foreground hover:bg-secondary"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={performMerge}
-                disabled={merging}
-                className="flex h-6 items-center gap-1 rounded bg-amber-500/20 px-2 text-[10px] font-medium text-amber-300 hover:bg-amber-500/30 disabled:opacity-50"
-              >
-                {merging ? <PulseDots count={1} dotClassName="size-1" /> : <GitMerge size={10} />}
-                Merge anyway
-              </button>
-            </>
-          ) : (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    onClick={handleMergeClick}
-                    disabled={merging || state !== "OPEN"}
-                    className="flex h-6 items-center gap-1.5 rounded bg-green-500/20 px-2 text-[10px] font-medium text-green-300 hover:bg-green-500/30 disabled:cursor-not-allowed disabled:opacity-50"
-                  />
-                }
-              >
-                {merging ? <PulseDots count={1} dotClassName="size-1" /> : <GitMerge size={10} />}
-                Merge into {baseRefName}
-                <Kbd keys="ctrl+enter" />
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="text-[10px]">{state === "OPEN" ? `Merge PR #${prNumber} into ${baseRefName}` : "PR is not open"}</TooltipContent>
-            </Tooltip>
-          )}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  onClick={() => void requestMergeConfirm()}
+                  disabled={merging || state !== "OPEN"}
+                  className="flex h-6 items-center gap-1.5 rounded bg-green-500/20 px-2 text-[10px] font-medium text-green-300 hover:bg-green-500/30 disabled:cursor-not-allowed disabled:opacity-50"
+                />
+              }
+            >
+              {merging ? <PulseDots count={1} dotClassName="size-1" /> : <GitMerge size={10} />}
+              Merge into {baseRefName}
+              <Kbd keys="m" />
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">{state === "OPEN" ? `Merge PR #${prNumber} into ${baseRefName}` : "PR is not open"}</TooltipContent>
+          </Tooltip>
         </div>
       </div>
     </div>

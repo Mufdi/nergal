@@ -9,6 +9,7 @@ export interface KbdProps {
   /// when rendered inside a primary/colored button so the chip stays
   /// legible against the saturated background.
   tone?: "subtle" | "onPrimary";
+  size?: "sm" | "md";
 }
 
 const PLATFORM_GLYPHS: Record<string, { ctrl: string; shift: string; alt: string; meta: string; sep: string }> = {
@@ -36,13 +37,40 @@ function formatKey(part: string): string {
   return part.charAt(0).toUpperCase() + part.slice(1);
 }
 
+const SPOKEN_KEYS: Record<string, string> = {
+  arrowup: "Up arrow",
+  arrowdown: "Down arrow",
+  arrowleft: "Left arrow",
+  arrowright: "Right arrow",
+  enter: "Enter",
+  escape: "Escape",
+  esc: "Escape",
+  backspace: "Backspace",
+  space: "Space",
+  tab: "Tab",
+  ctrl: "Ctrl",
+  control: "Ctrl",
+  shift: "Shift",
+  alt: "Alt",
+  option: "Alt",
+  meta: "Super",
+  cmd: "Super",
+  command: "Super",
+  super: "Super",
+};
+
+function spokenKey(part: string): string {
+  if (SPOKEN_KEYS[part]) return SPOKEN_KEYS[part];
+  return part.length === 1 ? part.toUpperCase() : part.charAt(0).toUpperCase() + part.slice(1);
+}
+
 /// Compact keyboard-shortcut chip. Renders OS-aware modifier glyphs (⌃⇧⌥⌘
 /// on macOS, plain `Ctrl+Shift+Alt+Super` elsewhere) so the user discovers
 /// the shortcut without having to hover or open the command palette.
 ///
 /// Pass the same string used in `shortcuts.ts` `keys` field — formatting is
 /// handled here so callsites stay terse.
-export function Kbd({ keys, className, tone = "subtle" }: KbdProps) {
+export function Kbd({ keys, className, tone = "subtle", size = "sm" }: KbdProps) {
   const [isMac, setIsMac] = useState(false);
   useEffect(() => {
     setIsMac(detectMac());
@@ -66,11 +94,12 @@ export function Kbd({ keys, className, tone = "subtle" }: KbdProps) {
   return (
     <kbd
       className={
-        "inline-flex h-4 select-none items-center rounded border px-1 font-mono text-[9px] leading-none " +
+        "inline-flex h-4 select-none items-center rounded border px-1 font-mono " +
+        (size === "md" ? "text-[10px]" : "text-[9px]") + " leading-none " +
         toneClass + " " +
         (className ?? "")
       }
-      aria-label={`Shortcut: ${keys}`}
+      aria-label={`Shortcut: ${parts.map(spokenKey).join("+")}`}
     >
       {text}
     </kbd>

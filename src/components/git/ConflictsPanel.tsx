@@ -30,6 +30,7 @@ import { zenModeAtom, prZenAtom } from "@/stores/zenMode";
 import * as terminalService from "@/components/terminal/terminalService";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
+import { Hint, HintBar } from "@/components/ui/hint-bar";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import {
@@ -356,6 +357,7 @@ function ConflictView({
   const addToast = useSetAtom(toastsAtom);
   const setFocusZone = useSetAtom(focusZoneAtom);
   const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
   /// Sync-scroll lock. On by default — JetBrains-style 3-pane review only
   /// makes sense when scrolling one pane drags the others. The toggle exists
   /// for the rare moment the user wants to look at theirs at line 200 while
@@ -404,8 +406,9 @@ function ConflictView({
     addToast({ message: "Reset", description: "Merged restored with conflict markers", type: "info" });
   }, [current, updateMerged, addToast]);
 
-  const askClaude = useCallback(async () => {
-    if (!current || sending) return;
+  const askAgent = useCallback(async () => {
+    if (!current || sendingRef.current) return;
+    sendingRef.current = true;
     setSending(true);
     try {
       const prompt = await invoke<string>("build_conflict_prompt", {
@@ -416,17 +419,18 @@ function ConflictView({
         originalMerged: current.originalMerged,
         intent: intent || null,
       });
+      await invoke("deliver_prompt_to_session", { sessionId, text: prompt });
       setFocusZone("terminal");
       terminalService.focusActive();
-      await terminalService.writeToSession(sessionId, `${prompt}\r`);
-      addToast({ message: "Sent to Claude", description: "Prompt submitted with conflict context", type: "success" });
+      addToast({ message: "Sent to agent", description: "Prompt submitted with conflict context", type: "success" });
       setIntentMap((prev) => ({ ...prev, [key]: "" }));
     } catch (e) {
       addToast({ message: "Failed", description: String(e), type: "error" });
     } finally {
+      sendingRef.current = false;
       setSending(false);
     }
-  }, [current, sending, sessionId, path, intent, key, setFocusZone, addToast, setIntentMap]);
+  }, [current, sessionId, path, intent, key, setFocusZone, addToast, setIntentMap]);
 
   const saveResolution = useCallback(async () => {
     if (!current) return;
@@ -480,7 +484,7 @@ function ConflictView({
     toggleSyncScroll,
     onSave: saveResolution,
     onReset: resetMerged,
-    onAskClaude: askClaude,
+    onAskAgent: askAgent,
     onAcceptAll: handleAcceptAll,
   });
 
@@ -931,11 +935,6 @@ function ConflictView({
             </Tooltip>
           </div>
         </div>
-        {regions.length > 0 && (
-          <div className="border-t border-border/30 px-3 py-0.5 text-[9px] text-muted-foreground/60">
-            ↑↓ / j k region · o / t / b region · ctrl+shift+o / t all · s sync · ctrl+shift+k picker · ctrl+shift+enter save · ctrl+shift+r ask Claude
-          </div>
-        )}
       </div>
 
       {/* Row 3: Region index — one row per conflict region. Pure navigation
@@ -1049,12 +1048,11 @@ function ConflictView({
         />
       </div>
 
-      {/* Intent + Ask Claude */}
+      {/* Intent + Ask Agent */}
       <div className="flex shrink-0 flex-col gap-1.5 border-t border-border/50 bg-card/40 px-3 py-2">
         <div className="flex items-center gap-2">
           <Sparkles size={10} className="text-muted-foreground" />
-          <label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Intent for Claude (optional)</label>
-          <span className="ml-auto text-[9px] text-muted-foreground/60">Ctrl+Shift+R sends</span>
+          <label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Intent for the agent (optional)</label>
         </div>
         <textarea
           value={intent}
@@ -1064,11 +1062,23 @@ function ConflictView({
           spellCheck={false}
         />
         <div className="flex justify-end">
-          <Button size="sm" onClick={askClaude} disabled={sending} className="h-6 gap-1 px-2 text-[10px]">
-            {sending ? "Sending…" : <><Send size={10} /> Ask Claude</>}
+          <Button size="sm" onClick={askAgent} disabled={sending} className="h-6 gap-1 px-2 text-[10px]">
+            {sending ? "Sending…" : <><Send size={10} /> Ask Agent</>}
           </Button>
         </div>
       </div>
+
+      {regions.length > 0 && (
+        <HintBar>
+          <Hint keys={["arrowup", "arrowdown", "j", "k"]}>region</Hint>
+          <Hint keys={["o", "t", "b"]}>ours/theirs/both</Hint>
+          <Hint keys={["ctrl+shift+o", "ctrl+shift+t"]}>all</Hint>
+          <Hint keys="s">sync</Hint>
+          <Hint keys="ctrl+shift+k">picker</Hint>
+          <Hint keys="ctrl+shift+enter">save</Hint>
+          <Hint keys="ctrl+shift+r">ask agent</Hint>
+        </HintBar>
+      )}
 
       {/* File picker overlay — same shape as PrViewer's. Floats over the
           panel, j/k+Enter nav, Esc closes. Backdrop dims the merge surface
@@ -1084,9 +1094,6 @@ function ConflictView({
               <div className="sticky top-0 flex items-center justify-between border-b border-border/50 bg-card px-3 py-1.5">
                 <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                   Conflicted files ({files.length})
-                </span>
-                <span className="text-[9px] text-muted-foreground/60">
-                  j/k move · Enter pick · Esc close
                 </span>
               </div>
               {files.map((fp, i) => {
@@ -1118,6 +1125,11 @@ function ConflictView({
                   </button>
                 );
               })}
+              <HintBar className="sticky bottom-0">
+                <Hint keys={["j", "k"]}>move</Hint>
+                <Hint keys="enter">pick</Hint>
+                <Hint keys="esc">close</Hint>
+              </HintBar>
             </div>
           </div>
         </>
@@ -1453,7 +1465,7 @@ function CodePane({ title, accent, value, onChange, readOnly, hint, filePath, wr
       <div className="flex shrink-0 items-center gap-1 border-b border-border/30 px-2 py-1">
         <Check size={10} className={accent} />
         <span className={`text-[10px] font-medium uppercase tracking-wider ${accent}`}>{title}</span>
-        {hint && <span className="ml-auto text-[9px] text-muted-foreground/60">{hint}</span>}
+        {hint && <span className="ml-auto text-[10px] text-muted-foreground/60">{hint}</span>}
       </div>
       <div ref={containerRef} className="min-h-0 flex-1 overflow-hidden" />
     </div>

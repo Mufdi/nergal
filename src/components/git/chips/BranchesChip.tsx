@@ -30,7 +30,7 @@ import { focusZoneAtom } from "@/stores/shortcuts";
 import { toastsAtom } from "@/stores/toast";
 import { workspacesAtom, type Session } from "@/stores/workspace";
 import * as terminalService from "@/components/terminal/terminalService";
-import { Kbd } from "@/components/ui/kbd";
+import { Hint, HintBar } from "@/components/ui/hint-bar";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
@@ -317,7 +317,7 @@ export function BranchesChip({ sessionId, workspaceId }: BranchesChipProps) {
           </div>
         </div>
       ) : (
-        <div className="flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto">
           {rows.map((row) => {
             const rowKey = branchKey(row.name);
             const isCursor = cursorItemKey === rowKey;
@@ -459,10 +459,16 @@ export function BranchesChip({ sessionId, workspaceId }: BranchesChipProps) {
               </div>
             );
           })}
-          <div className="sticky bottom-0 flex items-center gap-1 border-t border-border/40 bg-card/95 px-3 py-1 text-[9px] text-muted-foreground/60">
-            <Kbd keys="arrowup" /><Kbd keys="arrowdown" /> · <Kbd keys="j" /><Kbd keys="k" /> move · <Kbd keys="space" /> expand · <Kbd keys="enter" /> open file · <Kbd keys="o" /> open session · <Kbd keys="d" /> delete
-          </div>
         </div>
+      )}
+      {rows.length > 0 && (
+        <HintBar>
+          <Hint keys={["arrowup", "arrowdown", "j", "k"]}>move</Hint>
+          <Hint keys="space">expand</Hint>
+          <Hint keys="enter">open file</Hint>
+          <Hint keys="o">open session</Hint>
+          <Hint keys="d">delete</Hint>
+        </HintBar>
       )}
     </div>
   );

@@ -154,7 +154,7 @@ export function PlanPanel({ path }: PlanPanelProps) {
       .then(() => {
         setReviewStatusMap((prev) => ({ ...prev, [sessionId]: "submitted" }));
         clearAnnotations();
-        addToast({ message: "Annotations sent", description: "Claude will revise the plan", type: "success" });
+        addToast({ message: "Annotations sent", description: "The agent will revise the plan", type: "success" });
       })
       .catch((err: unknown) => failDecision("Revise", err))
       .finally(() => setInFlight(sessionId, false));

@@ -17,7 +17,8 @@
   "interview_answers": {
     "where_was_focus": "In the plan panel; the screenshot was from another moment.",
     "symptom": "Approve with A and with the mouse both ended the panel's waiting state, but Claude Code kept asking for approval in the terminal.",
-    "run_plan": "Stacked branches FRI-604 -> 506 -> 507 -> 473 (deb checkpoint 1); nothing merged to main until walked."
+    "run_plan": "Stacked branches FRI-604 -> 506 -> 507 -> 473 (deb checkpoint 1); nothing merged to main until walked.",
+    "terminal_deny_or_esc_gap": "Accept the gap (user, 2026-11-24): Claude Code does not kill the pending PermissionRequest hook when the user answers in its own dialog (spike: hook alive 6 s after the TUI answer, no signal). A terminal approval is detected via PostToolUse[ExitPlanMode]; a terminal deny or Esc leaves the panel stale until the next PlanReview or the turn's Stop. Documented, no extra signal."
   },
   "events": [
     {
@@ -29,6 +30,11 @@
       "ts": "2026-11-23T20:30:58-03:00",
       "type": "yield",
       "note": "iprev 3 rounds (R1: 2 high/4 medium/4 low); reviewers: adversarial 5 Important + 5 nits, frontend 5 Important + 4 nits, re-review 2 Important + 5 nits, all fixed per user; orchestrator found 1 defect (documentBase); Red conflicts 1 (tsc cast earlier n/a here: 0); gate failures 0; walks pending checkpoint 1"
+    },
+    {
+      "ts": "2026-11-24T04:40:00Z",
+      "type": "revalidated",
+      "note": "Revision 3 re-review: 3 Important, 7 Minor, 4 Nit. Convergence rule on the release mechanism: asked user; user accepted the terminal deny/Esc gap. Revision 4 fixes every other finding."
     }
   ]
 }

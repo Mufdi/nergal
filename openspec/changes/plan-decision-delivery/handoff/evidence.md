@@ -126,3 +126,21 @@ Verify:
 | 2. Red locks | PASS | 6 locked file(s) unchanged |
 
 - clippy --all-targets -D warnings: clean. cargo test: `test result: ok. 1268 passed; 0 failed; 1 ignored` (+ other binaries ok). rustfmt --edition 2024 --check (4 files): OK. tsc: clean. vitest: 559 passed (52 files).
+
+## Revision 4 (Revision 3 re-review, 2026-11-24)
+
+- Spike (isolated `claude --model haiku`, `--settings` with a test `PermissionRequest[Write]` hook, no `NERGAL_*` env): the hook stayed alive 6 s after the user answered Claude Code's own dialog, with no signal; the tool ran. A fresh session had no transcript file on disk at hook start nor after Esc. User decision: accept the terminal deny/Esc gap (`interview_answers.terminal_deny_or_esc_gap`).
+- Red (test-writer): `server_review_close_tests.rs` (9 `closes_review` + unix `release_plan_review` FIFO), `cli_plan_review_rev4_tests.rs` (12), `adapter_plan_owner_tests.rs` (4), `src/stores/planReview.test.ts`. Rust Red = E0432/E0599 on the missing items.
+- Red-conflict ruling: the locked Revision 3 vitest asserts `applyReviewClosed("submitted")` toEqual `{status, toast}` exactly, while the new file expected a `restore` key. Ruling: `applyReviewClosed` returns no `restore`; the restore decision is a separate pure helper `shouldRestoreAnnotations(prev, next)`. Only the new file was changed and relocked.
+- Builder (Revision 4): `cli.rs`, `server.rs`, `events.rs`, `adapter.rs`, `commands/plans.rs`, `planReady.ts`, `hooks.ts`, `annotations.ts`, `PlanPanel.tsx`, `docs/hooks.md`. Accepted deviations: the stash lives in `annotations.ts` (import cycle); a restored stash is in memory only (the Revise already cleared the DB rows); the adapter-trait `submit_plan_decision` keeps a bare approve (no production caller).
+- Found in the Builder diff: `plan:review-closed` was emitted only when a registration existed, so a delivered Revise followed by a terminal approval never reached the panel (spec scenario "A Revise that lost the race"); and a nested `PlanReview` still opened a live review. Test-writer added `server_review_emit_tests.rs` (10, Red E0432); main thread added `emits_review_closed` + `review_decision_for` and wired them. Removed one WHAT doc comment (`approved_plan_override`).
+
+| Gate | Result | Detail |
+|------|--------|--------|
+| 5. Deps | SKIP | no manifest or lockfile changed |
+| 6a. Placeholders | PASS | none |
+| 6b. Bar weakening | PASS | none |
+| 6c. Secrets | PASS | gitleaks clean |
+| 2. Red locks | PASS | 11 locked file(s) unchanged |
+
+- clippy clean; cargo test `ok. 1304 passed; 0 failed; 1 ignored`; tsc clean; vitest 588 passed (53 files).

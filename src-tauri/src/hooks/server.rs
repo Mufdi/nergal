@@ -902,6 +902,53 @@ pub(crate) fn record_cc_conversation_id(
     }
 }
 
+/// `owner_agent` is the registered review's owner (`None` = main agent). Only
+/// top-level events count: a nested agent CLI inherits `NERGAL_SESSION_ID` and
+/// must never close the parent's review.
+fn closes_review(event: &HookEvent, top_level: bool, owner_agent: Option<&str>) -> bool {
+    if !top_level {
+        return false;
+    }
+    match event {
+        HookEvent::PostToolUse {
+            tool_name,
+            agent_id,
+            ..
+        } => tool_name == "ExitPlanMode" && agent_id.as_deref() == owner_agent,
+        HookEvent::Stop { .. } => owner_agent.is_none(),
+        HookEvent::SubagentStop { agent_id, .. } => {
+            owner_agent.is_some() && agent_id.as_deref() == owner_agent
+        }
+        HookEvent::SessionEnd { .. } => true,
+        _ => false,
+    }
+}
+
+/// `owner` is the registry lookup: `None` when nothing is registered, which
+/// happens after a panel decision claimed the review. A terminal approval
+/// still has to reach the panel then, so a Revise that lost the race is reported.
+fn emits_review_closed(event: &HookEvent, top_level: bool, owner: Option<Option<&str>>) -> bool {
+    let HookEvent::PostToolUse {
+        tool_name,
+        agent_id,
+        ..
+    } = event
+    else {
+        return false;
+    };
+    if !top_level || tool_name != "ExitPlanMode" {
+        return false;
+    }
+    match owner {
+        Some(registered) => agent_id.as_deref() == registered,
+        None => agent_id.is_none(),
+    }
+}
+
+fn review_decision_for(top_level: bool, decision: Option<String>) -> Option<String> {
+    decision.filter(|_| top_level)
+}
+
 #[cfg(unix)]
 fn release_plan_review(path: Option<PathBuf>) {
     let Some(path) = path else { return };
@@ -984,26 +1031,13 @@ fn process_event(
     }
 
     if let Some(csid) = nergal_session_id {
-        let closes_review = match event {
-            HookEvent::PostToolUse {
-                tool_name,
-                agent_id: None,
-                ..
-            } => tool_name == "ExitPlanMode",
-            HookEvent::Stop { .. } | HookEvent::SessionEnd { .. } => true,
-            _ => false,
-        };
-        if closes_review {
+        let owner = agent_state.claude_code.pending_plan_owner(csid);
+        if let Some(registered) = &owner
+            && closes_review(event, top_level, registered.as_deref())
+        {
             release_plan_review(agent_state.claude_code.release_pending_plan_fifo(csid));
         }
-        if let HookEvent::PostToolUse {
-            tool_name,
-            session_id,
-            agent_id: None,
-            ..
-        } = event
-            && tool_name == "ExitPlanMode"
-        {
+        if emits_review_closed(event, top_level, owner.as_ref().map(|o| o.as_deref())) {
             #[derive(Clone, serde::Serialize)]
             struct ReviewClosed {
                 session_id: String,
@@ -1011,7 +1045,7 @@ fn process_event(
             let _ = app.emit(
                 "plan:review-closed",
                 ReviewClosed {
-                    session_id: nergal_session_id.unwrap_or(session_id).to_string(),
+                    session_id: csid.to_string(),
                 },
             );
         }
@@ -1289,6 +1323,7 @@ fn process_event(
             tool_input,
             session_id,
             fifo_path,
+            agent_id,
             ..
         } => {
             tracing::debug!("PlanReview: fifo_path={fifo_path}");
@@ -1302,31 +1337,37 @@ fn process_event(
                         None
                     }
                 };
-                let decision = crate::plan_fifo::review_decision_path(fifo_path, ipc.as_deref());
-                if decision.is_none() && ipc.is_some() {
+                let in_ipc = crate::plan_fifo::review_decision_path(fifo_path, ipc.as_deref());
+                if in_ipc.is_none() && ipc.is_some() {
                     tracing::warn!(
                         "PlanReview: FIFO {fifo_path} is outside the IPC dir, not registering"
                     );
                 }
+                let decision = review_decision_for(top_level, in_ipc);
                 if let (Some(path), Some(csid)) = (&decision, nergal_session_id) {
                     let new_path = std::path::PathBuf::from(path);
-                    let replaced = agent_state
-                        .claude_code
-                        .register_pending_plan_fifo(csid, new_path.clone());
+                    let replaced = agent_state.claude_code.register_pending_plan_fifo_owned(
+                        csid,
+                        new_path.clone(),
+                        agent_id.clone(),
+                    );
                     release_plan_review(replaced.filter(|old| *old != new_path));
                 }
                 decision.unwrap_or_default()
             };
             #[cfg(not(unix))]
             let decision_path = {
-                if let Some(csid) = nergal_session_id {
-                    let new_path = std::path::PathBuf::from(fifo_path);
-                    let replaced = agent_state
-                        .claude_code
-                        .register_pending_plan_fifo(csid, new_path.clone());
+                let decision = review_decision_for(top_level, Some(fifo_path.clone()));
+                if let (Some(path), Some(csid)) = (&decision, nergal_session_id) {
+                    let new_path = std::path::PathBuf::from(path);
+                    let replaced = agent_state.claude_code.register_pending_plan_fifo_owned(
+                        csid,
+                        new_path.clone(),
+                        agent_id.clone(),
+                    );
                     release_plan_review(replaced.filter(|old| *old != new_path));
                 }
-                fifo_path.clone()
+                decision.unwrap_or_default()
             };
 
             if let Ok(mut state) = plan_state.lock() {
@@ -1360,6 +1401,16 @@ fn process_event(
                 } else {
                     tracing::warn!(
                         "PlanReview: no active plan resolved, the hook waits with no review in the panel"
+                    );
+                    #[derive(Clone, serde::Serialize)]
+                    struct ReviewUnresolved {
+                        session_id: String,
+                    }
+                    let _ = app.emit(
+                        "plan:review-unresolved",
+                        ReviewUnresolved {
+                            session_id: nergal_session_id.unwrap_or(session_id).to_string(),
+                        },
                     );
                 }
             }
@@ -1883,6 +1934,14 @@ fn process_task_event(
 mod identity_tests;
 
 #[cfg(test)]
+#[path = "server_review_close_tests.rs"]
+mod review_close_tests;
+
+#[cfg(test)]
+#[path = "server_review_emit_tests.rs"]
+mod review_emit_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
@@ -2054,6 +2113,7 @@ mod tests {
                     tool_name: "ExitPlanMode".into(),
                     tool_input: json!({}),
                     fifo_path: "/f".into(),
+                    agent_id: None,
                 },
                 "plan_review",
             ),

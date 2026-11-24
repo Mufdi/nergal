@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useAtomValue, useSetAtom, useAtom } from "jotai";
 import { planDocumentsAtom, planStateMapAtom, defaultPlanState, activePlanReviewStatusAtom, planReviewStatusMapAtom, planDecisionInFlightAtom } from "@/stores/plan";
 import { activeSessionIdAtom } from "@/stores/workspace";
-import { activeAnnotationsAtom, clearAnnotationsAtom, addAnnotationAtom, serializeAnnotations, annotationModeAtom, annotationScopeAtom, canEnterAnnotationModeAtom } from "@/stores/annotations";
+import { activeAnnotationsAtom, clearAnnotationsAtom, sentAnnotationsStashAtom, addAnnotationAtom, serializeAnnotations, annotationModeAtom, annotationScopeAtom, canEnterAnnotationModeAtom } from "@/stores/annotations";
 import { hasCapabilityAtom } from "@/stores/agent";
 import { decisionGuard, isLiveReview, isReviewDocument, showReviewAnnotations } from "@/stores/planReady";
 import { toastsAtom } from "@/stores/toast";
@@ -36,6 +36,7 @@ export function PlanPanel({ path }: PlanPanelProps) {
   const addToast = useSetAtom(toastsAtom);
   const annotations = useAtomValue(activeAnnotationsAtom);
   const clearAnnotations = useSetAtom(clearAnnotationsAtom);
+  const setSentStash = useSetAtom(sentAnnotationsStashAtom);
   const addAnnotation = useSetAtom(addAnnotationAtom);
   const reviewStatus = useAtomValue(activePlanReviewStatusAtom);
   const setReviewStatusMap = useSetAtom(planReviewStatusMapAtom);
@@ -49,9 +50,10 @@ export function PlanPanel({ path }: PlanPanelProps) {
   const canAnnotate = isLiveReview(docPlan, sessionPlan, reviewStatus);
   const showAnnotations = showReviewAnnotations(docPlan, sessionPlan, reviewStatus);
   const canToggleAnnotationMode = canEnterAnnotationMode && isReviewDocument(docPlan, sessionPlan);
-  const isSubmitted = reviewStatus === "submitted";
-  const isUndelivered = reviewStatus === "undelivered";
-  const isAnswered = reviewStatus === "answered";
+  const onReviewDocument = isReviewDocument(docPlan, sessionPlan);
+  const isSubmitted = onReviewDocument && reviewStatus === "submitted";
+  const isUndelivered = onReviewDocument && reviewStatus === "undelivered";
+  const isAnswered = onReviewDocument && reviewStatus === "answered";
   const decisionBusy = sessionId ? inFlightMap[sessionId] === true : false;
   const [annotationMode, setAnnotationMode] = useAtom(annotationModeAtom);
   const setScope = useSetAtom(annotationScopeAtom);
@@ -153,6 +155,7 @@ export function PlanPanel({ path }: PlanPanelProps) {
     })
       .then(() => {
         setReviewStatusMap((prev) => ({ ...prev, [sessionId]: "submitted" }));
+        setSentStash((prev) => ({ ...prev, [sessionId]: annotations }));
         clearAnnotations();
         addToast({ message: "Annotations sent", description: "Claude will revise the plan", type: "success" });
       })

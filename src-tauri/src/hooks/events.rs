@@ -115,6 +115,8 @@ pub enum HookEvent {
         #[serde(default)]
         tool_input: serde_json::Value,
         fifo_path: String,
+        #[serde(default)]
+        agent_id: Option<String>,
     },
     #[serde(rename = "AskUser")]
     AskUser {
@@ -419,6 +421,7 @@ mod tests {
             tool_name: "ExitPlanMode".into(),
             tool_input: serde_json::Value::Null,
             fifo_path: "/tmp/x".into(),
+            agent_id: None,
         };
         assert_eq!(plan.waiting_for().as_deref(), Some("plan review"));
 

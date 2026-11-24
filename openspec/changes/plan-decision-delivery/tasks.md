@@ -23,17 +23,24 @@
 
 ## 5. Walk findings (Revision 3)
 
-- [ ] 5.1 Test (Red): Rust `plan_review_output`: Allow with `tool_input` `{"plan":"# A","planFilePath":"/p/a.md"}` → `decision.behavior` `allow` and `updatedInput` equal to that object; Deny `fix step 2` → `deny`, message, no `updatedInput`; Released → `None`; `parse_plan_review_decision("{\"released\":true}")` → Released. Adapter: `register_pending_plan_fifo` returns the replaced path; `release_pending_plan_fifo` returns and removes it, `None` when nothing is registered. Setup: an existing Nergal `PostToolUse` entry with the old matcher gets `ExitPlanMode` added in place, no second entry. Vitest: `applyReviewClosed` (`pending_review`/`undelivered` → `answered`, no toast; `submitted` → `answered` + `Revise not delivered`; `idle`/`answered` unchanged); `showReviewAnnotations` true for `answered` on the review document; `decisionGuard` with `answered` → ignore.
+- [x] 5.1 Test (Red): Rust `plan_review_output`: Allow with `tool_input` `{"plan":"# A","planFilePath":"/p/a.md"}` → `decision.behavior` `allow` and `updatedInput` equal to that object; Deny `fix step 2` → `deny`, message, no `updatedInput`; Released → `None`; `parse_plan_review_decision("{\"released\":true}")` → Released. Adapter: `register_pending_plan_fifo` returns the replaced path; `release_pending_plan_fifo` returns and removes it, `None` when nothing is registered. Setup: an existing Nergal `PostToolUse` entry with the old matcher gets `ExitPlanMode` added in place, no second entry. Vitest: `applyReviewClosed` (`pending_review`/`undelivered` → `answered`, no toast; `submitted` → `answered` + `Revise not delivered`; `idle`/`answered` unchanged); `showReviewAnnotations` true for `answered` on the review document; `decisionGuard` with `answered` → ignore.
 - [x] 5.2 Hook output with `updatedInput`, `Released`, silent no-session path (`cli.rs`).
 - [x] 5.3 Release on `PostToolUse[ExitPlanMode]` (main agent), replaced `PlanReview`, `Stop`, `SessionEnd`; emit `plan:review-closed`; setup matcher.
 - [x] 5.4 Frontend `answered` state, listener, `stop` keeps it, header copy; `docs/hooks.md`.
 
-## 6. Verification
+## 6. Revision 3 re-review (Revision 4, user: fix every finding; terminal deny/Esc gap accepted)
 
-- [ ] 6.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check`, then `npx tsc --noEmit` and `pnpm test`.
-- [ ] 6.2 `~/.claude/skills/work/scripts/work-gates.sh main plan-decision-delivery` passes.
-- [ ] 6.3 Manual walk: in plan mode, Claude Code proposes a plan; with focus in the plan panel, `A` approves it and Claude Code starts working. Repeat with the Approve button on a second plan.
-- [ ] 6.4 Manual walk: annotate a plan and press `R`; Claude Code receives the annotations and proposes a revised plan; Approve on the revised plan reaches Claude Code.
-- [ ] 6.5 Manual walk: with a plan pending in the panel, answer in the terminal instead; the panel header reads `Answered in the terminal.` and shows no Approve or Revise; annotations made before stay, with `Annotations were not sent.`
-- [ ] 6.6 Manual walk: annotate a plan, deny it in the terminal; when Claude Code proposes the next plan the earlier hook is gone (no `nergal hook plan-review` process left besides the new one). After a terminal answer, `X` clears the kept annotations. Hold `A` on a new plan: Claude Code receives one approval.
-- [ ] 6.7 Manual walk: with a review pending, open an earlier plan from the plan list; its tab shows no Approve or Revise, and the live plan's tab still does.
+- [x] 6.1 Test (Red): Rust `closes_review` matrix (top-level vs nested; PostToolUse[ExitPlanMode] owner match/mismatch; Stop with main vs subagent owner; SubagentStop owner; SessionEnd; other events false); `release_plan_review` delivers `{"released":true}` to a FIFO reader within 1 s; `parse_plan_review_decision` `{}` and `{"released":"true"}` → Released; `plan_review_output` with a `plan` override and with a non-object `tool_input` (→ None); `review_session_id` (None/empty → None); adapter registry returns/stores the owner. Vitest: `applyReviewClosed(status, inFlight)`, `statusOnStop`, `applyReviewUnresolved`, annotation stash restore + clear-on-new-review helpers.
+- [x] 6.2 CLI + adapter + server per design "Revision 4" (top-level gate, owner agent, fail-closed, plan override, unresolved event, single match).
+- [x] 6.3 `submit_plan_decision` adds `plan` when edited; frontend in-flight guard, stop helper, unresolved listener, annotation stash/clear, label gating.
+- [x] 6.4 Comments (`cli.rs` plan_review_output WHY, stale enum doc), `docs/hooks.md` (top-level, owner, accepted gap).
+
+## 7. Verification
+
+- [x] 7.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check`, then `npx tsc --noEmit` and `pnpm test`.
+- [x] 7.2 `~/.claude/skills/work/scripts/work-gates.sh main plan-decision-delivery` passes.
+- [ ] 7.3 Manual walk: in plan mode, Claude Code proposes a plan; with focus in the plan panel, `A` approves it and Claude Code starts working. Repeat with the Approve button on a second plan.
+- [ ] 7.4 Manual walk: annotate a plan and press `R`; Claude Code receives the annotations and proposes a revised plan; Approve on the revised plan reaches Claude Code.
+- [ ] 7.5 Manual walk: with a plan pending in the panel, answer in the terminal instead; the panel header reads `Answered in the terminal.` and shows no Approve or Revise; annotations made before stay, with `Annotations were not sent.`
+- [ ] 7.6 Manual walk: annotate a plan, deny it in the terminal; when Claude Code proposes the next plan the earlier hook is gone (no `nergal hook plan-review` process left besides the new one). After a terminal answer, `X` clears the kept annotations. Hold `A` on a new plan: Claude Code receives one approval.
+- [ ] 7.7 Manual walk: with a review pending, open an earlier plan from the plan list; its tab shows no Approve or Revise, and the live plan's tab still does.

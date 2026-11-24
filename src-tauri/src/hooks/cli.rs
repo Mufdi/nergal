@@ -212,11 +212,10 @@ pub fn plan_review(socket_path: &Path) -> Result<()> {
     let stdin_json: serde_json::Value =
         serde_json::from_str(input.trim()).context("stdin is not valid JSON")?;
 
-    let nergal_id = std::env::var("NERGAL_SESSION_ID").unwrap_or_default();
-    if nergal_id.is_empty() {
+    let Some(nergal_id) = review_session_id(std::env::var("NERGAL_SESSION_ID").ok()) else {
         // No session: print nothing so CC falls through to its own prompt
         return Ok(());
-    }
+    };
 
     // FIFO lives in the per-user 0700 IPC dir so only a same-uid process
     // can open it for writing — closes the forged-allow approval-gate hole.
@@ -250,7 +249,7 @@ pub fn plan_review(socket_path: &Path) -> Result<()> {
         .cloned()
         .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
-    let socket_msg = serde_json::json!({
+    let mut socket_msg = serde_json::json!({
         "hook_event_name": "PlanReview",
         "session_id": session_id,
         "tool_name": tool_name,
@@ -258,6 +257,9 @@ pub fn plan_review(socket_path: &Path) -> Result<()> {
         "fifo_path": fifo_path.display().to_string(),
         "nergal_session_id": nergal_id,
     });
+    if let Some(agent_id) = stdin_json.get("agent_id").and_then(|v| v.as_str()) {
+        socket_msg["agent_id"] = serde_json::Value::String(agent_id.to_string());
+    }
 
     let payload = serde_json::to_string(&socket_msg).context("serializing socket message")?;
     let mut stream = crate::platform::sync_connect(socket_path)
@@ -280,48 +282,63 @@ pub fn plan_review(socket_path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         let decision_str = blocking_fifo_read_liveness_aware(&fifo_path, gui_token)?;
-        print_plan_review_output(&parse_plan_review_decision(&decision_str)?, &tool_input)?;
+        print_plan_review_output(
+            &parse_plan_review_decision(&decision_str)?,
+            &tool_input,
+            approved_plan_override(&decision_str).as_deref(),
+        )?;
     }
     #[cfg(windows)]
     {
         let decision_str = blocking_pipe_read_liveness_aware(&mut pipe_server, gui_token)?;
-        print_plan_review_output(&parse_plan_review_decision(&decision_str)?, &tool_input)?;
+        print_plan_review_output(
+            &parse_plan_review_decision(&decision_str)?,
+            &tool_input,
+            approved_plan_override(&decision_str).as_deref(),
+        )?;
     }
 
     Ok(())
 }
 
-/// Maps a decision JSON string — a real FIFO/pipe decision or one of the
-/// liveness-aware readers' safe-deny sentinels — to a single stdout action.
-/// `plan_review()` is the only caller and the only stdout writer; extracted as
-/// a pure function so the single-decision invariant (never two concatenated
-/// `hookSpecificOutput` objects) is unit-testable without a real FIFO/timer.
 #[derive(Debug, PartialEq)]
 enum PlanReviewDecision {
     Allow,
     Deny(String),
+    /// The GUI dropped the review without a human decision (answered in the
+    /// terminal, session ended): print nothing and let Claude Code proceed.
     Released,
 }
 
+/// Fails closed: only an explicit `approved: true` approves, so a malformed or
+/// truncated payload can never auto-approve a plan.
 fn parse_plan_review_decision(decision_str: &str) -> Result<PlanReviewDecision> {
     let decision: serde_json::Value =
         serde_json::from_str(decision_str.trim()).context("parsing decision JSON")?;
-    if decision.get("released").and_then(|v| v.as_bool()) == Some(true) {
-        return Ok(PlanReviewDecision::Released);
+    match decision.get("approved").and_then(|v| v.as_bool()) {
+        Some(true) => Ok(PlanReviewDecision::Allow),
+        Some(false) => {
+            let message = decision
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Plan changes requested")
+                .to_string();
+            Ok(PlanReviewDecision::Deny(message))
+        }
+        None => Ok(PlanReviewDecision::Released),
     }
-    let approved = decision
-        .get("approved")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-    if approved {
-        return Ok(PlanReviewDecision::Allow);
-    }
-    let message = decision
-        .get("message")
+}
+
+fn approved_plan_override(decision_str: &str) -> Option<String> {
+    let decision: serde_json::Value = serde_json::from_str(decision_str.trim()).ok()?;
+    decision
+        .get("plan")
         .and_then(|v| v.as_str())
-        .unwrap_or("Plan changes requested")
-        .to_string();
-    Ok(PlanReviewDecision::Deny(message))
+        .map(String::from)
+}
+
+fn review_session_id(raw: Option<String>) -> Option<String> {
+    raw.filter(|id| !id.is_empty())
 }
 
 /// Blocking FIFO read with GUI liveness awareness.
@@ -773,17 +790,34 @@ fn statusline_tui_text(cc: &serde_json::Value) -> String {
     out
 }
 
-/// An approval echoes the tool input as `updatedInput` so CC runs ExitPlanMode
-/// with the input it asked about.
+/// Claude Code ignores a bare `allow` for ExitPlanMode and keeps waiting on its
+/// own dialog, so an approval must echo the tool input as `updatedInput`; that
+/// is also the only channel for an edited plan. Without an object input there
+/// is nothing valid to echo, so print nothing rather than a hollow allow.
+#[cfg(test)]
 fn plan_review_output(
     decision: &PlanReviewDecision,
     tool_input: &serde_json::Value,
 ) -> Option<serde_json::Value> {
+    plan_review_output_with_plan(decision, tool_input, None)
+}
+
+fn plan_review_output_with_plan(
+    decision: &PlanReviewDecision,
+    tool_input: &serde_json::Value,
+    plan: Option<&str>,
+) -> Option<serde_json::Value> {
     let decision = match decision {
-        PlanReviewDecision::Allow => serde_json::json!({
-            "behavior": "allow",
-            "updatedInput": tool_input
-        }),
+        PlanReviewDecision::Allow => {
+            let mut updated = tool_input.as_object()?.clone();
+            if let Some(plan) = plan {
+                updated.insert("plan".into(), serde_json::Value::String(plan.to_string()));
+            }
+            serde_json::json!({
+                "behavior": "allow",
+                "updatedInput": updated
+            })
+        }
         PlanReviewDecision::Deny(message) => serde_json::json!({
             "behavior": "deny",
             "message": message
@@ -801,8 +835,9 @@ fn plan_review_output(
 fn print_plan_review_output(
     decision: &PlanReviewDecision,
     tool_input: &serde_json::Value,
+    plan: Option<&str>,
 ) -> Result<()> {
-    let Some(output) = plan_review_output(decision, tool_input) else {
+    let Some(output) = plan_review_output_with_plan(decision, tool_input, plan) else {
         return Ok(());
     };
     std::io::stdout()
@@ -818,6 +853,10 @@ mod chain_tests;
 #[cfg(test)]
 #[path = "cli_plan_review_output_tests.rs"]
 mod plan_review_output_tests;
+
+#[cfg(test)]
+#[path = "cli_plan_review_rev4_tests.rs"]
+mod plan_review_rev4_tests;
 
 #[cfg(test)]
 mod tests {

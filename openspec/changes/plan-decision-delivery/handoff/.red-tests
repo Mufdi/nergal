@@ -4,3 +4,8 @@
 b9070dfe21b1df127767e556de3d03cff75fee60  src-tauri/src/agents/claude_code/adapter_plan_fifo_tests.rs
 e770e27e3209b4e8ef63b207ddcc9bca9bec23fe  src-tauri/src/setup_status_tests.rs
 9661006ea1794904f76a12796e2e2a5e5abfefd5  src/stores/planReady.test.ts
+40700ab6c4318621c81205074f0d1dd99e9057aa  src-tauri/src/hooks/server_review_close_tests.rs
+f235f9942c219a7fba6e8af15de9bff46747b002  src-tauri/src/hooks/cli_plan_review_rev4_tests.rs
+397f69221e978b11fd8dfd5e21e912e015051ea3  src-tauri/src/agents/claude_code/adapter_plan_owner_tests.rs
+01cb6392f2a723d935dc73144d7df942d313e0cc  src/stores/planReview.test.ts
+55e634a2cabccba8cc126c621a62ec3df380c423  src-tauri/src/hooks/server_review_emit_tests.rs

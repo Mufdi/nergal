@@ -201,3 +201,98 @@ Frontend:
 - Failed Revise keeps annotations: state kept (`PlanPanel.tsx:157`); walk 4.6, at risk from Important 1.
 
 Verdict: the Rust fixes hold; fix the failed-Revise annotation surface and the `undelivered` spec wording before the walks.
+
+## Re-review Revision 3 (adversarial)
+
+Scope: `git show d10e5bc`, design Revision 3 (D4-D6), the three new cc-adapter requirements, and the code they touch. Read-only. Earlier findings are not repeated.
+
+### Important
+
+**1. A nested `claude` releases the live review and marks it answered.**
+- `src-tauri/src/hooks/server.rs:986-1018`. The release and the `plan:review-closed` emit ignore `top_level`.
+- A nested `claude -p` inherits `NERGAL_SESSION_ID`. The global hooks fire for it. `is_top_level_chain` (`server.rs:858`) exists for exactly this case.
+- Scenario: the main agent starts a background Bash that runs `claude -p`. Then it calls `ExitPlanMode`. The review is live.
+- The nested run ends. Its `Stop` and `SessionEnd` carry the parent's Nergal id. `release_pending_plan_fifo` removes the live registration.
+- The hook prints nothing. A panel Approve now fails with `Approve failed`, while Claude Code still waits.
+- A nested `PostToolUse[ExitPlanMode]` has no `agent_id` in its own run. It emits `plan:review-closed`. The panel shows `Answered in the terminal.` for a live review.
+- A nested `PlanReview` also replaces and releases the parent's FIFO (`server.rs:1312-1316`).
+- Fix: gate `closes_review`, the emit and the PlanReview registration on `top_level`. `drain_idle` (`server.rs:1068`) already follows that rule.
+- Also fix `docs/hooks.md`: "top-level only" there means "no `agent_id`", not this codebase's `top_level`.
+
+**2. A terminal deny or Esc still leaves a live-looking review.**
+- D5 covers only a terminal approval. "No, keep planning" fires no `PostToolUse`. Esc fires no `Stop` either, since Claude Code skips `Stop` on a user interrupt.
+- Scenario: `pending_review`. The user denies or presses Esc in Claude Code's dialog. The hook stays blocked, and the FIFO stays registered.
+- The panel still shows Approve. `A` claims, writes, and the hook prints `allow`. `.then` sets `idle` with no error (`src/components/plan/PlanPanel.tsx:164-172`).
+- Claude Code ignores that answer. This is the silent success the Revision 3 walk reported for `R`.
+- The window lasts until the next `PlanReview` or the next turn's `Stop`. After Esc, that can be a whole user turn.
+- Fix: confirm Approve instead of assuming it worked. After a delivered Approve, expect a top-level `PostToolUse[ExitPlanMode]` within a few seconds. If none arrives, show `Approve may not have reached Claude Code`.
+- At minimum, D5 and the spec should name this gap. Today they claim `PlanReview`/`Stop` cover a terminal deny.
+
+**3. The release wiring has no test.**
+- Four of five scenarios in "A review resolved outside the panel releases its hook" have no test. These are the terminal approval, the new review, `Stop`, and a subagent `PostToolUse`.
+- `release_plan_review` (`server.rs:905-918`) is never run against a FIFO reader. The same-path filter (`server.rs:1317`) is untested.
+- The rule that `stop` keeps `answered` sits inline in `src/stores/hooks.ts:134`. Scenario "Stop keeps the answered state" has no test.
+- The no-session path (`src-tauri/src/hooks/cli.rs:216-219`) has no test.
+- Fix: extract `fn closes_review(event, top_level) -> bool` and test its matrix, including finding 1. Test `release_plan_review` with the `plan_fifo_tests.rs` reader helpers. Move the `stop` rule into a pure `planReady.ts` helper and test it.
+
+### Minor
+
+**4. An Allow is now fail-open.**
+- `cli.rs:315` maps a missing `approved` to Allow. `cli.rs:251` maps a missing `tool_input` to `{}`.
+- Before this commit, Allow printed a bare `allow`, which Claude Code ignored. Now Allow really approves.
+- Scenario: a payload `{}`, `{"released":"true"}` or a future sentinel without `approved` approves the plan.
+- A stdin without `tool_input` approves with `updatedInput: {}`. That replaces the tool input with an empty object.
+- Fix: return Allow only for `approved == true`. Map any other payload to Released. Print nothing when `tool_input` is missing.
+
+**5. D4's premise about edits is unverified.**
+- `tool_input` carries the inline `plan` text (`server.rs:792` reads it). The hook echoes it unchanged.
+- `submit_plan_decision` first writes panel edits to disk (`src-tauri/src/commands/plans.rs:124`). The echoed `plan` stays the original text.
+- Claude Code's own Ctrl+G edit returns the edited text through `updatedInput.plan`. So Claude Code likely uses that key as the approved plan, not the file.
+- No UI edits plan content today (first review). This stays latent until an edit path ships.
+- Fix: send the saved plan text with the approve payload. Have the hook override only the `plan` key. Or correct D4's claim.
+
+**6. A panel Approve can flash `answered`.**
+- `src/stores/hooks.ts:277-290` applies `plan:review-closed` with no in-flight check.
+- Scenario: Approve writes. Claude Code runs `ExitPlanMode`, and its `PostToolUse` lands before the invoke promise resolves.
+- `pending_review` becomes `answered`. The header reads `Answered in the terminal. Annotations were not sent.` Then `.then` sets `idle`.
+- Fix: skip the listener while `planDecisionInFlightAtom[sid]` is true. Or pass the in-flight flag to `applyReviewClosed`.
+
+**7. The residual-race Revise loses its annotations.**
+- `PlanPanel.tsx:154-157` clears the annotations and shows `Annotations sent` once the FIFO write succeeds.
+- In the D5 race, `plan:review-closed` then shows `Revise not delivered`. The annotations are already gone.
+- The header omits `Annotations were not sent.`, since the count is zero. The spec says `answered` keeps the annotations.
+- Fix: keep the sent batch per session until the next `plan:ready`. Restore it on `submitted` to `answered`.
+
+**8. Kept annotations leak into the next review.**
+- `answered` keeps the session-scoped annotations (`src/stores/annotations.ts:34`). A `plan:ready` that opens a review does not clear them (`hooks.ts:293-310`).
+- Scenario: the user annotates plan A, then approves it in the terminal. Plan B opens a review. A's annotations show on B, and a Revise sends them.
+- The `Plan updated` toast is the only guard. `answered` makes this path routine after every terminal approval.
+- Fix: clear the annotations when a review opens with a different `decisionPath`. Or key annotations by `decisionPath`.
+
+**9. The `answered` label shows on any plan tab.**
+- `PlanPanel.tsx:328` gates the label on session status only.
+- Scenario: after a terminal answer, open an older plan from the plan list. Its header reads `Answered in the terminal. Annotations were not sent.`
+- Fix: also require `isReviewDocument(docPlan, sessionPlan)`. The `submitted` and `undelivered` labels have the same gap.
+
+**10. The release ignores which agent owns the review.**
+- The `PlanReview` socket message carries no `agent_id` (`cli.rs:253-260`). The registry has one slot per session.
+- Scenario: a background plan-mode subagent waits on review. The main turn ends. `Stop` releases the subagent's review.
+- Scenario: a subagent's review is answered in the terminal. Its `PostToolUse` has an `agent_id`, so the hook stays blocked until the main `Stop`.
+- Fix: forward `agent_id` and store it with the registration. Release on events from the same agent, including `SubagentStop`.
+
+### Nits
+
+**11. Dead fallback in the emit.** `server.rs:1013-1015` uses `nergal_session_id.unwrap_or(session_id)` inside `if let Some(csid)`. Use `csid`. One `match` on `event` can serve both the release and the emit.
+
+**12. Comments.**
+- `cli.rs:776-777` restates the code. The WHY is missing: Claude Code ignores a bare `allow` for `ExitPlanMode`.
+- `cli.rs:294` now lies. It says each decision maps to "a single stdout action", but Released prints nothing. It also sits on the enum while it describes a function.
+
+**13. A false `Revise not delivered` after a delivered Revise.**
+- Scenario: Revise is delivered, so the status is `submitted`. The next `PlanReview` resolves no plan (`server.rs:1360-1363`), and so does the preview.
+- The status stays `submitted`. The user approves in the terminal. The toast blames a Revise that Claude Code applied.
+- Fix: leave `submitted` on any `PlanReview` for the session, even one without a resolved plan.
+
+**14. Task drift.** Tasks 5.1, 6.1 and 6.2 stay `[ ]`. `handoff/evidence.md` records the Red tests and both gates as done.
+
+Verdict: D4 and the hook output are sound. Gate the release on `top_level` before the walk. Then close the terminal-deny gap and add the wiring tests.

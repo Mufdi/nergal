@@ -109,7 +109,7 @@ On Unix, `submit_plan_decision` SHALL claim the session's registration before wr
 - **AND** pressing `X` and confirming SHALL clear them
 
 ### Requirement: An approval carries the tool input
-The `nergal hook plan-review` subprocess SHALL answer an approval with a `PermissionRequest` decision whose `behavior` is `allow` and whose `updatedInput` equals the `tool_input` object it read from stdin, because Claude Code ignores an `allow` without `updatedInput` for `ExitPlanMode`. A denial SHALL keep `behavior: "deny"` with the message. Without `NERGAL_SESSION_ID` the subprocess SHALL print nothing and exit 0, so Claude Code shows its own dialog. A released review SHALL print nothing and exit 0.
+The `nergal hook plan-review` subprocess SHALL answer an approval with a `PermissionRequest` decision whose `behavior` is `allow` and whose `updatedInput` equals the `tool_input` object it read from stdin, because Claude Code ignores an `allow` without `updatedInput` for `ExitPlanMode`. A denial SHALL keep `behavior: "deny"` with the message. Only a decision with `approved: true` SHALL approve; a decision with `approved: false` denies; any other decision is a release. When an approval carries a `plan` string, `updatedInput.plan` SHALL be that string. An approval with no object `tool_input`, a release, and a run without `NERGAL_SESSION_ID` SHALL print nothing and exit 0.
 
 #### Scenario: Approve echoes the plan input
 - **GIVEN** the hook read `{"tool_name":"ExitPlanMode","tool_input":{"plan":"# A","planFilePath":"/p/a.md"}}` from stdin
@@ -126,11 +126,21 @@ The `nergal hook plan-review` subprocess SHALL answer an approval with a `Permis
 - **THEN** stdout SHALL be empty and the exit code SHALL be 0
 
 #### Scenario: A released review prints no decision
-- **WHEN** the hook receives `{"released": true}`
+- **WHEN** the hook receives `{"released": true}`, `{}` or `{"released": "true"}`
 - **THEN** stdout SHALL be empty and the exit code SHALL be 0
 
+#### Scenario: An edited plan is the approved plan
+- **GIVEN** the hook read `tool_input` `{"plan":"# A","planFilePath":"/p/a.md"}`
+- **WHEN** it receives `{"approved": true, "plan": "# A edited"}`
+- **THEN** `decision.updatedInput` SHALL be `{"plan":"# A edited","planFilePath":"/p/a.md"}`
+
+#### Scenario: An approval without tool input prints nothing
+- **GIVEN** the hook read no `tool_input`, or a non-object one
+- **WHEN** it receives `{"approved": true}`
+- **THEN** stdout SHALL be empty
+
 ### Requirement: A review resolved outside the panel releases its hook
-Nergal SHALL register its `PostToolUse` hook for `ExitPlanMode` in addition to the tools it already matches. It SHALL release a session's plan review on a `PostToolUse` for `ExitPlanMode` from the main agent, on a `PlanReview` for a session that still has a registered FIFO (before registering the new one), on `Stop`, and on `SessionEnd`. Releasing SHALL remove the registration and, when one existed, write `{"released": true}` to its FIFO with a deadline of at most 1 second, off the hook server's event loop; a failed write SHALL only be logged. On a `PostToolUse` for `ExitPlanMode` from the main agent, Nergal SHALL emit `plan:review-closed` with the session id.
+Nergal SHALL register its `PostToolUse` hook for `ExitPlanMode` in addition to the tools it already matches. Only top-level events (not from a nested agent CLI) SHALL register, release or close a review. The registration SHALL record the `agent_id` of the agent that asked. Nergal SHALL release a session's review on a `PostToolUse` for `ExitPlanMode` whose `agent_id` equals the owner's, on a `PlanReview` for the session (before registering the new one), on `Stop` when the owner is the main agent, on `SubagentStop` of the owner, and on `SessionEnd`. A deny or Esc answered in Claude Code's own dialog emits no event Nergal registers; that review stays registered until one of these events (accepted gap). Releasing SHALL remove the registration and, when one existed, write `{"released": true}` to its FIFO with a deadline of at most 1 second, off the hook server's event loop; a failed write SHALL only be logged. On a `PostToolUse` for `ExitPlanMode` from the main agent, Nergal SHALL emit `plan:review-closed` with the session id.
 
 #### Scenario: A terminal approval releases the hook and closes the review
 - **GIVEN** session S has registered FIFO F with a reader
@@ -147,6 +157,18 @@ Nergal SHALL register its `PostToolUse` hook for `ExitPlanMode` in addition to t
 - **WHEN** a `Stop` event for S arrives
 - **THEN** the reader of F SHALL receive `{"released": true}` and S SHALL have no registration
 
+#### Scenario: A nested agent CLI touches no review
+- **GIVEN** session S has registered FIFO F for the main agent
+- **WHEN** a non-top-level `Stop`, `SessionEnd`, `PlanReview`, or `PostToolUse` for `ExitPlanMode` arrives for S
+- **THEN** F SHALL stay registered and no `plan:review-closed` SHALL be emitted
+
+#### Scenario: A subagent review is released by its own events
+- **GIVEN** session S has registered FIFO F for subagent `ag1`
+- **WHEN** a top-level `Stop` arrives for S
+- **THEN** F SHALL stay registered
+- **AND WHEN** `SubagentStop` with `agent_id` `ag1`, or `PostToolUse` for `ExitPlanMode` with `agent_id` `ag1`, arrives for S
+- **THEN** the reader of F SHALL receive `{"released": true}`
+
 #### Scenario: A subagent's PostToolUse releases nothing
 - **GIVEN** session S has registered FIFO F
 - **WHEN** a `PostToolUse` event for `ExitPlanMode` with an `agent_id` arrives for S
@@ -158,7 +180,7 @@ Nergal SHALL register its `PostToolUse` hook for `ExitPlanMode` in addition to t
 - **THEN** that entry's matcher SHALL also include `ExitPlanMode` and no second Nergal `PostToolUse` entry SHALL exist
 
 ### Requirement: The panel shows a review answered in the terminal
-On `plan:review-closed`, the panel SHALL move a review in `pending_review` or `undelivered` to state `answered`, and a review in `submitted` to `answered` with an error toast titled `Revise not delivered`. `answered` hides Approve and Revise, keeps the annotations visible and clearable, and shows `Answered in the terminal.` in the header, plus `Annotations were not sent.` when annotations exist. It SHALL last until a `plan:ready` opens a review or brings new content, or the session ends; `Stop` SHALL keep it.
+On `plan:review-closed`, while no panel decision is in flight for the session, the panel SHALL move a review in `pending_review` or `undelivered` to state `answered`, and a review in `submitted` to `answered` with an error toast titled `Revise not delivered` and the annotations that Revise sent restored. A `plan:review-unresolved` event SHALL move `submitted` to `idle`. A `plan:ready` that opens a review with a new decision path SHALL clear the session's annotations. The `submitted`, `undelivered` and `answered` header labels SHALL show only on the review document. `answered` hides Approve and Revise, keeps the annotations visible and clearable, and shows `Answered in the terminal.` in the header, plus `Annotations were not sent.` when annotations exist. It SHALL last until a `plan:ready` opens a review or brings new content, or the session ends; `Stop` SHALL keep it.
 
 #### Scenario: The panel shows the terminal answer and keeps annotations
 - **GIVEN** session S has review state `pending_review` and two annotations
@@ -174,6 +196,26 @@ On `plan:review-closed`, the panel SHALL move a review in `pending_review` or `u
 - **GIVEN** session S has review state `submitted` after a Revise
 - **WHEN** `plan:review-closed` arrives for S
 - **THEN** a `Revise not delivered` error toast SHALL show and the review state SHALL be `answered`
+
+#### Scenario: A Revise that lost the race gets its annotations back
+- **GIVEN** session S sent a Revise with annotations N1 and N2 and is in `submitted`
+- **WHEN** `plan:review-closed` arrives for S
+- **THEN** N1 and N2 SHALL be the session's annotations again and the header SHALL read `Answered in the terminal. Annotations were not sent.`
+
+#### Scenario: A panel Approve in flight does not flash answered
+- **GIVEN** session S is in `pending_review` with a decision in flight
+- **WHEN** `plan:review-closed` arrives for S
+- **THEN** the review state SHALL stay `pending_review`
+
+#### Scenario: A new review starts without old annotations
+- **GIVEN** session S is `answered` with annotation N1 on decision path F1
+- **WHEN** `plan:ready` arrives for S with decision path F2
+- **THEN** S SHALL have no annotations
+
+#### Scenario: An unresolved review clears a delivered Revise
+- **GIVEN** session S is in `submitted`
+- **WHEN** `plan:review-unresolved` arrives for S, then `plan:review-closed`
+- **THEN** the review state SHALL be `idle` after the first and stay `idle`, with no toast
 
 #### Scenario: Stop keeps the answered state
 - **GIVEN** session S has review state `answered`

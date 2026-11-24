@@ -77,3 +77,20 @@
 ### Per-phase risk
 - Setup matcher change only reaches users after setup runs (existing flow: hooks status shows not registered → register). Without it, D5 still releases on `PlanReview`/`Stop`; only the `answered` label needs it.
 - A release write to a FIFO whose hook already exited fails fast (ENXIO budget ≤ 1 s) on a blocking thread; the event loop never waits.
+
+## Revision 4 plan (Revision 3 re-review)
+
+### Verified codebase facts (do not re-assume)
+- `src-tauri/src/hooks/server.rs:922-930` `process_event(..., nergal_session_id, top_level)`; `top_level` from `is_top_level_chain` (`:402-415`, `:858`); `drain_idle` gates on it at `:1068`. Release block added in Revision 3 at `:986-1018`; `release_plan_review` at `:905-918`; PlanReview registration at `:1309-1328`; unresolved-plan warn at `:1360-1363`.
+- `src-tauri/src/hooks/cli.rs:253-260` PlanReview socket message (no `agent_id` today); stdin of a main-agent `PermissionRequest` has keys `cwd, effort, hook_event_name, permission_mode, permission_suggestions, prompt_id, scratchpad_dir, session_id, tool_input, tool_name, transcript_path` (spike, CC 2.1.331); `:312-327` `parse_plan_review_decision` (missing `approved` → Allow today); `:251` missing `tool_input` → `{}`.
+- `src-tauri/src/commands/plans.rs:122-140` `submit_plan_decision` saves edits then builds `{"approved": true}`.
+- `src-tauri/src/agents/claude_code/adapter.rs:74-84` registry `DashMap<String, PathBuf>`.
+- Frontend: `src/stores/hooks.ts:134` stop rule, `:277-290` review-closed listener, `:293-310` plan:ready; `src/components/plan/PlanPanel.tsx:154-157` Revise clears annotations, `:320-333` header labels; annotations store `src/stores/annotations.ts:34`.
+
+### Execution order
+1. CLI: fail-closed parse; `plan` override on Allow; Allow with non-object `tool_input` → `None`; forward `agent_id` in the PlanReview message; `review_session_id`.
+2. Adapter registry stores `(PathBuf, Option<String>)`; `register` returns the replaced entry; `release_pending_plan_fifo` returns the path; owner lookup.
+3. Server: pure `closes_review(event, top_level, owner_agent) -> bool`; release + emit only when it says so; `SubagentStop` with the owner id; registration only when `top_level`; `plan:review-unresolved` on an unresolved PlanReview; single `match`, `csid` in the emit.
+4. `submit_plan_decision`: add `plan` when edited.
+5. Frontend: `applyReviewClosed(status, inFlight)`, `statusOnStop`, `plan:review-unresolved` listener, annotation stash/restore/clear, label gating.
+6. Comments (`cli.rs:776`, `:294`), `docs/hooks.md` (top-level, owner, accepted gap), tasks marks.

@@ -13,5 +13,5 @@
 
 - [x] 3.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check`, then `npx tsc --noEmit` and `pnpm test`.
 - [x] 3.2 `~/.claude/skills/work/scripts/work-gates.sh mufdidev/fri-506-mouse-tracking-clicks bracketed-paste-gate` passes.
-- [ ] 3.3 Manual walk: in a quake shell run `cat`, paste two lines with Ctrl+Shift+V: no `^[[200~` shows and each line echoes as if typed; Ctrl+D ends it. In the zsh prompt (2004 on), paste two lines: they land as one paste and do not run until Enter.
-- [ ] 3.4 Manual walk: in a Claude Code session, paste multi-line text: it lands as one paste; a Linear "send to session" of a multi-line issue still arrives as one turn; in the PR viewer, "Apply with Claude" with two annotations lands as one paste in Claude Code.
+- [x] 3.3 Manual walk: in a quake shell run `cat`, paste two lines with Ctrl+Shift+V: no `^[[200~` shows and each line echoes as if typed; Ctrl+D ends it. In the zsh prompt (2004 on), paste two lines: they land as one paste and do not run until Enter.
+- [x] 3.4 Manual walk: in a Claude Code session, paste multi-line text: it lands as one paste; a Linear "send to session" of a multi-line issue still arrives as one turn; in the PR viewer, "Apply with Claude" with two annotations lands as one paste in Claude Code.

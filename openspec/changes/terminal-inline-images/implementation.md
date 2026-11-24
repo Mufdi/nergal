@@ -18,14 +18,14 @@
 
 ## Execution order
 
-1. Types: `ImageRun` in `types.rs` (doc: `col` is the terminal column, not an index into `cells`); `GridSnapshot.images: Vec<Vec<ImageRun>>` (parallel to `rows`; readers use `.get(i)` with an empty fallback, so a snapshot built with `images: vec![]` stays valid); `GridRow.images: Vec<ImageRun>` with `#[serde(skip_serializing_if = "Vec::is_empty")]`. f32 fields: derive `PartialEq` only where `Eq` breaks, and hash with `f32::to_bits`.
+1. Types: `ImageRun` in `types.rs` (doc: `col` is the terminal column, not an index into `cells`); `GridSnapshot.images: Vec<Vec<ImageRun>>` (`grid_snapshot` always fills it to `rows.len()`; readers still use `.get(i)` with an empty fallback, so a hand-built snapshot with `images: vec![]` stays valid); `GridRow.images: Vec<ImageRun>` with `#[serde(skip_serializing_if = "Vec::is_empty")]`. f32 fields: derive `PartialEq` only where `Eq` breaks, and hash with `f32::to_bits`.
 2. Snapshot: build runs per visible line from `attrs.images()` using `cell.cell_index()` as the column; fill `TerminalSession.image_registry: HashMap<[u8; 32], Weak<ImageData>>`, pruning dead entries.
 3. Differ: `hash_row` covers the row's runs; `compute_update` copies runs into `GridRow`.
 4. Core `image_payload(session: &mut TerminalSession or registry, hash: &[u8;32]) -> Result<Vec<u8>, String>` plus `parse_hash_hex`. Async command `terminal_image(session_id, hash_hex) -> Result<tauri::ipc::Response, String>` in `pty.rs`: clone the handle's `Arc<Mutex<TerminalSession>>` and drop `session_ptys`/`instances`; upgrade the `Weak` under the session mutex; build the payload in `spawn_blocking` (`Rgba8` → kind 0 with width/height; `EncodedFile` whose magic bytes are PNG, JPEG or GIF → kind 1, width/height 0; anything else → error). Register in `lib.rs`.
 5. Frontend types (`src/lib/types.ts`): `ImageRun`, `GridRow.images?`.
 6. `src/components/terminal/imagePlacement.ts`: pure `runRects(run, imgW, imgH, cellW, cellH, rowY)` → source and destination rects.
 7. `src/components/terminal/imageCache.ts`: pure-logic cache with injected `fetch(hash)` and `decode(bytes)`; budget 256 MB; `touch(hash)` on draw; `setVisible(hashes)` after every grid update (the hashes in `rowImages`); eviction only of entries not in the visible set, oldest-drawn first, with overshoot while the visible set exceeds the budget, up to a hard ceiling of 512 MB above which new images are not decoded (transport-failure state, retryable); an entry enters with the current draw tick; in-flight dedupe; decode failures permanent; transport failures retried up to 2 more times; `dispose()` sets `disposed` and closes every bitmap; a fetch resolving after it skips the decode, a decode resolving after it closes its bitmap, neither notifies. The cache is built with the terminal's attach key (`key` at `terminalService.ts:476`, `${sessionId}::${shellId}` for a quake shell, `:532`), and its fetch calls `terminal_image` with that key, never `ownerSessionId`.
-   Also in `imagePlacement.ts`: pure `applyRowImages(rowImages, update, cols)` that reshapes with the grid, sets `rowImages[i] = row.images ?? []` for every received row, and drops runs past `cols`.
+   Also in `imagePlacement.ts`: pure `applyRowImages(rowImages, update)` (`cols` and `totalRows` come from the update) that reshapes with the grid, sets `rowImages[i] = row.images ?? []` for every received row, and drops runs past `cols`.
 8. `terminalService.ts`: entry gets a cache and a `rowImages: ImageRun[][]` shadow; `applyUpdate` calls `applyRowImages`, then `cache.setVisible(...)`; `paintRow` draws ready runs after glyphs (z ≥ 0) and before selection/cursor; on `ready(hash)` repaint rows that reference it, then selection and cursor; dispose the cache in both destruction sites (`destroy` and quake shell removal).
 
 ## Plan
@@ -33,6 +33,11 @@
 - **types.rs / session.rs / differ.rs**: as in the order above. Update struct literals in existing tests (`differ.rs` builders, `differ_mouse_tracking_tests.rs`) with `images: vec![]`.
 - **pty.rs**: `terminal_image` next to `terminal_attach`; hex-decode the hash (64 chars, else error).
 - **Frontend**: the cache fetch calls `invoke<ArrayBuffer>("terminal_image", { sessionId: key, hash })` with the attach key; decode: kind 0 → `createImageBitmap(new ImageData(new Uint8ClampedArray(buf, 9), w, h))`, kind 1 → `createImageBitmap(new Blob([new Uint8Array(buf, 9)]), { imageOrientation: "none" })`.
+
+## Builder coordination
+
+- Interface fixed for the test-writer and both builders: Rust `ImageRun { hash, col, span, u0, v0, u1, v1, pad_left, pad_top, pad_right, pad_bottom, z }` (camelCase JSON); new module `src-tauri/src/terminal/image_fetch.rs` with `parse_hash_hex`, `image_payload(&TerminalSession, &[u8;32])`, `ImageFetchError { MalformedHash, UnknownHash, Dropped, UnsupportedFormat }` and `ImageRegistry { insert, get }` (the registry lives in `TerminalSession`). TS `ImageRun` in `src/lib/types.ts`; `imagePlacement.ts` (`runRects`, `applyRowImages`); `imageCache.ts` (`IMAGE_BUDGET_BYTES`, `IMAGE_CEILING_BYTES`, `parseImageHeader`, `createImageCache({ key, fetch, decode, onReady })` → `{ get, touch, setVisible, dispose, bytes }`).
+- Group 1+2 (Rust) and group 3 (frontend) touch disjoint files and may run in parallel; the JSON shape above is their only contract.
 
 ## Per-phase risk
 

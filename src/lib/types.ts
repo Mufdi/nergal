@@ -135,9 +135,25 @@ export interface CursorSnapshot {
   visible: boolean;
 }
 
+export interface ImageRun {
+  hash: string;
+  col: number;
+  span: number;
+  u0: number;
+  v0: number;
+  u1: number;
+  v1: number;
+  padLeft: number;
+  padTop: number;
+  padRight: number;
+  padBottom: number;
+  z: number;
+}
+
 export interface GridRow {
   index: number;
   cells: CellSnapshot[];
+  images?: ImageRun[];
 }
 
 export interface GridUpdate {

@@ -42,7 +42,7 @@ pub struct CursorSnapshot {
 ///
 /// `scroll_offset` is the number of lines the visible window is scrolled above
 /// the live bottom; `0` means pinned to the bottom (live PTY output).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct GridSnapshot {
     pub cols: usize,
     pub rows: Vec<Vec<CellSnapshot>>,
@@ -51,6 +51,7 @@ pub struct GridSnapshot {
     pub scroll_offset: usize,
     pub is_alt_screen: bool,
     pub mouse_tracking: bool,
+    pub images: Vec<Vec<ImageRun>>,
 }
 
 /// Delta-ish payload sent over each terminal's attached grid-update channel.
@@ -59,7 +60,7 @@ pub struct GridSnapshot {
 /// with their visible-row index. `cursor` and `title` always reflect the
 /// current state (they are cheap to send and the frontend needs them every
 /// tick to render the caret and the tab label).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GridUpdate {
     pub session_id: String,
@@ -73,11 +74,33 @@ pub struct GridUpdate {
     pub mouse_tracking: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GridRow {
     pub index: usize,
     pub cells: Vec<CellSnapshot>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<ImageRun>,
+}
+
+/// A horizontal strip of one inline image on a single row. `col` is the
+/// terminal column (wezterm's `cell_index()`), not an index into the row's
+/// `cells`, which skips wide-character continuation cells.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageRun {
+    pub hash: String,
+    pub col: usize,
+    pub span: usize,
+    pub u0: f32,
+    pub v0: f32,
+    pub u1: f32,
+    pub v1: f32,
+    pub pad_left: u16,
+    pub pad_top: u16,
+    pub pad_right: u16,
+    pub pad_bottom: u16,
+    pub z: i32,
 }
 
 /// A key event as delivered by the frontend. Phase 2 defines the shape so the

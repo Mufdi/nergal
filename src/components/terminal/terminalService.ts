@@ -16,7 +16,7 @@ import { invoke } from "@/lib/tauri";
 import { Channel } from "@tauri-apps/api/core";
 import { open as openShell } from "@tauri-apps/plugin-shell";
 import { readText as readClipboard } from "@tauri-apps/plugin-clipboard-manager";
-import type { CellSnapshot, GridUpdate, TerminalKeyEvent } from "@/lib/types";
+import type { CellSnapshot, GridUpdate, ImageRun, TerminalKeyEvent } from "@/lib/types";
 import { appStore } from "@/stores/jotaiStore";
 import { configLoadedAtom } from "@/stores/config";
 import { readingTerminalAtom } from "@/stores/readingMode";
@@ -28,6 +28,8 @@ import { auxButtonToForward, keyboardMenuKey, releasePointerCell, reportsMouse, 
 import { TERM_FONT, TERM_THEME, refreshTermTheme, rgbaToCss } from "./theme";
 import { readingLayout } from "./readingCols";
 import { clampedCell } from "./cellMapping";
+import { createImageCache, type ImageCache } from "./imageCache";
+import { applyRowImages, runRects } from "./imagePlacement";
 import { refitNeeded, waitUntil } from "./waitUntil";
 import { cssColorToRgb } from "./cssColor";
 import { shouldPassThrough } from "./passThrough";
@@ -52,7 +54,11 @@ interface Selection {
 /// its own active terminal so both render simultaneously.
 export type Region = "center" | "quake";
 
+type BitmapCache = ImageCache<ImageBitmap>;
+
 interface Entry {
+  images: BitmapCache;
+  rowImages: ImageRun[][];
   /// Terminal key used in every backend invoke. The agent terminal's key is
   /// its session id; an aux shell's key is `${sessionId}::${shellId}` (the
   /// backend registers both in the same PTY key space).
@@ -420,6 +426,19 @@ async function showTerminal(opts: {
     if (!ctx) throw new Error("terminal canvas 2d context unavailable");
 
     const entry: Entry = {
+      images: createImageCache<ImageBitmap>({
+        key,
+        fetch: (imageKey, hash) => invoke<ArrayBuffer>("terminal_image", { sessionId: imageKey, hash }),
+        decode: (header) => {
+          if (header.kind === 0) {
+            const pixels = new Uint8ClampedArray(header.body.buffer as ArrayBuffer, header.body.byteOffset, header.body.byteLength);
+            return createImageBitmap(new ImageData(pixels, header.width, header.height));
+          }
+          return createImageBitmap(new Blob([header.body as BlobPart]), { imageOrientation: "none" });
+        },
+        onReady: (hash) => repaintImageRows(entry, hash),
+      }),
+      rowImages: [],
       sessionId: key,
       region,
       ownerSessionId,
@@ -517,6 +536,7 @@ export function destroy(sessionId: string): void {
   for (const [id, entry] of [...entries]) {
     if (entry.ownerSessionId !== sessionId) continue;
     entry.unlisten();
+    entry.images.dispose();
     entry.container.remove();
     entries.delete(id);
   }
@@ -533,6 +553,7 @@ export function dropShellEntry(sessionId: string, shellId: string): void {
   const entry = entries.get(key);
   if (!entry) return;
   entry.unlisten();
+  entry.images.dispose();
   entry.container.remove();
   entries.delete(key);
   if (activeIds.get("quake") === key) activeIds.set("quake", null);
@@ -1334,6 +1355,9 @@ function applyUpdate(entry: Entry, update: GridUpdate): void {
     touchedRows.add(row.index);
   }
 
+  entry.rowImages = applyRowImages(entry.rowImages, update);
+  entry.images.setVisible(new Set(entry.rowImages.flatMap((runs) => runs.map((r) => r.hash))));
+
   entry.cursor = update.cursor;
   entry.title = update.title;
   if (entry.scrollOffset !== update.scrollOffset) {
@@ -1391,6 +1415,9 @@ function paintRow(entry: Entry, y: number): void {
   ctx.fillStyle = TERM_THEME.background;
   ctx.fillRect(0, dyCell, cols * metrics.cellWidth, metrics.cellHeight);
 
+  const runs = entry.rowImages[y] ?? [];
+  drawImageRuns(entry, runs, y, (z) => z < 0);
+
   for (let x = 0; x < cols; x += 1) {
     const cell = row[x];
     const dxCell = x * metrics.cellWidth;
@@ -1429,6 +1456,32 @@ function paintRow(entry: Entry, y: number): void {
     // emoji we just drew.
     if (span === 2) x += 1;
   }
+
+  drawImageRuns(entry, runs, y, (z) => z >= 0);
+}
+
+function drawImageRuns(entry: Entry, runs: ImageRun[], y: number, layer: (z: number) => boolean): void {
+  const { ctx, metrics, images } = entry;
+  for (const run of runs) {
+    if (!layer(run.z)) continue;
+    const bitmap = images.get(run.hash);
+    if (!bitmap) continue;
+    images.touch(run.hash);
+    const r = runRects(run, bitmap.width, bitmap.height, metrics.cellWidth, metrics.cellHeight, y * metrics.cellHeight);
+    ctx.drawImage(bitmap, r.sx, r.sy, r.sw, r.sh, r.dx, r.dy, r.dw, r.dh);
+  }
+}
+
+function repaintImageRows(entry: Entry, hash: string): void {
+  let touched = false;
+  for (let y = 0; y < entry.rows; y += 1) {
+    if (!entry.rowImages[y]?.some((r) => r.hash === hash)) continue;
+    paintRow(entry, y);
+    touched = true;
+  }
+  if (!touched) return;
+  paintSelection(entry);
+  paintCursor(entry);
 }
 
 function paintSelection(entry: Entry): void {

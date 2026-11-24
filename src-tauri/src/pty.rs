@@ -2455,6 +2455,45 @@ pub fn terminal_attach(
         .ok_or_else(|| "differ produced no update after invalidate (unreachable)".to_string())
 }
 
+/// Raw bytes of an inline image the grid referenced by hash. Async so the
+/// payload copy never runs on the main thread; the global PTY maps are
+/// released before the first await.
+#[tauri::command]
+pub async fn terminal_image(
+    state: State<'_, PtyManager>,
+    session_id: String,
+    hash: String,
+) -> Result<tauri::ipc::Response, String> {
+    use crate::terminal::image_fetch::{parse_hash_hex, payload_for};
+
+    let hash = parse_hash_hex(&hash).map_err(|e| e.to_string())?;
+    let session = {
+        let pty_id = {
+            let session_ptys = state.session_ptys.lock().map_err(|e| e.to_string())?;
+            session_ptys
+                .get(&session_id)
+                .cloned()
+                .ok_or_else(|| "no PTY for session".to_string())?
+        };
+        let instances = state.instances.lock().map_err(|e| e.to_string())?;
+        let instance = instances.get(&pty_id).ok_or("PTY instance not found")?;
+        Arc::clone(&instance.terminal.session)
+    };
+
+    let image = session
+        .lock()
+        .map_err(|e| e.to_string())?
+        .image_registry()
+        .get(&hash)
+        .map_err(|e| e.to_string())?;
+
+    let payload = tauri::async_runtime::spawn_blocking(move || payload_for(&image))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    Ok(tauri::ipc::Response::new(payload))
+}
+
 pub(crate) fn cc_resume_arg(resume: Option<&str>, picked: Option<String>) -> Option<String> {
     match resume {
         Some("continue") => picked,

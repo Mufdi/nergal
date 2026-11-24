@@ -8,8 +8,9 @@ use wezterm_term::color::ColorPalette;
 use wezterm_term::{Terminal, TerminalSize};
 
 use super::config::NergalTerminalConfig;
+use super::image_fetch::{ImageRegistry, hash_to_hex};
 use super::input::map_event;
-use super::types::{CellSnapshot, CursorSnapshot, GridSnapshot, TerminalKeyEvent};
+use super::types::{CellSnapshot, CursorSnapshot, GridSnapshot, ImageRun, TerminalKeyEvent};
 
 pub type SyncState = Arc<Mutex<Option<Instant>>>;
 
@@ -109,6 +110,7 @@ pub struct TerminalSession {
     last_scrollback_rows: usize,
     sync_since: SyncState,
     sync_tail: Vec<u8>,
+    image_registry: ImageRegistry,
 }
 
 impl TerminalSession {
@@ -182,7 +184,12 @@ impl TerminalSession {
             last_scrollback_rows: 0,
             sync_since: Arc::new(Mutex::new(None)),
             sync_tail: Vec::new(),
+            image_registry: ImageRegistry::default(),
         }
+    }
+
+    pub fn image_registry(&self) -> &ImageRegistry {
+        &self.image_registry
     }
 
     pub fn sync_output_since(&self) -> Option<Instant> {
@@ -515,11 +522,20 @@ impl TerminalSession {
         let screen = self.terminal.screen();
         let visible = screen.lines_in_phys_range(start..end);
         let mut rows: Vec<Vec<CellSnapshot>> = Vec::with_capacity(visible.len());
+        let mut images: Vec<Vec<ImageRun>> = Vec::with_capacity(visible.len());
+        self.image_registry.prune();
 
         for line in &visible {
             let mut row_cells: Vec<CellSnapshot> = Vec::with_capacity(cols);
+            let mut runs: Vec<ImageRun> = Vec::new();
             for cell in line.visible_cells() {
                 let attrs = cell.attrs();
+                if let Some(cell_images) = attrs.images() {
+                    for image in &cell_images {
+                        push_image_cell(&mut runs, cell.cell_index(), image);
+                        self.image_registry.insert(image.image_data());
+                    }
+                }
                 let snap = CellSnapshot {
                     ch: cell.str().to_owned(),
                     fg: color_to_rgba(attrs.foreground(), &self.palette),
@@ -536,6 +552,7 @@ impl TerminalSession {
                 row_cells.push(CellSnapshot::default());
             }
             rows.push(row_cells);
+            images.push(runs);
         }
 
         let cursor_pos = self.terminal.cursor_pos();
@@ -568,8 +585,54 @@ impl TerminalSession {
             scroll_offset: self.scroll_offset,
             is_alt_screen,
             mouse_tracking: self.terminal.is_mouse_grabbed(),
+            images,
         }
     }
+}
+
+/// Extends the open run this slice continues (same image, same vertical range,
+/// contiguous horizontal range) or starts a new one. wezterm hands out slices
+/// of one placement with `x` fractions that chain exactly, so equality is safe.
+fn push_image_cell(runs: &mut Vec<ImageRun>, col: usize, image: &termwiz::image::ImageCell) {
+    let top_left = image.top_left();
+    let bottom_right = image.bottom_right();
+    let (u0, v0) = (top_left.x.into_inner(), top_left.y.into_inner());
+    let (u1, v1) = (bottom_right.x.into_inner(), bottom_right.y.into_inner());
+    let (pad_left, pad_top, pad_right, pad_bottom) = image.padding();
+    let hash = hash_to_hex(&image.image_data().hash());
+    let z = image.z_index();
+
+    let continues = |run: &ImageRun| {
+        run.hash == hash
+            && run.z == z
+            && run.col + run.span == col
+            && run.u1 == u0
+            && run.v0 == v0
+            && run.v1 == v1
+            && run.pad_left == pad_left
+            && run.pad_top == pad_top
+    };
+    if let Some(run) = runs.iter_mut().rev().find(|run| continues(run)) {
+        run.span += 1;
+        run.u1 = u1;
+        run.pad_right = pad_right;
+        run.pad_bottom = pad_bottom;
+        return;
+    }
+    runs.push(ImageRun {
+        hash,
+        col,
+        span: 1,
+        u0,
+        v0,
+        u1,
+        v1,
+        pad_left,
+        pad_top,
+        pad_right,
+        pad_bottom,
+        z,
+    });
 }
 
 fn color_to_rgba(color: termwiz::color::ColorAttribute, palette: &ColorPalette) -> Option<[u8; 4]> {
@@ -1039,3 +1102,7 @@ mod mouse_tracking_tests;
 #[cfg(test)]
 #[path = "mouse_scroll_gate_tests.rs"]
 mod mouse_scroll_gate_tests;
+
+#[cfg(test)]
+#[path = "image_runs_tests.rs"]
+mod image_runs_tests;

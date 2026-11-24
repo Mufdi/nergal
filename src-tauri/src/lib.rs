@@ -524,6 +524,7 @@ pub fn run() {
             pty::resize_session_terminal,
             pty::terminal_input,
             pty::terminal_attach,
+            pty::terminal_image,
             pty::set_terminal_default_colors,
             pty::terminal_scroll,
             pty::terminal_scroll_to_bottom,

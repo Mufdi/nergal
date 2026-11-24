@@ -13,6 +13,7 @@ fn snapshot(mouse_tracking: bool) -> GridSnapshot {
         scroll_offset: 0,
         is_alt_screen: false,
         mouse_tracking,
+        images: vec![],
     }
 }
 

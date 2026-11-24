@@ -12,10 +12,13 @@
 pub(crate) mod config;
 mod differ;
 mod emitter;
+pub(crate) mod image_fetch;
 mod input;
 pub(crate) mod session;
 mod types;
 
+#[cfg(test)]
+mod image_fetch_tests;
 #[cfg(test)]
 #[allow(clippy::type_complexity)]
 mod pixel_geometry_tests;
@@ -28,5 +31,5 @@ pub use emitter::TerminalHandle;
 pub use input::map_event;
 pub use session::{MouseMods, PrimaryButton, PrimaryKind, TerminalSession};
 pub use types::{
-    CellSnapshot, CursorSnapshot, GridRow, GridSnapshot, GridUpdate, TerminalKeyEvent,
+    CellSnapshot, CursorSnapshot, GridRow, GridSnapshot, GridUpdate, ImageRun, TerminalKeyEvent,
 };

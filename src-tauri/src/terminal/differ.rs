@@ -1,7 +1,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use super::types::{CellSnapshot, CursorSnapshot, GridRow, GridSnapshot, GridUpdate};
+use super::types::{CellSnapshot, CursorSnapshot, GridRow, GridSnapshot, GridUpdate, ImageRun};
 
 /// Keeps track of the last emitted state so subsequent [`GridDiffer::compute_update`]
 /// calls can return only the rows that actually changed. This is the core of
@@ -50,13 +50,15 @@ impl GridDiffer {
         let mut changed_rows: Vec<GridRow> = Vec::new();
 
         for (index, row) in snapshot.rows.iter().enumerate() {
-            let hash = hash_row(row);
+            let runs = snapshot.images.get(index).map_or(&[][..], Vec::as_slice);
+            let hash = hash_row(row, runs);
             let was_different = !self.emitted_first || self.row_hashes[index] != hash;
             if was_different {
                 self.row_hashes[index] = hash;
                 changed_rows.push(GridRow {
                     index,
                     cells: row.clone(),
+                    images: runs.to_vec(),
                 });
             }
         }
@@ -98,10 +100,28 @@ impl Default for GridDiffer {
     }
 }
 
-fn hash_row(row: &[CellSnapshot]) -> u64 {
+fn hash_row(row: &[CellSnapshot], runs: &[ImageRun]) -> u64 {
     let mut hasher = DefaultHasher::new();
     row.hash(&mut hasher);
+    runs.hash(&mut hasher);
     hasher.finish()
+}
+
+impl Hash for ImageRun {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.hash.hash(state);
+        self.col.hash(state);
+        self.span.hash(state);
+        self.u0.to_bits().hash(state);
+        self.v0.to_bits().hash(state);
+        self.u1.to_bits().hash(state);
+        self.v1.to_bits().hash(state);
+        self.pad_left.hash(state);
+        self.pad_top.hash(state);
+        self.pad_right.hash(state);
+        self.pad_bottom.hash(state);
+        self.z.hash(state);
+    }
 }
 
 impl Hash for CellSnapshot {
@@ -134,6 +154,7 @@ mod tests {
             scroll_offset: 0,
             is_alt_screen: false,
             mouse_tracking: false,
+            images: vec![],
         }
     }
 
@@ -223,3 +244,7 @@ mod tests {
 #[cfg(test)]
 #[path = "differ_mouse_tracking_tests.rs"]
 mod mouse_tracking_tests;
+
+#[cfg(test)]
+#[path = "differ_image_tests.rs"]
+mod image_tests;

@@ -1944,11 +1944,10 @@ pub async fn terminal_clipboard_write(text: String) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
-/// Paste `text` into the session's PTY wrapped in bracketed-paste markers.
-/// Applications that understand bracketed paste (bash, zsh, vim, claude CLI,
-/// etc.) can then treat it as a single paste operation instead of a flurry
-/// of keystrokes — most importantly they skip autoindent / tab-expansion on
-/// the pasted body.
+/// Paste user-clipboard `text` into the session's PTY, shaped by what the
+/// foreground app negotiated: wrapped in bracketed-paste markers only while
+/// DECSET 2004 is on, otherwise as typed lines (`\r`) so a shell or `cat`
+/// that never asked for markers does not echo them as `^[[200~`.
 #[tauri::command]
 pub fn terminal_paste(
     state: State<'_, PtyManager>,
@@ -1965,16 +1964,23 @@ pub fn terminal_paste(
 
     let instances = state.instances.lock().map_err(|e| e.to_string())?;
     let instance = instances.get(&pty_id).ok_or("PTY instance not found")?;
+    let is_aux = session_id.contains("::");
 
-    if session_id.contains("::") {
+    let s = instance
+        .terminal
+        .session
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (bracketed, cursor_col, payload) = (
+        s.bracketed_paste_enabled(),
+        s.cursor_col(),
+        user_paste_payload(&s, &text),
+    );
+    drop(s);
+
+    if is_aux {
         // A paste can be the line's first input — anchor the start column
         // like a keystroke would (the pasted echo hasn't landed yet).
-        let cursor_col = instance
-            .terminal
-            .session
-            .lock()
-            .map(|s| s.cursor_col())
-            .unwrap_or(0);
         if let Ok(mut trackers) = state.aux_line_trackers.lock() {
             let t = trackers.entry(session_id.clone()).or_default();
             if t.start_col.is_none() {
@@ -1983,15 +1989,55 @@ pub fn terminal_paste(
         }
     }
 
-    let mut w = instance.writer.lock().map_err(|e| e.to_string())?;
-    write_bracketed(&mut *w, &text, false).map_err(|e| e.to_string())?;
+    {
+        let mut w = instance.writer.lock().map_err(|e| e.to_string())?;
+        w.write_all(payload.as_bytes()).map_err(|e| e.to_string())?;
+        w.flush().map_err(|e| e.to_string())?;
+    }
+
+    if is_aux && let Ok(mut trackers) = state.aux_line_trackers.lock() {
+        tracker_after_paste(trackers.entry(session_id).or_default(), bracketed, &text);
+    }
     Ok(())
 }
 
-/// Bracketed-paste encoder shared by `terminal_paste` and
-/// [`paste_to_session`]. When `submit`, the `\r` is written as a separate
-/// byte AFTER the closing marker — inside the brackets it would be text,
-/// not a submit.
+/// Programmatic delivery to an agent session (e.g. the PR viewer's "Apply
+/// with Claude"): always a bracketed paste, so a multi-line prompt lands as
+/// one turn regardless of the DECSET 2004 state a user paste follows.
+#[tauri::command]
+pub fn terminal_deliver(
+    state: State<'_, PtyManager>,
+    session_id: String,
+    text: String,
+) -> Result<(), String> {
+    paste_to_session(&state, &session_id, &text, false)
+}
+
+fn encode_user_paste(text: &str, bracketed: bool) -> String {
+    if bracketed {
+        format!("\x1b[200~{}\x1b[201~", strip_paste_markers(text))
+    } else {
+        strip_paste_markers(&text.replace("\r\n", "\r").replace('\n', "\r"))
+    }
+}
+
+fn user_paste_payload(session: &TerminalSession, text: &str) -> String {
+    encode_user_paste(text, session.bracketed_paste_enabled())
+}
+
+/// A plain multi-line paste runs its lines as typed Enters, so the prompt
+/// that follows sits at an unknown column: drop the anchor instead of
+/// re-deriving it from the cursor.
+fn tracker_after_paste(tracker: &mut AuxLineTracker, bracketed: bool, text: &str) {
+    if !bracketed && text.contains(['\n', '\r']) {
+        tracker.start_col = None;
+        tracker.prefill_chars = 0;
+    }
+}
+
+/// Bracketed-paste encoder for agent deliveries ([`paste_to_session`]). When
+/// `submit`, the `\r` is written as a separate byte AFTER the closing marker —
+/// inside the brackets it would be text, not a submit.
 fn write_bracketed(w: &mut dyn Write, text: &str, submit: bool) -> std::io::Result<()> {
     w.write_all(b"\x1b[200~")?;
     w.write_all(strip_paste_markers(text).as_bytes())?;
@@ -3159,3 +3205,7 @@ mod launch_prompt_tests;
 #[cfg(test)]
 #[path = "pty_launch_prompt_ps_tests.rs"]
 mod launch_prompt_ps_tests;
+
+#[cfg(test)]
+#[path = "pty_user_paste_tests.rs"]
+mod user_paste_tests;

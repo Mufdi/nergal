@@ -1,0 +1,33 @@
+{
+  "tier": "S",
+  "ceremony": "quick-fix",
+  "risk_tier": "low",
+  "spec_target": "terminal-wezterm",
+  "tracker": {
+    "system": "linear",
+    "id": "FRI-507",
+    "pending": []
+  },
+  "validation": "validated",
+  "planning_only": false,
+  "iprev": {
+    "rounds": 2,
+    "verdict": "APPROVED"
+  },
+  "interview_answers": {
+    "paste_to_session": "Issue asks to review agent deliveries separately; decision (design D3): keep them bracketed, since a delivery can precede Claude Code enabling 2004 and a multi-line body would split into turns.",
+    "run_plan": "Stacked on mufdidev/fri-506-mouse-tracking-clicks; checkpoint 1 .deb after FRI-604, 506, 507, 473."
+  },
+  "events": [
+    {
+      "ts": "2026-11-23T21:06:03-03:00",
+      "type": "validated",
+      "note": "iprev R1 REVISE (1 high PrViewer delivery, 2 medium, 5 low), R2 APPROVED; R2 lows folded"
+    },
+    {
+      "ts": "2026-11-23T21:20:44-03:00",
+      "type": "yield",
+      "note": "iprev 2 rounds (R1: 1 high PrViewer delivery on the user-paste path, 2 medium, 5 low); adversarial 3 Important + 4 nits, frontend 0 Important + 1 nit, all fixed; gate failures 0; walks pending checkpoint 1"
+    }
+  ]
+}

@@ -55,3 +55,25 @@
 - `src/components/plan/PlanPanel.tsx`: `annotationsEnabled` (passed to `AnnotatableMarkdownView` at `:427`), the `X` key and the clear listener use `showReviewAnnotations`; Approve/Revise, `A`/`R`, global comment and the annotation toggle use `isLiveReview`; `guardDecision` passes `appStore.get(planReviewStatusMapAtom)[sessionId]`. Verify in `src/components/plan/AnnotatableMarkdownView.tsx` that `annotationsEnabled` with annotation mode off renders and restores highlights without letting a text selection create one (the `CREATE` handler and `annotationModeRef`); if creation does not depend on annotation mode, gate creation on `pending_review` explicitly.
 - `src-tauri/src/plan_fifo.rs`: `pub fn review_decision_path(fifo_path: &str, ipc_dir: Option<&Path>) -> Option<String>` built on `fifo_in_ipc_dir`; `ENXIO` budget 900 ms. `src-tauri/src/hooks/server.rs` PlanReview (Unix) applies it: `Some` → register and emit that path, `None` → no registration and an empty `decision_path`.
 - `docs/hooks.md:13` FIFO name; `:33` causes of `undelivered`.
+
+## Revision 3 plan (walk findings)
+
+### Verified codebase facts (do not re-assume)
+- `src-tauri/src/hooks/cli.rs:206` `plan_review`: reads stdin JSON, `tool_input` at `:249`; no-session early `output_allow()` at `:215-219`; decision mapping at `:284-295` via `parse_plan_review_decision` (`:312`, enum `PlanReviewDecision` `:307`); `output_allow` at `:792` prints `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}`.
+- `src-tauri/src/agents/claude_code/adapter.rs:74` `register_pending_plan_fifo` uses `DashMap::insert` (returns the replaced path, discarded today); `:80` `claim_pending_plan_fifo` (`remove_if`).
+- `src-tauri/src/hooks/server.rs:1268-1275` registers the FIFO on `PlanReview` (key: Nergal session id); `:1174` `PostToolUse` handler (has `agent_id` in the event, `events.rs:66`); `:1198` `Stop`; `:1129` `SessionEnd`.
+- `src-tauri/src/plan_fifo.rs:85` `write_plan_decision(path, payload, deadline)` (no create, no symlink, ENXIO budget).
+- `src-tauri/src/setup.rs:41-45` Nergal `PostToolUse` matcher; `merge_hook` upgrades the matcher in place (`:494-509`).
+- Frontend: `src/stores/plan.ts:33` `PlanReviewStatus`; `src/stores/hooks.ts:133-135` `stop` sets `idle` unconditionally, `:181-183` `session_end`; `plan:ready` listener `:278`; `src/stores/planReady.ts` `showReviewAnnotations` (`:86`), `decisionGuard` (`:59`); `src/components/plan/PlanPanel.tsx:52-53` status flags, header label for `undelivered`.
+
+### Execution order
+1. `cli.rs`: pure `plan_review_output(decision, tool_input) -> Option<serde_json::Value>` (Allow → allow + `updatedInput`, Deny → deny + message, Released → `None`); `PlanReviewDecision::Released` from `{"released": true}`; no-session path prints nothing. `plan_review` prints only `Some`.
+2. Adapter: `register_pending_plan_fifo` returns the replaced path; add `release_pending_plan_fifo(session_id) -> Option<PathBuf>` (remove).
+3. Server: helper `release_plan_review(path)` spawns a blocking thread that calls `write_plan_decision(path, b"{\"released\":true}", 1 s)` and logs a failure. `PlanReview`: release the replaced path when it differs from the new one. `PostToolUse` with `tool_name == "ExitPlanMode"` and no `agent_id`: release + emit `plan:review-closed { session_id }` (Nergal id). `Stop`, `SessionEnd`: release.
+4. Setup: append `ExitPlanMode` to the `PostToolUse` matcher.
+5. Frontend: `"answered"` status; pure `applyReviewClosed(status) -> { status, toast }` in `planReady.ts`; listener in `hooks.ts`; `stop` keeps `answered`; `showReviewAnnotations` true for `answered`; PlanPanel header label and copy.
+6. Docs: `docs/hooks.md` plan review section (updatedInput, release, `answered`).
+
+### Per-phase risk
+- Setup matcher change only reaches users after setup runs (existing flow: hooks status shows not registered → register). Without it, D5 still releases on `PlanReview`/`Stop`; only the `answered` label needs it.
+- A release write to a FIFO whose hook already exited fails fast (ENXIO budget ≤ 1 s) on a blocking thread; the event loop never waits.

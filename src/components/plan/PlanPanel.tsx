@@ -51,6 +51,7 @@ export function PlanPanel({ path }: PlanPanelProps) {
   const canToggleAnnotationMode = canEnterAnnotationMode && isReviewDocument(docPlan, sessionPlan);
   const isSubmitted = reviewStatus === "submitted";
   const isUndelivered = reviewStatus === "undelivered";
+  const isAnswered = reviewStatus === "answered";
   const decisionBusy = sessionId ? inFlightMap[sessionId] === true : false;
   const [annotationMode, setAnnotationMode] = useAtom(annotationModeAtom);
   const setScope = useSetAtom(annotationScopeAtom);
@@ -322,6 +323,12 @@ export function PlanPanel({ path }: PlanPanelProps) {
 
           {isUndelivered && (
             <span className="text-[10px] text-muted-foreground">Not delivered. Answer in the terminal.</span>
+          )}
+
+          {isAnswered && (
+            <span className="text-[10px] text-muted-foreground">
+              Answered in the terminal.{annotations.length > 0 && " Annotations were not sent."}
+            </span>
           )}
 
           {canAnnotate && (

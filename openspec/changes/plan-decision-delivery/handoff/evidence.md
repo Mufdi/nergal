@@ -108,3 +108,21 @@ Verify:
 - work-gates: deps SKIP, placeholders PASS, bar weakening PASS, gitleaks clean, 4 Red locks unchanged.
 - Comment audit: every added comment states a WHY (registry claim, handler ref, ENXIO budget, `original` vs `content`, `documentBase`).
 - Walks 4.3-4.7 wait for the checkpoint-1 `.deb` (after FRI-604, 506, 507, 473).
+
+## Revision 3 (walk findings, 2026-11-24)
+
+- Root cause of Approve never reaching Claude Code: the hook printed a bare `allow`; the current hook reference requires `updatedInput` on `allow` for `ExitPlanMode` ("returning allow alone is not sufficient"). Evidence: walk transcript `~/.claude/projects/-home-felipe-Projects-XD001/18e18c76-0e4e-4831-9830-f4e83cbe2040.jsonl` 02:40-03:07 UTC: every Revise has `hook_permission_decision: deny`, no approval has a hook decision; the installed binary equals the checkpoint-1 deb (`307da3b`).
+- Locks are `git hash-object` blob ids (what `work-gates.sh` checks), not `sha1sum`. The Revision 3 test-writer wrote `sha1sum` lines; all six lines were recomputed with `git hash-object`; the two older files are unchanged since `d52f64a`.
+- Red (test-writer): new `src-tauri/src/hooks/cli_plan_review_output_tests.rs` (6), appended adapter (3), setup (1), vitest `applyReviewClosed` (5) + `answered` (3). Rust Red = E0432/E0599/E0308 on the missing items; vitest 6 failed / 39 passed in `planReady.test.ts`. Relocked.
+- Builder: `cli.rs` (`plan_review_output`, `Released`, silent no-session path), `server.rs` (release in `process_event` for top-level `PostToolUse[ExitPlanMode]`, `Stop`, `SessionEnd`; replaced `PlanReview` FIFO; `plan:review-closed`), `adapter.rs` (`register` returns the replaced path, `release_pending_plan_fifo`), `setup.rs` (matcher + `ExitPlanMode`), frontend `answered` state, `docs/hooks.md`. Deviation accepted: release lives in `process_event` because the `Stop` arm only matches `transcript_path: Some`.
+- Main-thread doc fix: two inaccurate `docs/hooks.md` sentences (why `updatedInput` is needed; what CC does on release).
+
+| Gate | Result | Detail |
+|------|--------|--------|
+| 5. Deps | SKIP | no manifest or lockfile changed |
+| 6a. Placeholders | PASS | none |
+| 6b. Bar weakening | PASS | none |
+| 6c. Secrets | PASS | gitleaks clean |
+| 2. Red locks | PASS | 6 locked file(s) unchanged |
+
+- clippy --all-targets -D warnings: clean. cargo test: `test result: ok. 1268 passed; 0 failed; 1 ignored` (+ other binaries ok). rustfmt --edition 2024 --check (4 files): OK. tsc: clean. vitest: 559 passed (52 files).

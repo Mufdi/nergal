@@ -30,7 +30,7 @@ export const fetchPlanCapabilityAction = atom(null, async (get, set, sessionId: 
   }
 });
 
-export type PlanReviewStatus = "idle" | "pending_review" | "submitted" | "undelivered";
+export type PlanReviewStatus = "idle" | "pending_review" | "submitted" | "undelivered" | "answered";
 
 export const planReviewStatusMapAtom = sessionScopedMapAtom<PlanReviewStatus>();
 

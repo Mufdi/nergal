@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   applyPlanReady,
+  applyReviewClosed,
   decisionGuard,
   documentBase,
   isLiveReview,
@@ -233,5 +234,41 @@ describe("showReviewAnnotations", () => {
 
   it("is false for an old document with a different decision path", () => {
     expect(showReviewAnnotations({ ...live, decisionPath: "/fifo/old" }, live, "pending_review")).toBe(false);
+  });
+});
+
+describe("applyReviewClosed", () => {
+  it.each([
+    ["pending_review", "answered", null],
+    ["undelivered", "answered", null],
+    ["submitted", "answered", "Revise not delivered"],
+    ["idle", "idle", null],
+    ["answered", "answered", null],
+  ] as const)("maps %s to %s with toast %s", (from, status, toast) => {
+    expect(applyReviewClosed(from)).toEqual({ status, toast });
+  });
+});
+
+describe("answered review", () => {
+  const live: PlanState = { ...stored, decisionPath: "/fifo/a" };
+
+  it("keeps annotations on the review document", () => {
+    expect(showReviewAnnotations(live, live, "answered")).toBe(true);
+  });
+
+  it("hides annotations on a document with a different decision path", () => {
+    expect(showReviewAnnotations({ ...live, decisionPath: "/fifo/old" }, live, "answered")).toBe(false);
+  });
+
+  it("ignores a decision once answered", () => {
+    expect(
+      decisionGuard({
+        repeat: false,
+        inFlight: false,
+        decisionPath: "/fifo/a",
+        sessionId: "s1",
+        status: "answered",
+      }),
+    ).toBe("ignore");
   });
 });

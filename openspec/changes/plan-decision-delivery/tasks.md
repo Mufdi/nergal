@@ -21,12 +21,19 @@
 - [x] 3.5 Test (Red): vitest `isReviewDocument` (equal non-empty paths → true; empty or different → false; undefined → false), `showReviewAnnotations` (true for `pending_review` and `undelivered` on the review document; false for `submitted`, `idle` and an old document), `decisionGuard` with `status` (`submitted`, `idle`, `undelivered` → ignore; `pending_review` keeps the existing outcomes). Rust `review_decision_path`: FIFO in the IPC dir → `Some(path)`; other dir → `None`; IPC dir `None` → `None`.
 - [x] 3.6 Implement Revision 2 (design.md "Revision 2", implementation.md "Revision 2 plan").
 
-## 4. Verification
+## 5. Walk findings (Revision 3)
 
-- [x] 4.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check`, then `npx tsc --noEmit` and `pnpm test`.
-- [x] 4.2 `~/.claude/skills/work/scripts/work-gates.sh main plan-decision-delivery` passes.
-- [ ] 4.3 Manual walk: in plan mode, Claude Code proposes a plan; with focus in the plan panel, `A` approves it and Claude Code starts working. Repeat with the Approve button on a second plan.
-- [ ] 4.4 Manual walk: annotate a plan and press `R`; Claude Code receives the annotations and proposes a revised plan; Approve on the revised plan reaches Claude Code.
-- [ ] 4.5 Manual walk: with a plan pending in the panel, answer in the terminal instead; Approve in the panel afterwards shows `Approve failed` and the header reads `Not delivered. Answer in the terminal.`
-- [ ] 4.6 Manual walk: annotate a plan, answer in the terminal, then press `R` in the panel; `Revise failed` shows, the annotations stay highlighted, and `X` clears them. Hold `A` on a new plan: Claude Code receives one approval, and the buttons show disabled while it sends.
-- [ ] 4.7 Manual walk: with a review pending, open an earlier plan from the plan list; its tab shows no Approve or Revise, and the live plan's tab still does.
+- [ ] 5.1 Test (Red): Rust `plan_review_output`: Allow with `tool_input` `{"plan":"# A","planFilePath":"/p/a.md"}` → `decision.behavior` `allow` and `updatedInput` equal to that object; Deny `fix step 2` → `deny`, message, no `updatedInput`; Released → `None`; `parse_plan_review_decision("{\"released\":true}")` → Released. Adapter: `register_pending_plan_fifo` returns the replaced path; `release_pending_plan_fifo` returns and removes it, `None` when nothing is registered. Setup: an existing Nergal `PostToolUse` entry with the old matcher gets `ExitPlanMode` added in place, no second entry. Vitest: `applyReviewClosed` (`pending_review`/`undelivered` → `answered`, no toast; `submitted` → `answered` + `Revise not delivered`; `idle`/`answered` unchanged); `showReviewAnnotations` true for `answered` on the review document; `decisionGuard` with `answered` → ignore.
+- [x] 5.2 Hook output with `updatedInput`, `Released`, silent no-session path (`cli.rs`).
+- [x] 5.3 Release on `PostToolUse[ExitPlanMode]` (main agent), replaced `PlanReview`, `Stop`, `SessionEnd`; emit `plan:review-closed`; setup matcher.
+- [x] 5.4 Frontend `answered` state, listener, `stop` keeps it, header copy; `docs/hooks.md`.
+
+## 6. Verification
+
+- [ ] 6.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check`, then `npx tsc --noEmit` and `pnpm test`.
+- [ ] 6.2 `~/.claude/skills/work/scripts/work-gates.sh main plan-decision-delivery` passes.
+- [ ] 6.3 Manual walk: in plan mode, Claude Code proposes a plan; with focus in the plan panel, `A` approves it and Claude Code starts working. Repeat with the Approve button on a second plan.
+- [ ] 6.4 Manual walk: annotate a plan and press `R`; Claude Code receives the annotations and proposes a revised plan; Approve on the revised plan reaches Claude Code.
+- [ ] 6.5 Manual walk: with a plan pending in the panel, answer in the terminal instead; the panel header reads `Answered in the terminal.` and shows no Approve or Revise; annotations made before stay, with `Annotations were not sent.`
+- [ ] 6.6 Manual walk: annotate a plan, deny it in the terminal; when Claude Code proposes the next plan the earlier hook is gone (no `nergal hook plan-review` process left besides the new one). After a terminal answer, `X` clears the kept annotations. Hold `A` on a new plan: Claude Code receives one approval.
+- [ ] 6.7 Manual walk: with a review pending, open an earlier plan from the plan list; its tab shows no Approve or Revise, and the live plan's tab still does.

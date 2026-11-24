@@ -43,3 +43,33 @@ fn concurrent_claims_yield_exactly_one_winner() {
         assert_eq!(wins, 1);
     }
 }
+
+#[test]
+fn register_returns_none_first_then_the_replaced_path() {
+    let a = ClaudeCodeAdapter::new();
+    assert_eq!(
+        a.register_pending_plan_fifo("s1", PathBuf::from("/p/a")),
+        None
+    );
+    assert_eq!(
+        a.register_pending_plan_fifo("s1", PathBuf::from("/p/b")),
+        Some(PathBuf::from("/p/a"))
+    );
+}
+
+#[test]
+fn release_returns_and_removes_the_registered_path() {
+    let a = ClaudeCodeAdapter::new();
+    a.register_pending_plan_fifo("s1", PathBuf::from("/p/a"));
+    assert_eq!(
+        a.release_pending_plan_fifo("s1"),
+        Some(PathBuf::from("/p/a"))
+    );
+    assert!(!a.claim_pending_plan_fifo("s1", Path::new("/p/a")));
+}
+
+#[test]
+fn release_with_nothing_registered_is_none() {
+    let a = ClaudeCodeAdapter::new();
+    assert_eq!(a.release_pending_plan_fifo("s1"), None);
+}

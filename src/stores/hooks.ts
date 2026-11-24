@@ -1,4 +1,4 @@
-import { applyPlanReady, documentBase } from "@/stores/planReady";
+import { applyPlanReady, applyReviewClosed, documentBase } from "@/stores/planReady";
 import { type getDefaultStore } from "jotai";
 import { invoke, listen } from "@/lib/tauri";
 import type { HookEvent, CostSummary, Task, ActivityEntry } from "@/lib/types";
@@ -131,7 +131,7 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
         }
         case "stop": {
           set(modeMapAtom, (prev) => ({ ...prev, [sid]: "idle" }));
-          set(planReviewStatusMapAtom, (prev) => ({ ...prev, [sid]: "idle" }));
+          set(planReviewStatusMapAtom, (prev) => (prev[sid] === "answered" ? prev : { ...prev, [sid]: "idle" }));
           set(closeUnclaimedSubagentRowsAtom, sid);
           set(closeMainToolRowsAtom, sid);
           if (shouldClearOnTurnEvent(get(pendingAttentionAtom)[sid])) {
@@ -270,6 +270,22 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
         sessionId: sid,
         entry: createActivity("file_modified", `Modified: ${payload.path.split("/").pop() ?? payload.path}`, payload.path),
       });
+    }),
+  );
+
+  unlisteners.push(
+    await listen<{ session_id: string }>("plan:review-closed", (payload) => {
+      const sid = payload.session_id;
+      if (!sid) return;
+      const closed = applyReviewClosed(get(planReviewStatusMapAtom)[sid] ?? "idle");
+      set(planReviewStatusMapAtom, (prev) => ({ ...prev, [sid]: closed.status }));
+      if (closed.toast) {
+        set(toastsAtom, {
+          message: closed.toast,
+          description: "Claude Code was answered in the terminal before the revision arrived.",
+          type: "error",
+        });
+      }
     }),
   );
 

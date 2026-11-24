@@ -218,3 +218,41 @@ fn binary_usable_accepts_binary_outside_any_appimage() {
         None
     ));
 }
+
+#[test]
+fn apply_setup_adds_exit_plan_mode_to_existing_wrapper_post_tool_use_entry() {
+    let mut settings = Map::new();
+    settings.insert(
+        "hooks".into(),
+        json!({
+            "PostToolUse": [{
+                "hooks": [{
+                    "type": "command",
+                    "command": "/home/felipe/.claude/hooks/nergal-conditional.sh send tool-done",
+                    "async": true,
+                }],
+                "matcher": "Write|Edit|MultiEdit|Bash|TaskCreate|TaskUpdate|TodoWrite|NotebookEdit|Create|AskUserQuestion"
+            }]
+        }),
+    );
+    apply_setup(&mut settings).unwrap();
+    let entries: Vec<&Value> = settings["hooks"]["PostToolUse"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| {
+            e["hooks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|h| h["command"].as_str().unwrap().contains("send tool-done"))
+        })
+        .collect();
+    assert_eq!(
+        entries.len(),
+        1,
+        "matcher upgrade must not add a second entry"
+    );
+    let matcher = entries[0]["matcher"].as_str().unwrap();
+    assert!(matcher.split('|').any(|m| m == "ExitPlanMode"));
+}

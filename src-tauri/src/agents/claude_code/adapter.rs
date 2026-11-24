@@ -71,8 +71,14 @@ impl ClaudeCodeAdapter {
 
     /// Record the FIFO path for a session's pending plan-review. Called by
     /// the hook dispatcher when a `PlanReview` hook event arrives.
-    pub fn register_pending_plan_fifo(&self, session_id: &str, path: PathBuf) {
-        self.pending_plan_fifos.insert(session_id.to_string(), path);
+    pub fn register_pending_plan_fifo(&self, session_id: &str, path: PathBuf) -> Option<PathBuf> {
+        self.pending_plan_fifos.insert(session_id.to_string(), path)
+    }
+
+    pub fn release_pending_plan_fifo(&self, session_id: &str) -> Option<PathBuf> {
+        self.pending_plan_fifos
+            .remove(session_id)
+            .map(|(_, path)| path)
     }
 
     /// Atomically consumes the registration only when it names `requested`,

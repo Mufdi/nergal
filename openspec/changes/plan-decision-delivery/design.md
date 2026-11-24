@@ -72,3 +72,38 @@ A missing decision path or a delivery error shows an error toast: "Claude Code i
 - `ENXIO` budget 900 ms, so the 20 ms retry sleep cannot push a no-reader failure past 1 second.
 - `undelivered` lasts until a `plan:ready` opens a review or brings new content, or the session stops (`src/stores/hooks.ts` stop and session-end handlers reset the status); spec text matches.
 - Docs: `docs/hooks.md` FIFO name in the subcommand table, and the `undelivered` causes limited to what the UI can reach.
+
+## Revision 3: walk findings (2026-11-24, checkpoint 1)
+
+The walk showed that Approve, by key or button, still never reached Claude Code, while Revise did. The transcript of the walk session (XD001, 2026-11-24 02:40–03:07 UTC) holds a `hook_permission_decision: deny` attachment for every Revise and none for any approval: every approval came from Claude Code's own dialog. The current hook reference states that `AskUserQuestion` and `ExitPlanMode` need `updatedInput` on `allow`, and that "returning `allow` alone is not sufficient for these tools". The hook printed a bare `allow` (`src-tauri/src/hooks/cli.rs:792`), so Claude Code 2.1.331 ignored it. The walk also showed that answering in the terminal leaves the hook blocked and the FIFO registered, so a later `R` "succeeds" into a hook Claude Code no longer reads, and the panel learns nothing until `Stop` sets it `idle`.
+
+### D4. Approve echoes `tool_input` as `updatedInput`
+The hook already holds the stdin `tool_input`; the approval output carries it unchanged. Edits the user saved from the panel live in the plan file, which `ExitPlanMode` reads by path, so echoing the received input keeps today's behavior.
+- Alternative: rebuild the input from the plan file on disk. Rejected: the hook would duplicate Claude Code's input schema and break when it adds fields.
+- Alternative: add `updatedPermissions` with `setMode` to pick the post-plan mode. Rejected for now: Claude Code's own dialog offers several modes, the panel offers one Approve; picking a mode is a feature, not this fix.
+The no-session path (`cli.rs:215`) printed a bare `allow` that Claude Code ignored; with `updatedInput` it would approve every plan of a session outside Nergal. It now prints nothing, which keeps the effective behavior: Claude Code shows its dialog.
+
+### D5. Release the hook when Claude Code resolves the review elsewhere
+Signals that the review is over without the panel: `PostToolUse[ExitPlanMode]` from the main agent (the plan was approved), a new `PlanReview` for the same session (the earlier one was answered), `Stop` and `SessionEnd`. Nergal's `PostToolUse` matcher gains `ExitPlanMode`; `merge_hook` already upgrades a registered matcher in place (`src-tauri/src/setup.rs:494`). Releasing claims the registration and writes `{"released": true}` (1 s deadline, on a blocking thread) so the hook exits without printing a decision. A deny in Claude Code's dialog is covered by the next `PlanReview` or `Stop`.
+- Alternative: release on any main-agent `PreToolUse`. Rejected: the async `PreToolUse[ExitPlanMode]` can land after `PlanReview` (the FRI-604 race), and parallel tool calls could release a live review.
+- Alternative: let the hook detect that Claude Code abandoned it (closed stdout, signal). Rejected: undocumented behavior.
+- Alternative: register `PostToolUseFailure`. Rejected: a new event in the user's global settings for a case the next `PlanReview`/`Stop` already covers.
+Residual race: a Revise sent in the milliseconds between a terminal answer and its `PostToolUse` reaches a hook Claude Code ignores; `plan:review-closed` then finds the review `submitted` and shows `Revise not delivered`.
+
+### D6. `answered` review state
+A new state, like `undelivered`, that hides Approve and Revise, keeps annotations visible and clearable, and labels the header `Answered in the terminal.` (+ `Annotations were not sent.` when any exist). `Stop` keeps it, because after a terminal approval Claude Code works for a while and the label would vanish before the user reads it; a new review or new content replaces it.
+
+```mermaid
+stateDiagram-v2
+  idle --> pending_review: plan:ready with decision_path
+  pending_review --> idle: Approve delivered
+  pending_review --> submitted: Revise delivered
+  pending_review --> undelivered: delivery failed
+  pending_review --> answered: plan:review-closed
+  undelivered --> answered: plan:review-closed
+  submitted --> answered: plan:review-closed (Revise not delivered)
+  answered --> pending_review: plan:ready with decision_path
+  answered --> idle: plan:ready with new content / session end
+  submitted --> idle: Stop
+  undelivered --> idle: Stop
+```

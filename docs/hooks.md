@@ -27,10 +27,14 @@ A user-installed shell wrapper at `~/.claude/hooks/nergal-conditional.sh` inspec
 1. Claude calls `ExitPlanMode`. The `PermissionRequest[ExitPlanMode]` hook fires.
 2. `nergal hook plan-review` blocks on `plan-{pid}-{nonce}.fifo` in the per-user IPC dir (the nonce is a v4 UUID, so a later review that reuses the pid never matches a stale registration).
 3. The GUI loads the plan in `AnnotatableMarkdownView`. The review opens only from the `PlanReview` event, which carries the decision path; a plan preview alone never opens it. The user can add inline annotations while `planReviewStatusMapAtom` is in `pending_review` and the open document's decision path matches the session's (`isLiveReview`).
-4. Accept → GUI writes `allow` to the FIFO → Claude proceeds.
+4. Accept → GUI writes `allow` to the FIFO → the hook prints `allow` with `updatedInput` set to the `tool_input` it received (CC ignores a bare `allow` for `ExitPlanMode` and keeps its own dialog open) → Claude proceeds.
 5. Reject → GUI writes `deny` with a Plannotator-style message that points Claude back to the edited plan file → Claude re-reads and re-plans.
 
+Release: when the review is resolved outside the panel, the GUI writes `{"released":true}` to the registered FIFO (1 s budget, on a blocking thread) and the hook exits printing nothing; CC already has its answer, so nothing is left blocked. Triggers: `PostToolUse[ExitPlanMode]` (top-level only), a new `PlanReview` for the same session (releases the replaced FIFO), `Stop` and `SessionEnd`. `PostToolUse[ExitPlanMode]` also emits `plan:review-closed`, which needs `ExitPlanMode` in the `PostToolUse` matcher of the `tool-done` entry in `HOOKS`; setup upgrades an existing entry's matcher in place.
+
 State machine in `src/stores/plan.ts`: `idle → pending_review → submitted | idle`. A decision that cannot be delivered (Claude Code is no longer waiting, e.g. answered in the terminal or timed out) moves the status to `undelivered`: the decision controls hide and the header reads `Not delivered. Answer in the terminal.`. The annotations stay visible and clearable. It lasts until a new review, new plan content, or the session stops.
+
+`plan:review-closed` moves `pending_review`, `undelivered` and `submitted` to `answered`: the header reads `Answered in the terminal.` (plus ` Annotations were not sent.` when annotations exist), the decision controls stay hidden and the annotations stay visible and clearable. From `submitted` it also raises the error toast `Revise not delivered`. `Stop` keeps `answered`; `SessionEnd`, a new review or new plan content reset it.
 
 ## AskUserQuestion attention
 

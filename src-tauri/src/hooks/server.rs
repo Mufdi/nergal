@@ -902,6 +902,23 @@ pub(crate) fn record_cc_conversation_id(
     }
 }
 
+#[cfg(unix)]
+fn release_plan_review(path: Option<PathBuf>) {
+    let Some(path) = path else { return };
+    std::thread::spawn(move || {
+        if let Err(e) = crate::plan_fifo::write_plan_decision(
+            &path,
+            b"{\"released\":true}",
+            std::time::Duration::from_secs(1),
+        ) {
+            tracing::warn!("releasing plan review {}: {e}", path.display());
+        }
+    });
+}
+
+#[cfg(not(unix))]
+fn release_plan_review(_path: Option<PathBuf>) {}
+
 fn process_event(
     app: &AppHandle,
     event: &HookEvent,
@@ -964,6 +981,40 @@ fn process_event(
             "hook event for session not in agent cache; assuming claude-code (foundation transitional)"
         );
         agent_state.register_session(csid, AgentId::claude_code());
+    }
+
+    if let Some(csid) = nergal_session_id {
+        let closes_review = match event {
+            HookEvent::PostToolUse {
+                tool_name,
+                agent_id: None,
+                ..
+            } => tool_name == "ExitPlanMode",
+            HookEvent::Stop { .. } | HookEvent::SessionEnd { .. } => true,
+            _ => false,
+        };
+        if closes_review {
+            release_plan_review(agent_state.claude_code.release_pending_plan_fifo(csid));
+        }
+        if let HookEvent::PostToolUse {
+            tool_name,
+            session_id,
+            agent_id: None,
+            ..
+        } = event
+            && tool_name == "ExitPlanMode"
+        {
+            #[derive(Clone, serde::Serialize)]
+            struct ReviewClosed {
+                session_id: String,
+            }
+            let _ = app.emit(
+                "plan:review-closed",
+                ReviewClosed {
+                    session_id: nergal_session_id.unwrap_or(session_id).to_string(),
+                },
+            );
+        }
     }
 
     // Mirror the frontend `modeMapAtom` into the runtime side-map so the MCP
@@ -1258,18 +1309,22 @@ fn process_event(
                     );
                 }
                 if let (Some(path), Some(csid)) = (&decision, nergal_session_id) {
-                    agent_state
+                    let new_path = std::path::PathBuf::from(path);
+                    let replaced = agent_state
                         .claude_code
-                        .register_pending_plan_fifo(csid, std::path::PathBuf::from(path));
+                        .register_pending_plan_fifo(csid, new_path.clone());
+                    release_plan_review(replaced.filter(|old| *old != new_path));
                 }
                 decision.unwrap_or_default()
             };
             #[cfg(not(unix))]
             let decision_path = {
                 if let Some(csid) = nergal_session_id {
-                    agent_state
+                    let new_path = std::path::PathBuf::from(fifo_path);
+                    let replaced = agent_state
                         .claude_code
-                        .register_pending_plan_fifo(csid, std::path::PathBuf::from(fifo_path));
+                        .register_pending_plan_fifo(csid, new_path.clone());
+                    release_plan_review(replaced.filter(|old| *old != new_path));
                 }
                 fifo_path.clone()
             };

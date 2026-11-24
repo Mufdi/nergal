@@ -89,7 +89,12 @@ export function showReviewAnnotations(
   status: PlanReviewStatus,
 ): boolean {
   return (
-    (status === "pending_review" || status === "undelivered")
+    (status === "pending_review" || status === "undelivered" || status === "answered")
     && isReviewDocument(docPlan, sessionPlan)
   );
+}
+
+export function applyReviewClosed(status: PlanReviewStatus): { status: PlanReviewStatus; toast: string | null } {
+  if (status === "idle") return { status, toast: null };
+  return { status: "answered", toast: status === "submitted" ? "Revise not delivered" : null };
 }

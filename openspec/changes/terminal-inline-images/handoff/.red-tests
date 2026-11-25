@@ -1,5 +1,6 @@
 acd591febbbd8cb1a5bd89286925ceef1b597c51  src-tauri/src/terminal/image_runs_tests.rs
 e1ccd95481d9295bc4437dcbb05dd7d77f068108  src-tauri/src/terminal/differ_image_tests.rs
-e874efe7997bc3ee22accfca0c3356fe28364801  src-tauri/src/terminal/image_fetch_tests.rs
 13a7a68875f19620046775f691a2ede6925aba68  src/components/terminal/imagePlacement.test.ts
-e22fce48a99a60c33439ecabf5231e6f9fe95b7d  src/components/terminal/imageCache.test.ts
+0b056f9107bc75fa72f3b57f80d85eedbfa30b9a  src/components/terminal/imageCache.test.ts
+4c008bd6d69c32eb7e32c1b937cc86bc912ad4ec  src-tauri/src/terminal/image_fetch_tests.rs
+75ba9149a02a7a8d635a7322680e0f163d4eefc0  src-tauri/src/csp_tests.rs

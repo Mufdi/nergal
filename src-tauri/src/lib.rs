@@ -34,6 +34,9 @@ mod worktree;
 #[cfg(all(test, target_os = "linux"))]
 mod log_owner_tests;
 
+#[cfg(test)]
+mod csp_tests;
+
 use agents::claude_code::plan::{PlanWatcher, SharedPlanWatcher};
 use agents::claude_code::transcript::TranscriptWatcher;
 use agents::state::AgentRuntimeState;

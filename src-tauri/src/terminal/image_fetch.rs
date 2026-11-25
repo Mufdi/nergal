@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, LazyLock, Weak};
 
 use termwiz::image::{ImageData, ImageDataType};
 
@@ -8,6 +8,31 @@ use super::session::TerminalSession;
 const KIND_RGBA: u8 = 0;
 const KIND_ENCODED: u8 = 1;
 const HEADER_LEN: usize = 9;
+// Mirrors wezterm's check_image_dimensions cap so a decoded image never exceeds what the terminal accepts.
+const MAX_DECODED_BYTES: u64 = 100_000_000;
+// One decode at the cap peaks near 300 MB, and a small compressed file can reach it, so a burst of hostile images must not decode all at once.
+const DECODE_PERMITS: usize = 2;
+
+static DECODE_SLOTS: LazyLock<tokio::sync::Semaphore> =
+    LazyLock::new(|| tokio::sync::Semaphore::new(DECODE_PERMITS));
+
+pub fn decode_slots() -> &'static tokio::sync::Semaphore {
+    &DECODE_SLOTS
+}
+
+/// The permit moves into the blocking closure, so dropping this future cannot free a slot while the decode still runs.
+pub async fn payload_for_bounded(image: Arc<ImageData>) -> Result<Vec<u8>, ImageFetchError> {
+    let permit = decode_slots()
+        .acquire()
+        .await
+        .map_err(|_| ImageFetchError::UnsupportedFormat)?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        payload_for(&image)
+    })
+    .await
+    .map_err(|_| ImageFetchError::UnsupportedFormat)?
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageFetchError {
@@ -89,33 +114,64 @@ pub fn image_payload(
 
 /// Header: kind u8, width u32 LE, height u32 LE; then the pixels or file bytes.
 pub fn payload_for(image: &ImageData) -> Result<Vec<u8>, ImageFetchError> {
-    match &*image.data() {
+    let bytes = match &*image.data() {
         ImageDataType::Rgba8 {
             data,
             width,
             height,
             ..
-        } => {
-            let mut out = Vec::with_capacity(HEADER_LEN + data.len());
-            out.push(KIND_RGBA);
-            out.extend_from_slice(&width.to_le_bytes());
-            out.extend_from_slice(&height.to_le_bytes());
-            out.extend_from_slice(data);
-            Ok(out)
-        }
+        } => return Ok(pack(KIND_RGBA, *width, *height, data)),
         data @ ImageDataType::EncodedFile(bytes) if is_allowed_encoding(bytes) => {
             let (width, height) = data
                 .dimensions()
                 .map_err(|_| ImageFetchError::UnsupportedFormat)?;
-            let mut out = Vec::with_capacity(HEADER_LEN + bytes.len());
-            out.push(KIND_ENCODED);
-            out.extend_from_slice(&width.to_le_bytes());
-            out.extend_from_slice(&height.to_le_bytes());
-            out.extend_from_slice(bytes);
-            Ok(out)
+            return Ok(pack(KIND_ENCODED, width, height, bytes));
         }
-        _ => Err(ImageFetchError::UnsupportedFormat),
+        ImageDataType::EncodedFile(bytes) => {
+            if !matches!(
+                image::guess_format(bytes),
+                Ok(image::ImageFormat::Tiff | image::ImageFormat::Bmp | image::ImageFormat::WebP)
+            ) {
+                return Err(ImageFetchError::UnsupportedFormat);
+            }
+            bytes.clone()
+        }
+        _ => return Err(ImageFetchError::UnsupportedFormat),
+    };
+    let (width, height, rgba) = decode_to_rgba(&bytes)?;
+    Ok(pack(KIND_RGBA, width, height, &rgba))
+}
+
+fn pack(kind: u8, width: u32, height: u32, body: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(HEADER_LEN + body.len());
+    out.push(kind);
+    out.extend_from_slice(&width.to_le_bytes());
+    out.extend_from_slice(&height.to_le_bytes());
+    out.extend_from_slice(body);
+    out
+}
+
+fn decode_to_rgba(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), ImageFetchError> {
+    let mut reader = image::io::Reader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|_| ImageFetchError::UnsupportedFormat)?;
+    if !matches!(
+        reader.format(),
+        Some(image::ImageFormat::Tiff | image::ImageFormat::Bmp | image::ImageFormat::WebP)
+    ) {
+        return Err(ImageFetchError::UnsupportedFormat);
     }
+    let mut limits = image::io::Limits::default();
+    limits.max_alloc = Some(MAX_DECODED_BYTES);
+    reader.limits(limits);
+    let decoded = reader
+        .decode()
+        .map_err(|_| ImageFetchError::UnsupportedFormat)?;
+    Ok((
+        decoded.width(),
+        decoded.height(),
+        decoded.into_rgba8().into_raw(),
+    ))
 }
 
 fn is_allowed_encoding(bytes: &[u8]) -> bool {

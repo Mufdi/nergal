@@ -1,10 +1,13 @@
 use super::TerminalSession;
-use super::image_fetch::{ImageFetchError, ImageRegistry, image_payload, parse_hash_hex};
+use super::image_fetch::{
+    ImageFetchError, ImageRegistry, decode_slots, image_payload, parse_hash_hex, payload_for,
+    payload_for_bounded,
+};
 use base64::Engine;
 use std::sync::Arc;
 use termwiz::image::{ImageData, ImageDataType};
 
-// 64x48 solid PNG; the `image` crate is not a direct dependency.
+// 64x48 solid PNG.
 const PNG_64X48_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAEAAAAAwCAIAAAAuKetIAAAAQElEQVR42u3PQQkAAAgAsetfWiv4FQYrsKZeS0BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEDgagGlwfSmsRz7tgAAAABJRU5ErkJggg==";
 
 fn session(pw: u16, ph: u16) -> TerminalSession {
@@ -55,6 +58,85 @@ fn bmp_2x2() -> Vec<u8> {
     bmp.extend_from_slice(&[0; 16]);
     bmp.extend_from_slice(&[0x40; 16]);
     bmp
+}
+
+const TIFF_RGB: [u8; 3] = [200, 100, 50];
+
+fn tiff_rgb(width: u32, height: u32, strip: &[u8]) -> Vec<u8> {
+    const ENTRIES: u16 = 9;
+    let bits_offset = 8 + 2 + u32::from(ENTRIES) * 12 + 4;
+    let strip_offset = bits_offset + 6;
+    let strip_bytes = width.saturating_mul(height).saturating_mul(3);
+    let entry = |tag: u16, kind: u16, value: u32| {
+        let mut e = Vec::with_capacity(12);
+        e.extend_from_slice(&tag.to_le_bytes());
+        e.extend_from_slice(&kind.to_le_bytes());
+        e.extend_from_slice(&1u32.to_le_bytes());
+        e.extend_from_slice(&value.to_le_bytes());
+        e
+    };
+    let mut tiff = b"II*\0".to_vec();
+    tiff.extend_from_slice(&8u32.to_le_bytes());
+    tiff.extend_from_slice(&ENTRIES.to_le_bytes());
+    tiff.extend(entry(256, 4, width));
+    tiff.extend(entry(257, 4, height));
+    let mut bits = entry(258, 3, bits_offset);
+    bits[4..8].copy_from_slice(&3u32.to_le_bytes());
+    tiff.extend(bits);
+    tiff.extend(entry(259, 3, 1));
+    tiff.extend(entry(262, 3, 2));
+    tiff.extend(entry(273, 4, strip_offset));
+    tiff.extend(entry(277, 3, 3));
+    tiff.extend(entry(278, 4, height));
+    tiff.extend(entry(279, 4, strip_bytes));
+    tiff.extend_from_slice(&0u32.to_le_bytes());
+    for _ in 0..3 {
+        tiff.extend_from_slice(&8u16.to_le_bytes());
+    }
+    tiff.extend_from_slice(strip);
+    tiff
+}
+
+fn solid_tiff_64x48() -> Vec<u8> {
+    let strip: Vec<u8> = TIFF_RGB.iter().copied().cycle().take(64 * 48 * 3).collect();
+    tiff_rgb(64, 48, &strip)
+}
+
+fn webp_64x48() -> Vec<u8> {
+    let pixels: Vec<u8> = TIFF_RGB.iter().copied().cycle().take(64 * 48 * 3).collect();
+    let mut out = Vec::new();
+    image::codecs::webp::WebPEncoder::new_lossless(&mut out)
+        .encode(&pixels, 64, 48, image::ColorType::Rgb8)
+        .expect("webp encodes");
+    out
+}
+
+fn jpeg_64x48() -> Vec<u8> {
+    let img = image::RgbImage::from_pixel(64, 48, image::Rgb(TIFF_RGB));
+    let mut out = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(img)
+        .write_to(&mut out, image::ImageOutputFormat::Jpeg(90))
+        .expect("jpeg encodes");
+    out.into_inner()
+}
+
+fn gif_64x48() -> Vec<u8> {
+    let img = image::RgbaImage::from_pixel(64, 48, image::Rgba([200, 100, 50, 255]));
+    let mut out = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(img)
+        .write_to(&mut out, image::ImageOutputFormat::Gif)
+        .expect("gif encodes");
+    out.into_inner()
+}
+
+fn pnm_64x48() -> Vec<u8> {
+    let mut pnm = b"P6\n64 48\n255\n".to_vec();
+    pnm.extend(TIFF_RGB.iter().copied().cycle().take(64 * 48 * 3));
+    pnm
+}
+
+fn encoded_image(bytes: Vec<u8>) -> ImageData {
+    ImageData::with_data(ImageDataType::EncodedFile(bytes))
 }
 
 fn shown_hash(s: &mut TerminalSession) -> String {
@@ -108,6 +190,45 @@ fn encoded_payload_header_carries_the_image_dimensions() {
 
     assert_eq!(&payload[1..5], &64u32.to_le_bytes());
     assert_eq!(&payload[5..9], &48u32.to_le_bytes());
+}
+
+#[test]
+fn iterm2_jpeg_payload_is_kind_one_with_the_file_bytes() {
+    let jpeg = jpeg_64x48();
+    let mut s = session_800x480();
+    s.advance_bytes(&iterm("", &jpeg));
+    let hash = shown_hash(&mut s);
+
+    let payload = fetch(&s, &hash).expect("visible jpeg is fetchable");
+
+    assert_eq!(payload[0], 1);
+    assert_eq!(&payload[1..5], &64u32.to_le_bytes());
+    assert_eq!(&payload[5..9], &48u32.to_le_bytes());
+    assert_eq!(&payload[9..], jpeg.as_slice());
+}
+
+#[test]
+fn iterm2_gif_payload_is_kind_one_with_the_file_bytes() {
+    let gif = gif_64x48();
+    let mut s = session_800x480();
+    s.advance_bytes(&iterm("", &gif));
+    let hash = shown_hash(&mut s);
+
+    let payload = fetch(&s, &hash).expect("visible gif is fetchable");
+
+    assert_eq!(payload[0], 1);
+    assert_eq!(&payload[1..5], &64u32.to_le_bytes());
+    assert_eq!(&payload[5..9], &48u32.to_le_bytes());
+    assert_eq!(&payload[9..], gif.as_slice());
+}
+
+#[test]
+fn iterm2_pnm_is_unsupported_because_it_is_outside_the_narrowed_formats() {
+    let mut s = session_800x480();
+    s.advance_bytes(&iterm("", &pnm_64x48()));
+    let hash = shown_hash(&mut s);
+
+    assert_eq!(fetch(&s, &hash), Err(ImageFetchError::UnsupportedFormat));
 }
 
 #[test]
@@ -177,15 +298,68 @@ fn parse_hash_hex_round_trips_a_valid_hash() {
 }
 
 #[test]
-fn encoded_image_that_is_not_png_jpeg_or_gif_is_unsupported() {
+fn iterm2_tiff_is_decoded_to_rgba_kind_zero() {
+    let mut s = session_800x480();
+    s.advance_bytes(&iterm("", &solid_tiff_64x48()));
+    let hash = shown_hash(&mut s);
+
+    let payload = fetch(&s, &hash).expect("visible tiff is fetchable");
+
+    assert_eq!(payload[0], 0);
+    assert_eq!(&payload[1..5], &64u32.to_le_bytes());
+    assert_eq!(&payload[5..9], &48u32.to_le_bytes());
+    assert_eq!(payload.len(), 9 + 12288);
+    assert_eq!(
+        &payload[9..13],
+        &[TIFF_RGB[0], TIFF_RGB[1], TIFF_RGB[2], 255]
+    );
+}
+
+#[test]
+fn iterm2_webp_is_decoded_to_rgba_kind_zero() {
+    let mut s = session_800x480();
+    s.advance_bytes(&iterm("", &webp_64x48()));
+    let hash = shown_hash(&mut s);
+
+    let payload = fetch(&s, &hash).expect("visible webp is fetchable");
+
+    assert_eq!(payload[0], 0);
+    assert_eq!(&payload[1..5], &64u32.to_le_bytes());
+    assert_eq!(&payload[5..9], &48u32.to_le_bytes());
+    assert_eq!(payload.len(), 9 + 12288);
+}
+
+#[test]
+fn iterm2_bmp_is_decoded_to_rgba_kind_zero() {
     let mut s = session_800x480();
     s.advance_bytes(&iterm("", &bmp_2x2()));
     let hash = shown_hash(&mut s);
 
-    assert!(is(&fetch(&s, &hash), |e| matches!(
-        e,
-        ImageFetchError::UnsupportedFormat
-    )));
+    let payload = fetch(&s, &hash).expect("visible bmp is fetchable");
+
+    assert_eq!(payload[0], 0);
+    assert_eq!(&payload[1..5], &2u32.to_le_bytes());
+    assert_eq!(&payload[5..9], &2u32.to_le_bytes());
+    assert_eq!(payload.len(), 9 + 16);
+}
+
+#[test]
+fn encoded_file_the_decoder_rejects_is_unsupported() {
+    let full = tiff_rgb(64, 48, &[]);
+
+    let result = payload_for(&encoded_image(full));
+
+    assert_eq!(result, Err(ImageFetchError::UnsupportedFormat));
+}
+
+#[test]
+fn encoded_file_whose_decoder_buffer_exceeds_the_limit_is_unsupported_fast() {
+    let started = std::time::Instant::now();
+
+    let result = payload_for(&encoded_image(tiff_rgb(6000, 6000, &[1, 2, 3])));
+
+    assert_eq!(result, Err(ImageFetchError::UnsupportedFormat));
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
 }
 
 #[test]
@@ -204,6 +378,35 @@ fn image_evicted_by_wezterm_after_clear_and_sixteen_new_images_is_an_error() {
         e,
         ImageFetchError::Dropped | ImageFetchError::UnknownHash
     )));
+}
+
+// payload_for_bounded and decode_slots are process-wide: only this test may use them,
+// so holding every permit cannot starve a parallel test (payload_for takes no permit).
+#[tokio::test]
+async fn bounded_payload_waits_for_a_decode_slot_and_completes_when_one_frees() {
+    let image = {
+        let mut s = session_800x480();
+        s.advance_bytes(&iterm("", &solid_tiff_64x48()));
+        let hash = shown_hash(&mut s);
+        s.image_registry()
+            .get(&parse_hash_hex(&hash).expect("valid hash"))
+            .expect("visible tiff is registered")
+    };
+    let first = decode_slots().acquire().await.expect("slot");
+    let second = decode_slots().acquire().await.expect("slot");
+
+    let fut = payload_for_bounded(image);
+    tokio::pin!(fut);
+    let blocked = tokio::time::timeout(std::time::Duration::from_millis(200), &mut fut).await;
+    assert!(blocked.is_err(), "decode ran with no free slot");
+
+    drop(first);
+    let payload = tokio::time::timeout(std::time::Duration::from_secs(5), &mut fut)
+        .await
+        .expect("a freed slot lets the decode run")
+        .expect("tiff decodes");
+    assert_eq!(payload[0], 0);
+    drop(second);
 }
 
 fn owned_image() -> Arc<ImageData> {

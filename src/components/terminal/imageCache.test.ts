@@ -389,8 +389,8 @@ describe("byte reservation", () => {
     for (const h of ["d", "e", "f"]) {
       t.cache.get(h);
       t.fetchesFor(h)[0].d.resolve(sizedBuf(10));
+      await flush();
     }
-    await flush();
     return t;
   }
 
@@ -438,6 +438,29 @@ describe("byte reservation", () => {
     expect(t.fetchesFor("d")).toHaveLength(2);
   });
 
+  it("restarts only one of two blocked hashes when the decode that blocked them fails and each alone would fit", async () => {
+    const t = harness();
+    t.cache.setVisible(new Set(["a", "b", "x", "c", "d"]));
+    await t.load("a", 150);
+    await t.load("b", 140);
+    t.cache.get("x");
+    t.fetchesFor("x")[0].d.resolve(sizedBuf(200));
+    await flush();
+    for (const h of ["c", "d"]) {
+      t.cache.get(h);
+      t.fetchesFor(h)[0].d.resolve(sizedBuf(150));
+      await flush();
+    }
+    expect(t.fetchesFor("c")).toHaveLength(1);
+    expect(t.fetchesFor("d")).toHaveLength(1);
+
+    const open = t.decodes.filter((x) => !x.done);
+    open[open.length - 1].d.reject(new Error("decode failed"));
+    await flush();
+
+    expect(t.fetchesFor("c").length + t.fetchesFor("d").length).toBe(3);
+  });
+
   it("returns an empty list when nothing was blocked or failed", async () => {
     const t = harness();
     await t.load("a", 1);
@@ -473,6 +496,196 @@ describe("byte reservation", () => {
 
     expect(a.close).toHaveBeenCalledTimes(1);
     expect(t.cache.bytes()).toBe(100 * MB);
+  });
+});
+
+describe("bounded fetches", () => {
+  it("queues a third fetch until one settles, then starts it by itself and repaints through ready", async () => {
+    const t = harness();
+    t.cache.get("a");
+    t.cache.get("b");
+    expect(t.cache.get("c")).toBeUndefined();
+    expect(t.fetchesFor("c")).toHaveLength(0);
+
+    t.fetchesFor("a")[0].d.resolve(sizedBuf(1));
+    await flush();
+    expect(t.fetchesFor("c")).toHaveLength(1);
+
+    t.fetchesFor("c")[0].d.resolve(sizedBuf(1));
+    await flush();
+    const open = t.decodes.filter((x) => !x.done);
+    open[open.length - 1].d.resolve({ width: 1024, height: 256, close: vi.fn<() => void>() });
+    await flush();
+    expect(t.ready).toContain("c");
+  });
+
+  it("starts a queued fetch when an in-flight one rejects", async () => {
+    const t = harness();
+    t.cache.get("a");
+    t.cache.get("b");
+    t.cache.get("c");
+    expect(t.fetchesFor("c")).toHaveLength(0);
+
+    t.fetchesFor("b")[0].d.reject(new Error("gone"));
+    await flush();
+
+    expect(t.fetchesFor("c")).toHaveLength(1);
+  });
+
+  it("does not start a queued hash twice when it is requested again while waiting", async () => {
+    const t = harness();
+    t.cache.get("a");
+    t.cache.get("b");
+    t.cache.get("c");
+    t.cache.get("c");
+    expect(t.fetchesFor("c")).toHaveLength(0);
+
+    t.fetchesFor("a")[0].d.resolve(sizedBuf(1));
+    await flush();
+
+    expect(t.fetchesFor("c")).toHaveLength(1);
+  });
+
+  it("never retries a fetch rejected as an unsupported image format", async () => {
+    const t = harness();
+    t.cache.get("a");
+    t.fetchesFor("a")[0].d.reject(new Error("unsupported image format"));
+    await flush();
+
+    expect(t.cache.setVisible(new Set(["a"]))).toEqual([]);
+    expect(t.cache.get("a")).toBeUndefined();
+    expect(t.cache.setVisible(new Set(["a"]))).toEqual([]);
+    expect(t.fetchesFor("a")).toHaveLength(1);
+  });
+
+  it("never retries an unsupported image format rejected with a plain string", async () => {
+    const t = harness();
+    t.cache.get("a");
+    t.fetchesFor("a")[0].d.reject("unsupported image format");
+    await flush();
+
+    expect(t.cache.setVisible(new Set(["a"]))).toEqual([]);
+    expect(t.fetchesFor("a")).toHaveLength(1);
+  });
+
+  it("marks hashes dead when a fetch resolves to a non-ArrayBuffer and warns exactly once", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const t = harness();
+      t.cache.get("a");
+      t.cache.get("b");
+      t.fetchesFor("a")[0].d.resolve([0, 1, 2, 3] as unknown as ArrayBuffer);
+      t.fetchesFor("b")[0].d.resolve([0, 1, 2, 3] as unknown as ArrayBuffer);
+      await flush();
+
+      expect(t.decodes).toHaveLength(0);
+      expect(t.cache.setVisible(new Set(["a", "b"]))).toEqual([]);
+      expect(t.cache.get("a")).toBeUndefined();
+      expect(t.cache.get("b")).toBeUndefined();
+      expect(t.fetchesFor("a")).toHaveLength(1);
+      expect(t.fetchesFor("b")).toHaveLength(1);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("counts requests from before releaseAll, so a new reference waits for one of them to settle", async () => {
+    const t = harness();
+    t.cache.get("a");
+    t.cache.get("b");
+    t.cache.releaseAll();
+    t.cache.setVisible(new Set(["c"]));
+
+    t.cache.get("c");
+    await flush();
+    expect(t.fetchesFor("c")).toHaveLength(0);
+
+    t.fetchesFor("a")[0].d.resolve(sizedBuf(1));
+    await flush();
+    expect(t.fetchesFor("c")).toHaveLength(1);
+    expect(t.decodes).toHaveLength(0);
+  });
+
+  it("decodes the bytes of a pre-releaseAll fetch for a hash the new epoch has queued, without fetching it again", async () => {
+    const t = harness();
+    t.cache.get("a");
+    t.cache.get("b");
+    t.cache.releaseAll();
+    t.cache.setVisible(new Set(["a"]));
+    t.cache.get("a");
+    expect(t.fetchesFor("a")).toHaveLength(1);
+
+    t.fetchesFor("a")[0].d.resolve(sizedBuf(1));
+    await flush();
+
+    expect(t.decodes).toHaveLength(1);
+    expect(t.fetchesFor("a")).toHaveLength(1);
+
+    t.decodes[0].d.resolve({ width: 1024, height: 256, close: vi.fn<() => void>() });
+    await flush();
+    expect(t.ready).toEqual(["a"]);
+
+    t.fetchesFor("b")[0].d.resolve(sizedBuf(1));
+    await flush();
+    expect(t.fetchesFor("a")).toHaveLength(1);
+    expect(t.decodes).toHaveLength(1);
+  });
+
+  it("drops a queued hash that left the screen instead of fetching it when a slot frees", async () => {
+    const t = harness();
+    t.cache.setVisible(new Set(["a", "b", "c", "d"]));
+    t.cache.get("a");
+    t.cache.get("b");
+    t.cache.get("c");
+    t.cache.get("d");
+
+    t.cache.setVisible(new Set(["d"]));
+    t.fetchesFor("a")[0].d.resolve(sizedBuf(1));
+    await flush();
+
+    expect(t.fetchesFor("d")).toHaveLength(1);
+    expect(t.fetchesFor("c")).toHaveLength(0);
+
+    t.fetchesFor("b")[0].d.resolve(sizedBuf(1));
+    await flush();
+    expect(t.fetchesFor("c")).toHaveLength(0);
+
+    t.cache.setVisible(new Set(["c", "d"]));
+    t.cache.get("c");
+    expect(t.fetchesFor("c")).toHaveLength(1);
+  });
+
+  it("warns once per cache for a non-ArrayBuffer response, not once per page", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      for (let i = 0; i < 2; i++) {
+        const t = harness();
+        t.cache.get("a");
+        t.cache.get("b");
+        t.fetchesFor("a")[0].d.resolve([0] as unknown as ArrayBuffer);
+        t.fetchesFor("b")[0].d.resolve([0] as unknown as ArrayBuffer);
+        await flush();
+      }
+      expect(warn).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("drops queued hashes on releaseAll so settling the old fetches starts nothing", async () => {
+    const t = harness();
+    t.cache.get("a");
+    t.cache.get("b");
+    t.cache.get("c");
+
+    t.cache.releaseAll();
+    t.fetchesFor("a")[0].d.resolve(sizedBuf(1));
+    t.fetchesFor("b")[0].d.resolve(sizedBuf(1));
+    await flush();
+
+    expect(t.fetchesFor("c")).toHaveLength(0);
+    expect(t.decodes).toHaveLength(0);
   });
 });
 

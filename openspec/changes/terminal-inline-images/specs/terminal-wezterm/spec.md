@@ -25,7 +25,7 @@ Each `GridRow` of a `GridUpdate` SHALL list the image runs it shows, read from t
 - **THEN** the next grid update includes that row with image B's hash
 
 ### Requirement: Image bytes are fetched once per terminal
-The backend SHALL keep, per terminal, a registry from image hash to the wezterm image data that visible rows reference, without extending the image's lifetime. A command `terminal_image(session_id, hash)` SHALL return that image as a raw IPC response: a header of 1 kind byte (0 = RGBA pixels, 1 = encoded file), a little-endian u32 width and a little-endian u32 height (the image's pixel size for both kinds), then the bytes. Image bytes SHALL never be part of a `GridUpdate`. The command SHALL serve encoded files only when their magic bytes are PNG, JPEG or GIF. It SHALL return an error for an unknown or malformed hash, for an image no longer held by the emulator, and for any other encoded format. It SHALL NOT block the main thread or hold the global PTY maps while it copies bytes.
+The backend SHALL keep, per terminal, a registry from image hash to the wezterm image data that visible rows reference, without extending the image's lifetime. A command `terminal_image(session_id, hash)` SHALL return that image as a raw IPC response that the frontend receives as bytes (an `ArrayBuffer`, never a JSON array): a header of 1 kind byte (0 = RGBA pixels, 1 = encoded file), a little-endian u32 width and a little-endian u32 height (the image's pixel size for both kinds), then the bytes. Image bytes SHALL never be part of a `GridUpdate`. It SHALL return an error for an unknown or malformed hash and for an image no longer held by the emulator. It SHALL NOT block the main thread or hold the global PTY maps while it copies or decodes bytes.
 
 #### Scenario: Fetch a sixel image
 - **GIVEN** a visible row shows a 64x48 sixel image with hash H
@@ -37,14 +37,71 @@ The backend SHALL keep, per terminal, a registry from image hash to the wezterm 
 - **WHEN** the frontend calls `terminal_image(session, H)`
 - **THEN** the response starts with kind 1, width 64 and height 48, and is followed by the PNG file bytes
 
-#### Scenario: Unsupported encoded format
-- **GIVEN** a visible row shows an iTerm2 image whose bytes are not PNG, JPEG or GIF
-- **WHEN** the frontend calls `terminal_image(session, H)`
-- **THEN** the command returns an error and the cells show text only
-
 #### Scenario: Unknown hash
 - **WHEN** the frontend calls `terminal_image(session, H)` for a hash no visible row has shown
 - **THEN** the command returns an error and no bytes
+
+### Requirement: The backend narrows encoded formats before WebKit
+`terminal_image` SHALL serve an encoded file as kind 1 only when its magic bytes are PNG, JPEG or GIF. It SHALL decode a TIFF (which `chafa -f iterm` sends), BMP or WebP in the backend and serve it as kind 0 RGBA, refusing a decode whose decoder buffer exceeds 100,000,000 bytes (wezterm's per-image cap). Any other encoded format, and a file it cannot decode, SHALL return an error. At most 2 backend decodes SHALL run at once across the app; a further fetch waits for a free slot.
+
+#### Scenario: Fetch an iTerm2 TIFF
+- **GIVEN** a visible row shows an iTerm2 TIFF of 64x48 pixels with hash H
+- **WHEN** the frontend calls `terminal_image(session, H)`
+- **THEN** the response starts with kind 0, width 64 and height 48, followed by 12288 RGBA bytes
+
+#### Scenario: Unsupported encoded format
+- **GIVEN** a visible row shows an iTerm2 image whose bytes are not PNG, JPEG or GIF and that the backend cannot decode
+- **WHEN** the frontend calls `terminal_image(session, H)`
+- **THEN** the command returns an error and the cells show text only
+
+#### Scenario: JPEG and GIF stay encoded
+- **GIVEN** visible rows show an iTerm2 64x48 JPEG with hash J and an iTerm2 64x48 GIF with hash G, neither downscaled
+- **WHEN** the frontend calls `terminal_image` for J and for G
+- **THEN** each response starts with kind 1, width 64 and height 48, followed by the file bytes
+
+#### Scenario: Other encoded formats are refused
+- **GIVEN** a visible row shows an iTerm2 image in a format other than PNG, JPEG, GIF, TIFF, BMP or WebP (for example a binary PNM)
+- **WHEN** the frontend calls `terminal_image(session, H)`
+- **THEN** the command returns an error
+
+#### Scenario: Fetch an iTerm2 WebP
+- **GIVEN** a visible row shows an iTerm2 64x48 WebP with hash H
+- **WHEN** the frontend calls `terminal_image(session, H)`
+- **THEN** the response starts with kind 0, width 64 and height 48, followed by 12288 RGBA bytes
+
+#### Scenario: Backend decodes are bounded
+- **GIVEN** both backend decode slots are taken
+- **WHEN** a fetch of a visible TIFF starts
+- **THEN** it does not complete while both slots stay taken
+- **AND** it completes with kind 0 once a slot frees
+
+### Requirement: The frontend bounds image fetches
+Each terminal's image cache SHALL keep at most 2 `terminal_image` fetches in flight; a further hash that a row references SHALL wait and start when a fetch settles, without a new grid update. The count SHALL include requests still running from before a release of the cache's bitmaps, so hiding and showing a terminal never stacks more than 2 requests. A queued hash that no current row references when a slot frees SHALL be dropped instead of fetched. A response that is not bytes, or an error whose message names an unsupported image format, SHALL be permanent for that hash, and the first non-bytes response of each cache SHALL be reported once on the console.
+
+#### Scenario: Third fetch waits for a slot
+- **GIVEN** a cache with fetches of A and B in flight
+- **WHEN** a row references C
+- **THEN** no fetch of C starts until A or B settles
+- **AND** once A settles, the fetch of C starts and C is drawn when decoded
+
+#### Scenario: Requests from before a release still count
+- **GIVEN** a cache with fetches of A and B in flight
+- **WHEN** the terminal is hidden (bitmaps released) and shown again, and a row references C
+- **THEN** no fetch of C starts until A or B settles
+
+#### Scenario: A queued hash that left the screen is not fetched
+- **GIVEN** fetches of A and B in flight and C and D queued
+- **WHEN** a grid update leaves only D referenced, and A settles
+- **THEN** D is fetched and C is not
+
+#### Scenario: Unsupported format is not retried
+- **GIVEN** the fetch of H fails with an unsupported image format error
+- **WHEN** later grid updates still reference H
+- **THEN** no second fetch of H is made
+
+#### Scenario: A non-bytes response is reported once
+- **GIVEN** the transport returns a JSON number array instead of bytes for A and for B
+- **THEN** A and B are permanent failures, their cells show text, and one console warning is written
 
 ### Requirement: The canvas draws inline images
 The canvas SHALL draw each image run of a painted row inside its cells: the source rectangle of the decoded image, scaled to the run's cell rectangle minus its padding, after the row's background and glyphs and before the selection and the cursor. The frontend SHALL fetch an image the first time a row references its hash, decode it without blocking the paint loop, and repaint the rows that reference it once the bitmap is ready. A row whose image is pending or failed SHALL paint its text only. An animated GIF SHALL show its first frame. This SHALL apply to the main terminal and to quake shells, live and scrolled into history.

@@ -2,7 +2,7 @@
   "tier": "L",
   "ceremony": "deep",
   "risk_tier": "medium",
-  "spec_target": "terminal-wezterm",
+  "spec_target": "terminal-wezterm, webview-content-security-policy",
   "tracker": {
     "system": "linear",
     "id": "FRI-611",
@@ -21,7 +21,9 @@
     "memory_budget": "256 MB of decoded images per terminal, drop least recently used; dropped cells show text until seen again (user, 2026-11-24)",
     "term_program": "do not set TERM_PROGRAM; draw what apps already send (user, 2026-11-24)",
     "scrollback": "images show in the scrollback (orchestrator default, reversible)",
-    "sixel_transport": "raw RGBA, no new dependency (orchestrator default, reversible)"
+    "sixel_transport": "raw RGBA, no new dependency (orchestrator default, reversible)",
+    "ipc_csp": "add `ipc: http://ipc.localhost` to connect-src in csp and devCsp; the CSP blocked Tauri's IPC protocol so raw responses arrived as JSON arrays via the postMessage fallback (user, 2026-11-25, walk 4.3 failure)",
+    "other_encoded_formats": "decode non PNG/JPEG/GIF encoded images in Rust with the `image` crate (already in the tree via wezterm) and serve them as RGBA kind 0; chafa -f iterm sends TIFF (user, 2026-11-25)"
   },
   "events": [
     {

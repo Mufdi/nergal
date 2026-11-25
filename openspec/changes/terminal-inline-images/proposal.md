@@ -7,7 +7,8 @@ Nergal advertises sixel, and wezterm-term already decodes sixel and iTerm2 inlin
 ## What Changes
 
 - **Placements in the grid update**: each `GridRow` carries the image runs it shows: image hash, first column, cell span, the source rectangle as fractions of the image, the cell padding, and `z`. Rows without images carry nothing extra. The differ treats a placement change as a row change.
-- **Bytes once, on demand**: a new command `terminal_image(session_id, hash)` returns one image as a raw IPC response: a small header (kind, width, height) and then RGBA pixels (sixel) or the encoded file (iTerm2 PNG/JPEG/GIF). Image bytes never travel in a grid update.
+- **Bytes once, on demand**: a new command `terminal_image(session_id, hash)` returns one image as a raw IPC response: a small header (kind, width, height) and then RGBA pixels (sixel) or the encoded file (iTerm2 PNG/JPEG/GIF); other iTerm2 formats (TIFF from `chafa -f iterm`, BMP, WebP) are decoded in Rust and sent as RGBA. Image bytes never travel in a grid update.
+- **IPC transport**: the CSP `connect-src` adds Tauri's IPC protocol (`ipc:`, `http://ipc.localhost`). Without it the webview blocks the protocol, Tauri falls back to `postMessage`, and a raw response arrives as a JSON number array.
 - **Canvas drawing**: the frontend fetches an unknown image once per terminal, decodes it off the main thread with `createImageBitmap`, and draws each run in its cells. A row whose image is still decoding paints its text and repaints when the bitmap is ready. A GIF shows its first frame.
 - **Memory budget**: each terminal keeps at most 256 MB of decoded images. Past the budget the least recently drawn images are dropped; their cells show text only until they come back into view, when the image is fetched again.
 - **Scroll and quake**: images scroll with their lines, show in the scrollback, and work in the main terminal and in quake shells through the same code.
@@ -22,9 +23,12 @@ None.
 ### Modified Capabilities
 
 - `terminal-wezterm`: adds requirements for inline image placements, the image fetch command, canvas drawing and the per-terminal image budget.
+- `webview-content-security-policy`: `connect-src` also allows Tauri's IPC protocol.
 
 ## Impact
 
 - Backend: `src-tauri/src/terminal/{types,session,differ,emitter}.rs`, `src-tauri/src/pty.rs` (the `terminal_image` command), `src-tauri/src/lib.rs` (registration).
 - Frontend: `src/lib/types.ts`, `src/components/terminal/terminalService.ts`, new pure modules `src/components/terminal/imagePlacement.ts` and `src/components/terminal/imageCache.ts`.
-- No config, schema or new dependency. No new OS seam (Linux-first, existing CI gates unchanged).
+- Config: `src-tauri/tauri.conf.json` (`csp` and `devCsp` `connect-src`).
+- Dependency: `image` 0.24 becomes a direct dependency of `src-tauri`; it already compiles through wezterm-term, so no new crate enters the build.
+- No schema change. No new OS seam (Linux-first, existing CI gates unchanged).

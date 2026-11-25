@@ -3148,6 +3148,7 @@ dependencies = [
  "eventsource-stream",
  "fs2",
  "futures-util",
+ "image 0.24.9",
  "keyring",
  "libc",
  "listeners",

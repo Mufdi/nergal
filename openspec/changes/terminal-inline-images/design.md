@@ -64,7 +64,7 @@ Alternatives:
 
 ### D3. Sixel pixels travel as raw RGBA
 
-Sixel images are `Rgba8` in wezterm. They are sent as raw RGBA; iTerm2 images stay in their encoded form (`EncodedFile`) and the WebView decodes them. Encoded bytes come from any process that writes to the PTY (a `cat` of a hostile file, output over ssh), and they now reach WebKit's native decoders. The backend sniffs magic bytes and serves only PNG, JPEG and GIF (a WebP, which wezterm keeps encoded even when it downscales, returns an error; a JPEG or BMP that wezterm downscales arrives already decoded as `Rgba8`, kind 0); any other encoded format returns an error and its cells show text. This narrows the decoder surface to the three formats terminal image tools send.
+Sixel images are `Rgba8` in wezterm. They are sent as raw RGBA; iTerm2 images stay in their encoded form (`EncodedFile`) and the WebView decodes them. Encoded bytes come from any process that writes to the PTY (a `cat` of a hostile file, output over ssh), and they now reach WebKit's native decoders. The backend sniffs magic bytes and serves only PNG, JPEG and GIF as encoded files (a JPEG or BMP that wezterm downscales arrives already decoded as `Rgba8`, kind 0); TIFF, BMP and WebP (a WebP stays encoded even when wezterm downscales it) are decoded in Rust and served as RGBA (Revision 2, D8, narrowed in Revision 3); every other encoded format, and an undecodable file, returns an error and its cells show text. This keeps WebKit's native decoders to the three formats terminal image tools send most.
 
 Alternatives:
 - PNG-encode sixel pixels in the backend. Rejected: a new direct dependency and CPU spent while holding the emulator lock, for a one-time transfer.
@@ -92,6 +92,56 @@ The frontend cache lives with the terminal entry; the backend registry is per te
 - [Padding is fixed in pixels at placement time] → after a font zoom or a DPR change the padding no longer matches the new cell size; zero for sixel and iTerm2, so accepted; walk 4.5 zooms with an image on screen.
 - [Wide characters before an image on the same row] → `col` is the terminal column (`cell_index()`), while `cells` skips wide-char continuations; the frontend positions runs by terminal column. Text and image positions on such rows follow the existing wide-char painting.
 - [A huge sixel blocks the emulator while parsing] → already true today; wezterm rejects images over 100 MB; out of scope.
-- [Copying a 100 MB image for the command] → it runs in `spawn_blocking` under the image's own mutex, never under the session mutex or the global PTY maps.
+- [Copying a 100 MB image for the command] → it runs in `spawn_blocking`, never under the session mutex or the global PTY maps; the raw and kind 1 paths copy under the image's own mutex, and the decode path copies the bytes out and drops that mutex first (Revision 2).
 - [Resize reflow of image cells] → wezterm behavior unverified; walk step covers a resize with an image on screen.
 - [The `terminal-wezterm` spec still names a `terminal:grid-update` event while the code uses a channel] → pre-existing drift; the new requirements name `GridUpdate` only.
+
+## Revision 2: Walk 4.3 failures (2026-11-25)
+
+The first walk showed no image at all, for sixel and for iTerm2. A probe that fed real `chafa` output through `TerminalSession`, the differ and `payload_for` showed the backend works for sixel (runs on every covered row, kind 0 payload). Two causes remained.
+
+### D7. The CSP allows Tauri's IPC protocol
+
+`connect-src 'self'` (`src-tauri/tauri.conf.json:15-16`) blocks the `ipc://localhost` fetch that Tauri's IPC script tries first (`tauri-2.11.1/scripts/ipc-protocol.js:24-67`). Tauri then falls back to `postMessage` for the whole app, and in that path a `Response` with raw bytes is formatted as JSON (`ipc/protocol.rs:337-339, 390-403`): the frontend gets a number array, `parseImageHeader` fails, and every image is marked dead. Every other command kept working because JSON responses survive the fallback, so nothing showed the problem until now. The fix adds `ipc: http://ipc.localhost` to `connect-src` in `csp` and `devCsp`, the sources Tauri documents for its IPC. The main document can already reach the same commands through `postMessage`, so the policy grants no new capability; framed browser tabs have their own origin and CSP and cannot use it.
+
+Alternatives:
+- Convert the number array to bytes in `imageCache.ts`. Rejected: a patch over the symptom; a 100 MB image would cross as about 400 MB of JSON, and the whole app would stay on the slower transport.
+
+### D8. Encoded formats other than PNG, JPEG and GIF decode in Rust
+
+`chafa -f iterm` sends TIFF, and wezterm keeps it as `EncodedFile`; the D3 allowlist then returned an error. The backend now decodes the other encoded files (narrowed to TIFF, BMP and WebP in Revision 3) with the `image` crate (0.24, the version and features wezterm-term already compiles, so the build gains no crate) inside the existing `spawn_blocking`, and serves it as kind 0 RGBA. A decode whose decoder buffer would exceed 100,000,000 bytes (wezterm's `check_image_dimensions` cap) is refused, and a decode error returns the unsupported-format error. WebKit's native decoders still see only PNG, JPEG and GIF; the other formats go through Rust decoders. GIF stays kind 1 for FRI-612.
+
+Alternatives:
+- Add TIFF to the WebKit allowlist. Rejected: WebKitGTK does not decode TIFF, and it widens the native decoder surface.
+- Keep the allowlist and test iTerm2 with another tool. Rejected: chafa is the most common image tool in the terminal, and the user chose the decode.
+
+## Revision 3: Review of the walk fixes (2026-11-25)
+
+The adversarial and security review of Revision 2 (`handoff/REVIEW-walk1.md`) confirmed D7 and found that D8 bounded one decode but not many.
+
+- **D8 decodes only TIFF, BMP and WebP.** The `image` 0.24 features cannot be narrowed (Cargo unifies them with wezterm-term's defaults), so the backend checks the guessed format at runtime and refuses every other one (EXR, HDR, DDS, TGA, ICO, PNM, QOI, farbfeld). Under `panic = "abort"` a decoder panic ends the process, so fewer decoders means a smaller crash surface; wezterm's own downscale path keeps its existing exposure.
+- **No dimension pre-check.** wezterm already refuses any image with `w*h*4 > 100,000,000` before placing it, and `Limits::max_alloc` refuses a decoder buffer above 100,000,000 bytes. A pre-check would decode a WebP twice, because image 0.24 decodes the whole WebP frame to read its size.
+- **Memory per decode.** `max_alloc` bounds only the decoder's buffer. `into_rgba8` adds one RGBA buffer for RGB input, and the payload adds one copy, so one decode peaks near 300 MB with an RGB TIFF at the cap. Accepted, because decodes are bounded below.
+- **D9. Decodes and fetches are bounded.** A compressed TIFF of about 100 KB can decode to 100 MB, and an app can keep many distinct images visible. A process-wide semaphore of 2 permits is acquired in `terminal_image` before `spawn_blocking`, so at most 2 decodes run at once; each terminal's cache keeps at most 2 fetches in flight and starts a waiting hash when one settles. The frontend 512 MB ceiling acts only after bytes arrive, so it cannot protect the backend alone.
+- **Unsupported format and non-bytes responses are final.** The cache stops retrying a hash whose fetch failed with the unsupported-format error, and treats a response that is not an `ArrayBuffer` as a permanent failure with one console warning, so a future transport regression is visible instead of silent.
+- **Re-decode after hide.** `releaseAll` on hide, quake close and session switch frees bitmaps, so showing the terminal again fetches and decodes again. Accepted: decodes are bounded, and a backend cache would hold memory for hidden terminals.
+- **`http://ipc.localhost` in `connect-src`.** Tauri uses it on Windows and Android, where `convertFileSrc` builds `http://ipc.localhost`; on Linux the IPC URL is `ipc://localhost`. It stays in the shared config to match Tauri's documented policy and the frozen Windows build. On Linux it names loopback port 80, which the main document could not reach through Tauri anyway.
+
+Alternatives:
+- A backend cache of decoded RGBA. Rejected: memory for hidden terminals, and the bounded re-decode is cheap enough.
+- One decode at a time. Rejected: a large TIFF would stall every other image fetch in the app. With 2 permits a second fetch proceeds while one decode runs; two concurrent decodes stall other fetches until one ends. Every payload takes a permit, including sixel and PNG/JPEG/GIF copies, which return fast.
+
+## Revision 4: Second review of the walk fixes (2026-11-25)
+
+The re-review (`handoff/REVIEW-walk1-r2.md`) found that the frontend cap was not a real cap and listed smaller gaps in the same mechanism.
+
+- **The in-flight count tracks real requests.** `releaseAll` no longer resets it; every settle decrements it, also when the settle belongs to an older epoch, and then drains the queue. Hiding and showing a terminal therefore never stacks orphan requests on the global semaphore.
+- **The queue serves what is on screen.** When a slot frees, a queued hash that no current row references is dropped, so a later reference fetches it again; fast navigation in yazi fetches the current preview, not every preview passed on the way.
+- **Restarting blocked hashes counts the restarts.** After one blocked hash restarts, the next ones are checked as if a decode were in flight, so two blocked hashes do not both restart and then block each other again (each extra fetch of a TIFF is a full backend decode).
+- **The permit lives in the blocking task.** It moves into the `spawn_blocking` closure, so a dropped command future cannot free a slot while its decode still runs.
+- **Refused formats cost nothing.** The format is guessed under the image mutex before the bytes are copied; the check in `decode_to_rgba` stays the authority.
+- **One warning per cache.** The non-bytes warning flag lives in each cache, so tests stay independent of order and every terminal reports a broken transport once.
+
+## Revision 5: Third review (2026-11-25)
+
+The third review (`handoff/REVIEW-walk1-r3.md`) passed with 4 nits. One touches the cache: a request that settles after a release discarded its bytes even when the new epoch had queued the same hash, so a quake toggle decoded large images twice. An old-epoch success now feeds the bytes to that queued entry; `drainQueue` then skips it because it is no longer queued. The other three nits were walk-row and task wording.

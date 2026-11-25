@@ -35,6 +35,32 @@
 - [x] 6.3 `terminalService.ts`: smoothing chosen per run by scale with a pixel-snapped source rect; a terminal created hidden releases its bitmaps (or never fetches) until shown; a region-visibility hook (`setRegionVisible("quake", open)`) called by `QuakeTerminal.tsx` on open/close releases quake shell bitmaps and suppresses their image draws while closed, and repaints on open.
 - [x] 6.4 `implementation.md` Builder coordination lists `releaseAll()` and `setVisible(): string[]`.
 
+## 7. Walk fixes (Revision 2)
+
+- [x] 7.1 Test (Red): a Rust test that reads `src-tauri/tauri.conf.json` and asserts that the `connect-src` directive of both `csp` and `devCsp` lists exactly `'self'`, `ipc:` and `http://ipc.localhost`. `image_fetch_tests.rs`: an iTerm2 64x48 TIFF (`File=inline=1`, no downscale) returns kind 0, width 64, height 48 and 12288 RGBA bytes whose first pixel matches the fixture; the small BMP case now returns kind 0 with its size; an encoded file the decoder rejects returns `UnsupportedFormat` (through a visible run if wezterm places it, otherwise through `payload_for` on an `ImageData` built from those bytes); an encoded file whose `w*h*4` exceeds 100,000,000 returns `UnsupportedFormat`; PNG, JPEG and GIF still return kind 1. Re-lock.
+- [x] 7.2 `src-tauri/tauri.conf.json`: add `ipc: http://ipc.localhost` to `connect-src` in `csp` and `devCsp`.
+- [x] 7.3 `src-tauri/Cargo.toml`: `image` 0.24 as a direct dependency, no new package in `Cargo.lock`.
+- [x] 7.4 `src-tauri/src/terminal/image_fetch.rs`: decode encoded files other than PNG/JPEG/GIF to RGBA with a 100,000,000-byte limit, outside the `image.data()` guard, and serve them as kind 0.
+
+## 8. Review fixes for the walk fixes (Revision 3)
+
+- [x] 8.1 Test (Red): `image_fetch_tests.rs` — an iTerm2 64x48 JPEG and an iTerm2 64x48 GIF, not downscaled, each return kind 1 with width 64, height 48 and the file bytes; an iTerm2 binary PNM (or another format outside PNG/JPEG/GIF/TIFF/BMP/WebP that wezterm places) returns `UnsupportedFormat`; the over-limit TIFF test claims a decoder buffer above 100,000,000 bytes (e.g. 6000x6000 RGB) and is renamed so it no longer claims "without allocating"; with both permits of `decode_slots()` held, `payload_for_bounded` for a visible TIFF does not complete within 200 ms, and completes with kind 0 after one permit is released. `imageCache.test.ts` — with fetches of A and B pending, a reference to C starts no fetch until A settles, then C is fetched and `onReady(C)` fires after decode; a fetch rejected with `unsupported image format` is never retried by later `setVisible` calls; a fetch resolving to a number array marks the hash dead and `console.warn` is called once for two such hashes; `releaseAll()` drops queued hashes. Re-lock.
+- [x] 8.2 `image_fetch.rs`: `decode_slots()` + `payload_for_bounded`; runtime format allowlist `Tiff | Bmp | WebP`; remove the dimension pre-check. `pty.rs` `terminal_image` calls `payload_for_bounded`.
+- [x] 8.3 `imageCache.ts`: in-flight cap of 2 with a queue; permanent failure for the unsupported-format error and for a non-`ArrayBuffer` response, with one console warning.
+- [x] 8.4 Docs: `design.md` Revision 3 and `implementation.md` Revision 3 match the code after the work lands.
+
+## 9. Second review fixes (Revision 4)
+
+- [x] 9.1 Test (Red): `imageCache.test.ts` — `get(a)`, `get(b)`, `releaseAll()`, then a reference to c starts no fetch of c until a or b settles; with c and d queued, `setVisible({d})` then settling a fetches d and not c; with 290 MB referenced, a 200 MB decode in flight and two 150 MB hashes blocked behind it, the failure of that decode restarts only one of them; two caches each warn once for a non-ArrayBuffer response (the warning is per cache). `image_fetch_tests.rs` — an iTerm2 64x48 WebP returns kind 0, width 64, height 48 and 12288 RGBA bytes. Re-lock.
+- [x] 9.2 `imageCache.ts`: in-flight count across epochs, queue drops non-visible hashes, restart accounting in `requestRetries`, per-cache warn flag.
+- [x] 9.3 `image_fetch.rs`: permit inside the blocking task; format guessed before the clone.
+- [x] 9.4 Docs: `implementation.md` Revision 4 anchors match the code after the work lands; 8.4 checked.
+
+## 10. Third review nit (Revision 5)
+
+- [x] 10.1 Test (Red): `imageCache.test.ts` — after `releaseAll()`, an old fetch of a hash that the current epoch has queued is used: one decode, `onReady`, no second fetch. Re-lock.
+- [x] 10.2 `imageCache.ts`: an old-epoch success uses its bytes when the same hash is `queued` in the current epoch.
+
 ## 4. Verification
 
 - [x] 4.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check`, then `npx tsc --noEmit` and `pnpm test`.
@@ -42,4 +68,7 @@
 - [ ] 4.3 Manual walk: in the main terminal, `img2sixel` (or `chafa -f sixel`) on a PNG draws the image in place; `chafa -f iterm` on a PNG draws it; `clear` removes it.
 - [ ] 4.4 Manual walk: in yazi, moving across image files shows each preview and replaces the previous one; leaving yazi leaves no image behind.
 - [ ] 4.5 Manual walk: after printing an image, run `seq 100` and scroll up: the image is drawn in its rows in the scrollback, with no seams between rows; resizing the window and zooming the font with an image on screen keep the app usable; switching to another session and back redraws the image.
-- [ ] 4.6 Manual walk: the same `img2sixel` in a quake shell draws the image; a GIF via `chafa -f iterm` shows its first frame.
+- [ ] 4.6 Manual walk: the same `chafa -f sixels` in a quake shell draws the image; a GIF via `chafa -f iterm` shows its first frame.
+- [ ] 4.7 Manual walk: with the IPC protocol enabled, sessions open and type, the side panels load, the terminal scrolls, and Settings › About checks for updates without errors; the webview console shows no "IPC custom protocol failed" and no "non-ArrayBuffer" warning.
+- [ ] 4.8 Manual walk: a script prints 30 distinct deflate-compressed TIFFs of about 5000x5000 next to each other (`doNotMoveCursor=1`); the app stays usable; the main process (`ps -o rss= -p $(pgrep -o -x nergal)`) stays below about 1 GB (baseline plus 2 decodes of about 300 MB), and the web process (sum of `ps -o rss= -C WebKitWebProcess`) stays below about 1 GB (baseline plus the 512 MB ceiling plus one image).
+- [ ] 4.9 Manual walk: with 2 large TIFFs on screen in a quake shell, closing and opening the quake 10 times quickly brings the images back within about 2 s of the last open.

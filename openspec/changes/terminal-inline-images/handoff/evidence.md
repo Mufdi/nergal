@@ -38,3 +38,37 @@ Builder deviations: a terminal created in the background skips image draws throu
 Gate 6b WARN (unchanged): `image_runs_tests.rs` `.iter().enumerate().skip(3)` is an iterator adaptor, not a skipped test.
 
 Verification (2026-11-24): clippy clean; `cargo test` 1343 passed, 1 ignored; tsc clean; `pnpm test` 58 files, 699 tests; work-gates 6a/6c PASS, 6b WARN (justified), Red locks PASS (5 files).
+
+## Walk 1 fixes (group 7, 2026-11-25)
+
+Walk 1 on the installed deb: F1-F8 all failed, no image drawn for sixel or iTerm2. A temporary probe test (removed) fed real `chafa -f sixels` and `chafa -f iterm` output through `TerminalSession`, the differ and `payload_for`. Sixel: runs on every covered row, kind 0 payload. iTerm2: chafa sends TIFF, `payload_for` returned `UnsupportedFormat`. The frontend failure came from the CSP: `connect-src 'self'` blocks Tauri's IPC protocol, so the raw response reached `imageCache` as a JSON number array. User decisions: add the IPC sources to the CSP; decode other encoded formats in Rust (design Revision 2, D7/D8).
+
+Red (sonnet test-writer): `csp_tests.rs` (new) and `image_fetch_tests.rs` (TIFF and BMP decode to kind 0, truncated TIFF and over-limit TIFF stay `UnsupportedFormat`). 4 new tests failed for the intended reason, and 2 guards passed. Re-locked.
+
+Builder (sonnet): `tauri.conf.json` connect-src in csp and devCsp; `image = "0.24"` (Cargo.lock adds only the reference to the existing 0.24.9); `payload_for` copies the bytes out of the guard, pre-checks dimensions, decodes under `Limits.max_alloc` 100,000,000 and serves kind 0.
+
+Verification (2026-11-25): clippy `--all-targets -D warnings` clean; `cargo test` 1348 passed, 1 ignored; rustfmt check clean on changed files; tsc clean; `pnpm test` 699 passed; work-gates 6a/6c PASS, Red locks PASS (6 files), 5 WARN (Cargo manifests changed; `image 0.24.9` was already in the lock through wezterm-term, so no new package), 6b WARN (unchanged iterator `.skip(3)`, justified earlier).
+
+## Review of the walk fixes (group 8, 2026-11-25)
+
+Reviewer (opus, adversarial + security, `handoff/REVIEW-walk1.md`): FAIL, 2 Important (unbounded concurrent decodes; no JPEG/GIF kind 1 tests) + 11 Nit. D7 root cause confirmed. Finding 13 (`docs/shortcuts.md`) not acted on: an unrelated user edit that is never committed. The rest is answered by design/implementation Revision 3 and group 8.
+
+Red (sonnet test-writer): Rust JPEG/GIF kind 1, PNM refused, over-limit TIFF at a 108 MB decoder buffer (renamed), `payload_for_bounded` waits for a slot; TS queue of 2 in flight, unsupported format not retried, non-ArrayBuffer dead with one warning, `releaseAll` drops the queue. 7 TS tests failed for the intended reason; Rust failed to compile only on the missing `decode_slots`/`payload_for_bounded`. Test-writer added `flush()` calls to the `blockedBehindDecode` helper so the cap does not queue the existing byte-reservation fetches. Re-locked.
+
+Builder (sonnet): `decode_slots()` (2 permits) + `payload_for_bounded`, used by `terminal_image`; runtime format allowlist Tiff/Bmp/WebP; pre-check removed; `imageCache.ts` queue with `MAX_IN_FLIGHT_FETCHES = 2`, unsupported-format and non-ArrayBuffer permanent, one console warning. Orchestrator fix: the `DECODE_PERMITS` comment named panics; it now gives the memory reason.
+
+Verification (2026-11-25): clippy clean; `cargo test` 1352 + 1 + 1 passed, 1 ignored; rustfmt check clean; tsc clean; `pnpm test` 706 passed; work-gates 6a/6c PASS, Red locks PASS (6 files), 5 WARN (justified above), 6b WARN (unchanged iterator `.skip(3)`).
+
+## Second review of the walk fixes (group 9, 2026-11-25)
+
+Re-review (opus, `handoff/REVIEW-walk1-r2.md`): FAIL, 1 Important (`releaseAll` reset the in-flight count while old requests still ran, so hide/show stacked orphan decodes on the global semaphore) + 9 Nit. Prior findings: 9 resolved, 3 partial, 13 not acted on by decision. Answered by design/implementation Revision 4 and group 9. Nit "renumber Verification": kept as group 4, because the config rule requires Verification last and walk ids 4.x are cited across the docs.
+
+Red (sonnet test-writer): 4 TS tests (count across `releaseAll`, queue drops non-visible, one restart of two blocked hashes, one warning per cache) + Rust WebP guard. Conflict and ruling: the Builder reported the restart test's sizes could not block both hashes. Ruling: the test was wrong; the test-writer rebuilt it (x decode rejects and frees 200 MB) and re-locked. Orchestrator mutation check: with `restarted` removed from `overCeiling` the test fails; restored byte-identical (`cmp`).
+
+Builder (sonnet): `inFlight` decremented on every settle, kept across `releaseAll`; `drainQueue` drops non-visible queued hashes; `requestRetries` counts its restarts; per-cache warn flag; permit inside the blocking closure; format guessed before the clone. Deviation: `visibilityKnown` (see implementation.md "Code after group 9").
+
+Verification (2026-11-25): clippy clean; `cargo test` 1353 + 1 + 1 passed, 1 ignored; rustfmt check clean; tsc clean; `pnpm test` 710 passed; work-gates 6a/6c PASS, Red locks PASS (6 files), 5 WARN and 6b WARN (justified above). Comment audit: three added comments, all WHY.
+
+## Third review (group 10, 2026-11-25)
+
+Re-review (opus, `handoff/REVIEW-walk1-r3.md`): PASS, 0 Important, 4 Nit. Nits 2-4 (walk rows 4.7/4.8 pass conditions, task 9.1 sizes) fixed in tasks.md. Nit 1: Red test by the sonnet test-writer (old-epoch bytes reused for a queued hash; failed with 0 decodes), then a one-line orchestrator fix at `imageCache.ts:184` (XS, main thread). Verification: `pnpm test` 711 passed; tsc clean; Red locks PASS (6 files). Rust untouched since group 9 (clippy clean, cargo test 1355 passed).

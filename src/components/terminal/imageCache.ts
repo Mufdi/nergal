@@ -4,6 +4,8 @@ export const IMAGE_CEILING_BYTES = 512 * MB;
 
 const HEADER_BYTES = 9;
 const MAX_FETCH_RETRIES = 2;
+const MAX_IN_FLIGHT_FETCHES = 2;
+const UNSUPPORTED_FORMAT = "unsupported image format";
 
 export interface ImageHeader {
   kind: 0 | 1;
@@ -54,6 +56,7 @@ export function headerBlob(header: ImageHeader): Blob {
 }
 
 type Entry<B> =
+  | { state: "queued" }
   | { state: "loading" }
   | { state: "decoding" }
   | { state: "failed"; fetchFailures: number }
@@ -69,12 +72,16 @@ export function createImageCache<B extends CachedBitmap>(opts: ImageCacheOptions
   const entries = new Map<string, Entry<B>>();
   const failures = new Map<string, number>();
   let visible: ReadonlySet<string> = new Set();
+  let visibilityKnown = false;
   let tick = 0;
   let total = 0;
   let retryable = 0;
   let decoding = 0;
+  let inFlight = 0;
+  let queue: string[] = [];
   let epoch = 0;
   let disposed = false;
+  let warnedNonBuffer = false;
 
   function put(hash: string, e: Entry<B>): void {
     if (isRetryable(entries.get(hash))) retryable -= 1;
@@ -104,9 +111,9 @@ export function createImageCache<B extends CachedBitmap>(opts: ImageCacheOptions
 
   // A lone decode may cross the ceiling; stacking another one on top of
   // in-flight decodes may not, or a burst of fetches would all pass the check.
-  function overCeiling(size: number, held: number = total): boolean {
+  function overCeiling(size: number, held: number = total, restarted: number = 0): boolean {
     if (held >= IMAGE_CEILING_BYTES) return true;
-    return decoding > 0 && held + size > IMAGE_CEILING_BYTES;
+    return decoding + restarted > 0 && held + size > IMAGE_CEILING_BYTES;
   }
 
   function unreferencedBytes(): number {
@@ -125,13 +132,15 @@ export function createImageCache<B extends CachedBitmap>(opts: ImageCacheOptions
   function requestRetries(hashes: ReadonlySet<string>, includeFailed: boolean): string[] {
     let held = total - unreferencedBytes();
     const requested: string[] = [];
+    let restarted = 0;
     for (const [hash, e] of [...entries]) {
       if (!hashes.has(hash)) continue;
       if (includeFailed && e.state === "failed" && isRetryable(e)) {
         startFetch(hash);
         requested.push(hash);
-      } else if (e.state === "blocked" && !overCeiling(e.size, held)) {
+      } else if (e.state === "blocked" && !overCeiling(e.size, held, restarted)) {
         held += e.size;
+        restarted += 1;
         startFetch(hash);
         requested.push(hash);
       }
@@ -140,25 +149,67 @@ export function createImageCache<B extends CachedBitmap>(opts: ImageCacheOptions
   }
 
   function startFetch(hash: string): void {
+    if (inFlight >= MAX_IN_FLIGHT_FETCHES) {
+      put(hash, { state: "queued" });
+      queue.push(hash);
+      return;
+    }
+    beginFetch(hash);
+  }
+
+  function drainQueue(): void {
+    while (inFlight < MAX_IN_FLIGHT_FETCHES && queue.length > 0) {
+      const next = queue.shift();
+      if (next === undefined || entries.get(next)?.state !== "queued") continue;
+      if (!visibilityKnown || visible.has(next)) beginFetch(next);
+      else drop(next);
+    }
+  }
+
+  function isUnsupported(reason: unknown): boolean {
+    const message = reason instanceof Error ? reason.message : typeof reason === "string" ? reason : "";
+    return message.includes(UNSUPPORTED_FORMAT);
+  }
+
+  function beginFetch(hash: string): void {
     put(hash, { state: "loading" });
+    inFlight += 1;
     const startedIn = epoch;
     opts
       .fetch(opts.key, hash)
       .then(
         (buf) => {
-          if (disposed || startedIn !== epoch) return;
-          onFetched(hash, buf);
+          if (disposed) return;
+          inFlight -= 1;
+          if (startedIn === epoch || entries.get(hash)?.state === "queued") onFetched(hash, buf);
+          drainQueue();
         },
-        () => {
-          if (disposed || startedIn !== epoch) return;
-          const count = (failures.get(hash) ?? 0) + 1;
-          failures.set(hash, count);
-          put(hash, { state: "failed", fetchFailures: count });
+        (reason) => {
+          if (disposed) return;
+          inFlight -= 1;
+          if (startedIn === epoch) {
+            if (isUnsupported(reason)) {
+              put(hash, { state: "dead" });
+            } else {
+              const count = (failures.get(hash) ?? 0) + 1;
+              failures.set(hash, count);
+              put(hash, { state: "failed", fetchFailures: count });
+            }
+          }
+          drainQueue();
         },
       );
   }
 
   function onFetched(hash: string, buf: ArrayBuffer): void {
+    if (!(buf instanceof ArrayBuffer)) {
+      if (!warnedNonBuffer) {
+        warnedNonBuffer = true;
+        console.warn("terminal image fetch returned a non-ArrayBuffer; the IPC transport must deliver raw bytes");
+      }
+      put(hash, { state: "dead" });
+      return;
+    }
     let header: ImageHeader;
     try {
       header = parseImageHeader(buf);
@@ -222,6 +273,7 @@ export function createImageCache<B extends CachedBitmap>(opts: ImageCacheOptions
     },
     setVisible(hashes) {
       visible = hashes;
+      visibilityKnown = true;
       if (disposed || retryable === 0) return [];
       return requestRetries(hashes, true);
     },
@@ -235,6 +287,7 @@ export function createImageCache<B extends CachedBitmap>(opts: ImageCacheOptions
       total = 0;
       retryable = 0;
       decoding = 0;
+      queue = [];
     },
     dispose() {
       disposed = true;
@@ -244,6 +297,7 @@ export function createImageCache<B extends CachedBitmap>(opts: ImageCacheOptions
       entries.clear();
       total = 0;
       retryable = 0;
+      queue = [];
     },
     bytes: () => total,
   };

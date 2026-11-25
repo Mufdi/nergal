@@ -53,3 +53,79 @@
 - `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check`, then `npx tsc --noEmit` and `pnpm test`.
 - `~/.claude/skills/work/scripts/work-gates.sh mufdidev/fri-609-git-panel-agent-actions terminal-inline-images` (stacked base).
 - Manual walk on the installed `.deb` with `chafa`/`img2sixel` and yazi (tasks group Verification).
+
+## Revision 2: Walk 4.3 fixes (2026-11-25)
+
+### Verified codebase facts (do not re-assume)
+
+- `src-tauri/tauri.conf.json:15-16`: `csp` and `devCsp` both carry `connect-src 'self'`; nothing else in the repo asserts the CSP string.
+- Tauri's IPC script tries `fetch(convertFileSrc(cmd, 'ipc'))` first and, on any failure (CSP included), sets `customProtocolIpcFailed` and uses `window.ipc.postMessage` for every later call (`~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-2.11.1/scripts/ipc-protocol.js:24-80`). On that path `can_use_channel_for_response` is false and a `Raw` body is formatted with `format_result` as JSON (`tauri-2.11.1/src/ipc/protocol.rs:337-339, 390-403`). tauri-codegen 2.6.1 does not add `ipc:` to `connect-src` (no match for `ipc.localhost` outside docs).
+- Probe (2026-11-25, temporary test removed): `chafa -f sixels` output fed to `TerminalSession::new_with_pixels(100, 30, 900, 600)` gives one run on each covered row, the differ emits them, and `payload_for` returns kind 0. `chafa -f iterm` sends a TIFF (`II*\0`, base64 `SUkqAA`), wezterm keeps it as `EncodedFile`, and `payload_for` returns `UnsupportedFormat`.
+- `payload_for` (`src-tauri/src/terminal/image_fetch.rs:93-112` after Revision 2) matches `Rgba8` → kind 0, `EncodedFile` passing `is_allowed_encoding` (`:152-157`) → kind 1, any other `EncodedFile` → bytes copied out of the `image.data()` guard and decoded by `decode_to_rgba` (`:131-150`); it runs inside `spawn_blocking` in `terminal_image` (`src-tauri/src/pty.rs:2489`). Before Revision 2 it held the guard for its whole body and returned `UnsupportedFormat` for every other encoded file.
+- `image` 0.24.9 is in `Cargo.lock` (`:2475`) through wezterm-term (`image = "0.24.6"`, default features, `WZ/term/Cargo.toml:25`), with `tiff 0.9.1`, `gif`, `jpeg-decoder`, `png 0.17`, `qoi`, `exr`. wezterm refuses any image with `w*h*4 > 100_000_000` (`WZ/term/src/terminalstate/image.rs:273-280`) and reads dimensions with the same crate before placing an iTerm2 image (`WZ/term/src/terminalstate/iterm.rs:25-38`); it fully decodes an image it downscales (`iterm.rs:104-118`), and image 0.24 fully decodes a WebP even to read its dimensions.
+- The locked `image_fetch_tests.rs` asserts `UnsupportedFormat` for a small BMP that wezterm keeps encoded; under D8 that BMP decodes, so that case moves to bytes the decoder rejects.
+
+### Execution order
+
+1. `tauri.conf.json`: `connect-src 'self' ipc: http://ipc.localhost` in `csp` and `devCsp`; nothing else in either policy changes.
+2. `src-tauri/Cargo.toml`: `image = "0.24"` as a direct dependency with the features wezterm already enables; `cargo tree -i image` must still show a single 0.24.9 next to the existing 0.25.10, and `Cargo.lock` must gain no new package.
+3. `image_fetch.rs`: copy the encoded bytes out of the `image.data()` guard, drop it, and for an `EncodedFile` that is not PNG/JPEG/GIF decode with `image::io::Reader` (guessed format, `Limits` with `max_alloc` at 100,000,000) to RGBA8; build a kind 0 payload with the decoded width and height. A decode error or an RGBA size above 100,000,000 returns `UnsupportedFormat`. PNG/JPEG/GIF keep the kind 1 path.
+
+### Per-phase risk
+
+- [Switching the whole app from `postMessage` to the IPC protocol] → it is Tauri's default transport; the walk adds rows for sessions, panels, Channels (terminal grid) and the updater check, and the CSP test pins the exact `connect-src`.
+- [A crafted TIFF or other file costs CPU and memory in the decoder] → the decode runs in `spawn_blocking`, never under the session mutex or the global PTY maps; `max_alloc` bounds the decoder buffer, and Revision 3 bounds concurrency and narrows the formats.
+- [Decoded size differs from wezterm's reported size] → the header carries the decoded width and height; slices use fractions, so the draw stays correct.
+
+## Revision 3: Review fixes for the walk fixes (2026-11-25)
+
+### Verified codebase facts (do not re-assume)
+
+These facts describe the code before group 8; the code after it is anchored under Revision 4.
+
+- Review: `handoff/REVIEW-walk1.md` (2 Important, 11 Nit, VERDICT FAIL).
+- `terminal_image` (`src-tauri/src/pty.rs:2461-2494`) awaits `spawn_blocking(move || payload_for(&image))` with no concurrency bound; Tokio's blocking pool allows up to 512 threads.
+- `decode_to_rgba` (`image_fetch.rs:131-150`) reads dimensions with a first `guessed_reader`, then decodes with a second under `Limits.max_alloc = 100_000_000`; `guessed_reader` (`:123-129`) exposes `format()` on the reader before decoding.
+- `release` profile sets `panic = "abort"` (`src-tauri/Cargo.toml:168`), so a decoder panic ends the process.
+- `imageCache.ts`: `startFetch` (`:142-159`) starts one fetch per new hash with no cap; the rejection handler counts every failure as retryable (`:152-157`, `isRetryable` `:64-66`); `onFetched` (`:161-205`) parses `buf` with `parseImageHeader` inside `try`, so a non-`ArrayBuffer` becomes `dead` with no trace.
+- The over-limit test in `image_fetch_tests.rs` builds a 6000x5000 RGB TIFF: its decoder buffer is 90,000,000 bytes, below `max_alloc`, so without the pre-check the decoder may allocate it before failing on the missing strip.
+
+### Execution order
+
+1. `image_fetch.rs`: a process-wide `tokio::sync::Semaphore` with 2 permits (`DECODE_PERMITS`), exposed as `pub fn decode_slots() -> &'static Semaphore`, and `pub async fn payload_for_bounded(image: Arc<ImageData>) -> Result<Vec<u8>, ImageFetchError>` that acquires a permit, then runs `payload_for` in `spawn_blocking` (join error → `UnsupportedFormat`). `terminal_image` calls it.
+2. `decode_to_rgba`: one reader, `with_guessed_format`; refuse unless `format()` is `Tiff`, `Bmp` or `WebP`; decode under `max_alloc`; drop the dimension pre-check.
+3. `imageCache.ts`: `MAX_IN_FLIGHT_FETCHES = 2`; a hash referenced while 2 fetches are in flight enters a `queued` state and starts, oldest first, when a fetch settles; a rejection whose message contains `unsupported image format` becomes `dead`; a fetch result that is not an `ArrayBuffer` becomes `dead` and the first one writes one `console.warn`.
+4. Docs: the D5/D8 risk lines and these facts match the code after the work lands.
+
+### Per-phase risk
+
+- [A queued fetch starves when the cache is disposed or released] → `releaseAll` and `dispose` clear the queue with the entries; a settle after an epoch change does not start queued work from the old epoch.
+- [Semaphore held across a long decode stalls sixel fetches] → 2 permits; a sixel payload is a copy and returns fast once a permit frees.
+
+## Revision 4: Second review fixes (2026-11-25)
+
+### Verified codebase facts (do not re-assume)
+
+- Review: `handoff/REVIEW-walk1-r2.md` (1 Important, 9 Nit, VERDICT FAIL).
+- Group 8 code: `DECODE_PERMITS`, `decode_slots()` and `payload_for_bounded` (`src-tauri/src/terminal/image_fetch.rs:14-32`), called by `terminal_image` (`src-tauri/src/pty.rs:2489`); the runtime allowlist (`image_fetch.rs:147-152`); `payload_for` clones a non-allowlisted encoded file under the guard (`:127`).
+- `imageCache.ts` after group 8: module-level `warnedNonBuffer` (`:10`); `startFetch`/`drainQueue` (`:149-163`); `isUnsupported` (`:165-168`); `beginFetch` settles return early on an older epoch before decrementing `inFlight` (`:178`, `:184`); non-ArrayBuffer branch (`:198-206`); `releaseAll` sets `inFlight = 0` (`:283`); `requestRetries` (`:132-147`) checks each blocked hash against the live `decoding` count.
+- `hideEntry` calls `releaseAll` on a session switch (`src/components/terminal/terminalService.ts:278`), and `setRegionVisible` does on quake close (`:269`).
+
+### Execution order
+
+1. `imageCache.ts`: decrement `inFlight` on every settle before the epoch check (return early only when disposed), run `onFetched`/the failure branch only for the current epoch, then `drainQueue`; remove `inFlight = 0` from `releaseAll`. `drainQueue` drops a queued hash that is not in `visible`. `requestRetries` treats the loop's own restarts as in-flight decodes for the ceiling check. Move the warn flag into the `createImageCache` closure.
+2. `image_fetch.rs`: move the permit into the `spawn_blocking` closure; under the `image.data()` guard, return `UnsupportedFormat` before the clone when `image::guess_format` is not TIFF, BMP or WebP.
+3. Docs: anchors for the new code after it lands.
+
+### Per-phase risk
+
+- [A settle from an old epoch drains the queue] → `releaseAll` already replaced the queue, so it only starts work queued after the release.
+- [Dropping a non-visible queued hash loses it] → its entry is removed, so the next `get` from a paint starts a fresh fetch.
+
+### Code after group 9 (anchors)
+
+- `src-tauri/src/terminal/image_fetch.rs`: `MAX_DECODED_BYTES` `:12`, `DECODE_PERMITS` `:14`, `DECODE_SLOTS`/`decode_slots()` `:16-21`, `payload_for_bounded` (permit moved into the blocking closure) `:24`, `payload_for` (format guessed before the clone) `:116`, `pack` `:145`, `decode_to_rgba` (single reader, Tiff/Bmp/WebP allowlist, `max_alloc`) `:154`, `is_allowed_encoding` `:177`. `terminal_image` calls `payload_for_bounded` at `src-tauri/src/pty.rs:2489`.
+- `src/components/terminal/imageCache.ts`: `MAX_IN_FLIGHT_FETCHES` `:7`; `visibilityKnown` `:75` (a queued hash is dropped only once `setVisible` has run, set at `:276`); per-cache `warnedNonBuffer` `:84`; `overCeiling(size, held, restarted)` `:114`; `requestRetries` with its restart count `:132`; `startFetch` `:151`; `drainQueue` `:160`; `isUnsupported` `:169`; `beginFetch` (decrements on every settle, acts only for the current epoch) `:174`; `onFetched` `:204`; `releaseAll` (keeps the in-flight count) `:280`.
+- Builder deviation (group 9): `visibilityKnown`. Before the first `setVisible` the cache has no visible set, so the queue keeps every hash; in the app `applyUpdate` calls `setVisible` before any paint fetches.
+- `src-tauri/tauri.conf.json:15-16`: `connect-src 'self' ipc: http://ipc.localhost` in `csp` and `devCsp`. `src-tauri/Cargo.toml:15`: `image = "0.24"`.
+- Group 10: `beginFetch` success handler feeds old-epoch bytes to a hash the current epoch has queued (`src/components/terminal/imageCache.ts:184`).

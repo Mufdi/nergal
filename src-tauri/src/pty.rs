@@ -2463,7 +2463,7 @@ pub async fn terminal_image(
     session_id: String,
     hash: String,
 ) -> Result<tauri::ipc::Response, String> {
-    use crate::terminal::image_fetch::{parse_hash_hex, payload_for};
+    use crate::terminal::image_fetch::{parse_hash_hex, payload_for_bounded};
 
     let hash = parse_hash_hex(&hash).map_err(|e| e.to_string())?;
     let session = {
@@ -2486,9 +2486,8 @@ pub async fn terminal_image(
         .get(&hash)
         .map_err(|e| e.to_string())?;
 
-    let payload = tauri::async_runtime::spawn_blocking(move || payload_for(&image))
+    let payload = payload_for_bounded(image)
         .await
-        .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
     Ok(tauri::ipc::Response::new(payload))
 }

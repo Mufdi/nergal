@@ -362,6 +362,35 @@ fn encoded_file_whose_decoder_buffer_exceeds_the_limit_is_unsupported_fast() {
     assert!(started.elapsed() < std::time::Duration::from_secs(2));
 }
 
+// image 0.24's TIFF decoder splits max_alloc between the output and the strip buffer, so a
+// single-strip image at the pixel cap needs more headroom than the output alone.
+#[test]
+fn large_single_strip_tiff_at_the_pixel_cap_decodes_to_full_rgba() {
+    let strip: Vec<u8> = TIFF_RGB
+        .iter()
+        .copied()
+        .cycle()
+        .take(5000 * 5000 * 3)
+        .collect();
+    let tiff = tiff_rgb(5000, 5000, &strip);
+    drop(strip);
+    let mut s =
+        TerminalSession::new_with_pixels(150, 40, Some(1500), Some(800), Box::new(std::io::sink()));
+    s.advance_bytes(&iterm("width=5000px;height=5000px;", &tiff));
+    let hash = shown_hash(&mut s);
+
+    let payload = fetch(&s, &hash).expect("a 5000x5000 single-strip tiff is fetchable");
+
+    assert_eq!(payload[0], 0);
+    assert_eq!(&payload[1..5], &5000u32.to_le_bytes());
+    assert_eq!(&payload[5..9], &5000u32.to_le_bytes());
+    assert_eq!(payload.len(), 9 + 100_000_000);
+    assert_eq!(
+        &payload[9..13],
+        &[TIFF_RGB[0], TIFF_RGB[1], TIFF_RGB[2], 255]
+    );
+}
+
 #[test]
 fn image_evicted_by_wezterm_after_clear_and_sixteen_new_images_is_an_error() {
     let mut s = session_800x480();

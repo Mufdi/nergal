@@ -129,3 +129,20 @@ These facts describe the code before group 8; the code after it is anchored unde
 - Builder deviation (group 9): `visibilityKnown`. Before the first `setVisible` the cache has no visible set, so the queue keeps every hash; in the app `applyUpdate` calls `setVisible` before any paint fetches.
 - `src-tauri/tauri.conf.json:15-16`: `connect-src 'self' ipc: http://ipc.localhost` in `csp` and `devCsp`. `src-tauri/Cargo.toml:15`: `image = "0.24"`.
 - Group 10: `beginFetch` success handler feeds old-epoch bytes to a hash the current epoch has queued (`src/components/terminal/imageCache.ts:184`).
+
+## Revision 6: Large TIFF decode (2026-11-25)
+
+### Verified codebase facts (do not re-assume)
+
+- `image-0.24.9/src/codecs/tiff.rs:210-228`: `TiffDecoder::set_limits` gives `decoding_buffer_size = total_bytes_buffer()` and `intermediate_buffer_size = max_alloc - total_bytes_buffer()`; a single-strip image needs an intermediate buffer as large as the image.
+- Probe (temporary, removed): `burst.py 2 5000` output placed in a 150x40 session at 1500x800 px gives 2 hashes with runs; `payload_for` returns `UnsupportedFormat`; the same bytes decode with `max_alloc` 1 GB or none (5000x5000 Rgb8, 0.46 s). `burst.py 2 600` works today.
+- Constructors: `TiffDecoder::new` (`tiff.rs:36+`), `BmpDecoder::new` (`bmp/decoder.rs:530`), `WebPDecoder::new` (`webp/decoder.rs:131`, decodes the frame on construction); `image::DynamicImage::from_decoder` decodes any `ImageDecoder`.
+- `decode_to_rgba` today: `src-tauri/src/terminal/image_fetch.rs:154`.
+
+### Execution order
+
+1. `image_fetch.rs`: `MAX_DECODED_BYTES` stays the image cap; add a working-memory constant of 300,000,000. `decode_to_rgba` builds the decoder for the guessed format (Tiff, Bmp, WebP; anything else `UnsupportedFormat`), checks `w*h*4` against `MAX_DECODED_BYTES`, sets `Limits.max_alloc` to the working constant, decodes with `DynamicImage::from_decoder`, converts to RGBA8.
+
+### Code after group 11 (anchors)
+
+- `src-tauri/src/terminal/image_fetch.rs`: `MAX_DECODER_WORK_BYTES` `:14`; `decode_to_rgba` (per-format decoder from `image::guess_format`) `:156`; `decode_with` (header check against `MAX_DECODED_BYTES`, then `max_alloc` at the working limit, `DynamicImage::from_decoder`) `:169`.

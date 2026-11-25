@@ -145,3 +145,13 @@ The re-review (`handoff/REVIEW-walk1-r2.md`) found that the frontend cap was not
 ## Revision 5: Third review (2026-11-25)
 
 The third review (`handoff/REVIEW-walk1-r3.md`) passed with 4 nits. One touches the cache: a request that settles after a release discarded its bytes even when the new epoch had queued the same hash, so a quake toggle decoded large images twice. An old-epoch success now feeds the bytes to that queued entry; `drainQueue` then skips it because it is no longer queued. The other three nits were walk-row and task wording.
+
+## Revision 6: Walk 2, large TIFFs (2026-11-25)
+
+Walk 2 passed F1-F8 and G1, but `burst.py` (5000x5000 deflate TIFFs at native size) drew nothing. A probe showed wezterm places them and the backend returns `UnsupportedFormat` in under 1 ms: image 0.24's TIFF decoder splits `max_alloc` between its output buffer (`total_bytes`, 75 MB here) and the intermediate strip buffer (the remaining 25 MB), so a 75 MB single-strip image fails with "Memory limit exceeded" under a 100 MB `max_alloc` (`image-0.24.9/src/codecs/tiff.rs:210-228`). With a larger limit it decodes in 0.46 s.
+
+Decision: the backend builds the decoder for the guessed format (`TiffDecoder`, `BmpDecoder`, `WebPDecoder`), refuses the image when `width × height × 4 > 100,000,000` from the decoder's header before decoding pixels (the same rule as wezterm's `check_image_dimensions`, so nothing wezterm placed is refused), then decodes with `max_alloc` at 300,000,000 bytes: room for the output buffer, the intermediate strip and the copy into the image buffer. One decode then peaks near 400 MB with an RGB input (plus `into_rgba8`), and the 2 decode permits bound the backend near 800 MB.
+
+Alternatives:
+- Raise `max_alloc` to 300 MB without the header check. Rejected: the cap would then follow image 0.24's internal accounting instead of the image size the spec names.
+- Keep 100 MB. Rejected: it refuses images at half of wezterm's cap, so a valid TIFF that wezterm shows stays blank.

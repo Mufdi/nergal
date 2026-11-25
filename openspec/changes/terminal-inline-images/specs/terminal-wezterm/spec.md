@@ -42,7 +42,7 @@ The backend SHALL keep, per terminal, a registry from image hash to the wezterm 
 - **THEN** the command returns an error and no bytes
 
 ### Requirement: The backend narrows encoded formats before WebKit
-`terminal_image` SHALL serve an encoded file as kind 1 only when its magic bytes are PNG, JPEG or GIF. It SHALL decode a TIFF (which `chafa -f iterm` sends), BMP or WebP in the backend and serve it as kind 0 RGBA, refusing a decode whose decoder buffer exceeds 100,000,000 bytes (wezterm's per-image cap). Any other encoded format, and a file it cannot decode, SHALL return an error. At most 2 backend decodes SHALL run at once across the app; a further fetch waits for a free slot.
+`terminal_image` SHALL serve an encoded file as kind 1 only when its magic bytes are PNG, JPEG or GIF. It SHALL decode a TIFF (which `chafa -f iterm` sends), BMP or WebP in the backend and serve it as kind 0 RGBA, refusing, before the pixels are decoded, an image whose width × height × 4 exceeds 100,000,000 bytes (wezterm's per-image cap, so nothing wezterm placed is refused), and bounding the decoder's working memory at 300,000,000 bytes. Any other encoded format, and a file it cannot decode, SHALL return an error. At most 2 backend decodes SHALL run at once across the app; a further fetch waits for a free slot.
 
 #### Scenario: Fetch an iTerm2 TIFF
 - **GIVEN** a visible row shows an iTerm2 TIFF of 64x48 pixels with hash H
@@ -63,6 +63,11 @@ The backend SHALL keep, per terminal, a registry from image hash to the wezterm 
 - **GIVEN** a visible row shows an iTerm2 image in a format other than PNG, JPEG, GIF, TIFF, BMP or WebP (for example a binary PNM)
 - **WHEN** the frontend calls `terminal_image(session, H)`
 - **THEN** the command returns an error
+
+#### Scenario: A large single-strip TIFF decodes
+- **GIVEN** a visible row shows a deflate-compressed 5000x5000 RGB TIFF written as one strip, placed at its native pixel size
+- **WHEN** the frontend calls `terminal_image(session, H)`
+- **THEN** the response starts with kind 0, width 5000 and height 5000, followed by 100,000,000 RGBA bytes
 
 #### Scenario: Fetch an iTerm2 WebP
 - **GIVEN** a visible row shows an iTerm2 64x48 WebP with hash H

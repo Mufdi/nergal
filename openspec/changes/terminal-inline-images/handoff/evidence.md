@@ -72,3 +72,9 @@ Verification (2026-11-25): clippy clean; `cargo test` 1353 + 1 + 1 passed, 1 ign
 ## Third review (group 10, 2026-11-25)
 
 Re-review (opus, `handoff/REVIEW-walk1-r3.md`): PASS, 0 Important, 4 Nit. Nits 2-4 (walk rows 4.7/4.8 pass conditions, task 9.1 sizes) fixed in tasks.md. Nit 1: Red test by the sonnet test-writer (old-epoch bytes reused for a queued hash; failed with 0 decodes), then a one-line orchestrator fix at `imageCache.ts:184` (XS, main thread). Verification: `pnpm test` 711 passed; tsc clean; Red locks PASS (6 files). Rust untouched since group 9 (clippy clean, cargo test 1355 passed).
+
+## Walk 2 (group 11, 2026-11-25)
+
+Walk 2 on deb 19:51: F1-F8 and G1 PASS; G2 and G3 (`burst.py`, 5000x5000 deflate TIFFs at native size) drew nothing. Probe (temporary, removed): wezterm places them; `payload_for` returned `UnsupportedFormat` in under 1 ms; the same bytes decode with a larger `max_alloc`. Cause: image 0.24's `TiffDecoder::set_limits` splits `max_alloc` between the output and the strip buffer (`image-0.24.9/src/codecs/tiff.rs:210-228`). Fix (design Revision 6, orchestrator, S): per-format decoder, header check `w*h*4 <= 100,000,000`, working limit 300,000,000. Red by the sonnet test-writer (`large_single_strip_tiff_at_the_pixel_cap_decodes_to_full_rgba`, failed with `UnsupportedFormat`; about 13 s in debug, mostly fixture building). Release probe on the real `burst.py` output: kind 0, 100,000,009 bytes, 0.18-0.21 s per image.
+
+Verification (2026-11-25): clippy clean; `cargo test` 1354 + 1 + 1 passed, 1 ignored; rustfmt check clean; Red locks PASS (6 files); work-gates 6a/6c PASS, 5/6b WARN (justified above). Frontend untouched since group 10 (`pnpm test` 711).

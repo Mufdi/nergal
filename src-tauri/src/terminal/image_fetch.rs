@@ -10,6 +10,8 @@ const KIND_ENCODED: u8 = 1;
 const HEADER_LEN: usize = 9;
 // Mirrors wezterm's check_image_dimensions cap so a decoded image never exceeds what the terminal accepts.
 const MAX_DECODED_BYTES: u64 = 100_000_000;
+// image 0.24's TIFF decoder splits max_alloc between the output buffer and the strip buffer, and a single-strip image needs both at full size plus the copy.
+const MAX_DECODER_WORK_BYTES: u64 = 3 * MAX_DECODED_BYTES;
 // One decode at the cap peaks near 300 MB, and a small compressed file can reach it, so a burst of hostile images must not decode all at once.
 const DECODE_PERMITS: usize = 2;
 
@@ -152,20 +154,31 @@ fn pack(kind: u8, width: u32, height: u32, body: &[u8]) -> Vec<u8> {
 }
 
 fn decode_to_rgba(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), ImageFetchError> {
-    let mut reader = image::io::Reader::new(std::io::Cursor::new(bytes))
-        .with_guessed_format()
-        .map_err(|_| ImageFetchError::UnsupportedFormat)?;
-    if !matches!(
-        reader.format(),
-        Some(image::ImageFormat::Tiff | image::ImageFormat::Bmp | image::ImageFormat::WebP)
-    ) {
+    use image::codecs::{bmp::BmpDecoder, tiff::TiffDecoder, webp::WebPDecoder};
+
+    let unsupported = |_| ImageFetchError::UnsupportedFormat;
+    let cursor = std::io::Cursor::new(bytes);
+    match image::guess_format(bytes).map_err(unsupported)? {
+        image::ImageFormat::Tiff => decode_with(TiffDecoder::new(cursor).map_err(unsupported)?),
+        image::ImageFormat::Bmp => decode_with(BmpDecoder::new(cursor).map_err(unsupported)?),
+        image::ImageFormat::WebP => decode_with(WebPDecoder::new(cursor).map_err(unsupported)?),
+        _ => Err(ImageFetchError::UnsupportedFormat),
+    }
+}
+
+fn decode_with<'a>(
+    mut decoder: impl image::ImageDecoder<'a>,
+) -> Result<(u32, u32, Vec<u8>), ImageFetchError> {
+    let (width, height) = decoder.dimensions();
+    if u64::from(width) * u64::from(height) * 4 > MAX_DECODED_BYTES {
         return Err(ImageFetchError::UnsupportedFormat);
     }
     let mut limits = image::io::Limits::default();
-    limits.max_alloc = Some(MAX_DECODED_BYTES);
-    reader.limits(limits);
-    let decoded = reader
-        .decode()
+    limits.max_alloc = Some(MAX_DECODER_WORK_BYTES);
+    decoder
+        .set_limits(limits)
+        .map_err(|_| ImageFetchError::UnsupportedFormat)?;
+    let decoded = image::DynamicImage::from_decoder(decoder)
         .map_err(|_| ImageFetchError::UnsupportedFormat)?;
     Ok((
         decoded.width(),

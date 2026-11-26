@@ -2,10 +2,12 @@
 
 ## Purpose
 TBD - created by archiving change webview-csp. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Main webview enforces a Content-Security-Policy
 
-The main webview SHALL enforce a Content-Security-Policy configured in `tauri.conf.json` (`app.security.csp`). The policy SHALL default to `default-src 'self'` (with `script-src`/`connect-src` also `'self'`) and SHALL allowlist only origins the application genuinely requires, each justified in the design/proposal (not as JSON comments). Because the in-app browser renders cross-origin `<iframe>`s inside the main webview, the policy SHALL include `frame-src http: https:` as a deliberate, documented allowance so browser tabs work; this SHALL NOT widen `script-src`/`connect-src`/`default-src`. The policy SHALL NOT regress the markdown renderers, the confirm dialog, the in-app browser tabs, external-link opening, the updater, the toast notifications (Sileo), or the code editors (CodeMirror), verified against a built bundle (or a mirrored `devCsp`), not plain dev.
+The main webview SHALL enforce a Content-Security-Policy configured in `tauri.conf.json` (`app.security.csp`). The policy SHALL default to `default-src 'self'` (with `script-src` also `'self'`, and `connect-src` `'self'` plus Tauri's IPC protocol, `ipc:` and `http://ipc.localhost`) and SHALL allowlist only origins the application genuinely requires, each justified in the design/proposal (not as JSON comments). The IPC sources SHALL be present in both `csp` and `devCsp`: without them the webview blocks Tauri's IPC protocol, Tauri falls back to `postMessage`, and raw command responses reach the frontend as JSON number arrays instead of bytes. Because the in-app browser renders cross-origin `<iframe>`s inside the main webview, the policy SHALL include `frame-src http: https:` as a deliberate, documented allowance so browser tabs work; this SHALL NOT widen `script-src`/`connect-src`/`default-src`. The policy SHALL NOT regress the markdown renderers, the confirm dialog, the in-app browser tabs, external-link opening, the updater, the toast notifications (Sileo), or the code editors (CodeMirror), verified against a built bundle (or a mirrored `devCsp`), not plain dev.
 
 The shipped `index.html` (the HTML Tauri scans at build time) SHALL contain **no inline `<style>` or `<script>` elements**. Tauri auto-nonces every inline `<style>`/`<script>` it finds and injects the matching nonce-source into the served `style-src`/`script-src`; per CSP spec, the presence of a nonce-source voids `'unsafe-inline'` for that directive, silently blocking every non-nonced runtime-injected stylesheet (e.g. Sileo's `__insertCSS`, CodeMirror's `StyleModule`). Splash/critical CSS SHALL live in the bundled external stylesheet (served under `style-src 'self'`) so `'unsafe-inline'` remains effective for library styles.
 
@@ -29,7 +31,7 @@ The shipped `index.html` (the HTML Tauri scans at build time) SHALL contain **no
 
 - **GIVEN** the in-app browser renders a cross-origin `<iframe>` per tab inside the main webview
 - **WHEN** the user opens a browser tab to an arbitrary `https:` site under the policy
-- **THEN** the iframe loads (because `frame-src http: https:` is allowed), while `script-src`/`connect-src` remain `'self'` so the framed origin cannot script the app
+- **THEN** the iframe loads (because `frame-src http: https:` is allowed), while `script-src` stays `'self'` and `connect-src` stays `'self'` plus the IPC protocol, so the framed origin cannot script the app
 
 #### Scenario: policy is verified against the enforced build
 
@@ -41,3 +43,8 @@ The shipped `index.html` (the HTML Tauri scans at build time) SHALL contain **no
 - **GIVEN** a hypothetical HTML/script payload that reaches the webview
 - **THEN** the CSP blocks its execution or external exfiltration path (no arbitrary `script-src`/`connect-src` origin is permitted)
 
+#### Scenario: Tauri IPC uses its custom protocol
+
+- **GIVEN** `tauri.conf.json`
+- **WHEN** the `connect-src` directive of `csp` and of `devCsp` is read
+- **THEN** each lists `'self'`, `ipc:` and `http://ipc.localhost`, and no other source

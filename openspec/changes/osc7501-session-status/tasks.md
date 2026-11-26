@@ -37,9 +37,9 @@
 
 - [x] 6.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test`, `rustfmt --edition 2024 --check` on the changed `.rs` files, `npx tsc --noEmit`, `pnpm test`.
 - [x] 6.2 `~/.claude/skills/work/scripts/work-gates.sh main osc7501-session-status` passes.
-- [ ] 6.3 Manual walk: with the new deb installed and Nergal restarted, a new Claude Code session started with `claude --debug` logs `probe: OSC 7501 reply` in `~/.claude/debug/<session>.txt`, and no OSC 7501 text appears in the terminal.
-- [ ] 6.4 Manual walk: a prompt shows working while Claude Code runs; a permission prompt shows attention; finishing the task shows the green ring (done) in the tab, the sidebar row and the collapsed sidebar.
-- [ ] 6.5 Manual walk: a prompt that starts a background command keeps the session working after the turn ends; `list_sessions` reports it `running`; a `send_to_session` to it from another session is delivered.
-- [ ] 6.6 Manual walk: opening Claude Code in a new, untrusted folder shows attention and the pending tint while the folder-trust prompt is open; a `send_to_session` to it stays `queued` and arrives after the prompt is answered.
-- [ ] 6.7 Manual walk: interrupting a turn with Esc shows idle; a failed turn shows the red dot (error) when it can be triggered.
-- [ ] 6.8 Manual walk: a quake shell running `printf '\033]7501;state=working\033\\'` shows no text and changes no session indicator. (The fallback for Claude Code without OSC 7501 is covered by the no-root tests of 5.1.)
+- [x] 6.3 Manual walk: with the new deb installed and Nergal restarted, a new Claude Code session started with `claude --debug` logs `probe: OSC 7501 reply` in `~/.claude/debug/<session>.txt`, and no OSC 7501 text appears in the terminal.
+- [x] 6.4 Manual walk: a prompt shows working while Claude Code runs; a permission prompt shows attention; finishing the task shows the green ring (done) in the tab, the sidebar row and the collapsed sidebar.
+- [x] 6.5 Manual walk: a prompt that starts a background command keeps the session working after the turn ends; `list_sessions` reports it `running`; a `send_to_session` to it from another session is delivered.
+- [x] 6.6 Manual walk: opening Claude Code in a new, untrusted folder shows attention and the pending tint while the folder-trust prompt is open; a `send_to_session` to it stays `queued` and arrives after the prompt is answered.
+- [x] 6.7 Manual walk: interrupting a turn with Esc shows idle; a failed turn shows the red dot (error) when it can be triggered.
+- [x] 6.8 Manual walk: a quake shell running `printf '\033]7501;state=working\033\\'` shows no text and changes no session indicator. (The fallback for Claude Code without OSC 7501 is covered by the no-root tests of 5.1.)

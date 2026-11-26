@@ -77,3 +77,7 @@ Verification (orchestrator): clippy clean; `cargo test` 1445 passed / 0 failed /
 ## Walk (pending, 2026-11-26)
 
 Deb `src-tauri/target/release/bundle/deb/Nergal_0.5.0_amd64.deb` built 2026-11-26 15:58 from `8c61d7a` (the trailing updater-signing error is expected locally: no private key). Walk table I1-I8 given to the user; verbatim copy in `~/.claude/projects/-home-felipe-Projects-cluihud/work/osc7501/progress.md`. Tasks 6.3-6.8 stay open until the user reports. Linear FRI-623 In Review.
+
+## Walk results (2026-11-26) — PASS
+
+User walk I1-I8 all pass. I1: Claude Code debug log `~/.claude/debug/9a5efcb6-1bd3-4ec1-8119-b6ad1d7204b9.txt:325` shows `programStatus=yes (probe: OSC 7501 reply)` and `XTVERSION: terminal identified as "nergal 0.5.0"`. I2: attention uses the theme `bg-primary` (cyan in the user's theme), tab and sidebar tinted; done ring fine at small size. I3 background `sleep 90` keeps working, `list_sessions` running, `send_to_session` delivered. I4: home is trusted, so the trust prompt was reproduced in `/tmp/trust-test-623` (exit + `claude` in the same Nergal PTY): attention + tint while open, `send_to_session` queued and delivered after accepting. I5 Esc → idle. I6 quake printf → no text, no change. I7 `/clear` and `/resume` keep the status flowing. I8 after `/exit`, a printed report does not change the indicator.

@@ -381,14 +381,17 @@ fn a_decoded_length_that_differs_from_the_size_is_dropped() {
 }
 
 #[test]
-fn base64_must_be_canonical_standard() {
+fn base64_follows_the_emulators_rules_standard_alphabet_padding_required_trailing_bits_allowed() {
     let url_safe = RGBA_2X2_B64.replace('/', "_");
+    // chafa emits non-zero trailing bits in its last chunk; wezterm accepts them.
+    let forwarded = fresh(&apc("a=t,f=32,s=1,v=1,i=1", "AAAAAB=="));
+    assert_eq!(forwarded.len(), 1);
+    let KittyImage::TransmitData { transmit, .. } = &forwarded[0] else {
+        panic!("expected a transmission: {:?}", forwarded[0]);
+    };
+    assert_eq!(transmit.data, KittyImageData::DirectBin(vec![0, 0, 0, 0]));
     assert_dropped(&[
         ("no padding", apc("a=t,f=32,s=1,v=1,i=1", "AAAAAA")),
-        (
-            "non-zero trailing bits",
-            apc("a=t,f=32,s=1,v=1,i=1", "AAAAAB=="),
-        ),
         ("url-safe alphabet", apc("a=t,f=32,s=2,v=2,i=1", &url_safe)),
         (
             "characters outside the alphabet",

@@ -32,9 +32,9 @@ describe("kittyCappedNotice", () => {
     expect(prev.size).toBe(0);
   });
 
-  it("words the toast in neutral Spanish, never voseo", () => {
+  it("words the toast in English", () => {
     expect(KITTY_CAPPED_MESSAGE).toBe(
-      "Imágenes kitty pausadas en esta terminal. Ábrela de nuevo para volver a verlas.",
+      "Kitty images paused in this terminal. Reopen it to show them again.",
     );
   });
 });

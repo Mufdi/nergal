@@ -44,3 +44,10 @@ Main `23470f5` = FRI-623 merge; its local gates passed at `8c61d7a` (cargo test 
 - Timed worst stacking (release, `--ignored`): passed (suite 0.01 s; was 9.226 s before Revision 2).
 - Clippy guard: a temporary `t.advance_bytes(b"x")` in non-test code failed clippy with `use of a disallowed method 'wezterm_term::Terminal::advance_bytes'`; removed (Builder run).
 - work-gates: deps SKIP, placeholders PASS, secrets PASS, Red locks PASS (4). 6b WARN justified: `#[allow(clippy::disallowed_methods)]` is the planned parity test that must call the emulator's own parser (design D6); `.skip(8)` is an iterator, not a skipped test.
+
+## Review-fix Red (2026-11-26)
+
+- Reviews: adversarial FAIL (2 Important: chafa GIF stacking → accepted risk by user, FRI-612 comment; main spec contradiction → MODIFIED requirement; 2 Nit: docs drift fixed, chafa fixture test), frontend PASS (4 Nit), security FAIL (1 Important: stack check clipped to visible width, bypass with `ESC[1;999H`).
+- Red: `a_cursor_past_the_last_column_still_caps_the_stack_at_eight_images`, `chafa_kitty_output_with_empty_header_and_closing_chunks_draws_and_writes_nothing` (real chafa 1.8 bytes; exposed that the gate rejected non-zero trailing base64 bits that wezterm and chafa accept → artifacts and the base64 gate test aligned to the emulator rules), English toast text (app UI copy is English). Red output: 2 session tests fail, 1 gate test fails, 1 vitest fails.
+- Frontend Nit 3 (purge `kittyNotified`) not fixed: one short key per capped terminal for the app run, the backend emits once; purging needs a terminal-close hook for no measurable gain.
+- Locks: kitty_gate_tests 27c4d7dc, session_kitty_tests 09eb765a, kittyCapped.test b9219cf1, imageLayers.test 8fcdb6af.

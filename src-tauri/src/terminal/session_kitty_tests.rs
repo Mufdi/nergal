@@ -555,6 +555,41 @@ fn eight_images_stacked_on_each_of_two_cells_are_all_drawn_without_a_notice() {
 }
 
 #[test]
+fn a_cursor_past_the_last_column_still_caps_the_stack_at_eight_images() {
+    let mut s = session();
+
+    s.advance_bytes(b"[1;999H");
+    for id in 1..=9 {
+        s.advance_bytes(&place_pixel_at_cursor(id, "c=2,r=2"));
+    }
+
+    assert!(
+        max_images_in_one_cell(s.terminal()) <= 8,
+        "a cell holds more than 8 images"
+    );
+    assert!(s.take_kitty_capped_notice());
+    assert!(!s.take_kitty_capped_notice());
+}
+
+#[test]
+fn chafa_kitty_output_with_empty_header_and_closing_chunks_draws_and_writes_nothing() {
+    let (mut s, writer) = session_with_writer();
+    // Captured from  of a 16x8 RGBA PNG: the header and the m=0 chunk carry no payload.
+    let chafa: &[u8] = b"\x1b_Ga=T,f=32,s=16,v=8,c=2,r=1,m=1\x1b\\\x1b_Gm=1;AACA/xAAgP8gAID/MACA/0AAgP9QAID/YACA/3AAgP+AAID/kACA/6AAgP+wAID/wACA/9AAgP/gAID/8ACA/wAggP8QIID/ICCA/zAggP9AIID/UCCA/2AggP9wIID/gCCA/5AggP+gIID/sCCA/8AggP/QIID/4CCA//AggP8AQID/EECA/yBAgP8wQID/QECA/1BAgP9gQID/cECA/4BAgP+QQID/oECA/7BAgP/AQID/0ECA/+BAgP/wQID/AGCA/xBggP8gYID/MGCA/0BggP9QYID/YGCA/3BggP+AYID/kGCA/6BggP+wYID/wGCA/9BggP/gYID/8GCA/wCAgP8QgID/IICA/zCAgP9AgID/UICA/2CAgP9wgID/gICA/5CAgP+ggID/sICA/8CAgP/QgID/4ICA//CAgP8AoID/EKCA/yCggP8woID/QKCA/1CggP9goID/cKCA/4CggP+QoID/oKCA/7CggP/AoID/0KCA/+CggP/woID/AMCA/xDAgP8gwID/MMCA/0DAgP9QwID/YMCA/3DAgP+AwID/kMCA/6DAgP+wwID/wMCA/9DAgP/gwID/8MCA/wDggP8Q4ID/IOCA/zDggP9A4ID/UOCA/2DggP9w4ID/gOCA/5DggP+g4ID/sOCA/8DggP/Q4ID/4OCA//DggPP=\x1b\\\x1b_Gm=0\x1b\\\n";
+
+    s.advance_bytes(chafa);
+    s.advance_bytes(b"[c");
+
+    assert_eq!(total_runs(&mut s), 1);
+    let written = writer.drain();
+    assert!(
+        written.starts_with(b"[?"),
+        "the device-attributes reply must be the only output: {written:?}"
+    );
+    assert!(!written.windows(3).any(|w| w == b"_G"));
+}
+
+#[test]
 #[ignore = "timing bound for the release profile: cargo test --release -- --ignored"]
 fn the_worst_stacking_of_1024_placements_stays_under_two_seconds() {
     let mut s = session();

@@ -11,14 +11,15 @@
   "validation": "pending",
   "planning_only": false,
   "iprev": {
-    "rounds": 2,
+    "rounds": 4,
     "verdict": "REVISE"
   },
   "interview_answers": {
     "order": "kitty first: FRI-613 then FRI-624 (Unicode placeholders + a=q answer) (user, 2026-11-26)",
     "query": "the a=q answer stays off in FRI-613 so Claude Code never sees half kitty; walk uses chafa -f kitty (user, 2026-11-26)",
     "security": "protection in Nergal, not a fork; after iprev r1 the byte filter became Nergal owning the termwiz parser and gating typed kitty actions before perform_actions",
-    "memory_invariant": "PTY output can never grow Nergal memory without bound through kitty: per-terminal lifetime caps on forwarded bytes and cells instead of tracking wezterm memory (user, 2026-11-26, convergence rule after iprev r1+r2)"
+    "memory_invariant": "PTY output can never grow Nergal memory without bound through kitty: per-terminal lifetime caps on forwarded bytes and cells instead of tracking wezterm memory (user, 2026-11-26, convergence rule after iprev r1+r2)",
+    "caps": "low lifetime caps with a visible notice: 256 MiB, 131072 cells, 1024 placements, 4096 transmissions, 4096 deletes; deletes pass after the other caps (user, 2026-11-26, after iprev r4)"
   },
   "events": []
 }

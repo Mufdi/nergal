@@ -7,7 +7,7 @@ Modern terminal tools such as chafa and yazi draw images with the kitty graphics
 ## What Changes
 
 - Nergal parses the PTY output itself, with the same termwiz parser the emulator uses, and applies the parsed actions to the emulator. A gate between the two lets only safe kitty graphics actions through: direct RGB or RGBA data of a checked size, placements that cannot divide by zero, and deletes. It drops every other kitty action, assembles chunked transfers itself, and forwards every action in quiet mode, so the emulator never replies.
-- Kitty memory and work stay under lifetime caps per terminal (256 MiB of image data, about half a million covered cells, and 4096 transmissions, placements and deletes). Past a cap, that terminal stops accepting kitty images until it is reopened.
+- Kitty memory and work stay under lifetime caps per terminal (256 MiB of image data, 131,072 covered cells, 1024 placements, 4096 transmissions and deletes). Past a cap, that terminal stops drawing new kitty images until it is reopened, and the user sees a notice. `NERGAL_DISABLE_KITTY=1` turns kitty off without a release.
 - The kitty query (`a=q`) is dropped and gets no answer, so no program, Claude Code included, sees kitty support yet. FRI-624 adds Unicode placeholders and then answers the query.
 - The emulator config turns kitty graphics on.
 - The canvas draws kitty placements in z order, in kitty's three layers: under the cell background, over the background and under text, and over text.
@@ -26,6 +26,6 @@ None.
 ## Impact
 
 - Rust: new `src-tauri/src/terminal/kitty_gate.rs`; `src-tauri/src/terminal/session.rs` (owns a termwiz parser; `advance_bytes` parses, gates and calls `perform_actions`); `src-tauri/src/terminal/config.rs` (`enable_kitty_graphics`).
-- React: a pure layer module next to `src/components/terminal/imagePlacement.ts`; `src/components/terminal/terminalService.ts` (`paintRow` draws three layers in z order).
+- React: a toast when a terminal reaches its kitty cap; a pure layer module next to `src/components/terminal/imagePlacement.ts`; `src/components/terminal/terminalService.ts` (`paintRow` draws three layers in z order).
 - No new dependency (termwiz is already a direct dependency), no IPC change, no schema change.
 - Behavior for sixel and iTerm2 images is unchanged.

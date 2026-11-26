@@ -24,7 +24,7 @@
 
 ### 1. `KittyGate` (`src-tauri/src/terminal/kitty_gate.rs`, declared in `terminal/mod.rs`)
 
-- `pub struct GateLimits { pub max_side: u32, pub max_bytes: u64, pub max_cells: u64, pub max_transmissions: u32, pub max_placements: u32, pub max_deletes: u32 }` with `Default` = 4096, 256 MiB, 524,288, 4096, 4096, 4096; per-transmission minimum charge 4 KiB; `KittyGate::with_limits(limits)` and `KittyGate::default()`.
+- `pub struct GateLimits { pub max_side: u32, pub max_bytes: u64, pub max_cells: u64, pub max_transmissions: u32, pub max_placements: u32, pub max_deletes: u32 }` with `Default` = 4096, 256 MiB, 131,072, 4096, 1024, 4096; per-transmission minimum charge 4 KiB; deletes keep passing after the other caps until `max_deletes`; `pub fn take_capped_notice(&mut self) -> bool` returns true once, the first time a cap is reached; `NERGAL_DISABLE_KITTY=1` (read once when the gate is built) drops every kitty action; `KittyGate::with_limits(limits)` and `KittyGate::default()`.
 - `pub fn admit(&mut self, actions: Vec<Action>, cols: usize, rows: usize) -> Vec<Action>`: non-kitty actions pass in order; kitty actions follow design D2-D4. Small pure functions per rule (`check_transmit`, `check_placement`, `continuation`) so each rule has a direct test.
 - State: the in-flight transfer (first chunk's typed fields, decoded bytes so far); lifetime counters (bytes, cells, transmissions, placements, deletes); a `capped` flag that, once set, drops every later kitty action and logs once (`tracing::warn!`). No image dimension map (design D2).
 - Count before forwarding: transmissions add `max(width * height * 4, 4096)` bytes and 1 transmission; placements add `columns * rows` cells and 1 placement; deletes add 1 delete; an `a=T` must fit both; if anything would pass a cap, drop the action and set `capped`.
@@ -38,15 +38,20 @@
 - `config.rs`: `fn enable_kitty_graphics(&self) -> bool { true }`.
 - `src-tauri/clippy.toml` (new): `disallowed-methods = [{ path = "wezterm_term::Terminal::advance_bytes", reason = "PTY bytes go through TerminalSession's parser and KittyGate" }]`. Check the crate path name with `cargo tree` (`wezterm-term` exposes `wezterm_term`) and that clippy picks the file from `src-tauri/`.
 
-### 3. Layers (`src/components/terminal/imageLayers.ts`)
+### 3. Snapshot run index and the cap notice
 
-- `export const KITTY_UNDER_BG_Z = -1073741824;` `export function imageLayers(runs)` → `{ underBackground, underText, overText }`, stable ascending z.
+- `session.rs` `push_image_cell_hashed` (`:640-684`): replace the reverse linear search of open runs (`:663`) with a `HashMap` keyed by the merge key (hash, z, end column, u1, v0, v1, padding), so each image of a cell is O(1).
+- The PTY reader thread (`pty.rs`, after `advance_bytes`, with the session guard held only to read the flag): when `take_capped_notice()` is true, emit `terminal:kitty-capped` with `{ session_id, pty_id }` outside the lock. Frontend (`src/stores/hooks.ts` setup, or the terminal store that owns toasts): one toast, neutral Spanish, e.g. "Imágenes kitty pausadas en esta terminal. Ábrela de nuevo para volver a verlas."
+
+### 4. Layers
+
+- `export const KITTY_UNDER_BG_Z = -1073741824;` `export function imageLayers(runs)` → `{ underBackground, underText, overText }`, stable ascending z (`src/components/terminal/imageLayers.ts`).
 - `paintRow`: row clear → `underBackground` → backgrounds pass (all cells, keep the wide-cell skip) → `underText` → glyph/underline pass → `overText`. `drawImageRuns` takes an ordered list.
 
 ## Builder coordination
 
 - Group A (Rust: 1-2) and group B (frontend: 3) share no files.
-- Interface for the test-writer: `terminal::kitty_gate::{KittyGate, GateLimits}` with `admit(Vec<Action>, cols, rows) -> Vec<Action>` and `GateLimits { max_side, max_bytes, max_cells }`; a session-level way to inject `GateLimits` for the oracle tests (e.g. `TerminalSession::set_kitty_limits`); tests build actions with `termwiz::escape::parser::Parser::new().parse_as_vec(bytes)` so they exercise real parsing. Frontend: `imageLayers(runs)`, `KITTY_UNDER_BG_Z`.
+- Interface for the test-writer: `terminal::kitty_gate::{KittyGate, GateLimits}` with `admit(Vec<Action>, cols, rows) -> Vec<Action>`, `take_capped_notice()`, and `GateLimits { max_side, max_bytes, max_cells, max_transmissions, max_placements, max_deletes }`; `KittyGate::with_limits_and_switch(limits, disabled: bool)` for the kill-switch test; a session-level way to inject `GateLimits` for the oracle tests (e.g. `TerminalSession::set_kitty_limits`); tests build actions with `termwiz::escape::parser::Parser::new().parse_as_vec(bytes)` so they exercise real parsing. Frontend: `imageLayers(runs)`, `KITTY_UNDER_BG_Z`.
 - Trap: the emulator's own parser must never be fed again (state would split between two parsers).
 - Trap: forward rebuilt typed actions, never the original verbosity.
 - Trap: locked test files must be rustfmt-clean before hashing; `rustfmt --edition 2024 --config skip_children=true` on production files.
@@ -55,7 +60,8 @@
 
 - [Parser swap changes ordinary output] → a comparison test feeds a mixed byte corpus (text, CSI, OSC, DCS sixel, iTerm2 OSC 1337, split reads) through both paths and compares grids.
 - [A gate rule misses a bypass] → a deterministic fuzz test (seeded generator, no new dependency) builds random kitty key sets and byte noise around them, parses, gates, and asserts every forwarded kitty action satisfies the allowlist and the forwarded totals stay under the caps.
-- [Memory bound] → the oracle test counts image cells and distinct image bytes inside wezterm, in both screens and the scrollback, after line-moving actions and a resize.
+- [Memory bound] → the oracle test counts image cells inside wezterm, in both screens and the scrollback, after line-moving actions and a resize; the private parts (`id_to_data`, image cache) rest on the arithmetic in design D4.
+- [CPU] → the worst-stacking test (1024 placements of 16x8 at one cursor, three snapshots, a delete) under a time bound in release profile.
 - [Painter regression for sixel/iTerm2 (z=0)] → z=0 stays in `overText`.
 
 ## Verification

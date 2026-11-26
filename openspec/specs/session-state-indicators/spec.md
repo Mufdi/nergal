@@ -21,26 +21,58 @@ Provide polymorphic session indicators that communicate session state at a glanc
 ## Implementation Notes
 
 Original spec proposed shape-shifting (circle→squircle→square→diamond). Implemented as circle-only with motion layers instead — more modern, legible at small sizes. Thinking state uses color-only (no animation) per user feedback. During implementation, discovered and fixed a critical session routing bug: all event payloads used Claude CLI session ID instead of nergal session ID, causing cross-session state contamination.
+
 ## Requirements
+
 ### Requirement: Polymorphic indicator resolves visual state from session data
-The system SHALL render a polymorphic indicator for each session that derives its visual state from the session's `modeMap` value, `planReviewStatus`, `askUser` state, and pending `Notification` attention. The resolution priority SHALL be: attention (plan review, ask user, or notification attention pending) > completed > idle > thinking (active between tools) > working (tool executing). Notification attention SHALL be set by the `permission_prompt` and `agent_needs_input` notification types. The `agent_completed` notification type SHALL NOT set attention; it SHALL clear pending notification attention for its session only when that attention came from `agent_needs_input`, because a background agent is answered in agent view and fires no other clearing event. Attention from `agent_needs_input` SHALL survive PostToolUse and Stop of the foreground session, and SHALL clear on `agent_completed`, UserPromptSubmit, and SessionEnd. Other notification attention SHALL clear on PostToolUse, Stop, UserPromptSubmit, and SessionEnd.
+The system SHALL render a polymorphic indicator for each session that derives its visual state from the session's reported root status (OSC 7501, see `program-status-protocol`), its `modeMap` value, `planReviewStatus`, `askUser` state, and pending `Notification` attention. Attention SHALL take priority over every other state; attention is pending when a plan review is `pending_review`, an ask-user question is pending, notification attention is pending, or the root status is `blocked`. The pending tint on the session tab and sidebar row SHALL follow the same attention sources, root status `blocked` included; the root status SHALL NOT send desktop notifications, because the hooks already notify for permission prompts and questions. Completed SHALL come next. When the session has a root status, the remaining state SHALL come from it: `error` → error, `done` → done, `idle` → idle, and `working` → working when the mode is a tool name, thinking when the mode is `"active"`, and working otherwise (for example after `Stop` while background work runs). When the session has no root status, the remaining resolution SHALL be: idle (mode `"idle"`) > thinking (mode `"active"`) > working (mode is a tool name). Notification attention SHALL be set by the `permission_prompt` and `agent_needs_input` notification types. The `agent_completed` notification type SHALL NOT set attention; it SHALL clear pending notification attention for its session only when that attention came from `agent_needs_input`, because a background agent is answered in agent view and fires no other clearing event. Attention from `agent_needs_input` SHALL survive PostToolUse and Stop of the foreground session, and SHALL clear on `agent_completed`, UserPromptSubmit, and SessionEnd. Other notification attention SHALL clear on PostToolUse, Stop, UserPromptSubmit, and SessionEnd.
 
 #### Scenario: Idle session shows static circle
-- **WHEN** a session's mode is `"idle"` and it has no pending plan review, ask-user, or notification attention
+- **WHEN** a session's mode is `"idle"`, it has no root status, and it has no pending plan review, ask-user, or notification attention
 - **THEN** the indicator renders as a static circle with muted gray color and no animation
 
 #### Scenario: Thinking session shows blue circle
-- **WHEN** a session's mode is `"active"` (between tool calls)
+- **WHEN** a session's mode is `"active"` (between tool calls) and it has no root status
 - **THEN** the indicator renders as a static circle with sky-blue color and no animation
 
 #### Scenario: Working session shows circle with orbital ring
-- **WHEN** a session's mode is a tool name (e.g., `"Read"`, `"Edit"`, `"Bash"`)
+- **WHEN** a session's mode is a tool name (e.g., `"Read"`, `"Edit"`, `"Bash"`) and it has no root status
 - **THEN** the indicator renders as a green circle with a rotating orbital ring (0.8s cycle)
 
 #### Scenario: Attention session shows circle with ripple ping
 - **WHEN** a session has `planReviewStatus === "pending_review"` OR has a pending `askUser` question OR has pending notification attention
 - **THEN** the indicator renders as an orange circle with expanding ripple/ping animation (1.2s cycle)
-- **AND** the attention state takes priority over any mode-derived state
+- **AND** the attention state takes priority over any mode-derived or status-derived state
+
+#### Scenario: Blocked root status shows attention
+- **WHEN** session 4 has root status `blocked` with no `kind` (for example the folder-trust prompt) and no hook attention
+- **THEN** the indicator renders the attention state
+- **AND** session 4's tab and sidebar row carry the same pending tint as an AskUserQuestion
+- **AND** no desktop notification is sent for the root status
+
+#### Scenario: Working root status after Stop shows working
+- **WHEN** session 4's mode is `"idle"` after a `Stop` hook and its root status is `working`
+- **THEN** the indicator renders the working state
+
+#### Scenario: Working root status between tools shows thinking
+- **WHEN** session 4's mode is `"active"` and its root status is `working`
+- **THEN** the indicator renders the thinking state
+
+#### Scenario: Done root status shows done
+- **WHEN** session 4's root status is `done`, its mode is `"Read"` from a late PostToolUse, and it has no attention
+- **THEN** the indicator renders the done state: a static green ring with a transparent center and no animation
+
+#### Scenario: Error root status shows error
+- **WHEN** session 4's root status is `error` and it has no attention
+- **THEN** the indicator renders the error state: a static red X icon with no animation, so it differs from attention and working by shape and not only by color
+
+#### Scenario: Idle root status shows idle
+- **WHEN** session 4's root status is `idle` and its mode is `"active"`
+- **THEN** the indicator renders the idle state
+
+#### Scenario: Removed root status falls back to hooks
+- **WHEN** session 4's root status is removed and its mode is `"Bash"`
+- **THEN** the indicator renders the working state
 
 #### Scenario: Background agent needing input sets attention
 - **WHEN** a `Notification` hook with `notification_type: "agent_needs_input"` arrives for session 4
@@ -114,4 +146,3 @@ All Tauri event payloads (`plan:ready`, `cost:update`, `cwd:changed`, `file:chan
 #### Scenario: Session switch opens pending plan
 - **WHEN** user switches to a session with `pending_review` plan status
 - **THEN** the plan tab opens and the right panel expands automatically
-

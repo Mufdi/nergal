@@ -335,6 +335,10 @@ mod liveness_tests;
 mod identity_liveness_tests;
 
 #[cfg(test)]
+#[path = "program_status_state_tests.rs"]
+mod program_status_state_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

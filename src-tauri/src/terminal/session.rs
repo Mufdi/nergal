@@ -1120,3 +1120,7 @@ mod mouse_scroll_gate_tests;
 #[cfg(test)]
 #[path = "image_runs_tests.rs"]
 mod image_runs_tests;
+
+#[cfg(test)]
+#[path = "session_status_tests.rs"]
+mod status_tests;

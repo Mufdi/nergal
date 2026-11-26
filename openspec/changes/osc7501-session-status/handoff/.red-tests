@@ -1,0 +1,7 @@
+b3abf29c92d54376c7b4d98d3b6e80b61def2bd6  src-tauri/src/terminal/program_status_tests.rs
+1b95ae9ed05b7d15d27bbf311fa54abccf1dbf01  src-tauri/src/terminal/write_queue_tests.rs
+97c154f72960c299523101719c8d8dd22b00e66d  src-tauri/src/terminal/session_status_tests.rs
+5b5cd153c9bbbee95fb9e5341d57833ba687b39d  src-tauri/src/pty_program_status_tests.rs
+479302a77ea7ef0e3e0cd2571d1808d6b5de602a  src-tauri/src/agents/program_status_state_tests.rs
+c8dc57aaa1abbea4c4342858243327c39bfe1d1e  src-tauri/src/mcp/messaging_status_tests.rs
+34d686ec0a2c6e2102963ba4f10454736e1f0e32  src-tauri/src/mcp/notify_outcome_tests.rs

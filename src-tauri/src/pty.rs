@@ -3264,3 +3264,7 @@ mod user_paste_tests;
 #[cfg(test)]
 #[path = "pty_deliver_prompt_tests.rs"]
 mod deliver_prompt_tests;
+
+#[cfg(test)]
+#[path = "pty_program_status_tests.rs"]
+mod pty_program_status_tests;

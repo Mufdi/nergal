@@ -639,3 +639,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "messaging_status_tests.rs"]
+mod status_tests;

@@ -1311,3 +1311,7 @@ mod tests {
         assert!(outcome_note("r1", &WorktreeRequestState::Cancelled).is_empty());
     }
 }
+
+#[cfg(test)]
+#[path = "notify_outcome_tests.rs"]
+mod notify_outcome_tests;

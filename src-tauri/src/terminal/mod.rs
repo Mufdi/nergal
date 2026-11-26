@@ -14,8 +14,10 @@ mod differ;
 mod emitter;
 pub(crate) mod image_fetch;
 mod input;
+pub mod program_status;
 pub(crate) mod session;
 mod types;
+pub mod write_queue;
 
 #[cfg(test)]
 mod image_fetch_tests;

@@ -266,6 +266,92 @@ pub fn drain_idle(
 }
 
 #[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    /// Captures the `on_settled` callback instead of running a real 250ms PTY
+    /// settle, so tests drive the confirmed/failed outcome synchronously.
+    pub(crate) struct MockDelivery {
+        wake_calls: AtomicUsize,
+        paste_count: AtomicUsize,
+        captured: Mutex<Option<SettleCallback>>,
+        emitted: Arc<Mutex<Vec<(String, Value)>>>,
+        fail_paste: bool,
+    }
+
+    impl MockDelivery {
+        pub(crate) fn new(fail_paste: bool) -> Self {
+            Self {
+                wake_calls: AtomicUsize::new(0),
+                paste_count: AtomicUsize::new(0),
+                captured: Mutex::new(None),
+                emitted: Arc::new(Mutex::new(Vec::new())),
+                fail_paste,
+            }
+        }
+
+        pub(crate) fn pastes(&self) -> usize {
+            self.paste_count.load(Ordering::SeqCst)
+        }
+
+        /// Entries into `wake_idle`, counted BEFORE the fail check — so a test
+        /// can tell a retry that actually reached the paste logic apart from
+        /// one skipped by the in-flight guard (which never calls `wake_idle`).
+        pub(crate) fn wake_calls(&self) -> usize {
+            self.wake_calls.load(Ordering::SeqCst)
+        }
+
+        pub(crate) fn emitted_count(&self) -> usize {
+            self.emitted.lock().unwrap().len()
+        }
+
+        /// Simulate the deferred submit landing (or failing) by invoking the
+        /// callback `wake_idle` captured instead of calling it immediately.
+        pub(crate) fn settle(&self, ok: bool) {
+            let cb = self.captured.lock().unwrap().take();
+            if let Some(cb) = cb {
+                cb(ok);
+            }
+        }
+    }
+
+    impl SessionDelivery for MockDelivery {
+        fn wake_idle(
+            &self,
+            _session_id: &str,
+            _note: &str,
+            on_settled: SettleCallback,
+        ) -> Result<()> {
+            self.wake_calls.fetch_add(1, Ordering::SeqCst);
+            if self.fail_paste {
+                return Err(anyhow::anyhow!("mock paste failure"));
+            }
+            self.paste_count.fetch_add(1, Ordering::SeqCst);
+            *self.captured.lock().unwrap() = Some(on_settled);
+            Ok(())
+        }
+
+        fn emit(&self, event: &str, payload: Value) {
+            self.emitted
+                .lock()
+                .unwrap()
+                .push((event.to_string(), payload));
+        }
+
+        fn emit_handle(&self) -> EmitHandle {
+            let emitted = self.emitted.clone();
+            Box::new(move |event, payload| {
+                emitted.lock().unwrap().push((event.to_string(), payload));
+            })
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -323,87 +409,8 @@ mod tests {
     // -- drain_idle: completion-callback bookkeeping (cross-session-delivery-
     //    confirmation) --
 
-    use std::sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-    };
-
-    /// Captures the `on_settled` callback instead of running a real 250ms PTY
-    /// settle, so tests drive the confirmed/failed outcome synchronously.
-    struct MockDelivery {
-        wake_calls: AtomicUsize,
-        paste_count: AtomicUsize,
-        captured: Mutex<Option<SettleCallback>>,
-        emitted: Arc<Mutex<Vec<(String, Value)>>>,
-        fail_paste: bool,
-    }
-
-    impl MockDelivery {
-        fn new(fail_paste: bool) -> Self {
-            Self {
-                wake_calls: AtomicUsize::new(0),
-                paste_count: AtomicUsize::new(0),
-                captured: Mutex::new(None),
-                emitted: Arc::new(Mutex::new(Vec::new())),
-                fail_paste,
-            }
-        }
-
-        fn pastes(&self) -> usize {
-            self.paste_count.load(Ordering::SeqCst)
-        }
-
-        /// Entries into `wake_idle`, counted BEFORE the fail check — so a test
-        /// can tell a retry that actually reached the paste logic apart from
-        /// one skipped by the in-flight guard (which never calls `wake_idle`).
-        fn wake_calls(&self) -> usize {
-            self.wake_calls.load(Ordering::SeqCst)
-        }
-
-        fn emitted_count(&self) -> usize {
-            self.emitted.lock().unwrap().len()
-        }
-
-        /// Simulate the deferred submit landing (or failing) by invoking the
-        /// callback `wake_idle` captured instead of calling it immediately.
-        fn settle(&self, ok: bool) {
-            let cb = self.captured.lock().unwrap().take();
-            if let Some(cb) = cb {
-                cb(ok);
-            }
-        }
-    }
-
-    impl SessionDelivery for MockDelivery {
-        fn wake_idle(
-            &self,
-            _session_id: &str,
-            _note: &str,
-            on_settled: SettleCallback,
-        ) -> Result<()> {
-            self.wake_calls.fetch_add(1, Ordering::SeqCst);
-            if self.fail_paste {
-                return Err(anyhow::anyhow!("mock paste failure"));
-            }
-            self.paste_count.fetch_add(1, Ordering::SeqCst);
-            *self.captured.lock().unwrap() = Some(on_settled);
-            Ok(())
-        }
-
-        fn emit(&self, event: &str, payload: Value) {
-            self.emitted
-                .lock()
-                .unwrap()
-                .push((event.to_string(), payload));
-        }
-
-        fn emit_handle(&self) -> EmitHandle {
-            let emitted = self.emitted.clone();
-            Box::new(move |event, payload| {
-                emitted.lock().unwrap().push((event.to_string(), payload));
-            })
-        }
-    }
+    use super::test_support::MockDelivery;
+    use std::sync::Arc;
 
     fn test_db() -> SharedDb {
         Arc::new(std::sync::Mutex::new(

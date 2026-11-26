@@ -2,17 +2,17 @@
   "tier": "L",
   "ceremony": "deep",
   "risk_tier": "medium",
-  "spec_target": "program-status-protocol, terminal-wezterm, session-state-indicators, session-directory",
+  "spec_target": "program-status-protocol, terminal-wezterm, session-state-indicators, session-directory, cross-session-messaging",
   "tracker": {
     "system": "linear",
     "id": "FRI-623",
     "pending": []
   },
-  "validation": "pending",
+  "validation": "validated",
   "planning_only": false,
   "iprev": {
-    "rounds": 2,
-    "verdict": "REVISE"
+    "rounds": 3,
+    "verdict": "REVISE-capped; r3 medium findings applied after the round, low ones recorded as accepted risks in design D9"
   },
   "interview_answers": {
     "done_visual": "done gets its own visual, distinct from idle and from completed (user, 2026-11-26)",
@@ -21,5 +21,16 @@
     "fri622": "FRI-622 is parked unmerged on its own branch; this change starts from main ab472c2 (user, 2026-11-26)",
     "delivery_invariant": "A wake note never lands inside a dialog or a running turn, and a queued message never stays queued while its target accepts a prompt; with OSC 7501 the root status decides busy (user, 2026-11-26, convergence rule after iprev r1+r2)"
   },
-  "events": []
+  "events": [
+    {
+      "ts": "2026-11-26T18:30:00-03:00",
+      "type": "validated",
+      "note": "openspec validate PASS; iprev opus 3 rounds (r1 11 findings, r2 7, r3 6: all medium/high applied, 2 low as accepted risks); convergence rule triggered on delivery after r2, user set the invariant"
+    },
+    {
+      "ts": "2026-11-26T18:30:00-03:00",
+      "type": "iprev-cap",
+      "note": "medium risk cap of 3 rounds reached with REVISE; r3 fixes applied without a 4th round"
+    }
+  ]
 }

@@ -61,3 +61,9 @@ Verification (orchestrator):
 - `npx tsc --noEmit`: clean. `pnpm test`: 61 files, 755 tests passed.
 - `work-gates.sh`: 6a/6b/6c PASS, Red locks PASS (15), 5 WARN (tokio `test-util` dev feature only).
 - Comment audit: the added comments are WHY.
+
+## Re-review (round 2) and Red — group 8, 2026-11-26
+
+Re-review (opus, appended to REVIEW.md): FAIL; 14 of 17 first-round findings resolved, 2 partial (status bar `error` still a dot), 1 left to the walk (`done` ring at `xs`); new: 1 Important (disarm on `SessionEnd` also ran for `/resume` and nested `claude -p`, both with Claude Code still alive, freezing the status and letting a wake paste into a running turn) + 4 Nit (non-atomic in-flight check, status bar `error` dot, `assertNever` throws in render, arming not limited to the live PTY) + 2 doc notes. All accepted; artifacts `5c373fb` (disarm only on a top-level `SessionEnd` whose reason is not `clear`/`resume`; reasons verified in the 2.1.332 binary: clear, resume, logout, prompt_input_exit, other).
+
+Ruling: the locked `hooks/events_review_tests.rs` encoded the old disarm rule, so it was wrong against the updated spec; the test-writer rewrote it (11-case table over `disarms_on_session_end(top_level, reason)`) and re-locked. New locked files: `agents/program_status_rereview_tests.rs`, `mcp/outcome_inflight_tests.rs`, `src/lib/sessionIndicatorRereview.test.ts` (18 lines in `.red-tests`, all OK). Red: `cargo test --no-run` 1 error (`disarms_on_session_end` arity); with the old call, all 5 new Rust behavior tests fail for the expected reasons (late query arms A, non-live PTY armed, no in-flight mark during the outcome paste); vitest 5 failed (`assertNever` throws; `statusBarDot` missing), 755 passed.

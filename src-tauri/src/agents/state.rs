@@ -493,6 +493,10 @@ mod program_status_state_tests;
 mod program_status_arming_tests;
 
 #[cfg(test)]
+#[path = "program_status_rereview_tests.rs"]
+mod program_status_rereview_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

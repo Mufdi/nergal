@@ -18,14 +18,24 @@ fn session_end_carries_its_reason_and_still_parses_without_one() {
 }
 
 #[test]
-fn only_a_session_end_that_is_not_clear_disarms_the_protocol() {
-    assert!(!disarms_on_session_end(Some("clear")));
-    for reason in [
-        Some("prompt_input_exit"),
-        Some("logout"),
-        Some("other"),
-        None,
+fn only_a_top_level_session_end_that_is_not_clear_or_resume_disarms_the_protocol() {
+    for (top_level, reason, expected) in [
+        (true, Some("prompt_input_exit"), true),
+        (true, Some("logout"), true),
+        (true, Some("other"), true),
+        (true, None, true),
+        (true, Some("clear"), false),
+        (true, Some("resume"), false),
+        (false, Some("prompt_input_exit"), false),
+        (false, Some("other"), false),
+        (false, None, false),
+        (false, Some("clear"), false),
+        (false, Some("resume"), false),
     ] {
-        assert!(disarms_on_session_end(reason), "reason {reason:?}");
+        assert_eq!(
+            disarms_on_session_end(top_level, reason),
+            expected,
+            "top_level {top_level}, reason {reason:?}"
+        );
     }
 }

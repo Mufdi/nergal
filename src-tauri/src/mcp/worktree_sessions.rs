@@ -1316,3 +1316,7 @@ mod tests {
 #[cfg(test)]
 #[path = "notify_outcome_tests.rs"]
 mod notify_outcome_tests;
+
+#[cfg(test)]
+#[path = "outcome_inflight_tests.rs"]
+mod outcome_inflight_tests;

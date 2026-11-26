@@ -178,7 +178,7 @@ fn in_flight_set() -> &'static std::sync::Mutex<std::collections::HashSet<String
 }
 
 /// Returns `false` (without inserting) if `session_id` is already in flight.
-fn try_mark_in_flight(session_id: &str) -> bool {
+pub(crate) fn try_mark_in_flight(session_id: &str) -> bool {
     match in_flight_set().lock() {
         Ok(mut set) => set.insert(session_id.to_string()),
         Err(_) => false,
@@ -192,7 +192,7 @@ pub(crate) fn is_in_flight(session_id: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn clear_in_flight(session_id: &str) {
+pub(crate) fn clear_in_flight(session_id: &str) {
     if let Ok(mut set) = in_flight_set().lock() {
         set.remove(session_id);
     }

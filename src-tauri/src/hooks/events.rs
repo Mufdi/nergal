@@ -27,10 +27,10 @@ pub struct PromptCacheStatus {
     pub last_miss_causes: Vec<String>,
 }
 
-/// `clear` keeps the same PTY and the protocol on; every other end (or an unknown reason)
-/// stops the report stream.
-pub fn disarms_on_session_end(reason: Option<&str>) -> bool {
-    reason != Some("clear")
+/// `clear` and `resume` keep the same Claude Code process (it never re-sends the query), and a
+/// nested `claude -p` inherits the session env but is not the TUI that armed the protocol.
+pub fn disarms_on_session_end(top_level: bool, reason: Option<&str>) -> bool {
+    top_level && !matches!(reason, Some("clear" | "resume"))
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -10,7 +10,7 @@ import { activeAgentMetadataAtom } from "@/stores/agent";
 import { planReviewStatusMapAtom } from "@/stores/plan";
 import { pendingAsksAtom, pendingAttentionAtom } from "@/stores/askUser";
 import { programStatusMapAtom } from "@/stores/programStatus";
-import { indicatorDotClass, resolveIndicatorState } from "@/lib/sessionIndicatorState";
+import { resolveIndicatorState, statusBarDot } from "@/lib/sessionIndicatorState";
 import {
   browserNewTabAction,
   browserSetModeAction,
@@ -28,7 +28,7 @@ import { leaderPendingAtom } from "@/stores/leader";
 import * as terminalService from "@/components/terminal/terminalService";
 import { Badge } from "@/components/ui/badge";
 import { Kbd } from "@/components/ui/kbd";
-import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, DatabaseZap, Clock, Globe, CalendarRange, Pencil, TriangleAlert, Timer, History, X, Copy, ExternalLink } from "lucide-react";
+import { GitBranch, FolderOpen, Zap, ChevronUp, Gauge, DatabaseZap, Clock, Globe, CalendarRange, Pencil, TriangleAlert, Timer, History, X, Check, Copy, ExternalLink } from "lucide-react";
 import { activeIncidentsAtom, providerStatusOpenAtom, type ProviderStatusDetail } from "@/stores/statusFeed";
 import { notificationHistoryAtom, clearNotificationsAtom, notificationHistoryOpenAtom, type NotificationEntry } from "@/stores/notifications";
 import {
@@ -139,7 +139,7 @@ export function StatusBar() {
     return () => clearInterval(id);
   }, [sl.session_started_at]);
 
-  const dotColor = indicatorDotClass(
+  const dot = statusBarDot(
     resolveIndicatorState({
       sessionStatus: activeSession?.status ?? "idle",
       mode,
@@ -221,10 +221,16 @@ export function StatusBar() {
               variant="secondary"
               className="h-4 min-w-0 max-w-40 gap-1 px-1.5 text-[11px] leading-none"
             >
-              <span
-                className={`inline-block size-1.5 shrink-0 rounded-full ${dotColor}`}
-                aria-hidden="true"
-              />
+              {dot.icon === "x" ? (
+                <X className="size-3 shrink-0 text-red-500" aria-hidden="true" />
+              ) : dot.icon === "check" ? (
+                <Check className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+              ) : (
+                <span
+                  className={`inline-block size-1.5 shrink-0 rounded-full ${dot.className}`}
+                  aria-hidden="true"
+                />
+              )}
               {/* mode carries the running tool name during execution — truncate
                   so a long MCP tool name can't collapse the rest of the bar. */}
               <span className="truncate">{mode}</span>

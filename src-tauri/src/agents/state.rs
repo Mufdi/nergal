@@ -236,6 +236,10 @@ impl AgentRuntimeState {
             .insert(session_id.to_string(), pty_id.to_string());
     }
 
+    pub fn live_pty(&self, session_id: &str) -> Option<String> {
+        self.live_ptys.get(session_id).map(|p| p.clone())
+    }
+
     pub fn mark_dead(&self, session_id: &str) {
         self.live_ptys.remove(session_id);
     }
@@ -298,6 +302,10 @@ impl AgentRuntimeState {
 
     /// A newer PTY's arming replaces the older one's, so the old shell stops being believed.
     pub fn arm_program_status(&self, session_id: &str, pty_id: &str) {
+        let live = self.live_ptys.get(session_id).is_some_and(|p| *p == pty_id);
+        if !live {
+            return;
+        }
         self.program_status_armed
             .insert(session_id.to_string(), pty_id.to_string());
     }

@@ -29,6 +29,7 @@ export function resolveIndicatorState(input: IndicatorInput): IndicatorState {
   if (planReview === "pending_review" || isAwaitingSession(input)) return "attention";
   if (sessionStatus === "completed") return "completed";
   if (!root) return fromMode(mode);
+  const workingState = (): IndicatorState => (mode === "idle" ? "working" : fromMode(mode));
   switch (root.state) {
     case "error":
       return "error";
@@ -38,14 +39,13 @@ export function resolveIndicatorState(input: IndicatorInput): IndicatorState {
       return "idle";
     case "working":
     case "blocked":
-      return mode === "idle" ? "working" : fromMode(mode);
-    default:
-      return assertNever(root.state);
+      return workingState();
+    default: {
+      const _exhaustive: never = root.state;
+      void _exhaustive;
+      return fromMode(mode);
+    }
   }
-}
-
-function assertNever(value: never): never {
-  throw new Error(`unhandled root state: ${String(value)}`);
 }
 
 export function indicatorIcon(state: IndicatorState): "check" | "x" | null {
@@ -66,4 +66,8 @@ const DOT_CLASSES: Record<IndicatorState, string> = {
 
 export function indicatorDotClass(state: IndicatorState): string {
   return DOT_CLASSES[state];
+}
+
+export function statusBarDot(state: IndicatorState): { icon: "check" | "x" | null; className: string } {
+  return { icon: indicatorIcon(state), className: indicatorDotClass(state) };
 }

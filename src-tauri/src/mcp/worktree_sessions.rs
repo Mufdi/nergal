@@ -31,7 +31,7 @@ use tauri::AppHandle;
 use crate::agents::state::AgentRuntimeState;
 use crate::config::AgentWorktreesConfig;
 use crate::mcp::DaemonContext;
-use crate::mcp::delivery::{AppBridge, SessionDelivery};
+use crate::mcp::delivery::{AppBridge, SessionDelivery, SettleCallback};
 use crate::models::LaunchOptions;
 
 /// Lower bound on a request timeout (a too-short timeout would race the gate UI).
@@ -542,12 +542,21 @@ pub fn drain_worktree_outcomes(
     delivery: &dyn SessionDelivery,
     session_id: &str,
 ) {
+    if !crate::mcp::delivery::try_mark_in_flight(session_id) {
+        return;
+    }
     let notes = gate.take_outcomes(session_id);
     if notes.is_empty() {
+        crate::mcp::delivery::clear_in_flight(session_id);
         return;
     }
     let combined = notes.join("\n");
-    if let Err(e) = delivery.wake_idle(session_id, &combined, Box::new(|_| {})) {
+    let sid_for_settle = session_id.to_string();
+    let on_settled: SettleCallback = Box::new(move |_| {
+        crate::mcp::delivery::clear_in_flight(&sid_for_settle);
+    });
+    if let Err(e) = delivery.wake_idle(session_id, &combined, on_settled) {
+        crate::mcp::delivery::clear_in_flight(session_id);
         tracing::debug!(session_id, "worktree outcome drain wake failed: {e:#}");
         // Re-queue verbatim so a later idle flip retries.
         for note in notes {

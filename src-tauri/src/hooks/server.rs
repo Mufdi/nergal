@@ -1119,7 +1119,6 @@ fn process_event(
         // nothing this Stop; otherwise it waits for the next idle.
         let delivered = crate::mcp::delivery::drain_idle(db, &bridge, csid, cross_session_enabled);
         if delivered == 0
-            && !crate::mcp::delivery::is_in_flight(csid)
             && let Some(gate) = app.try_state::<crate::mcp::worktree_sessions::WorktreeGateState>()
         {
             crate::mcp::worktree_sessions::drain_worktree_outcomes(&gate, &bridge, csid);
@@ -1186,9 +1185,14 @@ fn process_event(
 
         HookEvent::SessionEnd { session_id, reason } => {
             if let Some(csid) = nergal_session_id
-                && crate::hooks::events::disarms_on_session_end(reason.as_deref())
+                && crate::hooks::events::disarms_on_session_end(top_level, reason.as_deref())
             {
-                agent_state.disarm_program_status(csid);
+                // A late SessionEnd from a dead process must not disarm the newer live PTY.
+                if let Some(live) = agent_state.live_pty(csid)
+                    && agent_state.program_status_armed(csid, &live)
+                {
+                    agent_state.disarm_program_status(csid);
+                }
             }
             let _ = app.emit("session:end", session_id);
             finalize_session_obsidian(db, nergal_session_id);

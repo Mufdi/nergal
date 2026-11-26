@@ -1,4 +1,4 @@
 8fcdb6af0d23da44c944cf53c82114cf983d4b6e  src/components/terminal/imageLayers.test.ts
 bab236f73db6abb2ff0efd04ab3e01b6b6cbc60c  src/stores/kittyCapped.test.ts
 87a21af24ccbd31ba047be3fdefc1001c50bc356  src-tauri/src/terminal/kitty_gate_tests.rs
-bffa677cbe2184f36d3cfe92ba2fa6e7daef5436  src-tauri/src/terminal/session_kitty_tests.rs
+5b7ea528e02dfac421b8e336f5342eac1ca5ebfb  src-tauri/src/terminal/session_kitty_tests.rs

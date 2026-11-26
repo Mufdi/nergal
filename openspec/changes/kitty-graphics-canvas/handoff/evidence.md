@@ -30,3 +30,9 @@ Main `23470f5` = FRI-623 merge; its local gates passed at `8c61d7a` (cargo test 
 - Test-writer revised the two Rust locked files: placements, `a=T` and `d=i`/`d=I` deletes forwarded with `placement_id: None`; 5 string-terminator residue tests; fuzz predicate rejects any placement id; parity compares cursor x/y/shape/visibility; worst stacking uses 1024 distinct images; new `placements_with_placement_ids_stay_linear`, `deleting_with_a_placement_id_removes_the_image`, and the seeded property `held_image_cells_never_exceed_the_forwarded_placed_cells_under_random_traffic` (user invariant made executable). Clippy needless-borrow fixed in the test, so no allow is needed.
 - Red against the uncommitted Builder code: `cargo test --lib terminal::` 207 passed, 9 failed (all on placement ids or held cells past forwarded), 1 ignored, about 18 s, no hang.
 - Locks re-verified: `kitty_gate_tests.rs` 87a21af2, `session_kitty_tests.rs` bffa677c.
+
+## Revision 2 (2026-11-26)
+
+- Green after Revision 1: clippy clean, `cargo test` 1512 passed / 2 ignored, rustfmt check OK, locks OK. Timed worst stacking in release: `took 9.226013234s` (bound 2 s) — wezterm `assign_image_to_cells` clones each covered cell's image list, O(N²): N=128 376 ms, 256 1.39 s, 512 5.59 s; Nergal snapshot linear (82/136/282 ms).
+- User: stack depth cap of 8 (recommended), no more hunting of extreme edge cases. Artifacts `59b207a`.
+- Red 2.3: `a_ninth_stacked_image_pauses_kitty_images`, `eight_images_stacked_on_each_of_two_cells_are_all_drawn_without_a_notice`, worst stacking expects 8 runs per row. Red = `E0432 unresolved import KITTY_MAX_STACK_DEPTH` only. Lock `session_kitty_tests.rs` 5b7ea528.

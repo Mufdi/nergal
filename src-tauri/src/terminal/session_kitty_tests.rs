@@ -510,6 +510,50 @@ fn image_cells_stay_under_the_cap_through_screen_switches_line_moves_and_resizes
     assert!(most_held > 0, "the test must place images that stay held");
 }
 
+fn place_pixel_at_cursor(id: u32, footprint: &str) -> Vec<u8> {
+    apc(
+        &format!("a=T,f=32,s=1,v=1,i={id},{footprint},C=1"),
+        &distinct_pixel_b64(id),
+    )
+}
+
+#[test]
+fn a_ninth_stacked_image_pauses_kitty_images() {
+    use crate::terminal::session::KITTY_MAX_STACK_DEPTH;
+    assert_eq!(KITTY_MAX_STACK_DEPTH, 8);
+    let mut s = session();
+
+    for id in 1..=9 {
+        s.advance_bytes(&place_pixel_at_cursor(id, "c=2,r=2"));
+    }
+
+    let images = runs(&mut s);
+    assert_eq!(images[0].len(), 8);
+    assert_eq!(images[1].len(), 8);
+    assert_eq!(images.iter().map(Vec::len).sum::<usize>(), 16);
+    assert!(s.take_kitty_capped_notice());
+    assert!(!s.take_kitty_capped_notice());
+}
+
+#[test]
+fn eight_images_stacked_on_each_of_two_cells_are_all_drawn_without_a_notice() {
+    let mut s = session();
+
+    for id in 1..=8 {
+        s.advance_bytes(&place_pixel_at_cursor(id, "c=1,r=1"));
+    }
+    s.advance_bytes(b"\x1b[2;1H");
+    for id in 9..=16 {
+        s.advance_bytes(&place_pixel_at_cursor(id, "c=1,r=1"));
+    }
+
+    let images = runs(&mut s);
+    assert_eq!(images[0].len(), 8);
+    assert_eq!(images[1].len(), 8);
+    assert_eq!(images.iter().map(Vec::len).sum::<usize>(), 16);
+    assert!(!s.take_kitty_capped_notice());
+}
+
 #[test]
 #[ignore = "timing bound for the release profile: cargo test --release -- --ignored"]
 fn the_worst_stacking_of_1024_placements_stays_under_two_seconds() {
@@ -531,7 +575,7 @@ fn the_worst_stacking_of_1024_placements_stays_under_two_seconds() {
 
     assert!(elapsed < Duration::from_secs(2), "took {elapsed:?}");
     for (row, row_runs) in stacked.iter().enumerate().take(8) {
-        assert_eq!(row_runs.len(), 1024, "stacked row {row}");
+        assert_eq!(row_runs.len(), 8, "stacked row {row}");
     }
     assert!(stacked.iter().skip(8).all(Vec::is_empty));
     assert!(after_delete.iter().all(Vec::is_empty));

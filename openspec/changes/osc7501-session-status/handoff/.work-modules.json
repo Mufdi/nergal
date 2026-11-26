@@ -1,0 +1,17 @@
+{
+  "tier": "L",
+  "ceremony": "deep",
+  "risk_tier": "medium",
+  "spec_target": "program-status-protocol, terminal-wezterm, session-state-indicators, session-directory",
+  "tracker": { "system": "linear", "id": "FRI-623", "pending": [] },
+  "validation": "pending",
+  "planning_only": false,
+  "iprev": { "rounds": 0, "verdict": null },
+  "interview_answers": {
+    "done_visual": "done gets its own visual, distinct from idle and from completed (user, 2026-11-26)",
+    "error_visual": "error gets its own red visual (user, 2026-11-26)",
+    "child_entries": "out of scope; only the root status drives the UI (user, 2026-11-26)",
+    "fri622": "FRI-622 is parked unmerged on its own branch; this change starts from main ab472c2 (user, 2026-11-26)"
+  },
+  "events": []
+}

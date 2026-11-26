@@ -14,6 +14,7 @@ mod differ;
 mod emitter;
 pub(crate) mod image_fetch;
 mod input;
+pub mod kitty_gate;
 pub mod program_status;
 pub(crate) mod session;
 mod types;

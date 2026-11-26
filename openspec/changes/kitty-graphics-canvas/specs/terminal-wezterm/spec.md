@@ -18,9 +18,9 @@ The system SHALL parse every terminal's PTY output with its own termwiz parser, 
 
 The system SHALL drop every parsed kitty graphics action except these, under these conditions:
 - a transmission (`a=t` or `a=T`) with direct data, no compression, format 24-bit RGB, 32-bit RGBA or no format (RGBA), width and height each between 1 and 4096, no image number, and exactly width × height × bytes-per-pixel decoded bytes;
-- a placement (`a=T`, or `a=p` with an image id of at least 1 and no image number) of an image the gate forwarded, with explicit columns between 1 and the terminal's columns, explicit rows between 1 and the terminal's rows, a source rectangle that starts inside the image, and explicit width and height above zero when given;
+- a placement (`a=T`, or `a=p` with an image id of at least 1 and no image number), with explicit columns between 1 and the terminal's columns, explicit rows between 1 and the terminal's rows, the source rectangle starting at the image origin (`x` and `y` absent or 0), and explicit width and height above zero when given;
 - a delete of all images or of one image by id (`a=d` with `d=a`, `d=A`, `d=i` or `d=I`).
-Queries (`a=q`), animation frames (`a=f`), frame composition (`a=c`), other media, compression, PNG, other formats and other delete variants SHALL be dropped. Every forwarded action SHALL be applied with quiet verbosity, so the emulator never writes a kitty reply to the PTY. The gate SHALL collect the chunks of a chunked transmission, decoding each chunk, and SHALL forward one complete transmission with the decoded bytes, or drop it whole; a continuation chunk SHALL carry only direct data and the more-data flag, and any other kitty action before the final chunk SHALL drop the transfer. The emulator's chunk accumulator SHALL never be used.
+Queries (`a=q`), animation frames (`a=f`), frame composition (`a=c`), other media, compression, PNG, other formats and other delete variants SHALL be dropped. Every forwarded action SHALL be applied with quiet verbosity, so the emulator never writes a kitty reply to the PTY. The gate SHALL forward every transmission with its decoded bytes, decoding with standard base64 at least as strict as the emulator's. It SHALL collect the chunks of a chunked transmission, decoding each chunk, and SHALL forward one complete transmission, or drop it whole; a continuation chunk SHALL carry only direct data and the more-data flag, and any other kitty action before the final chunk SHALL drop the transfer. The emulator's chunk accumulator SHALL never be used.
 
 #### Scenario: A direct RGBA image is placed
 
@@ -45,8 +45,13 @@ Queries (`a=q`), animation frames (`a=f`), frame composition (`a=c`), other medi
 
 #### Scenario: A degenerate placement cannot crash the app
 
-- **WHEN** the PTY output carries placements of a forwarded 2x2 image with `w=0,c=1,r=1`, `x=5,c=1,r=1`, `y=5,c=1,r=1`, `w=00,c=1,r=1`, `c=4000000000,r=1`, no `c`, no `r`, and `a=p,i=0`
+- **WHEN** the PTY output carries placements of a forwarded 2x2 image with `w=0,c=1,r=1`, `x=1,c=1,r=1`, `y=1,c=1,r=1`, `w=00,c=1,r=1`, `c=4000000000,r=1`, no `c`, no `r`, and `a=p,i=0`
 - **THEN** none SHALL reach the emulator, and the app SHALL keep running
+
+#### Scenario: Cached dimensions cannot crash the app
+
+- **WHEN** the PTY output carries `a=t,i=1,f=32,s=1,v=4` with 16 zero bytes, then `a=T,f=32,s=4,v=1,x=2,c=1,r=1` with the same 16 bytes
+- **THEN** the second action SHALL be dropped, and the app SHALL keep running
 
 #### Scenario: A size mismatch is dropped
 
@@ -66,22 +71,32 @@ Queries (`a=q`), animation frames (`a=f`), frame composition (`a=c`), other medi
 #### Scenario: Placing an unknown image is dropped
 
 - **WHEN** the PTY output carries `a=p,i=99,c=1,r=1` and no image 99 was forwarded
-- **THEN** nothing SHALL reach the emulator
+- **THEN** the grid SHALL not change, and the app SHALL keep running
 
 ### Requirement: Kitty memory stays under a lifetime cap per terminal
 
-The system SHALL count, per terminal, every forwarded transmission at 4 bytes per pixel and every forwarded placement at columns × rows cells, and SHALL never forward a transmission that would take the byte total past 512 MiB or a placement that would take the cell total past 1,048,576. The totals SHALL never decrease during the terminal's life, because the emulator retains at most what it was given and its deletes cannot be trusted to free it. When a terminal reaches either cap, every later kitty action on it SHALL be dropped, and the system SHALL log it once.
+The system SHALL keep, per terminal and for the terminal's whole life, these forwarded totals: image bytes, counting each transmission at the larger of width × height × 4 and 4 KiB; placed cells, counting each placement at columns × rows; and the number of transmissions, placements and deletes. It SHALL never forward an action that would take any total past its cap: 256 MiB of image bytes, 524,288 cells, 4096 transmissions, 4096 placements and 4096 deletes. An `a=T` SHALL count as one transmission and one placement, and SHALL be dropped whole if either would pass a cap. The totals SHALL never decrease, because the emulator retains at most what it was given and its deletes cannot be trusted to free it. When a terminal reaches any cap, every later kitty action on it SHALL be dropped, and the system SHALL log it once.
 
 #### Scenario: Repeated placements stop at the cell cap
 
 - **WHEN** a forwarded 1x1 image is placed 10,000 times with `c=80,r=24` in an 80x24 terminal
-- **THEN** at most 546 placements SHALL reach the emulator (546 × 1920 = 1,048,320 cells)
-- **AND** the image cells held by the emulator, in both screens and the scrollback, SHALL be at most 1,048,576
+- **THEN** at most 273 placements SHALL reach the emulator (273 × 1920 = 524,160 cells)
+- **AND** the image cells held by the emulator in the screens and the scrollback SHALL be at most 524,288
 
 #### Scenario: Retransmissions stop at the byte cap
 
 - **WHEN** 4096x4096 RGBA images (64 MiB each) are transmitted again and again, to the same id and to new ids
-- **THEN** at most 8 transmissions SHALL reach the emulator
+- **THEN** at most 4 transmissions SHALL reach the emulator
+
+#### Scenario: Tiny transmissions stop at the count cap
+
+- **WHEN** 10,000 1x1 images are transmitted to distinct ids
+- **THEN** at most 4096 transmissions SHALL reach the emulator
+
+#### Scenario: Stacked placements stay cheap
+
+- **WHEN** placements of 1x1 images with `c=1,r=1` are stacked on one cell up to the placement cap, then the grid is snapshotted, then deletes are sent up to the delete cap
+- **THEN** the whole sequence SHALL finish in under 1 second in a release-profile test
 
 #### Scenario: The cap is per terminal
 

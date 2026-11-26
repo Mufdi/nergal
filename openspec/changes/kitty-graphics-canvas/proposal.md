@@ -7,7 +7,7 @@ Modern terminal tools such as chafa and yazi draw images with the kitty graphics
 ## What Changes
 
 - Nergal parses the PTY output itself, with the same termwiz parser the emulator uses, and applies the parsed actions to the emulator. A gate between the two lets only safe kitty graphics actions through: direct RGB or RGBA data of a checked size, placements that cannot divide by zero, and deletes. It drops every other kitty action, assembles chunked transfers itself, and forwards every action in quiet mode, so the emulator never replies.
-- Kitty memory stays under a lifetime cap per terminal (512 MiB of image data and about a million covered cells). Past the cap, that terminal stops accepting kitty images until it is reopened.
+- Kitty memory and work stay under lifetime caps per terminal (256 MiB of image data, about half a million covered cells, and 4096 transmissions, placements and deletes). Past a cap, that terminal stops accepting kitty images until it is reopened.
 - The kitty query (`a=q`) is dropped and gets no answer, so no program, Claude Code included, sees kitty support yet. FRI-624 adds Unicode placeholders and then answers the query.
 - The emulator config turns kitty graphics on.
 - The canvas draws kitty placements in z order, in kitty's three layers: under the cell background, over the background and under text, and over text.

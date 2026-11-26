@@ -24,11 +24,12 @@
 
 ### 1. `KittyGate` (`src-tauri/src/terminal/kitty_gate.rs`, declared in `terminal/mod.rs`)
 
-- `pub struct GateLimits { pub max_side: u32, pub max_bytes: u64, pub max_cells: u64 }` with `Default` = 4096, 512 MiB, 1,048,576; `KittyGate::with_limits(limits)` and `KittyGate::default()`.
+- `pub struct GateLimits { pub max_side: u32, pub max_bytes: u64, pub max_cells: u64, pub max_transmissions: u32, pub max_placements: u32, pub max_deletes: u32 }` with `Default` = 4096, 256 MiB, 524,288, 4096, 4096, 4096; per-transmission minimum charge 4 KiB; `KittyGate::with_limits(limits)` and `KittyGate::default()`.
 - `pub fn admit(&mut self, actions: Vec<Action>, cols: usize, rows: usize) -> Vec<Action>`: non-kitty actions pass in order; kitty actions follow design D2-D4. Small pure functions per rule (`check_transmit`, `check_placement`, `continuation`) so each rule has a direct test.
-- State: the in-flight transfer (first chunk's typed fields, decoded bytes so far); a map image id → (width, height), set on every forwarded transmission with an id (the id-less `a=T` placement uses the transmission's own size and is not stored); lifetime counters `bytes_forwarded`, `cells_forwarded`; a `capped` flag that, once set, drops every later kitty action and logs once (`tracing::warn!`).
-- Count before forwarding: transmissions add `width * height * 4`; placements add `columns * rows`; if the addition would pass the cap, drop the action and set `capped`.
-- Forward rebuilt actions with `verbosity: KittyImageVerbosity::Quiet`; a completed transfer is forwarded as one action with `data: KittyImageData::DirectBin(decoded)` and `more_data_follows: false`.
+- State: the in-flight transfer (first chunk's typed fields, decoded bytes so far); lifetime counters (bytes, cells, transmissions, placements, deletes); a `capped` flag that, once set, drops every later kitty action and logs once (`tracing::warn!`). No image dimension map (design D2).
+- Count before forwarding: transmissions add `max(width * height * 4, 4096)` bytes and 1 transmission; placements add `columns * rows` cells and 1 placement; deletes add 1 delete; an `a=T` must fit both; if anything would pass a cap, drop the action and set `capped`.
+- Placements: `x` and `y` absent or 0.
+- Forward rebuilt actions with `verbosity: KittyImageVerbosity::Quiet`; every transmission (single chunk or assembled) is forwarded with `data: KittyImageData::DirectBin(decoded)` and `more_data_follows: false`. Decode with `base64::engine::general_purpose::STANDARD` (canonical padding, no trailing bits).
 - Deletes: forward only `KittyImageDelete::All { .. }` and `ByImageId { .. }`; drop other variants.
 
 ### 2. Session wiring (`session.rs`, `config.rs`, `clippy.toml`)

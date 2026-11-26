@@ -19,9 +19,9 @@
 
 - [x] 4.1 `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test && cargo fmt --check`, `npx tsc --noEmit`, `pnpm test`.
 - [x] 4.2 `~/.claude/skills/work/scripts/work-gates.sh main kitty-graphics-canvas` passes; `cargo test --release -- --ignored` runs the timed stacking test; a temporary direct call to `Terminal::advance_bytes` makes `cargo clippy --all-targets -- -D warnings` fail (then remove it).
-- [ ] 4.3 Manual walk: in a Nergal session terminal, `chafa -f kitty <image>` draws the image; scrolling and new output keep it in place; text printed over part of it replaces only those cells.
-- [ ] 4.4 Manual walk: the same in the quake terminal.
-- [ ] 4.5 Manual walk: sixel (`chafa -f sixels`) and iTerm2 (`chafa -f iterm`) images, yazi previews, colors, titles and Claude Code's TUI still behave as before.
-- [ ] 4.6 Manual walk: `printf` of a kitty sequence with `t=f` and the base64 of an existing file path shows nothing and the file is untouched; the app keeps running after `printf` of a `w=0,c=1` placement.
-- [ ] 4.7 Manual walk: a Claude Code session still logs `kittyGraphics=no` in `claude --debug` (the query stays unanswered until FRI-624).
-- [ ] 4.8 Manual walk: a loop of `chafa -f kitty` past the cap shows one toast that kitty images are paused, and a new terminal still draws them; with `NERGAL_DISABLE_KITTY=1` Nergal draws no kitty image.
+- [x] 4.3 Manual walk: in a Nergal session terminal, `chafa -f kitty <image>` draws the image; scrolling and new output keep it in place; text printed over part of it replaces only those cells.
+- [x] 4.4 Manual walk: the same in the quake terminal.
+- [x] 4.5 Manual walk: sixel (`chafa -f sixels`) and iTerm2 (`chafa -f iterm`) images, yazi previews, colors, titles and Claude Code's TUI still behave as before.
+- [x] 4.6 Manual walk: `printf` of a kitty sequence with `t=f` and the base64 of an existing file path shows nothing and the file is untouched; the app keeps running after `printf` of a `w=0,c=1` placement.
+- [x] 4.7 Manual walk: a Claude Code session still logs `kittyGraphics=no` in `claude --debug` (the query stays unanswered until FRI-624).
+- [x] 4.8 Manual walk: a loop of `chafa -f kitty` past the cap shows one toast that kitty images are paused, and a new terminal still draws them; with `NERGAL_DISABLE_KITTY=1` Nergal draws no kitty image.

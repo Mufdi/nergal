@@ -5,3 +5,5 @@ b3abf29c92d54376c7b4d98d3b6e80b61def2bd6  src-tauri/src/terminal/program_status_
 479302a77ea7ef0e3e0cd2571d1808d6b5de602a  src-tauri/src/agents/program_status_state_tests.rs
 c8dc57aaa1abbea4c4342858243327c39bfe1d1e  src-tauri/src/mcp/messaging_status_tests.rs
 34d686ec0a2c6e2102963ba4f10454736e1f0e32  src-tauri/src/mcp/notify_outcome_tests.rs
+7fd0e75f7794ccd4b21bcaf7196dc35618257525  src/lib/sessionIndicatorState.test.ts
+bd86323261271357878023b297d94157285eeaad  src/stores/programStatus.test.ts

@@ -40,7 +40,7 @@ The system SHALL render a polymorphic indicator for each session that derives it
 
 #### Scenario: Error root status shows error
 - **WHEN** session 4's root status is `error` and it has no attention
-- **THEN** the indicator renders the error state: a static red circle with no animation
+- **THEN** the indicator renders the error state: a static red X icon with no animation, so it differs from attention and working by shape and not only by color
 
 #### Scenario: Idle root status shows idle
 - **WHEN** session 4's root status is `idle` and its mode is `"active"`

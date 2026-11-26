@@ -80,7 +80,7 @@ The system SHALL parse each report's fields, which are `key=value` pairs separat
 
 ### Requirement: The root status belongs to the session's live PTY
 
-The system SHALL apply a report only when the reporting PTY is the session's live PTY (the one recorded when the PTY was reserved). Such a report SHALL replace any stored root status, including one stored for another PTY, and the stored status SHALL record the reporting PTY as its owner. A report from a PTY that is not the session's live PTY SHALL be ignored. A PTY EOF SHALL remove the root status only when that PTY owns it. Auxiliary shells (quake terminals) SHALL never set or clear a root status. A report equal to the stored status SHALL change nothing, its set time included.
+The system SHALL apply a report only when the reporting PTY is the session's live PTY (the one recorded when the PTY was reserved). Such a report SHALL replace any stored root status, including one stored for another PTY, and the stored status SHALL record the reporting PTY as its owner. A report from a PTY that is not the session's live PTY SHALL be ignored. A PTY EOF SHALL remove the root status only when that PTY owns it. Auxiliary shells (quake terminals) SHALL never set or clear a root status. A report equal to the stored status SHALL keep its set time and emit nothing; it SHALL only record the reporting PTY as the owner.
 
 #### Scenario: Late report from an old PTY is ignored
 
@@ -137,3 +137,31 @@ The system SHALL publish a root status change for an agent session as one Tauri 
 - **GIVEN** S's root status is `idle`
 - **WHEN** a `SessionEnd` hook and then a `SessionStart` hook arrive for S (as with `/clear`)
 - **THEN** S's root status SHALL still be `idle` in the agent state and in the frontend
+
+### Requirement: Reports count only while Claude Code has the protocol on
+
+The system SHALL arm a PTY for reports when the scanner answers an OSC 7501 query on it, and SHALL ignore every report from a PTY that is not armed. A `SessionEnd` hook whose reason is not `clear` SHALL disarm the session's PTY, because Claude Code has exited and the shell prints untrusted data again. A `SessionEnd` with reason `clear` SHALL keep the PTY armed, because the same Claude Code process keeps running and does not query again. PTY EOF SHALL disarm the PTY.
+
+#### Scenario: A report before any query is ignored
+
+- **GIVEN** session S's live PTY B has never carried an OSC 7501 query
+- **WHEN** B's output carries `ESC ] 7501 ; state=blocked:msg=SGk= ESC \`
+- **THEN** S SHALL have no root status
+
+#### Scenario: A report after the query is applied
+
+- **GIVEN** PTY B answered `ESC ] 7501 ; ? ESC \`
+- **WHEN** B's output carries `ESC ] 7501 ; state=working ESC \`
+- **THEN** S's root status SHALL be `working`
+
+#### Scenario: Shell output after Claude Code exits is ignored
+
+- **GIVEN** PTY B is armed and S's root status is `idle`
+- **WHEN** a `SessionEnd` hook with reason `prompt_input_exit` arrives for S, then B's output carries `state=blocked`
+- **THEN** S's root status SHALL stay `idle`
+
+#### Scenario: /clear keeps the PTY armed
+
+- **GIVEN** PTY B is armed
+- **WHEN** a `SessionEnd` hook with reason `clear` arrives for S, then B's output carries `state=done`
+- **THEN** S's root status SHALL be `done`

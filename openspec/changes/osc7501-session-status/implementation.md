@@ -99,3 +99,16 @@
 - `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test`; `rustfmt --edition 2024 --check <changed .rs files>`; `npx tsc --noEmit`; `pnpm test`.
 - `~/.claude/skills/work/scripts/work-gates.sh main osc7501-session-status`.
 - Walk with the installed deb (tasks group Verification).
+
+## Review fixes (adversarial + frontend review, 2026-11-26)
+
+Interface for the test-writer (group 7):
+- `TerminalSession::take_query_seen(&mut self) -> bool`: true once after `advance_bytes` answered at least one OSC 7501 query, then false until the next query.
+- `AgentRuntimeState::{arm_program_status(sid, pty_id), disarm_program_status(sid), program_status_armed(sid, pty_id) -> bool}`; `apply_program_status` ignores reports unless armed for that PTY; `clear_program_status_if` also disarms. Use the `DashMap::entry` API so compare-and-write is atomic per shard.
+- `HookEvent::SessionEnd { session_id, #[serde(default)] reason: Option<String> }` (`src-tauri/src/hooks/events.rs:57`; update the match at `:343` and the test near `:575`). The hook server disarms on `SessionEnd` with `reason != Some("clear")`.
+- Pure helpers in `mcp/messaging.rs`: `stop_drain_allowed(root: Option<&RootState>) -> bool` (false only for `blocked`), `ready_transition(busy_before: bool, busy_after: bool) -> bool`, `idle_since(hook: Option<&SessionActivity>, root: Option<&OwnedStatus>) -> Option<u64>` (the time the target stopped being busy, design D9), and the send-path `just_idled` uses it.
+- `delivery::is_in_flight(session_id) -> bool` (over `in_flight_set`, `mcp/delivery.rs:173-191`); `ready_drain` and the `Stop` path call `drain_worktree_outcomes` only when `drain_idle` pasted 0 and `!is_in_flight`.
+- Pure gate in `pty.rs`: `reports_apply(agent_session: bool, armed: bool) -> bool`.
+- Remove the unreachable trigger at `hooks/server.rs:1064-1072`; keep the `agent_completed` trigger (`:1600-1604`) through `ready_transition`.
+- Frontend: `SessionIndicator` renders `error` as lucide `X` (`size-3 shrink-0 text-red-500`); `StatusBar.tsx` `modeDotColor` (`:68-72`) replaced by the shared resolution (export a pure `indicatorDotClass(state)` from `src/lib/sessionIndicatorState.ts` or reuse `resolveIndicatorState` + a class map); exhaustive `switch` on `RootState`; contiguous `useAtomValue` block; `_removed` replaced if the lint config rejects it.
+- Docs: `docs/design.md` §3.10 ("All three respect reduced-motion" now names the static dots), `docs/architecture.md:59-67` (terminal modules `program_status`, `write_queue`, pre-scan and write queue sentence).

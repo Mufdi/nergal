@@ -2,7 +2,7 @@
 
 ### Requirement: Delivery follows the root status when there is one
 
-Every PTY delivery path (the send-path immediate wake, the just-idled deferred wake, the `Stop` drain, the worktree-outcome drain, and the immediate worktree-outcome wake) SHALL decide whether a target is busy with one rule. When the target has a root status (`program-status-protocol`), it SHALL be busy exactly when the root status is `blocked`, or when it is `working` and the hook-derived mode is `running` or `needs_attention`. When the target has no root status, today's rule SHALL apply: busy when the hook-derived mode is `running` or `needs_attention`. A busy target SHALL never receive a paste, so a wake note and its Enter never land inside a Claude Code dialog or a running turn.
+The send-path immediate wake, the just-idled deferred wake, the ready drain and the immediate worktree-outcome wake SHALL decide whether a target is busy with one rule. When the target has a root status (`program-status-protocol`), it SHALL be busy exactly when the root status is `blocked`, or when it is `working` and the hook-derived mode is `running` or `needs_attention`. When the target has no root status, today's rule SHALL apply: busy when the hook-derived mode is `running` or `needs_attention`. A busy target SHALL never receive a paste, so a wake note and its Enter never land inside a Claude Code dialog or a running turn. The `Stop` drain and its worktree-outcome drain SHALL skip only a target whose root status is `blocked`, because at `Stop` the prompt is free and today's `Stop` drain also delivers to a session with a preserved background-agent wait. The just-idled settle window SHALL start when the target stopped being busy: the hook `Stop` time when the hook mode decides, or the later of that time and the root status set time when the root status decides.
 
 #### Scenario: Folder-trust prompt queues the message
 
@@ -22,6 +22,18 @@ Every PTY delivery path (the send-path immediate wake, the just-idled deferred w
 - **WHEN** a message is sent to S
 - **THEN** the delivery status SHALL be `delivered`
 
+#### Scenario: Stop delivers past a background agent wait without a root status
+
+- **GIVEN** target S has no root status, its hook-derived mode is `needs_attention` for a background agent wait, and a message for S is queued
+- **WHEN** a `Stop` hook arrives for S
+- **THEN** the `Stop` drain SHALL run for S, as today
+
+#### Scenario: A done report before Stop opens the settle window
+
+- **GIVEN** target S's hook-derived mode is `running` and its root status changed to `done` 1 second ago
+- **WHEN** a message is sent to S
+- **THEN** the delivery status SHALL be `queued`, and a deferred wake SHALL run after the settle window
+
 #### Scenario: A worktree outcome is not pasted into a dialog
 
 - **GIVEN** requesting session S has hook-derived mode `idle` and root status `blocked`
@@ -36,7 +48,7 @@ Every PTY delivery path (the send-path immediate wake, the just-idled deferred w
 
 ### Requirement: A target that starts accepting a prompt is drained
 
-When a root status change, or a hook event other than `Stop` and `SessionEnd`, makes a target go from busy to not busy (by the rule above), the system SHALL run the ready drain for that target once, after the just-idled settle window, unless the target is busy again by then, because a dialog that closes without a turn sends no `Stop`. The ready drain SHALL do what the `Stop` drain does: the cross-session drain, then the worktree-outcome drain only when the first pasted nothing (at most one paste per transition). The `Stop` drain SHALL keep running as today for targets that are not busy. A message SHALL therefore never stay queued while its target accepts a prompt and has had a busy-to-not-busy transition after the message was queued.
+When a root status change, or the `agent_completed` clear of a background-agent wait, makes a target go from busy to not busy (by the rule above), the system SHALL run the ready drain for that target once, after the just-idled settle window, unless the target is busy again by then, because a dialog that closes without a turn sends no `Stop`. The ready drain SHALL do what the `Stop` drain does: the cross-session drain, then the worktree-outcome drain only when the first pasted nothing and no wake is still in flight for the target (at most one paste per transition). The `Stop` drain SHALL keep running as today for targets that are not busy. A message SHALL therefore never stay queued while its target accepts a prompt and has had a busy-to-not-busy transition after the message was queued.
 
 #### Scenario: Answering the folder-trust prompt delivers the queued message
 
@@ -55,6 +67,12 @@ When a root status change, or a hook event other than `Stop` and `SessionEnd`, m
 - **GIVEN** S's root status is `working`, its hook-derived mode is `needs_attention` for a background agent wait, and a message for S is queued
 - **WHEN** the `agent_completed` notification moves S's hook-derived mode to `idle` and the settle window passes
 - **THEN** the ready drain SHALL run for S once
+
+#### Scenario: An in-flight wake holds the worktree outcome
+
+- **GIVEN** a wake for S is still waiting for its submit and a worktree outcome for S is queued
+- **WHEN** the ready drain runs for S
+- **THEN** it SHALL NOT paste the worktree outcome
 
 #### Scenario: A busy target at the end of the settle window is not pasted
 

@@ -1,70 +1,71 @@
 ## Context
 
-wezterm-term (git tag `20240203-110809-5046fc22`) implements kitty graphics; Nergal keeps it off (`WZ/term/src/config.rs:175`). The analysis in `~/.claude/projects/-home-felipe-Projects-cluihud/work/kitty-graphics/analysis.md` found that turning it on as it ships is unsafe: `t=f`/`t=t` read any file and `t=t` deletes under a non-canonical `/tmp` prefix check; `t=s` unlinks any shared memory; `a=q` runs the same loader; `o=z`, `S=` and the chunk accumulator have no cap; `w=0` with `c=` divides by zero and the release build aborts. Nergal's FRI-611 pipeline already snapshots several images per cell with their z, and the canvas paints runs before and after glyphs.
+wezterm-term (git tag `20240203-110809-5046fc22`) implements kitty graphics; Nergal keeps it off (`WZ/term/src/config.rs:175`). Turning it on as it ships is unsafe (`~/.claude/projects/-home-felipe-Projects-cluihud/work/kitty-graphics/analysis.md`): file and temp-file media read any file and delete under a non-canonical `/tmp` prefix; shared memory is unlinked; the query runs the same loader; compression, `S=` and the chunk accumulator have no cap; degenerate placements divide by zero and the release build aborts.
 
-The user decided (2026-11-26): kitty before FRI-624; a filter in Nergal, not a fork; the `a=q` answer stays off until FRI-624 adds Unicode placeholders.
+Plan review round 1 (handoff/iprev/round1-review.md) showed that a byte-level filter cannot match wezterm's parser: in an APC, BEL is data and any `ESC`, C1 byte, CAN or SUB dispatches it; vtparse ignores bytes a scanner would see; wezterm's key parser keeps the last duplicate and parses `w=00` as 0. Every such difference is a bypass. It also found a division by zero without `w=0` (`x >= W`), memory amplification from repeated id-0 placements (`attach_image` appends per cell), PNG decode amplification, and kitty replies for `I=` transmissions.
+
+The user decided (2026-11-26): kitty before FRI-624; the protection lives in Nergal, not in a fork; the `a=q` answer stays off until FRI-624.
 
 ## Goals / Non-Goals
 
-**Goals:** safe kitty placements from direct data (chafa `-f kitty`, other tools that send direct data); correct z layering; no app crash, file access or unbounded memory from PTY output.
+**Goals:** safe kitty placements from direct RGB/RGBA data (chafa `-f kitty`); no file access, reply, crash or unbounded memory from PTY output through kitty; correct z layering.
 
-**Non-Goals:** the `a=q` answer, Unicode placeholders and Claude Code images (FRI-624); file, temp-file and shared-memory media; compression; animation; delete variants wezterm does not implement (they already only log); yazi auto-detection (needs the query).
+**Non-Goals:** the `a=q` answer, Unicode placeholders and Claude Code images (FRI-624); PNG (`f=100`), compression, file/temp/shm media, animation; the unbounded APC buffer of vtparse for non-kitty APCs (pre-existing with or without kitty; tracked separately).
 
 ## Decisions
 
-### D1. Filter in Nergal, not a fork
+### D1. Nergal owns the parser and gates typed actions
 
-A `KittyFilter` in `terminal/kitty_filter.rs` rewrites the PTY byte stream: it passes everything except kitty APC sequences, which it buffers whole and then forwards or drops. Alternatives: a `[patch]` fork of termwiz/term fixing `load_data` and the panic (rejected by the user: a large dependency to maintain), or keeping kitty off (no value).
+`TerminalSession` keeps its own `termwiz::escape::parser::Parser` (same wezterm revision, `termwiz` is a direct dependency) and replaces `self.terminal.advance_bytes(bytes)` with `parser.parse(bytes, ..)` → `KittyGate::admit(actions)` → `self.terminal.perform_actions(actions)` (`WZ/term/src/terminal.rs:164-173`). The gate sees exactly the actions wezterm would have performed, so there is no parsing difference to exploit: terminators, ignored bytes, nesting, duplicate keys and numeric spellings are all resolved by the same code before the gate decides on typed values. Parsing does not touch the file system (`load_data` runs only in `kitty_img`). The byte-level DEC 2026 tracker and OSC 7501 scanner keep running on the raw bytes as today.
 
-### D2. Position in `advance_bytes`
+Alternatives: a byte-level filter (rejected in iprev round 1: it must replicate vtparse exactly, and every divergence is a file read or delete); a fork of wezterm (rejected by the user).
 
-The filter runs first. Its output feeds `track_sync_mode`, the OSC 7501 scanner and `terminal.advance_bytes`, so every downstream consumer sees the same bytes. A kitty sequence cannot contain the OSC 7501 or DEC 2026 bytes, so ordering does not change their results. The OSC 7501 reply still goes to the write queue before wezterm parses the chunk.
+### D2. Typed allowlist
 
-### D3. Buffering and latency
+- Transmission (`TransmitData`, `TransmitDataAndDisplay`): `KittyImageData::Direct`, compression none, format `Rgb` or `Rgba`, width and height in 1..=4096, `image_number` none; the decoded length must equal width × height × bpp exactly.
+- Placement (`TransmitDataAndDisplay`, `Display`): the image is one the gate forwarded and tracks (its size known); `x < width`, `y < height`; explicit `w`/`h` above zero; `columns <= terminal cols`, `rows <= terminal rows`.
+- `Delete`: forwarded (it only removes).
+- Everything else (`Query`, `TransmitFrame`, `ComposeFrame`, other media, compression, PNG, other formats) is dropped.
+- Every forwarded action gets `KittyImageVerbosity::Quiet`, so wezterm never writes a reply.
 
-Bytes outside a kitty sequence pass in the same call. A kitty sequence is held until its terminator arrives, so only that sequence waits for the next PTY read. A trailing `ESC` or `ESC _` at the end of a chunk is held until the next byte decides it. CAN (`0x18`) or SUB (`0x1a`) inside a held sequence aborts it, like vtparse does; the filter drops the held bytes and passes the CAN/SUB. A sequence over 64 KiB is dropped as soon as it passes the limit, and the filter skips to its terminator without holding more.
+### D3. The gate assembles chunks
 
-### D4. Caps
+A transmission with `more_data_follows` starts a transfer in the gate. Continuation chunks append their payload; the transfer is capped at the base64 length of its declared size. On the final chunk the gate decodes, checks the exact size and forwards one complete action with `more_data_follows` false. An oversize chunk or any other kitty action before the final chunk drops the transfer whole. wezterm's accumulator is never used, so it cannot desynchronize or grow.
 
-- 64 KiB per sequence: the kitty spec sends large images in chunks of at most 4096 bytes, and chafa uses 4096-byte chunks. A larger single sequence is not produced by conforming senders.
-- 128 MiB of payload per transfer: base64 of 96 MiB, just under wezterm's 100 MB per-image check (`WZ/term/src/terminalstate/image.rs:273-290`). When a transfer passes it, the filter drops the rest of its chunks and forwards one synthetic final chunk `ESC _ G m=0 ESC \`, so wezterm coalesces and discards its accumulator instead of keeping partial data (its accumulator is otherwise never reset). The builder verifies that wezterm drops a transfer whose size does not match `s*v` and does not attach it.
+### D4. Budget with eviction
 
-### D5. Drop whole sequences, never strip keys
+Per terminal: at most 256 MiB decoded, 1024 live placements, 131072 placed cells (sum of columns × rows over live placements). The gate tracks images in forwarding order with their decoded size and placements. Before forwarding an action that would pass a limit, it injects `Delete` (by image id, freeing data) for the oldest images until the action fits. A transmission without an image id gets a private id from a reserved high range, so every image can be deleted; this also stops id-0 placements from stacking on the same cells. A placement that replaces itself (same id and placement id, or same id without a placement id, which wezterm treats as "remove all of this image's placements first", `kitty.rs:103-105`) updates its entry instead of adding one.
 
-Removing a key would change the meaning of the sequence (for example `t=f` without `t` becomes direct data whose payload is a path). Dropping is the only safe rewrite. A dropped first chunk marks its transfer as dropped until `m=0`.
+### D5. Painter layers in a pure module
 
-### D6. Key parsing
-
-Keys are parsed with wezterm's grammar: `G`, then `k=v` pairs separated by `,` up to `;`, then the payload. A key without `=` makes wezterm drop the sequence (`apc.rs:1073-1076`), so the filter drops it too. Unknown keys pass.
-
-### D7. Three layers in a pure module
-
-`imageLayers.ts` splits a row's runs into `underBackground`, `underText` and `overText`, each sorted by z with a stable sort. `paintRow` draws `underBackground` after the row clear, cell backgrounds, then `underText`, then glyphs and underlines, then `overText`. Today all negative z runs are drawn before the backgrounds, so a colored cell hides them.
+`imageLayers.ts` splits a row's runs into `underBackground` (`z < -1073741824`), `underText` (`-1073741824 <= z < 0`) and `overText` (`z >= 0`), each stably sorted by z. `paintRow` clears the row, draws `underBackground`, then all cell backgrounds, then `underText`, then glyphs and underlines (keeping the wide-cell skip), then `overText`. Drawing all backgrounds before glyphs changes one thing: a glyph that overhangs into the next cell is no longer covered by that cell's background. That is the usual terminal rendering and is accepted.
 
 ```mermaid
 flowchart LR
-  PTY[PTY read] --> KF[KittyFilter]
-  KF -->|non-kitty bytes| OUT[filtered bytes]
-  KF -->|safe kitty sequence| OUT
-  KF -->|unsafe / oversized / query| DROP[dropped]
-  OUT --> SYNC[track_sync_mode]
-  OUT --> OSC[OSC 7501 scanner]
-  OUT --> WZ[wezterm advance_bytes]
-  WZ --> SNAP[grid snapshot image runs]
-  SNAP --> LAYERS[imageLayers: 3 layers, z order]
-  LAYERS --> CANVAS[paintRow]
+  PTY[PTY read] --> RAW[raw bytes]
+  RAW --> SYNC[DEC 2026 tracker]
+  RAW --> OSC[OSC 7501 scanner]
+  RAW --> P[Nergal termwiz Parser]
+  P --> A[actions]
+  A --> G[KittyGate: typed allowlist, chunk assembly, budget, Quiet]
+  G -->|safe + synthetic deletes| PA[terminal.perform_actions]
+  G -->|unsafe| DROP[dropped]
+  PA --> SNAP[grid snapshot image runs]
+  SNAP --> L[imageLayers]
+  L --> CANVAS[paintRow]
 ```
 
 ## Risks / Trade-offs
 
-- [Memory from many large referenced images] → wezterm's 320 MB budget prunes only unreferenced images; the filter caps each transfer. Accepted residual: many distinct placed images could still use a lot of memory, as with sixel today.
-- [A sender that does not chunk] → dropped (D4); chafa and kitty's reference sender chunk.
-- [yazi does not pick kitty] → expected until FRI-624 answers the query.
-- [Filter bug drops normal output] → tests cover non-kitty APC, split sequences and plain text around dropped sequences.
+- [Parser state moves to Nergal] → the emulator's own parser is never used again; `perform_actions` is the same performer `advance_bytes` uses. Tests compare ordinary output against the emulator's own parser.
+- [Eviction makes old images disappear] → only past 256 MiB / 1024 placements / 131072 cells per terminal; expected to be rare in interactive use.
+- [PNG kitty images do not show] → senders that use `f=100` fall back to nothing; chafa uses RGBA. PNG can be added later with an IHDR size check.
+- [Deleted placements in scrollback] → wezterm's delete detaches the image from the cells it tracks; the builder verifies scrollback cells are freed too, or the budget accounts for it.
+- [Unbounded non-kitty APC buffer in vtparse] → pre-existing, unchanged by this change; tracked as a separate issue.
 
 ## Migration Plan
 
-No data migration. Rollback: turn `enable_kitty_graphics` off; the filter then only drops kitty sequences that wezterm would ignore anyway.
+No data migration. Rollback: `enable_kitty_graphics` false and the gate drops every kitty action; the parser swap stays (it is behavior-neutral and covered by the comparison tests).
 
 ## Open Questions
 

@@ -26,7 +26,7 @@
 
 - `pub struct GateLimits { pub max_side: u32, pub max_bytes: u64, pub max_cells: u64, pub max_transmissions: u32, pub max_placements: u32, pub max_deletes: u32 }` with `Default` = 4096, 256 MiB, 131,072, 4096, 1024, 4096; per-transmission minimum charge 4 KiB; deletes keep passing after the other caps until `max_deletes`; `pub fn take_capped_notice(&mut self) -> bool` returns true once, the first time a cap is reached; `NERGAL_DISABLE_KITTY=1` (read once when the gate is built) drops every kitty action; `KittyGate::with_limits(limits)` and `KittyGate::default()`.
 - `pub fn admit(&mut self, actions: Vec<Action>, cols: usize, rows: usize) -> Vec<Action>`: non-kitty actions pass in order; kitty actions follow design D2-D4. Small pure functions per rule (`check_transmit`, `check_placement`, `continuation`) so each rule has a direct test.
-- State: the in-flight transfer (first chunk's typed fields, decoded bytes so far); lifetime counters (bytes, cells, transmissions, placements, deletes); a `capped` flag that, once set, drops every later kitty action and logs once (`tracing::warn!`). No image dimension map (design D2).
+- State: the in-flight transfer (first chunk's typed fields, decoded bytes so far); lifetime counters (bytes, cells, transmissions, placements, deletes); a `capped` flag that, once set, drops every later transmission and placement (and any in-flight transfer at once, without decoding further chunks) while deletes pass until `max_deletes`; it logs once (`tracing::warn!`). Reaching `max_deletes` also sets `capped`. No image dimension map (design D2).
 - Count before forwarding: transmissions add `max(width * height * 4, 4096)` bytes and 1 transmission; placements add `columns * rows` cells and 1 placement; deletes add 1 delete; an `a=T` must fit both; if anything would pass a cap, drop the action and set `capped`.
 - Placements: `x` and `y` absent or 0.
 - Forward rebuilt actions with `verbosity: KittyImageVerbosity::Quiet`; every transmission (single chunk or assembled) is forwarded with `data: KittyImageData::DirectBin(decoded)` and `more_data_follows: false`. Decode with `base64::engine::general_purpose::STANDARD` (canonical padding, no trailing bits).
@@ -40,7 +40,7 @@
 
 ### 3. Snapshot run index and the cap notice
 
-- `session.rs` `push_image_cell_hashed` (`:640-684`): replace the reverse linear search of open runs (`:663`) with a `HashMap` keyed by the merge key (hash, z, end column, u1, v0, v1, padding), so each image of a cell is O(1).
+- `session.rs` `push_image_cell_hashed` (`:640-684`): replace the reverse linear search of open runs (`:663`) with a multimap `HashMap<MergeKey, Vec<usize>>` keyed by the merge key (hash, z, end column, u1, v0, v1, padding); each image of a cell takes one matching open run out of the list (so 1024 identical stacked images extend 1024 runs, not one), and the extended run is re-inserted under its new key. Each image is O(1).
 - The PTY reader thread (`pty.rs`, after `advance_bytes`, with the session guard held only to read the flag): when `take_capped_notice()` is true, emit `terminal:kitty-capped` with `{ session_id, pty_id }` outside the lock. Frontend (`src/stores/hooks.ts` setup, or the terminal store that owns toasts): one toast, neutral Spanish, e.g. "Imágenes kitty pausadas en esta terminal. Ábrela de nuevo para volver a verlas."
 
 ### 4. Layers
@@ -50,7 +50,7 @@
 
 ## Builder coordination
 
-- Group A (Rust: 1-2) and group B (frontend: 3) share no files.
+- Group A (Rust: plan sections 1-3, including the snapshot index and the `terminal:kitty-capped` emit) and group B (frontend: the toast in section 3 and the layers in section 4) share no files.
 - Interface for the test-writer: `terminal::kitty_gate::{KittyGate, GateLimits}` with `admit(Vec<Action>, cols, rows) -> Vec<Action>`, `take_capped_notice()`, and `GateLimits { max_side, max_bytes, max_cells, max_transmissions, max_placements, max_deletes }`; `KittyGate::with_limits_and_switch(limits, disabled: bool)` for the kill-switch test; a session-level way to inject `GateLimits` for the oracle tests (e.g. `TerminalSession::set_kitty_limits`); tests build actions with `termwiz::escape::parser::Parser::new().parse_as_vec(bytes)` so they exercise real parsing. Frontend: `imageLayers(runs)`, `KITTY_UNDER_BG_Z`.
 - Trap: the emulator's own parser must never be fed again (state would split between two parsers).
 - Trap: forward rebuilt typed actions, never the original verbosity.

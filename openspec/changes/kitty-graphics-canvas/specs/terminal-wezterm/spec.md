@@ -73,7 +73,7 @@ Queries (`a=q`), animation frames (`a=f`), frame composition (`a=c`), other medi
 - **WHEN** a chunked transfer exceeds its declared size, or another kitty action, or a continuation with any key besides `m`, arrives before its `m=0`
 - **THEN** nothing of that transfer SHALL reach the emulator
 
-#### Scenario: Placing an unknown image is dropped
+#### Scenario: Placing an unknown image changes nothing
 
 - **WHEN** the PTY output carries `a=p,i=99,c=1,r=1` and no image 99 was forwarded
 - **THEN** the grid SHALL not change, and the app SHALL keep running

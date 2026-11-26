@@ -27,5 +27,5 @@ None.
 
 - Rust: new `src-tauri/src/terminal/kitty_gate.rs`; `src-tauri/src/terminal/session.rs` (owns a termwiz parser; `advance_bytes` parses, gates and calls `perform_actions`); `src-tauri/src/terminal/config.rs` (`enable_kitty_graphics`).
 - React: a toast when a terminal reaches its kitty cap; a pure layer module next to `src/components/terminal/imagePlacement.ts`; `src/components/terminal/terminalService.ts` (`paintRow` draws three layers in z order).
-- No new dependency (termwiz is already a direct dependency), no IPC change, no schema change.
+- No new dependency (termwiz is already a direct dependency), one new Tauri event (`terminal:kitty-capped`), no schema change.
 - Behavior for sixel and iTerm2 images is unchanged.

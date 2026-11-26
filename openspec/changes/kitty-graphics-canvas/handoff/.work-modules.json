@@ -8,11 +8,11 @@
     "id": "FRI-613",
     "pending": []
   },
-  "validation": "pending",
+  "validation": "validated",
   "planning_only": false,
   "iprev": {
-    "rounds": 4,
-    "verdict": "REVISE"
+    "rounds": 5,
+    "verdict": "APPROVED"
   },
   "interview_answers": {
     "order": "kitty first: FRI-613 then FRI-624 (Unicode placeholders + a=q answer) (user, 2026-11-26)",
@@ -21,5 +21,11 @@
     "memory_invariant": "PTY output can never grow Nergal memory without bound through kitty: per-terminal lifetime caps on forwarded bytes and cells instead of tracking wezterm memory (user, 2026-11-26, convergence rule after iprev r1+r2)",
     "caps": "low lifetime caps with a visible notice: 256 MiB, 131072 cells, 1024 placements, 4096 transmissions, 4096 deletes; deletes pass after the other caps (user, 2026-11-26, after iprev r4)"
   },
-  "events": []
+  "events": [
+    {
+      "ts": "2026-11-26T21:30:00-03:00",
+      "type": "validated",
+      "note": "openspec validate PASS; iprev opus 5 rounds (critical): r1 16 findings (5 critical) -> typed gate redesign; r2 convergence -> lifetime-cap invariant (user); r3 cache-dimension abort fixed; r4 caps chosen by user; r5 APPROVED with 6 medium/low applied"
+    }
+  ]
 }

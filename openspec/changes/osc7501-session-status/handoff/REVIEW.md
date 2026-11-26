@@ -103,3 +103,53 @@ Ninguno.
 - Anti-slop: sin gradientes, glows ni tokens nuevos; reutiliza el vocabulario de §3.10.
 - Convenciones: `resolveIndicatorState` e `isAwaitingSession` son puros y están testeados; no hay comentarios WHAT añadidos; sin voseo.
 - Spec: la precedencia (attention, completed, root) coincide con el spec; `blocked` sin hook attention da el tint `nergal-ask-pending` en `TopBar.tsx:479` y `SessionRow.tsx:67`.
+
+---
+
+# Re-review — adversarial (round 2)
+
+reviewer: adversarial (re-review) · alcance: `git diff d040bc8..HEAD` sin `docs/shortcuts.md` · artefactos: `specs/**`, `design.md` D4/D8/D9/Risks, `implementation.md` "Review fixes", `tasks.md` grupo 7, `handoff/evidence.md`.
+
+## Resolución de los hallazgos previos
+
+| Hallazgo previo | Estado | Evidencia |
+|---|---|---|
+| P1 Important: el gate del `Stop` drain cambia el comportamiento sin OSC 7501 | Resuelto | `hooks/server.rs:1103-1112` usa `stop_drain_allowed`; `mcp/messaging.rs:51-53`; test `messaging_review_tests.rs:44` |
+| P1 Important: `drain_idle` devuelve `0` para vacío y para in flight | Resuelto (residuo en Nit 1) | `hooks/server.rs:1121-1122`, `mcp/messaging.rs:85-86`, `mcp/delivery.rs:188-193`; test `messaging_review_tests.rs:189` |
+| P1 Important: `just_idled` ignora el root que libera al target | Resuelto | `mcp/messaging.rs:61-68` y `:294-295`; test `messaging_review_tests.rs:83`, `:126` |
+| P2 Important: cualquier dato impreso en el shell falsea el root | Resuelto en el gate; el disarm trae un defecto nuevo (Important 1) | `pty.rs:183-185`, `:204-212`; `terminal/session.rs:205-207`, `:260`; residuo query+report documentado en D4 |
+| P3 Important: faltan tests del `Stop` drain y del `agent_completed`; 4.1 en `[x]` | Resuelto | helpers puros `stop_drain_allowed`, `ready_transition`, `reports_apply` con tests (`messaging_review_tests.rs:44`, `:67`; `pty_review_tests.rs:4`) |
+| Nit: rama inalcanzable del hook server | Resuelto | `hooks/server.rs:1063-1065` |
+| Nit: `apply_program_status` no atómico | Resuelto | `agents/state.rs:270-296` usa `entry`; no toma otro lock de map dentro de la entrada |
+| Nit: el punto de la status bar lee solo el hook mode | Resuelto (con Nit 2) | `StatusBar.tsx:142-151` |
+| Nit: deriva de D-Risks y del spec del report idéntico | Resuelto | `design.md` Risks (write queue); `specs/program-status-protocol/spec.md:83` |
+| Nit: `docs/architecture.md` sin `program_status` ni `write_queue` | Resuelto | `docs/architecture.md:59`, `:67` |
+| Frontend Important 1: `error` vs `attention` a 6px | Resuelto en el indicador; parcial en la status bar (Nit 2) | `SessionIndicator.tsx:56-58` |
+| Frontend Important 2: `error` vs `working` con CVD | Resuelto en el indicador; parcial en la status bar (Nit 2) | `SessionIndicator.tsx:56-58` |
+| Frontend Nit 1: atoms no contiguos | Resuelto | `SessionIndicator.tsx:38-41` |
+| Frontend Nit 2: anillo de `done` en `xs` | Pendiente del walk (no es código) | `tasks.md` grupo 6 |
+| Frontend Nit 3: frase de reduced motion | Resuelto | `docs/design.md:480-483` |
+| Frontend Nit 4: switch sin chequeo exhaustivo | Resuelto (con Nit 3) | `src/lib/sessionIndicatorState.ts:39-44` |
+| Frontend Nit 5: `_removed` sin uso | Resuelto por decisión | `evidence.md:55` (el repo no tiene config de eslint) |
+
+## Hallazgos nuevos
+
+- [Important] `src-tauri/src/hooks/server.rs:1187-1192` y `src-tauri/src/hooks/events.rs:32-34` — El disarm corre en dos casos donde Claude Code sigue vivo. Caso 1: `/resume` dentro del TUI. Claude Code 2.1.332 dispara `SessionEnd` con reason `resume` y sigue en el mismo proceso. El binario lo muestra: `await njn(J,"resume",…)`, y `njn` arma `hook_event_name:"SessionEnd"`. Los reasons válidos son `clear`, `resume`, `logout`, `prompt_input_exit` y `other`. Caso 2: un `claude -p` anidado en un tool shell. Hereda `NERGAL_SESSION_ID` y su `SessionEnd` llega con `top_level == false`. El disarm no mira `top_level`. En los dos casos Claude Code no vuelve a enviar la query, porque el probe corre solo al arrancar el TUI. Desde ahí se ignoran todos los reports, y el root guardado queda congelado. Con un root congelado en `done` o `idle`, `busy_rule` nunca da busy (`mcp/messaging.rs:37`). Entonces un wake se pega dentro de un turno en curso, contra el invariante del user. Con un root congelado en `working` (el caso del `claude -p`), el tab y la status bar muestran working para siempre. `list_sessions` reporta `running` aunque la sesión esté libre. El test `only_a_session_end_that_is_not_clear_disarms_the_protocol` (`hooks/events_review_tests.rs:22`) fija este comportamiento. → Desarma solo con `top_level`, y exceptúa `clear` y `resume`. Considera también desarmar solo el PTY del evento (el `agent_shell_pid` de la sesión). Así un `SessionEnd` tardío de un proceso viejo no desarma un PTY nuevo. Agrega `resume` y un `SessionEnd` no top-level a los tests y al spec.
+
+- [Nit] `src-tauri/src/hooks/server.rs:1121-1122` y `src-tauri/src/mcp/messaging.rs:85-86` — El guard in flight es un chequeo aparte de `drain_idle`. Si el wake se asienta entre las dos llamadas, el outcome se pega justo después del Enter. Además `drain_worktree_outcomes` no marca in flight (`mcp/worktree_sessions.rs:550`). Por eso el guard solo protege en una dirección. La ventana es pequeña. → Haz que `drain_idle` devuelva un resultado de tres valores, y marca in flight también para el outcome wake.
+
+- [Nit] `src/components/layout/StatusBar.tsx:142-151` y `:225` — La status bar pinta `error` como un punto `bg-red-500` de `size-1.5`. Es el mismo punto rojo de 6px que el frontend review marcó como difícil de distinguir. D8 dice que `error` se distingue por forma. La status bar no lo cumple. → Usa `indicatorIcon` también ahí, o deja documentado en D8 que la status bar es solo color.
+
+- [Nit] `src/lib/sessionIndicatorState.ts:43-49` — `assertNever` lanza un error dentro del render. Antes, un estado desconocido caía en `working`. Ahora tumba el árbol de React. El parser de Rust filtra estados desconocidos, así que el riesgo es bajo. → Deja el chequeo de `never` solo en compilación y devuelve un fallback.
+
+- [Nit] `src-tauri/src/pty.rs:204-206` y `src-tauri/src/agents/state.rs:300-303` — El arming no comprueba que el PTY sea el vivo. Una query tardía de un PTY viejo reemplaza el arming del PTY vivo. Entonces los reports del PTY vivo se ignoran hasta su próxima query, que no llega. → Arma solo cuando `live_ptys` apunta a ese PTY.
+
+## Notas (sin severidad)
+
+- `tasks.md:19` (4.2) todavía dice que el `Stop` drain salta un target busy. También dice que el hook server agenda en cualquier transición. El código ya no hace eso. Alinea el texto con el grupo 7.
+- `design.md:149` dice que el arming cierra el forging "after Claude Code". Si Claude Code muere sin `SessionEnd`, el PTY queda armado hasta EOF. Nómbralo en el residuo de D4.
+- Revisado sin hallazgos: ningún otro camino llama a `apply_program_status` (solo `pty.rs:220`). La entrada de `DashMap` no toma otro lock. `idle_since` usa segundos en las dos fuentes (`pty.rs:214-217`, `now_secs`). El deferred wake vuelve a mirar `delivery_busy` antes de pegar. `/clear` conserva el arming. EOF del dueño desarma (`agents/state.rs:315-316`).
+
+## Verdict
+
+FAIL — Los cinco Important de la primera ronda están resueltos y probados. Los nits y el frontend también, salvo la status bar. El fix de seguridad trae un defecto nuevo: el disarm en `SessionEnd` también corre con `/resume` y con un `claude -p` anidado. En los dos casos Claude Code sigue vivo y nunca vuelve a armar. El root queda congelado, y con `done` o `idle` el wake entra en un turno en curso. El fix es chico: gate por `top_level` y excepción de `resume`.

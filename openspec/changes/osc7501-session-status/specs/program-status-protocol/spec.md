@@ -140,7 +140,7 @@ The system SHALL publish a root status change for an agent session as one Tauri 
 
 ### Requirement: Reports count only while Claude Code has the protocol on
 
-The system SHALL arm a PTY for reports when the scanner answers an OSC 7501 query on it, and SHALL ignore every report from a PTY that is not armed. A `SessionEnd` hook whose reason is not `clear` SHALL disarm the session's PTY, because Claude Code has exited and the shell prints untrusted data again. A `SessionEnd` with reason `clear` SHALL keep the PTY armed, because the same Claude Code process keeps running and does not query again. PTY EOF SHALL disarm the PTY.
+The system SHALL arm a PTY for reports when the scanner answers an OSC 7501 query on it and that PTY is the session's live PTY, and SHALL ignore every report from a PTY that is not armed. A top-level `SessionEnd` hook (not from a nested `claude -p`) whose reason is neither `clear` nor `resume` SHALL disarm the session's live PTY, because Claude Code has exited and the shell prints untrusted data again. A `SessionEnd` with reason `clear` or `resume`, or one that is not top-level, SHALL keep the PTY armed, because that Claude Code process keeps running and does not query again. PTY EOF SHALL disarm the PTY.
 
 #### Scenario: A report before any query is ignored
 
@@ -159,6 +159,24 @@ The system SHALL arm a PTY for reports when the scanner answers an OSC 7501 quer
 - **GIVEN** PTY B is armed and S's root status is `idle`
 - **WHEN** a `SessionEnd` hook with reason `prompt_input_exit` arrives for S, then B's output carries `state=blocked`
 - **THEN** S's root status SHALL stay `idle`
+
+#### Scenario: /resume keeps the PTY armed
+
+- **GIVEN** PTY B is armed
+- **WHEN** a top-level `SessionEnd` hook with reason `resume` arrives for S, then B's output carries `state=working`
+- **THEN** S's root status SHALL be `working`
+
+#### Scenario: A nested session end keeps the PTY armed
+
+- **GIVEN** PTY B is armed
+- **WHEN** a `SessionEnd` hook that is not top-level (a `claude -p` run inside a tool) arrives for S
+- **THEN** B SHALL stay armed
+
+#### Scenario: A late query from an old PTY does not take the arming
+
+- **GIVEN** S's live PTY is B and B is armed
+- **WHEN** old PTY A of session S answers an OSC 7501 query
+- **THEN** B SHALL stay armed and A SHALL NOT be armed
 
 #### Scenario: /clear keeps the PTY armed
 

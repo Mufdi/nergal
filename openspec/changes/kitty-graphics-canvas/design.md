@@ -70,7 +70,24 @@ flowchart LR
   L --> CANVAS[paintRow]
 ```
 
+## Revision 1: placements lose their placement id (2026-11-26)
+
+The Builder found that the caps did not bound wezterm's memory. `VecStorage::set_cell` (`WZ/termwiz/src/surface/line/vecstorage.rs:19-30`) re-attaches every image with a placement id that the old cell held, and `assign_image_to_cells` (`WZ/term/src/terminalstate/image.rs:190-216`) builds the new cell as a clone of the old one, images included. A placement over cells that already hold placement-id images therefore doubles them: k images become 2k+1. Measured on wezterm alone: 18 stacked `a=p,i=1,p=N,c=16,r=8,C=1` take 10 s and the process passes 5 GB. The forwarded totals stay far under the caps, so D4's premise (wezterm holds at most what it was given) was false for placement ids.
+
+Decision (user, 2026-11-26): the gate forwards every placement (`a=p`, the placement half of `a=T`) and every `ByImageId` delete with `placement_id: None`. Without a placement id, `set_cell` never re-attaches, the clone keeps each image once, and `kitty_img_place` removes the image's previous placement before drawing (`WZ/term/src/terminalstate/kitty.rs:103-105, 312-330`, placements keyed `(image_id, None)` at `:135-137`). Stacking is linear again and D4's bound holds. A delete that named a placement id now removes the image's placement, which is the only one it can have.
+
+Alternatives considered:
+- Drop placements that carry `p`: simpler, but programs that always send `p` lose their images and the move scenario stops working.
+- Patch wezterm's `set_cell` (fork): the exact fix, but the user ruled out a fork; every wezterm update would carry the patch.
+- Deduplicate images in the session after each placement: needs the cursor and scroll state in Nergal, and the transient 2k+1 copy inside `set_cell` still happens.
+
+Cost: one image id is shown in one place at a time. chafa and yazi send one placement per image id; Claude Code uses Unicode placeholders (FRI-624), a separate path.
+
+Also from the build: the parser emits the `ESC \` that ends an APC as its own `Esc(StringTerminator)` action. The gate drops that action when it directly follows a kitty action it dropped or consumed as a chunk (tracked across `admit` calls), so a dropped kitty action leaves no residue. A real ST right after a dropped APC is swallowed with it; in the emulator an ST alone only closes a pending tmux-title string.
+
 ## Risks / Trade-offs
+
+- [One image id shows in one place] → a program that places the same image id twice sees only the last placement (Revision 1); it can transmit the image under a second id.
 
 - [Parser state moves to Nergal] → the emulator's own parser is never used again; `perform_actions` is the same performer `advance_bytes` uses. Tests compare ordinary output against the emulator's own parser.
 - [A busy terminal stops showing new kitty images] → after 256 MiB of images, 131,072 placed cells, 1024 placements, or 4096 transmissions or deletes in its life (about 8 full-screen 4K images, 47 at 1080p, or hundreds of small ones); the notice tells the user, and reopening the terminal resets it.

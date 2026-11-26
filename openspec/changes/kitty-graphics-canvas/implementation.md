@@ -28,9 +28,10 @@
 - `pub fn admit(&mut self, actions: Vec<Action>, cols: usize, rows: usize) -> Vec<Action>`: non-kitty actions pass in order; kitty actions follow design D2-D4. Small pure functions per rule (`check_transmit`, `check_placement`, `continuation`) so each rule has a direct test.
 - State: the in-flight transfer (first chunk's typed fields, decoded bytes so far); lifetime counters (bytes, cells, transmissions, placements, deletes); a `capped` flag that, once set, drops every later transmission and placement (and any in-flight transfer at once, without decoding further chunks) while deletes pass until `max_deletes`; it logs once (`tracing::warn!`). Reaching `max_deletes` also sets `capped`. No image dimension map (design D2).
 - Count before forwarding: transmissions add `max(width * height * 4, 4096)` bytes and 1 transmission; placements add `columns * rows` cells and 1 placement; deletes add 1 delete; an `a=T` must fit both; if anything would pass a cap, drop the action and set `capped`.
-- Placements: `x` and `y` absent or 0.
+- Placements: `x` and `y` absent or 0. Rebuild every forwarded placement (`KittyImage::Display` and the placement of `TransmitData`) with `placement_id: None` (design Revision 1; doubling at `WZ/termwiz/src/surface/line/vecstorage.rs:19-30` + `WZ/term/src/terminalstate/image.rs:190-216`).
 - Forward rebuilt actions with `verbosity: KittyImageVerbosity::Quiet`; every transmission (single chunk or assembled) is forwarded with `data: KittyImageData::DirectBin(decoded)` and `more_data_follows: false`. Decode with `base64::engine::general_purpose::STANDARD` (canonical padding, no trailing bits).
-- Deletes: forward only `KittyImageDelete::All { .. }` and `ByImageId { .. }`; drop other variants.
+- Deletes: forward only `KittyImageDelete::All { .. }` and `ByImageId { .. }`, the latter with `placement_id: None`; drop other variants.
+- String terminator residue: drop an `Action::Esc(Esc::Code(EscCode::StringTerminator))` that directly follows a kitty action the gate dropped or consumed as a chunk; keep a flag across `admit` calls.
 
 ### 2. Session wiring (`session.rs`, `config.rs`, `clippy.toml`)
 
@@ -53,7 +54,7 @@
 - Group A (Rust: plan sections 1-3, including the snapshot index and the `terminal:kitty-capped` emit) and group B (frontend: the toast in section 3 and the layers in section 4) share no files.
 - Interface for the test-writer: `terminal::kitty_gate::{KittyGate, GateLimits}` with `admit(Vec<Action>, cols, rows) -> Vec<Action>`, `take_capped_notice()`, and `GateLimits { max_side, max_bytes, max_cells, max_transmissions, max_placements, max_deletes }`; `KittyGate::with_limits_and_switch(limits, disabled: bool)` for the kill-switch test; a session-level way to inject `GateLimits` for the oracle tests (e.g. `TerminalSession::set_kitty_limits`); tests build actions with `termwiz::escape::parser::Parser::new().parse_as_vec(bytes)` so they exercise real parsing. Frontend: `imageLayers(runs)`, `KITTY_UNDER_BG_Z`.
 - Trap: the emulator's own parser must never be fed again (state would split between two parsers).
-- Trap: forward rebuilt typed actions, never the original verbosity.
+- Trap: forward rebuilt typed actions, never the original verbosity and never a placement id (design Revision 1).
 - Trap: locked test files must be rustfmt-clean before hashing; `rustfmt --edition 2024 --config skip_children=true` on production files.
 
 ## Per-phase risk
@@ -61,7 +62,8 @@
 - [Parser swap changes ordinary output] → a comparison test feeds a mixed byte corpus (text, CSI, OSC, DCS sixel, iTerm2 OSC 1337, split reads) through both paths and compares grids.
 - [A gate rule misses a bypass] → a deterministic fuzz test (seeded generator, no new dependency) builds random kitty key sets and byte noise around them, parses, gates, and asserts every forwarded kitty action satisfies the allowlist and the forwarded totals stay under the caps.
 - [Memory bound] → the oracle test counts image cells inside wezterm, in both screens and the scrollback, after line-moving actions and a resize; the private parts (`id_to_data`, image cache) rest on the arithmetic in design D4.
-- [CPU] → the worst-stacking test (1024 placements of 16x8 at one cursor, three snapshots, a delete) under a time bound in release profile.
+- [CPU] → the worst-stacking test (1024 distinct images placed once each at 16x8 on one cursor, three snapshots, `a=d,d=a`) under a time bound in release profile.
+- [Placement-id doubling, Revision 1] → a regression test with 30 placements of one image under distinct `p` at `ESC [H`, plus a seeded property test over random placements (with and without `p`, overlapping, both screens) asserting the emulator's held image entries never exceed the forwarded placed cells.
 - [Painter regression for sixel/iTerm2 (z=0)] → z=0 stays in `overText`.
 
 ## Verification

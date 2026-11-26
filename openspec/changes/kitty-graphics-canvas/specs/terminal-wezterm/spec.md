@@ -20,7 +20,7 @@ The system SHALL drop every parsed kitty graphics action except these, under the
 - a transmission (`a=t` or `a=T`) with direct data, no compression, format 24-bit RGB, 32-bit RGBA or no format (RGBA), width and height each between 1 and 4096, no image number, and exactly width × height × bytes-per-pixel decoded bytes;
 - a placement (`a=T`, or `a=p` with an image id of at least 1 and no image number), with explicit columns between 1 and the terminal's columns, explicit rows between 1 and the terminal's rows, the source rectangle starting at the image origin (`x` and `y` absent or 0), and explicit width and height above zero when given;
 - a delete of all images or of one image by id (`a=d` with `d=a`, `d=A`, `d=i` or `d=I`).
-Queries (`a=q`), animation frames (`a=f`), frame composition (`a=c`), other media, compression, PNG, other formats and other delete variants SHALL be dropped. Every forwarded action SHALL be applied with quiet verbosity, so the emulator never writes a kitty reply to the PTY. The gate SHALL forward every transmission with its decoded bytes, decoding with standard base64 at least as strict as the emulator's. It SHALL collect the chunks of a chunked transmission, decoding each chunk, and SHALL forward one complete transmission, or drop it whole; a continuation chunk SHALL carry only direct data and the more-data flag, and any other kitty action before the final chunk SHALL drop the transfer. The emulator's chunk accumulator SHALL never be used.
+Queries (`a=q`), animation frames (`a=f`), frame composition (`a=c`), other media, compression, PNG, other formats and other delete variants SHALL be dropped. Every forwarded action SHALL be applied with quiet verbosity, so the emulator never writes a kitty reply to the PTY. Every forwarded placement and delete SHALL carry no placement id, so the emulator holds at most one placement per image id and a placement over cells that already hold images never copies those images again. The gate SHALL forward every transmission with its decoded bytes, decoding with standard base64 at least as strict as the emulator's. It SHALL collect the chunks of a chunked transmission, decoding each chunk, and SHALL forward one complete transmission, or drop it whole; a continuation chunk SHALL carry only direct data and the more-data flag, and any other kitty action before the final chunk SHALL drop the transfer. The emulator's chunk accumulator SHALL never be used.
 
 #### Scenario: A direct RGBA image is placed
 
@@ -73,6 +73,11 @@ Queries (`a=q`), animation frames (`a=f`), frame composition (`a=c`), other medi
 - **WHEN** a chunked transfer exceeds its declared size, or another kitty action, or a continuation with any key besides `m`, arrives before its `m=0`
 - **THEN** nothing of that transfer SHALL reach the emulator
 
+#### Scenario: Placements with placement ids stay linear
+
+- **WHEN** a forwarded 1x1 image is placed 30 times with `p=1` to `p=30`, `c=16,r=8`, each after `ESC [H`, in an 80x24 terminal
+- **THEN** the emulator SHALL hold at most 128 image cells for it, and every image cell SHALL hold at most one image
+
 #### Scenario: Placing an unknown image changes nothing
 
 - **WHEN** the PTY output carries `a=p,i=99,c=1,r=1` and no image 99 was forwarded
@@ -111,7 +116,7 @@ The system SHALL keep, per terminal and for the terminal's whole life, these for
 
 #### Scenario: The worst stacking stays cheap
 
-- **WHEN** one image is placed 1024 times with distinct placement ids, `c=16,r=8,C=1`, at the same cursor position, then the grid is snapshotted three times, then the image is deleted
+- **WHEN** 1024 distinct 1x1 images are each placed once with `c=16,r=8,C=1` at the same cursor position, then the grid is snapshotted three times, then all images are deleted with `a=d,d=a`
 - **THEN** the whole sequence SHALL finish in under 2 seconds in a release-profile test
 
 #### Scenario: The cap is per terminal
@@ -121,7 +126,7 @@ The system SHALL keep, per terminal and for the terminal's whole life, these for
 
 ### Requirement: Kitty placements are drawn on the canvas
 
-The system SHALL enable kitty graphics in the emulator, so a forwarded kitty placement appears in the grid as image runs, like sixel and iTerm2 images, in the main terminal and in the quake terminal. Placing an image again with the same image id and placement id SHALL move it. Deleting it SHALL remove its runs. Text printed over a placement SHALL replace the image only in the cells it overwrites.
+The system SHALL enable kitty graphics in the emulator, so a forwarded kitty placement appears in the grid as image runs, like sixel and iTerm2 images, in the main terminal and in the quake terminal. Placing an image again with the same image id SHALL move it, whatever placement ids the two placements name; one image id is shown in one place at a time. Deleting it SHALL remove its runs. Text printed over a placement SHALL replace the image only in the cells it overwrites.
 
 #### Scenario: A placed image becomes image runs
 
@@ -132,6 +137,11 @@ The system SHALL enable kitty graphics in the emulator, so a forwarded kitty pla
 
 - **WHEN** an image is placed with `i=1,p=7` at row 0, then placed again with `a=p,i=1,p=7` at row 5
 - **THEN** the snapshot SHALL carry runs for that image on row 5 and none on row 0
+
+#### Scenario: Deleting with a placement id removes the image
+
+- **WHEN** an image is placed with `i=1,p=7` and then deleted with `a=d,d=i,i=1,p=7`
+- **THEN** the snapshot SHALL carry no runs for it
 
 #### Scenario: Deleting removes the runs
 

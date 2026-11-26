@@ -1,8 +1,37 @@
 ## ADDED Requirements
 
-### Requirement: Status reports are parsed into one root status per session
+### Requirement: The scanner finds OSC 7501 sequences in the PTY output
 
-The system SHALL parse every OSC 7501 report that an agent session's PTY output carries. A report has the form `ESC ] 7501 ; <fields> <terminator>`, where the terminator is BEL (`0x07`) or ST (`ESC \`) and the fields are `key=value` pairs separated by `:`. The system SHALL keep, per agent session, one root status with: `state` (one of `working`, `blocked`, `done`, `idle`, `error`), `kind` (the `kind` field, only for `blocked`), and `msg` (the `msg` field decoded from base64 as UTF-8, lossy). A report with an `id` field SHALL be ignored, because it describes a child entry. A report with `state=clear` and no `id` SHALL remove the session's root status. A report with an unknown `state`, or without a `state`, SHALL be ignored. A `msg` that is not valid base64 SHALL be dropped and the rest of the report kept. A report body longer than 4096 bytes SHALL be discarded whole, and parsing SHALL resume after its terminator.
+The system SHALL scan each agent session's PTY output for `ESC ] 7501 ;` followed by a body and a terminator. The terminator SHALL be BEL (`0x07`) or ST (`ESC \`). An `ESC` followed by any byte other than `\`, a CAN (`0x18`) or a SUB (`0x1a`) SHALL abort the sequence without a result, and that `ESC` SHALL be scanned again as a possible start. A body equal to `?` SHALL be a query. Any other body SHALL be a report. A body longer than 4096 bytes SHALL be discarded whole, and scanning SHALL resume after its terminator or abort. A prefix or body split across PTY reads SHALL be joined.
+
+#### Scenario: Report split across PTY reads
+
+- **WHEN** one PTY read ends with `ESC ] 7501 ; state=wor` and the next read starts with `king:app=claude-code ESC \`
+- **THEN** the scanner SHALL yield one report with body `state=working:app=claude-code`
+
+#### Scenario: Oversized report is discarded
+
+- **WHEN** the output carries `ESC ] 7501 ; state=working:msg=` followed by 5000 base64 bytes and `ESC \`, then `ESC ] 7501 ; state=done ESC \`
+- **THEN** the scanner SHALL yield only the report `state=done`
+
+#### Scenario: An aborted sequence does not swallow later reports
+
+- **WHEN** the output carries `ESC ] 7501 ; state=working`, then `ESC [ 2 J`, then `ESC ] 7501 ; state=done BEL`
+- **THEN** the scanner SHALL yield only the report `state=done`
+
+#### Scenario: CAN aborts a sequence
+
+- **WHEN** the output carries `ESC ] 7501 ; state=working` followed by `0x18`, then `ESC ] 7501 ; ? BEL`
+- **THEN** the scanner SHALL yield only one query
+
+#### Scenario: Other OSC codes are ignored
+
+- **WHEN** the output carries `ESC ] 8 ; ; https://x ESC \`, `ESC ] 11 ; ? BEL` and `ESC ] 75010 ; state=done BEL`
+- **THEN** the scanner SHALL yield nothing
+
+### Requirement: Reports are parsed into one root status per session
+
+The system SHALL parse each report's fields, which are `key=value` pairs separated by `:`. The system SHALL keep, per agent session, one root status with: `state` (one of `working`, `blocked`, `done`, `idle`, `error`), `kind` (only for `blocked`), `msg`, and the time it was set. `msg` SHALL be the `msg` field decoded from base64 as UTF-8 (lossy), with control characters (C0, DEL and C1) removed. A report with an `id` field SHALL be ignored, because it describes a child entry. A report with `state=clear` and no `id` SHALL remove the session's root status. A report with an unknown `state`, or without a `state`, SHALL be ignored. A `msg` that is not valid base64 SHALL be dropped and the rest of the report kept.
 
 #### Scenario: Working report sets the root status
 
@@ -14,6 +43,11 @@ The system SHALL parse every OSC 7501 report that an agent session's PTY output 
 
 - **WHEN** S's PTY output carries `ESC ] 7501 ; state=blocked:app=claude-code:kind=permission:msg=QWxsb3cgQmFzaD8= BEL`
 - **THEN** S's root status SHALL be `state=blocked`, `kind=permission`, `msg="Allow Bash?"`
+
+#### Scenario: Control characters are removed from msg
+
+- **WHEN** a report carries `state=blocked:msg=` with the base64 of `"Allow\u001b[31m Bash?\u0007"`
+- **THEN** S's root status `msg` SHALL be `"Allow[31m Bash?"`
 
 #### Scenario: Child report is ignored
 
@@ -44,34 +78,50 @@ The system SHALL parse every OSC 7501 report that an agent session's PTY output 
 - **WHEN** S's PTY output carries `ESC ] 7501 ; state=error:app=claude-code:msg=!!! ESC \`
 - **THEN** S's root status SHALL be `state=error` with no `msg`
 
-#### Scenario: Report split across PTY reads
+### Requirement: The root status belongs to the PTY that reported it
 
-- **WHEN** one PTY read ends with `ESC ] 7501 ; state=wor` and the next read starts with `king:app=claude-code ESC \`
-- **THEN** S's root status SHALL be `state=working`
+The system SHALL store each root status with the id of the PTY whose output carried the report. A report or a PTY EOF from a PTY that does not own the stored root status SHALL leave it unchanged, unless no root status is stored, in which case a report sets it with the reporting PTY as owner. Auxiliary shells (quake terminals) SHALL never set or clear a root status.
 
-#### Scenario: Oversized report is discarded
+#### Scenario: EOF of an old PTY keeps the new PTY's status
 
-- **GIVEN** S's root status is `idle`
-- **WHEN** S's PTY output carries `ESC ] 7501 ; state=working:msg=` followed by 5000 base64 bytes and `ESC \`, then `ESC ] 7501 ; state=done ESC \`
-- **THEN** S's root status SHALL be `done`, never `working`
+- **GIVEN** S's root status `working` is owned by PTY B
+- **WHEN** PTY A of session S reaches EOF
+- **THEN** S's root status SHALL stay `working`
 
-### Requirement: Root status changes reach the frontend and the MCP directory
+#### Scenario: Late report from an old PTY is ignored
 
-The system SHALL publish a root status change for an agent session as one Tauri event `session:program-status` with payload `{session_id, state, kind, msg}`, where `session_id` is the Nergal session id, `state` is the new state or `null` when the root status was removed, and `kind` and `msg` are `null` when absent. The system SHALL emit the event only when the root status differs from the previous one. The system SHALL store the root status in the agent state so the MCP directory reads it. The root status SHALL be removed, with an event whose `state` is `null`, when the session's PTY closes. Auxiliary shells (quake terminals) SHALL never produce root status or events.
+- **GIVEN** S's root status `working` is owned by PTY B
+- **WHEN** PTY A of session S reports `state=done`
+- **THEN** S's root status SHALL stay `working`
+
+#### Scenario: EOF of the owner removes the status
+
+- **GIVEN** S's root status `working` is owned by PTY B
+- **WHEN** PTY B reaches EOF
+- **THEN** S SHALL have no root status
+
+#### Scenario: Quake shell reports are ignored
+
+- **WHEN** a quake shell's PTY output carries `ESC ] 7501 ; state=working ESC \`
+- **THEN** no root status SHALL be set
+
+### Requirement: Root status changes reach the frontend
+
+The system SHALL publish a root status change for an agent session as one Tauri event `session:program-status` with payload `{session_id, state, kind, msg}`. `session_id` is the Nergal session id. `state` is the new state, or `null` when the root status was removed. `kind` and `msg` are `null` when absent. The system SHALL emit the event only when `state`, `kind` or `msg` differs from the stored value. A session ending (`SessionEnd` hook) SHALL NOT remove the root status on either side, because Claude Code clears it with `state=clear` and PTY EOF removes it.
 
 #### Scenario: Repeated report emits once
 
 - **WHEN** S's PTY output carries `state=working` twice in a row
 - **THEN** exactly one `session:program-status` event with `state="working"` SHALL be emitted for S
 
-#### Scenario: PTY close removes the status
+#### Scenario: PTY close emits a removal
 
-- **GIVEN** S's root status is `working`
-- **WHEN** S's PTY reaches EOF
+- **GIVEN** S's root status `working` is owned by PTY B
+- **WHEN** PTY B reaches EOF
 - **THEN** a `session:program-status` event with `state=null` SHALL be emitted for S
-- **AND** the agent state SHALL hold no root status for S
 
-#### Scenario: Quake shell reports are ignored
+#### Scenario: SessionEnd keeps the status
 
-- **WHEN** a quake shell's PTY output carries `ESC ] 7501 ; state=working ESC \`
-- **THEN** no `session:program-status` event SHALL be emitted
+- **GIVEN** S's root status is `idle`
+- **WHEN** a `SessionEnd` hook and then a `SessionStart` hook arrive for S (as with `/clear`)
+- **THEN** S's root status SHALL still be `idle` in the agent state and in the frontend

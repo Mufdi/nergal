@@ -12,7 +12,12 @@
 - Reader thread: `pty.rs:810-830` reads 8 KiB chunks, locks `reader_session`, calls `guard.advance_bytes(&buf[..n])` (`:824`), drops the guard at end of the `match`, then `reader_notify.notify_one()`. It has `agent_session`, `session_id` (as `eof_session`) and `eof_app: AppHandle` in scope (`pty.rs:806-808`).
 - EOF path: `pty.rs:834-847`; for agent sessions it calls `on_agent_pty_eof(agents.inner(), &eof_session, &eof_pty_id)` (`:846`), defined at `pty.rs:970` (calls `agents.mark_dead_if`). Agent state is reached with `eof_app.try_state::<crate::agents::state::AgentRuntimeState>()`.
 - `AgentRuntimeState` (`src-tauri/src/agents/state.rs`): `session_activity: Arc<DashMap<String, SessionActivity>>` (`:93`, initialized `:130`); `record_activity` (`:222`) overwrites mode/waiting_for/last_activity; `session_activity()` (`:240`) returns a clone. `SessionActivity { mode, last_activity, waiting_for }` at `:43-50`.
-- MCP descriptor: `src-tauri/src/mcp/directory.rs:245` picks `(mode, last_activity, waiting_for)` from `agents.session_activity(&s.id)` when live, else the DB row. This is the only place that needs the combined mode.
+- MCP descriptor: `src-tauri/src/mcp/directory.rs:245` picks `(mode, last_activity, waiting_for)` from `agents.session_activity(&s.id)` when live, else the DB row.
+- Message delivery reads `session_activity` directly, not the descriptor: `src-tauri/src/mcp/messaging.rs:192-200` computes `target_busy` (`running`/`needs_attention`) and `just_idled` (`idle` within `IDLE_SETTLE_SECS` of `last_activity`); the deferred wake re-checks busy at `:221-224` and calls `delivery::drain_idle(&db, delivery.as_ref(), &to, enabled)`. `drain_idle` (`src-tauri/src/mcp/delivery.rs:203`) skips a session whose previous wake is in flight. The Stop drain is at `src-tauri/src/hooks/server.rs:1103-1119` (`AppBridge::new(app.clone())`, `Config::load().cross_session.enabled`).
+- wezterm wraps the writer passed to `Terminal::new` in `ThreadedWriter` (channel + own thread, `~/.cargo/git/checkouts/wezterm-26cdb9e734a97642/5046fc2/term/src/terminalstate/mod.rs:448-478`), so its answers never block the reader thread and arrive asynchronously.
+- Test helper `CapturedWriter::drain` (`session.rs:696-708`) returns as soon as one byte is present; `session_with_writer` (`session.rs:725-729`) builds with `TerminalSession::new` (no reply sink).
+- Pending tint: `isAwaiting` at `src/components/layout/TopBar.tsx:476` and `src/components/session/SessionRow.tsx:64` (`!!pendingAsks[id] || !!pendingAttention[id]`), class `nergal-ask-pending` (`src/styles/globals.css:886`).
+- Session-keyed atoms MUST use `sessionScopedMapAtom` (`src/stores/sessionScope.ts:3-7`), e.g. `src/stores/activity.ts:16`.
 - Hook server writes activity at `src-tauri/src/hooks/server.rs:1057-1066` (unchanged by this change).
 - Frontend: listeners are registered in one async setup function in `src/stores/hooks.ts:81` returning `UnlistenFn[]` (pattern: `unlisteners.push(await listen<Payload>("event", (payload) => {...}))`, e.g. `attention:pending` near `:398-412`). `listen` comes from `@/lib/tauri`.
 - `src/components/session/SessionIndicator.tsx`: `IndicatorState` union (`:7`), `STATE_COLORS`/`STATE_ANIMATIONS` maps (`:15-29`), component (`:37`), private `resolveState` (`:57`). Atoms: `modeMapAtom` (`src/stores/workspace.ts:160`), `planReviewStatusMapAtom` (`src/stores/plan`), `pendingAsksAtom`/`pendingAttentionAtom` (`src/stores/askUser.ts`).
@@ -20,65 +25,74 @@
 
 ## Execution order
 
-1. Rust pure core: new `src-tauri/src/terminal/program_status.rs` (scanner + report parser) and its tests.
-2. `TerminalSession` wiring: reply writer, `advance_bytes` returns the reports.
-3. `AgentRuntimeState.program_status` + pure `combined_mode`, directory use.
-4. Reader thread: apply reports, emit event, clear on EOF.
-5. Frontend: atom + listener, pure `resolveIndicatorState`, indicator visuals.
+1. Rust pure core: new `src-tauri/src/terminal/program_status.rs` (scanner, report parser, msg sanitizing) and its tests.
+2. Write queue + `TerminalSession` wiring: `PtyWriteQueue`, reply sink, `advance_bytes` returns the report bodies.
+3. `AgentRuntimeState.program_status` (owned by pty_id), pure `combined_mode`, directory use.
+4. Reader thread and EOF: apply reports, emit event, clear on owner EOF; messaging busy helper and the drain on leaving `blocked`.
+5. Frontend: scoped atom + listener, pure `resolveIndicatorState`, indicator visuals, pending tint.
 
 ## Plan
 
 ### 1. `terminal/program_status.rs` (new, declared in `terminal/mod.rs`)
 
-- `ProgramStatusScanner` with `fn feed(&mut self, bytes: &[u8]) -> Vec<Osc7501>` where `Osc7501` is `Query` or `Report(Vec<u8>)` (the raw body). State: matching the prefix `ESC ] 7501 ;` (partial prefix carried), collecting the body, discarding an oversized body (cap `MAX_BODY = 4096`), terminator BEL or `ESC \` (an `ESC` at the end of a chunk carried over). A body equal to `?` is `Query`.
-- `fn parse_report(body: &[u8]) -> Option<ReportAction>` with `ReportAction::{Set(ProgramStatus), Clear, Ignore}`: split on `:`, then `key=value`. Any `id` → `Ignore`. `state=clear` → `Clear`. `state` in `working|blocked|done|idle|error` → `Set`. Unknown or missing `state` → `Ignore`. `kind` kept only for `blocked`. `msg` base64-decoded (`base64 = "0.22"` is a direct dependency, `src-tauri/Cargo.toml:53`; use its `Engine` API with the standard alphabet), then `String::from_utf8_lossy`; a decode failure drops `msg`.
-- `ProgramStatus { state: RootState, kind: Option<String>, msg: Option<String> }`, `RootState` enum with `as_str()`, `Clone + PartialEq + Debug + Serialize`.
-- Tests: every `program-status-protocol` parsing scenario, the split and oversized cases, BEL and ST terminators, a query split across chunks.
+- `pub const MAX_BODY: usize = 4096`.
+- `ProgramStatusScanner` with `pub fn feed(&mut self, bytes: &[u8]) -> Vec<Osc7501>` where `pub enum Osc7501 { Query, Report(Vec<u8>) }` (raw body). States: idle (matching the exact prefix `ESC ] 7501 ;`, a partial prefix carried across calls), body (collect until BEL or `ESC \`), skip (body over `MAX_BODY`: drop until terminator or abort). In body and skip, `ESC` + any byte other than `\`, CAN (`0x18`) or SUB (`0x1a`) aborts with no result; the aborting `ESC` is re-scanned as a possible prefix start. A trailing lone `ESC` is carried to the next call. Body `?` → `Query`. `ESC ] 75010 ;` must not match (the `;` right after `7501` is part of the prefix).
+- `pub fn parse_report(body: &[u8]) -> ReportAction` with `pub enum ReportAction { Set(ProgramStatus), Clear, Ignore }`: split on `:`, then `key=value`. Any `id` → `Ignore`. `state=clear` → `Clear`. `state` in `working|blocked|done|idle|error` → `Set`. Unknown or missing `state` → `Ignore`. `kind` kept only for `blocked`. `msg`: base64-decode with `base64 = "0.22"` (`src-tauri/Cargo.toml:53`, `Engine` API, standard alphabet), `String::from_utf8_lossy`, then remove `char::is_control` characters (covers C0, DEL, C1); a decode failure drops `msg`.
+- `pub struct ProgramStatus { pub state: RootState, pub kind: Option<String>, pub msg: Option<String> }` and `pub enum RootState { Working, Blocked, Done, Idle, Error }` with `as_str()`; derive `Clone, Debug, PartialEq, Eq, serde::Serialize`.
 
-### 2. `TerminalSession`
+### 2. Write queue and `TerminalSession`
 
-- Add a field `program_status: ProgramStatusScanner` and `status_reply: Option<Box<dyn Write + Send>>`.
-- New constructor parameter or builder `with_status_reply(writer)`; `build_terminal_session` passes `Box::new(SharedWriterAdapter(Arc::clone(&writer)))` a second time. Keep the existing constructors compiling for other callers (tests): `None` means no reply.
-- `advance_bytes(&mut self, bytes) -> Vec<Vec<u8>>`: run `track_sync_mode`, then the scanner; for each `Query` write `ESC ] 7501 ; ? ESC \` to `status_reply` (log on error, never panic); collect `Report` bodies; then `self.terminal.advance_bytes(bytes)`; return the bodies. Callers that ignore the return compile with `let _ =` or by not binding (it is not `#[must_use]`).
-- Tests in `session.rs` tests module, using the captured writer: query answered; answer precedes DA1 within one chunk; split query answered once; report writes nothing; report leaves the grid unchanged (`ok` at column 0).
+- `terminal/write_queue.rs` (new): `PtyWriteQueue::spawn(inner: Box<dyn Write + Send>) -> PtyWriteQueue` starts one thread that receives `Vec<u8>` from an unbounded `std::sync::mpsc` channel and `write_all`s + `flush`es them to `inner`, stopping (with a `tracing::warn!`) on the first error. `PtyWriteQueue::writer(&self) -> QueueWriter`; `QueueWriter: Write + Send + Clone` whose `write` sends the bytes and returns `Ok(len)` (a closed channel → `BrokenPipe`).
+- `TerminalSession`: fields `status_scanner: ProgramStatusScanner` and `status_reply: Option<Box<dyn Write + Send>>`; `pub fn set_status_reply(&mut self, w: Box<dyn Write + Send>)`. Existing constructors unchanged (reply `None`).
+- `pub fn advance_bytes(&mut self, bytes: &[u8]) -> Vec<Vec<u8>>`: `track_sync_mode(bytes)`; `status_scanner.feed(bytes)`; for each `Query` write `ESC ] 7501 ; ? ESC \` to `status_reply` (log on error, never panic); collect `Report` bodies; then `self.terminal.advance_bytes(bytes)`; return the bodies.
+- `pty.rs` `build_terminal_session` (`:144`): take the `SharedWriter`, spawn a `PtyWriteQueue` over `SharedWriterAdapter(Arc::clone(&writer))`, pass `Box::new(queue.writer())` to the constructor and `set_status_reply(Box::new(queue.writer()))`. Update both callers (`spawn_pty`, test helper near `pty.rs:2856`).
+- Caller fix: the reader `match` at `pty.rs:823-828` has an `Err` arm returning `()`; bind the bodies (`let bodies = match ... { Ok(mut g) => g.advance_bytes(..), Err(e) => { log; Vec::new() } };`). `rg "advance_bytes\(" src-tauri/src` for every other caller (tests, benches).
+- Tests: add a `CapturedWriter::drain_len(n)` helper that waits until at least `n` bytes are present (500 ms deadline). Build the session with `session_with_writer` and `set_status_reply(Box::new(w.clone()))` so both paths land in one captured buffer.
 
 ### 3. Agent state and MCP mode
 
-- `AgentRuntimeState`: `program_status: Arc<DashMap<String, ProgramStatus>>`; `apply_program_status(&self, sid, action) -> Option<Option<ProgramStatus>>` returns `Some(new)` only when the stored value changed (`Some(None)` = removed); `program_status(&self, sid)`; `clear_program_status(&self, sid) -> bool`. Stamp `last_activity` in `session_activity` when a status is set, without touching its mode.
-- Pure `fn combined_mode(hook: Option<&SessionActivity>, root: Option<&ProgramStatus>) -> (String /*mode*/, Option<String> /*waiting_for*/)` per the `session-directory` requirement (200-char cut on `msg`, `permission|question|login|dialog` fallback). Place it next to `SessionActivity` in `agents/state.rs` or in `mcp/directory.rs`; tests cover every scenario of the requirement.
-- `mcp/directory.rs:245`: in the live branch, use `combined_mode` with the hook activity and the root status; a live session with a root status but no hook activity uses `combined_mode(None, root)` and `s.updated_at` for `last_activity`.
+- `AgentRuntimeState`: `program_status: Arc<DashMap<String, OwnedStatus>>`, `pub struct OwnedStatus { pub pty_id: String, pub status: ProgramStatus, pub set_at: u64 }`.
+  - `pub fn apply_program_status(&self, sid: &str, pty_id: &str, action: ReportAction) -> Option<StatusChange>`: ignore when an entry exists with another `pty_id`; `Set` stores (owner = `pty_id`, `set_at` = now) and returns `Some(StatusChange::Set(status))` only when `status` differs; `Clear` removes and returns `Some(StatusChange::Removed)` only when an entry existed; `Ignore` → `None`. `StatusChange` also carries the previous state so callers can see "left `blocked`".
+  - `pub fn clear_program_status_if(&self, sid: &str, pty_id: &str) -> Option<StatusChange>` for EOF (owner only).
+  - `pub fn program_status(&self, sid: &str) -> Option<OwnedStatus>`.
+  - Never touch `session_activity`.
+- Pure `pub fn combined_mode(hook: Option<&SessionActivity>, root: Option<&OwnedStatus>) -> (String, Option<String>, Option<u64>)` (mode, waiting_for, last_activity = max of both, `None` when neither) per `session-directory`; `waiting_for` from `msg` cut to 200 chars, else `permission|question|login|dialog`.
+- `mcp/directory.rs:245`: live branch uses `combined_mode(activity.as_ref(), root.as_ref())`, falling back to the DB row when both are `None`.
 
-### 4. Reader thread and EOF (`pty.rs`)
+### 4. Reader thread, EOF, delivery (`pty.rs`, `mcp/messaging.rs`)
 
-- Bind the returned bodies inside the lock, release the guard, then (only when `agent_session`) for each body: `parse_report` → `agents.apply_program_status(&session_id, action)` → when changed, `eof_app.emit("session:program-status", payload)` with `{session_id, state, kind, msg}` (`state` `null` when removed). Use `try_state::<AgentRuntimeState>()` as the EOF path does. Do not hold the session mutex while emitting.
-- `on_agent_pty_eof` (`pty.rs:970`): also clear the root status; if it existed, emit `session:program-status` with `state: null`. It needs the `AppHandle` for the emit: pass it, or emit from the EOF block at `pty.rs:845-847` after the call.
-- Extract the apply-and-decide step into a pure helper (`fn status_event(sid, change) -> Option<Payload>`) so tests cover dedupe and quake (`agent_session = false` → nothing).
+- Reader thread, after releasing the session guard and only when `agent_session`: for each body, `parse_report` → `agents.apply_program_status(&session_id, &pty_id, action)` → on `Some(change)`: emit `session:program-status` (payload from a pure `fn status_payload(sid, &change) -> serde_json::Value`), and when the previous state was `blocked` and the new one is not, call `crate::mcp::messaging::schedule_unblocked_drain(app, sid)`. Use `try_state::<AgentRuntimeState>()`; never hold the session mutex while emitting.
+- EOF block (`pty.rs:845-847`): after `on_agent_pty_eof`, `clear_program_status_if(&eof_session, &eof_pty_id)`; on `Some`, emit `state: null` (and schedule the drain if it was `blocked` — harmless: the PTY is gone, `drain_idle` finds no live target; skip it to keep teardown quiet).
+- `mcp/messaging.rs`: `pub fn delivery_busy(agents: &AgentRuntimeState, sid: &str) -> bool` = hook mode `running`/`needs_attention` OR root `blocked`; use it at `:192-196` and `:221-224`. `pub fn schedule_unblocked_drain(app: &AppHandle, sid: &str)`: `tauri::async_runtime::spawn` → sleep `IDLE_SETTLE_SECS + 1` → if `!delivery_busy` → `drain_idle(db, &AppBridge::new(app), sid, Config::load().cross_session.enabled)`, resolving `SharedDb` and `AgentRuntimeState` with `try_state`. Keep the decision pure for tests: `fn unblocked_drain_due(busy: bool) -> bool` is trivial, so test `delivery_busy` and the change detection (`left_blocked(prev, new)`) instead.
 
 ### 5. Frontend
 
-- `src/stores/programStatus.ts` (new): `export type RootState = "working" | "blocked" | "done" | "idle" | "error"`; `programStatusMapAtom: atom<Record<string, { state: RootState; kind: string | null; msg: string | null }>>({})`; a pure reducer `applyProgramStatus(prev, payload)` (remove the key when `state` is null).
-- `src/stores/hooks.ts` setup (`:81`): `unlisteners.push(await listen<ProgramStatusPayload>("session:program-status", (p) => set(programStatusMapAtom, (prev) => applyProgramStatus(prev, p))))`. Also drop the session's key on the existing `session_end` handling (`hooks.ts:182-185`) so an ended session falls back cleanly.
-- `src/lib/sessionIndicatorState.ts` (new): pure `resolveIndicatorState({ sessionStatus, mode, planReview, pendingAsk, pendingAttention, root })` implementing the `session-state-indicators` priority; `IndicatorState` adds `"done" | "error"`.
-- `SessionIndicator.tsx`: read `programStatusMapAtom`, call `resolveIndicatorState`, add `done` (`ring-1 ring-inset ring-green-500 bg-transparent`) and `error` (`bg-red-500`) to `STATE_COLORS`, `""` animations. Delete the private `resolveState`.
-- Tests: `src/lib/sessionIndicatorState.test.ts` (every indicator scenario, including no-root fallbacks), `src/stores/programStatus.test.ts` (reducer set/replace/remove).
+- `src/stores/programStatus.ts` (new): `export type RootState = "working" | "blocked" | "done" | "idle" | "error"`; `export interface ProgramStatusEntry { state: RootState; kind: string | null; msg: string | null }`; `export const programStatusMapAtom = sessionScopedMapAtom<ProgramStatusEntry>()`; pure `applyProgramStatus(prev, payload)` (remove the key when `state` is null; return `prev` unchanged for an equal entry).
+- `src/stores/hooks.ts` setup (`:81`): `unlisteners.push(await listen<ProgramStatusPayload>("session:program-status", ...))`. No clear on `session_end` (design D5).
+- `src/lib/sessionIndicatorState.ts` (new): `resolveIndicatorState({ sessionStatus, mode, planReview, pendingAsk, pendingAttention, root })` per the MODIFIED requirement; `isAwaitingSession({ pendingAsk, pendingAttention, root })` for the tint. `IndicatorState` adds `"done" | "error"`.
+- `SessionIndicator.tsx`: read `programStatusMapAtom`, call `resolveIndicatorState`, `done` → `ring-1 ring-inset ring-green-500 bg-transparent`, `error` → `bg-red-500`, no animation; delete the private `resolveState`.
+- `TopBar.tsx:476`, `SessionRow.tsx:64`: `isAwaiting` via `isAwaitingSession` with the root entry.
+- Tests: `src/lib/sessionIndicatorState.test.ts`, `src/stores/programStatus.test.ts`.
 
 ## Builder coordination
 
-- One Rust builder group (1-4) then one frontend group (5); they share no files. The Tauri event name `session:program-status` and payload `{session_id, state, kind, msg}` are the contract between them.
-- Interface for the test-writer: `terminal::program_status::{ProgramStatusScanner, Osc7501, parse_report, ReportAction, ProgramStatus, RootState, MAX_BODY}`; `TerminalSession::advance_bytes -> Vec<Vec<u8>>` and a constructor that takes the reply writer; `AgentRuntimeState::{apply_program_status, program_status, clear_program_status}`; `combined_mode(hook, root)`; frontend `applyProgramStatus`, `resolveIndicatorState`.
-- Trap: the reply must be written before `self.terminal.advance_bytes(bytes)` in the same call, or Claude Code sees DA1 first and turns the protocol off.
-- Trap: `advance_bytes` gains a return value; check every caller (`rg "advance_bytes\(" src-tauri/src`) including tests and the emitter benchmarks.
-- Trap: do not hold the `TerminalSession` mutex while calling `emit` or touching `AgentRuntimeState`.
+- Group A (Rust, steps 1-4) then group B (frontend, step 5); no shared files. Contract: event `session:program-status`, payload `{session_id, state, kind, msg}`.
+- Interface for the test-writer: `terminal::program_status::{ProgramStatusScanner, Osc7501, parse_report, ReportAction, ProgramStatus, RootState, MAX_BODY}`; `terminal::write_queue::{PtyWriteQueue, QueueWriter}`; `TerminalSession::{advance_bytes -> Vec<Vec<u8>>, set_status_reply}`; `agents::state::{OwnedStatus, StatusChange, AgentRuntimeState::{apply_program_status, clear_program_status_if, program_status}, combined_mode}`; `pty::status_payload`; `mcp::messaging::{delivery_busy, left_blocked}`; frontend `applyProgramStatus`, `resolveIndicatorState`, `isAwaitingSession`.
+- Trap: the reply must be enqueued before `self.terminal.advance_bytes(bytes)` in the same call, and wezterm must write through the same queue, or Claude Code sees DA1 first.
+- Trap: do not hold the `TerminalSession` mutex while calling `emit`, touching `AgentRuntimeState`, or spawning the drain.
+- Trap: the root status never writes `session_activity` (it would reset `just_idled` and invent a hook mode).
 
 ## Per-phase risk
 
-- [Scanner mis-detects a prefix inside another OSC] → it matches the exact prefix `ESC ] 7501 ;`; tests feed OSC 8 and OSC 11 around a report.
-- [Reply ordering] → the DA1-ordering test runs the real wezterm terminal with the captured writer.
-- [Stale `program_status` after PTY reuse] → EOF clears it; a test drives `apply` then the EOF clear.
+- [Scanner mis-detects a prefix inside another OSC, or swallows output after an aborted OSC] → exact prefix match; abort on `ESC`+other, CAN, SUB; tests for OSC 8/11/75010 and `ESC [ 2 J` after an unterminated body.
+- [Reply ordering] → test with the real wezterm terminal and one captured buffer for both writers, read with `drain_len`.
+- [Queue thread leaks] → it ends when every `QueueWriter` is dropped (channel closed), i.e. when the session and wezterm drop.
+- [Old PTY clobbers new] → owner tests (EOF and late report from another pty_id).
+- [Delivery strands or pastes into a dialog] → `delivery_busy` tests; walk 5.6 sends a message during the trust prompt.
 - [UI regression for sessions without status] → indicator tests repeat today's scenarios with `root` undefined.
 
 ## Verification
 
 - `cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test`; `rustfmt --edition 2024 --check <changed .rs files>`; `npx tsc --noEmit`; `pnpm test`.
 - `~/.claude/skills/work/scripts/work-gates.sh main osc7501-session-status`.
-- Walk with the installed deb (see tasks group Verification).
+- Walk with the installed deb (tasks group Verification).

@@ -12,6 +12,8 @@ Nergal guesses each session's state from hooks, and the guess has gaps. After `S
 - Session tabs, sidebar rows and the collapsed sidebar take the session state from that status. Hooks still supply detail: the running tool, plan review and AskUserQuestion.
 - Two new indicator states: `done` (the task finished) and `error` (the last turn failed). Today both look like `idle`.
 - The MCP session directory (`list_sessions`, `get_session`) takes `mode` and `waiting_for` from the same status, with the `mode` enum unchanged.
+- Cross-session delivery holds a message while the target is `blocked`, so a wake note never lands inside a Claude Code dialog. When the dialog closes, the queued message is delivered.
+- A `blocked` status also sets the pending tint on the tab and the sidebar row. It sends no desktop notification, because the hooks already notify for permission prompts and questions.
 - Sessions that never send OSC 7501 (older Claude Code, frozen agents) keep today's hook-derived state.
 - Out of scope: child entries (subagents and background tasks reported with an `id`), and progress values.
 
@@ -26,11 +28,12 @@ Nergal guesses each session's state from hooks, and the guess has gaps. After `S
 - `terminal-wezterm`: the emulator answers the OSC 7501 query and consumes status reports without drawing them.
 - `session-state-indicators`: the indicator resolves its state from the reported status when there is one, and gains the `done` and `error` states.
 - `session-directory`: the descriptor's `mode` and `waiting_for` follow the reported status when there is one.
+- `cross-session-messaging`: delivery treats a `blocked` status as busy, and leaving `blocked` drains the queue.
 
 ## Impact
 
-- Rust: `src-tauri/src/terminal/session.rs` (byte pre-scan next to the DEC 2026 tracking), `src-tauri/src/pty.rs` (reply writer, reader thread forwards reports), `src-tauri/src/agents/state.rs` (status per session), `src-tauri/src/mcp/directory.rs` (mode mapping).
+- Rust: `src-tauri/src/terminal/session.rs` (byte pre-scan next to the DEC 2026 tracking), `src-tauri/src/pty.rs` (one write queue for emulator answers, reader thread forwards reports), `src-tauri/src/mcp/messaging.rs` (busy check, drain on leaving `blocked`), `src-tauri/src/agents/state.rs` (status per session), `src-tauri/src/mcp/directory.rs` (mode mapping).
 - New Tauri event carrying a session's reported status to React.
-- React: `src/stores/` (status atom and listener), `src/components/session/SessionIndicator.tsx` (resolution and the two new states), `src/styles/globals.css` only if a new state needs a class.
+- React: `src/stores/` (status atom and listener), `src/components/session/SessionIndicator.tsx` (resolution and the two new states), `TopBar.tsx` and `SessionRow.tsx` (pending tint), `src/styles/globals.css` only if a new state needs a class.
 - No new dependency, no schema change, no change to the shortcuts.
 - Claude Code without OSC 7501, Codex, OpenCode and Pi: behavior unchanged.

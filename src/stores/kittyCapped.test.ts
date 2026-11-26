@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { KITTY_CAPPED_MESSAGE, kittyCappedNotice } from "./kittyCapped";
+import { KITTY_CAPPED_DESCRIPTION, KITTY_CAPPED_TITLE, kittyCappedNotice } from "./kittyCapped";
 
 describe("kittyCappedNotice", () => {
   it("notifies the first cap event of a terminal", () => {
@@ -32,9 +32,8 @@ describe("kittyCappedNotice", () => {
     expect(prev.size).toBe(0);
   });
 
-  it("words the toast in English", () => {
-    expect(KITTY_CAPPED_MESSAGE).toBe(
-      "Kitty images paused in this terminal. Reopen it to show them again.",
-    );
+  it("splits the toast into a short title and a description", () => {
+    expect(KITTY_CAPPED_TITLE).toBe("Kitty images paused");
+    expect(KITTY_CAPPED_DESCRIPTION).toBe("Reopen this terminal to show them again.");
   });
 });

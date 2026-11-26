@@ -56,3 +56,8 @@ Main `23470f5` = FRI-623 merge; its local gates passed at `8c61d7a` (cargo test 
 
 - Fixes: stack check no longer clips columns to the visible width (security #1); gate decodes base64 with the emulator rules, trailing bits allowed (chafa fixture); toast text in English; `kittyCappedNotice` returns `prev` when already notified; `imageLayers` returns a shared frozen empty result for rows without images.
 - Gates: clippy No issues found; cargo test 1516 passed, 2 ignored; rustfmt check OK; tsc no errors; vitest 770 passed; work-gates deps SKIP, placeholders PASS, secrets PASS, Red locks PASS (4), 6b WARN same two justified lines as in Green.
+
+## Walk 1 (2026-11-26)
+
+- K8 PASS (`kittyGraphics=no`). K9 cap behaves as designed (logo drawn at 48x24 = 1152 cells, so about 113 images fit; the first loop of 80 fits, the second trips the toast); walk defect: the whole sentence in the sileo title rendered title-cased and badly on first paint → regression test (kittyCapped.test.ts b13abf48) + split into title "Kitty images paused" and description "Reopen this terminal to show them again." (app toast convention). tsc clean, vitest 770 passed.
+- K11 (chafa GIF): grey block with a "1", cursor blinks until Ctrl+C; user: no patch here, recorded on FRI-612.

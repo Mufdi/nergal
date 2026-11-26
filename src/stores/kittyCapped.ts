@@ -1,5 +1,5 @@
-export const KITTY_CAPPED_MESSAGE =
-  "Kitty images paused in this terminal. Reopen it to show them again.";
+export const KITTY_CAPPED_TITLE = "Kitty images paused";
+export const KITTY_CAPPED_DESCRIPTION = "Reopen this terminal to show them again.";
 
 export interface KittyCappedPayload {
   session_id: string;

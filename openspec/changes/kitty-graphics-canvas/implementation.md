@@ -24,16 +24,18 @@
 
 ### 1. `KittyGate` (`src-tauri/src/terminal/kitty_gate.rs`, declared in `terminal/mod.rs`)
 
-- `pub struct GateLimits { max_side: u32, max_decoded: usize, max_placements: usize, max_cells: usize }` with `Default` = 4096, 256 MiB, 1024, 131072; `KittyGate::with_limits(limits)` and `KittyGate::default()`.
-- `pub fn admit(&mut self, actions: Vec<Action>, cols: usize, rows: usize) -> Vec<Action>`: non-kitty actions pass in order; kitty actions follow design D2-D4. Keep the decision logic in small pure functions (`check_transmit`, `check_placement`) so each rule has a direct test.
-- State: an in-flight transfer (first chunk's transmit + optional placement, collected payload, cap); a tracked-image table keyed by image id (width, height, decoded bytes, forwarding order, placements with their cells); a private id counter in a reserved range (e.g. starting at `0xFF00_0000`) for transmissions without an id.
-- Eviction emits `Action::KittyImage(Box::new(KittyImage::Delete { what: KittyImageDelete::ByImageId { image_id, placement_id: None, delete: true }, verbosity: KittyImageVerbosity::Quiet }))` before the action that needs room.
-- Every forwarded kitty action is rebuilt with `verbosity: Quiet`; a completed chunked transfer is forwarded as one action with `more_data_follows: false` and the full payload.
+- `pub struct GateLimits { pub max_side: u32, pub max_bytes: u64, pub max_cells: u64 }` with `Default` = 4096, 512 MiB, 1,048,576; `KittyGate::with_limits(limits)` and `KittyGate::default()`.
+- `pub fn admit(&mut self, actions: Vec<Action>, cols: usize, rows: usize) -> Vec<Action>`: non-kitty actions pass in order; kitty actions follow design D2-D4. Small pure functions per rule (`check_transmit`, `check_placement`, `continuation`) so each rule has a direct test.
+- State: the in-flight transfer (first chunk's typed fields, decoded bytes so far); a map image id → (width, height), set on every forwarded transmission with an id (the id-less `a=T` placement uses the transmission's own size and is not stored); lifetime counters `bytes_forwarded`, `cells_forwarded`; a `capped` flag that, once set, drops every later kitty action and logs once (`tracing::warn!`).
+- Count before forwarding: transmissions add `width * height * 4`; placements add `columns * rows`; if the addition would pass the cap, drop the action and set `capped`.
+- Forward rebuilt actions with `verbosity: KittyImageVerbosity::Quiet`; a completed transfer is forwarded as one action with `data: KittyImageData::DirectBin(decoded)` and `more_data_follows: false`.
+- Deletes: forward only `KittyImageDelete::All { .. }` and `ByImageId { .. }`; drop other variants.
 
-### 2. Session wiring (`session.rs`, `config.rs`)
+### 2. Session wiring (`session.rs`, `config.rs`, `clippy.toml`)
 
-- Field `parser: termwiz::escape::parser::Parser` and `kitty_gate: KittyGate`. In `advance_bytes`, keep `track_sync_mode` and the OSC 7501 scanner on the raw bytes, then `let actions = self.parser.parse_as_vec(bytes); let actions = self.kitty_gate.admit(actions, cols, rows); self.terminal.perform_actions(actions);` (use the session's current `cols`/`rows`). Never call `self.terminal.advance_bytes` again.
+- Fields `parser: termwiz::escape::parser::Parser` and `kitty_gate: KittyGate`. In `advance_bytes`, keep `track_sync_mode` and the OSC 7501 scanner on the raw bytes, then `let actions = self.parser.parse_as_vec(bytes); let actions = self.kitty_gate.admit(actions, self.cols as usize, self.rows as usize); self.terminal.perform_actions(actions);`. Never call `self.terminal.advance_bytes` again.
 - `config.rs`: `fn enable_kitty_graphics(&self) -> bool { true }`.
+- `src-tauri/clippy.toml` (new): `disallowed-methods = [{ path = "wezterm_term::Terminal::advance_bytes", reason = "PTY bytes go through TerminalSession's parser and KittyGate" }]`. Check the crate path name with `cargo tree` (`wezterm-term` exposes `wezterm_term`) and that clippy picks the file from `src-tauri/`.
 
 ### 3. Layers (`src/components/terminal/imageLayers.ts`)
 
@@ -43,7 +45,7 @@
 ## Builder coordination
 
 - Group A (Rust: 1-2) and group B (frontend: 3) share no files.
-- Interface for the test-writer: `terminal::kitty_gate::{KittyGate, GateLimits}` with `admit(Vec<Action>, cols, rows) -> Vec<Action>`; tests build actions with `termwiz::escape::parser::Parser::new().parse_as_vec(bytes)` so they exercise real parsing. Frontend: `imageLayers(runs)`, `KITTY_UNDER_BG_Z`.
+- Interface for the test-writer: `terminal::kitty_gate::{KittyGate, GateLimits}` with `admit(Vec<Action>, cols, rows) -> Vec<Action>` and `GateLimits { max_side, max_bytes, max_cells }`; a session-level way to inject `GateLimits` for the oracle tests (e.g. `TerminalSession::set_kitty_limits`); tests build actions with `termwiz::escape::parser::Parser::new().parse_as_vec(bytes)` so they exercise real parsing. Frontend: `imageLayers(runs)`, `KITTY_UNDER_BG_Z`.
 - Trap: the emulator's own parser must never be fed again (state would split between two parsers).
 - Trap: forward rebuilt typed actions, never the original verbosity.
 - Trap: locked test files must be rustfmt-clean before hashing; `rustfmt --edition 2024 --config skip_children=true` on production files.
@@ -51,7 +53,8 @@
 ## Per-phase risk
 
 - [Parser swap changes ordinary output] → a comparison test feeds a mixed byte corpus (text, CSI, OSC, DCS sixel, iTerm2 OSC 1337, split reads) through both paths and compares grids.
-- [A gate rule misses a bypass] → a deterministic fuzz test (seeded generator, no new dependency) builds random kitty key sets and byte noise around them, parses, gates, and asserts every forwarded kitty action satisfies the allowlist and the budget.
+- [A gate rule misses a bypass] → a deterministic fuzz test (seeded generator, no new dependency) builds random kitty key sets and byte noise around them, parses, gates, and asserts every forwarded kitty action satisfies the allowlist and the forwarded totals stay under the caps.
+- [Memory bound] → the oracle test counts image cells and distinct image bytes inside wezterm, in both screens and the scrollback, after line-moving actions and a resize.
 - [Painter regression for sixel/iTerm2 (z=0)] → z=0 stays in `overText`.
 
 ## Verification

@@ -17,20 +17,20 @@ The system SHALL parse every terminal's PTY output with its own termwiz parser, 
 ### Requirement: Only safe kitty graphics actions reach the emulator
 
 The system SHALL drop every parsed kitty graphics action except these, under these conditions:
-- a transmission (`a=t` or `a=T`) with direct data, no compression, format 24-bit RGB or 32-bit RGBA, width and height each between 1 and 4096, no image number, and exactly width × height × bytes-per-pixel decoded bytes;
-- a placement (`a=T` or `a=p`) of an image the gate forwarded and still tracks, whose source rectangle starts inside the image, whose explicit width and height are above zero, and whose columns and rows are at most the terminal's columns and rows;
-- a delete (`a=d`).
-Queries (`a=q`), animation frames (`a=f`), frame composition (`a=c`), other media, compression, PNG and any other format SHALL be dropped. Every forwarded action SHALL be applied with quiet verbosity, so the emulator never writes a kitty reply to the PTY. The chunks of a chunked transmission SHALL be collected by the gate and forwarded as one complete transmission, or dropped whole; the emulator's chunk accumulator SHALL never be used.
+- a transmission (`a=t` or `a=T`) with direct data, no compression, format 24-bit RGB, 32-bit RGBA or no format (RGBA), width and height each between 1 and 4096, no image number, and exactly width × height × bytes-per-pixel decoded bytes;
+- a placement (`a=T`, or `a=p` with an image id of at least 1 and no image number) of an image the gate forwarded, with explicit columns between 1 and the terminal's columns, explicit rows between 1 and the terminal's rows, a source rectangle that starts inside the image, and explicit width and height above zero when given;
+- a delete of all images or of one image by id (`a=d` with `d=a`, `d=A`, `d=i` or `d=I`).
+Queries (`a=q`), animation frames (`a=f`), frame composition (`a=c`), other media, compression, PNG, other formats and other delete variants SHALL be dropped. Every forwarded action SHALL be applied with quiet verbosity, so the emulator never writes a kitty reply to the PTY. The gate SHALL collect the chunks of a chunked transmission, decoding each chunk, and SHALL forward one complete transmission with the decoded bytes, or drop it whole; a continuation chunk SHALL carry only direct data and the more-data flag, and any other kitty action before the final chunk SHALL drop the transfer. The emulator's chunk accumulator SHALL never be used.
 
 #### Scenario: A direct RGBA image is placed
 
-- **WHEN** the PTY output carries `ESC _ G a=T,f=32,s=2,v=2,i=1 ; /wAA/wD/AP8AAP///////w== ESC \`
+- **WHEN** the PTY output carries `ESC _ G a=T,f=32,s=2,v=2,i=1,c=1,r=1 ; /wAA/wD/AP8AAP///////w== ESC \`
 - **THEN** the emulator SHALL place the image
 
 #### Scenario: File, temp-file and shared-memory media never touch the file system
 
 - **GIVEN** a file at a temporary path P
-- **WHEN** the PTY output carries kitty actions with `t=f`, `t=t` and `t=s` naming P
+- **WHEN** the PTY output carries kitty actions with `t=f`, `t=t` and `t=s` naming P, as transmissions, as queries, and as continuation chunks
 - **THEN** P SHALL still exist with its content unchanged, and nothing SHALL be placed
 
 #### Scenario: No kitty reply reaches the PTY
@@ -38,14 +38,14 @@ Queries (`a=q`), animation frames (`a=f`), frame composition (`a=c`), other medi
 - **WHEN** the PTY output carries `a=q`, a transmission with `I=5`, and a valid transmission with `q=0`
 - **THEN** nothing SHALL be written to the PTY
 
-#### Scenario: Compression, animation, PNG and placeholders are dropped
+#### Scenario: Compression, animation and PNG are dropped
 
-- **WHEN** the PTY output carries kitty actions with `o=z`, `a=f`, `a=c`, `f=100`, and `U=1`
+- **WHEN** the PTY output carries kitty actions with `o=z`, `a=f`, `a=c` and `f=100`
 - **THEN** none SHALL change the grid
 
 #### Scenario: A degenerate placement cannot crash the app
 
-- **WHEN** the PTY output carries placements of a tracked 2x2 image with `w=0,c=1`, with `x=5,c=1`, with `y=5,r=1`, with `w=00,c=1`, and with `c=4000000000`
+- **WHEN** the PTY output carries placements of a forwarded 2x2 image with `w=0,c=1,r=1`, `x=5,c=1,r=1`, `y=5,c=1,r=1`, `w=00,c=1,r=1`, `c=4000000000,r=1`, no `c`, no `r`, and `a=p,i=0`
 - **THEN** none SHALL reach the emulator, and the app SHALL keep running
 
 #### Scenario: A size mismatch is dropped
@@ -55,32 +55,38 @@ Queries (`a=q`), animation frames (`a=f`), frame composition (`a=c`), other medi
 
 #### Scenario: A chunked transfer is forwarded once
 
-- **WHEN** a transmission arrives in three chunks (`m=1`, `m=1`, `m=0`) whose decoded bytes match its size
-- **THEN** the emulator SHALL receive one complete transmission
+- **WHEN** a transmission arrives in three chunks (`m=1`, `m=1`, `m=0`) whose decoded bytes match its size, with base64 padding inside a middle chunk
+- **THEN** the emulator SHALL receive one complete transmission with the decoded bytes
 
 #### Scenario: An interrupted or oversized transfer is dropped whole
 
-- **WHEN** a chunked transfer exceeds its declared size, or another kitty action arrives before its `m=0`
+- **WHEN** a chunked transfer exceeds its declared size, or another kitty action, or a continuation with any key besides `m`, arrives before its `m=0`
 - **THEN** nothing of that transfer SHALL reach the emulator
 
 #### Scenario: Placing an unknown image is dropped
 
-- **WHEN** the PTY output carries `a=p,i=99` and no image 99 was forwarded
+- **WHEN** the PTY output carries `a=p,i=99,c=1,r=1` and no image 99 was forwarded
 - **THEN** nothing SHALL reach the emulator
 
-### Requirement: Kitty images stay within a memory budget
+### Requirement: Kitty memory stays under a lifetime cap per terminal
 
-The system SHALL keep, per terminal, at most 256 MiB of decoded kitty image data, at most 1024 live placements, and at most 131072 placed cells (the sum of each live placement's columns × rows), because the emulator keeps one image entry per covered cell. Before forwarding an action that would pass either limit, the system SHALL delete the oldest forwarded image, with its placements, until the action fits. A transmission without an image id SHALL get a private id from the gate, so it can be deleted later.
+The system SHALL count, per terminal, every forwarded transmission at 4 bytes per pixel and every forwarded placement at columns × rows cells, and SHALL never forward a transmission that would take the byte total past 512 MiB or a placement that would take the cell total past 1,048,576. The totals SHALL never decrease during the terminal's life, because the emulator retains at most what it was given and its deletes cannot be trusted to free it. When a terminal reaches either cap, every later kitty action on it SHALL be dropped, and the system SHALL log it once.
 
-#### Scenario: Repeated placements do not grow without bound
+#### Scenario: Repeated placements stop at the cell cap
 
-- **WHEN** the PTY output carries 5000 copies of a 1x1 `a=T,C=1,c=80,r=24` image without an image id
-- **THEN** at most 1024 placements and at most 131072 placed cells SHALL be live
+- **WHEN** a forwarded 1x1 image is placed 10,000 times with `c=80,r=24` in an 80x24 terminal
+- **THEN** at most 546 placements SHALL reach the emulator (546 × 1920 = 1,048,320 cells)
+- **AND** the image cells held by the emulator, in both screens and the scrollback, SHALL be at most 1,048,576
 
-#### Scenario: The decoded budget evicts the oldest image
+#### Scenario: Retransmissions stop at the byte cap
 
-- **WHEN** images totalling more than 256 MiB are transmitted with distinct ids
-- **THEN** the oldest images SHALL be deleted until the total is at most 256 MiB
+- **WHEN** 4096x4096 RGBA images (64 MiB each) are transmitted again and again, to the same id and to new ids
+- **THEN** at most 8 transmissions SHALL reach the emulator
+
+#### Scenario: The cap is per terminal
+
+- **WHEN** one terminal reaches its cap
+- **THEN** another terminal SHALL still accept kitty images
 
 ### Requirement: Kitty placements are drawn on the canvas
 
@@ -88,7 +94,7 @@ The system SHALL enable kitty graphics in the emulator, so a forwarded kitty pla
 
 #### Scenario: A placed image becomes image runs
 
-- **WHEN** the 2x2 image above is placed at the cursor in an 800x480 px, 80x24 terminal
+- **WHEN** the 2x2 image above is placed at the cursor with `c=1,r=1` in an 800x480 px, 80x24 terminal
 - **THEN** the next grid snapshot SHALL carry one image run with z 0 on the cursor row
 
 #### Scenario: Replacing a placement moves it

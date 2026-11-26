@@ -8,9 +8,9 @@ The user decided (2026-11-26): kitty before FRI-624; the protection lives in Ner
 
 ## Goals / Non-Goals
 
-**Goals:** safe kitty placements from direct RGB/RGBA data (chafa `-f kitty`); no file access, reply, crash or unbounded memory from PTY output through kitty; correct z layering.
+**Goals:** safe kitty placements from direct RGB/RGBA data (chafa `-f kitty`); no file access, reply or crash from PTY output through kitty, and kitty memory bounded per terminal by a lifetime cap; correct z layering.
 
-**Non-Goals:** the `a=q` answer, Unicode placeholders and Claude Code images (FRI-624); PNG (`f=100`), compression, file/temp/shm media, animation; the unbounded APC buffer of vtparse for non-kitty APCs (pre-existing with or without kitty; tracked separately).
+**Non-Goals:** the `a=q` answer, Unicode placeholders and Claude Code images (FRI-624); PNG (`f=100`), compression, file/temp/shm media, animation; the unbounded APC buffer of vtparse, which holds any APC (kitty included) until its terminator before the gate sees it (pre-existing with or without kitty; FRI-629).
 
 ## Decisions
 
@@ -22,19 +22,28 @@ Alternatives: a byte-level filter (rejected in iprev round 1: it must replicate 
 
 ### D2. Typed allowlist
 
-- Transmission (`TransmitData`, `TransmitDataAndDisplay`): `KittyImageData::Direct`, compression none, format `Rgb` or `Rgba`, width and height in 1..=4096, `image_number` none; the decoded length must equal width × height × bpp exactly.
-- Placement (`TransmitDataAndDisplay`, `Display`): the image is one the gate forwarded and tracks (its size known); `x < width`, `y < height`; explicit `w`/`h` above zero; `columns <= terminal cols`, `rows <= terminal rows`.
-- `Delete`: forwarded (it only removes).
-- Everything else (`Query`, `TransmitFrame`, `ComposeFrame`, other media, compression, PNG, other formats) is dropped.
-- Every forwarded action gets `KittyImageVerbosity::Quiet`, so wezterm never writes a reply.
+- Transmission (`TransmitData`, `TransmitDataAndDisplay`): `KittyImageData::Direct` or `DirectBin`, compression none, format `Rgb`, `Rgba` or none (kitty's default is RGBA), width and height in 1..=4096, `image_number` none; the decoded length must equal width × height × bpp exactly.
+- Placement (`TransmitDataAndDisplay`, `Display`): `Display` needs `image_id >= 1` and no `image_number`; the image is one the gate forwarded (the gate keeps each forwarded id's width and height, updated on every forwarded retransmission, the same way wezterm replaces its data); explicit `columns` in 1..=terminal cols and `rows` in 1..=terminal rows (without them the footprint depends on cell pixels and can reach millions of cells; chafa always sends both); `x < width`, `y < height`; explicit `w`/`h` above zero.
+- `Delete`: only `All` and `ByImageId`, the variants wezterm implements (others only log).
+- Everything else (`Query`, `TransmitFrame`, `ComposeFrame`, other media, compression, PNG) is dropped.
+- Every forwarded action gets `KittyImageVerbosity::Quiet`; wezterm returns before writing any reply (`kitty.rs:366-368`).
+- `U=1` cannot be filtered: termwiz does not parse `U` at this revision, so a `U=1` transmission is an ordinary direct transmission and is placed normally. Accepted until FRI-624: only Claude Code sends it, and it does not while the query stays unanswered.
 
 ### D3. The gate assembles chunks
 
-A transmission with `more_data_follows` starts a transfer in the gate. Continuation chunks append their payload; the transfer is capped at the base64 length of its declared size. On the final chunk the gate decodes, checks the exact size and forwards one complete action with `more_data_follows` false. An oversize chunk or any other kitty action before the final chunk drops the transfer whole. wezterm's accumulator is never used, so it cannot desynchronize or grow.
+A transmission with `more_data_follows` starts a transfer in the gate. A continuation is a `TransmitData` whose fields are all default except direct data and the more-data flag; anything else (another kitty action, a continuation with other keys or a non-direct medium) drops the transfer, and the new action is then judged on its own. The gate decodes each chunk's base64 separately (as wezterm does), caps the collected bytes at the declared size, checks the exact size on the final chunk, and forwards one action with `DirectBin(decoded)` and `more_data_follows` false. wezterm's accumulator is never used. The in-flight transfer is bounded by the 64 MiB maximum image size.
 
-### D4. Budget with eviction
+### D4. Lifetime caps instead of tracking wezterm's memory
 
-Per terminal: at most 256 MiB decoded, 1024 live placements, 131072 placed cells (sum of columns × rows over live placements). The gate tracks images in forwarding order with their decoded size and placements. Before forwarding an action that would pass a limit, it injects `Delete` (by image id, freeing data) for the oldest images until the action fits. A transmission without an image id gets a private id from a reserved high range, so every image can be deleted; this also stops id-0 placements from stacking on the same cells. A placement that replaces itself (same id and placement id, or same id without a placement id, which wezterm treats as "remove all of this image's placements first", `kitty.rs:103-105`) updates its entry instead of adding one.
+The user set the invariant (2026-11-26, convergence rule after review rounds 1 and 2): PTY output can never grow Nergal's memory without bound through kitty.
+
+wezterm's deletes are not exact (they detach only on the active screen and only in the rows recorded at placement time; screen switches, IL/DL, scroll regions and resize leave orphaned cells), and its 16-entry image cache keeps recent images after a delete. A gate that models wezterm's live memory diverges, and every divergence is unbounded memory (iprev round 2). So the gate does not model it. It counts, per terminal and for the terminal's whole life, the bytes it forwarded (at 4 bytes per pixel, because wezterm stores RGB as RGBA) and the cells it forwarded (columns × rows per placement). Everything wezterm retains for kitty comes from forwarded transmissions and placements, so retained memory is at most the forwarded totals. Caps: 512 MiB and 1,048,576 cells per terminal. When a cap is reached, the terminal drops every later kitty action and logs once. A new terminal (new session or quake shell) starts at zero.
+
+Retransmitting to an existing id, `i=0`, and orphaned cells all stay inside the bound, because each forwarded transmission and placement is counted when it is forwarded and never refunded.
+
+### D6. Mechanical guard against bypassing the gate
+
+`src-tauri/clippy.toml` (create if missing) adds `disallowed-methods` for `wezterm_term::Terminal::advance_bytes`, with the reason "PTY bytes go through TerminalSession's parser and KittyGate". `cargo clippy -D warnings` already runs in CI, so a future direct call fails the build.
 
 ### D5. Painter layers in a pure module
 
@@ -58,14 +67,14 @@ flowchart LR
 ## Risks / Trade-offs
 
 - [Parser state moves to Nergal] → the emulator's own parser is never used again; `perform_actions` is the same performer `advance_bytes` uses. Tests compare ordinary output against the emulator's own parser.
-- [Eviction makes old images disappear] → only past 256 MiB / 1024 placements / 131072 cells per terminal; expected to be rare in interactive use.
+- [A busy terminal stops showing new kitty images] → only after 512 MiB of images or about a million placed cells in its life; reopening the terminal resets it. Expected to be rare in interactive use.
 - [PNG kitty images do not show] → senders that use `f=100` fall back to nothing; chafa uses RGBA. PNG can be added later with an IHDR size check.
-- [Deleted placements in scrollback] → wezterm's delete detaches the image from the cells it tracks; the builder verifies scrollback cells are freed too, or the budget accounts for it.
-- [Unbounded non-kitty APC buffer in vtparse] → pre-existing, unchanged by this change; tracked as a separate issue.
+- [Deleted placements stay visible] → wezterm's inexact deletes can leave an image visible on the other screen or after a resize; memory stays bounded by D4. Accepted.
+- [Unbounded APC buffer in vtparse] → pre-existing, unchanged by this change; FRI-629.
 
 ## Migration Plan
 
-No data migration. Rollback: `enable_kitty_graphics` false and the gate drops every kitty action; the parser swap stays (it is behavior-neutral and covered by the comparison tests).
+No data migration. Rollback: `enable_kitty_graphics` false and the gate drops every kitty action, in a release. Reverting the parser swap also needs a release; it is behavior-neutral and covered by the comparison tests.
 
 ## Open Questions
 

@@ -11,6 +11,7 @@ use wezterm_term::{Terminal, TerminalSize};
 use super::config::NergalTerminalConfig;
 use super::image_fetch::{ImageRegistry, hash_to_hex};
 use super::input::map_event;
+use super::kitty_gate::{GateLimits, KittyGate};
 use super::program_status::{Osc7501, ProgramStatusScanner};
 use super::types::{CellSnapshot, CursorSnapshot, GridSnapshot, ImageRun, TerminalKeyEvent};
 
@@ -18,12 +19,29 @@ pub type SyncState = Arc<Mutex<Option<Instant>>>;
 
 const SYNC_ON: &[u8] = b"\x1b[?2026h";
 const SYNC_OFF: &[u8] = b"\x1b[?2026l";
+pub(crate) const KITTY_MAX_STACK_DEPTH: usize = 8;
+
 const FULL_RESET: &[u8] = b"\x1bc";
 
 enum SyncEvent {
     On,
     Off,
     Reset,
+}
+
+fn placement_footprint(action: &termwiz::escape::Action) -> Option<(u32, u32)> {
+    use termwiz::escape::Action;
+    use termwiz::escape::apc::KittyImage;
+    let Action::KittyImage(image) = action else {
+        return None;
+    };
+    match image.as_ref() {
+        KittyImage::Display { placement, .. }
+        | KittyImage::TransmitDataAndDisplay { placement, .. } => {
+            Some((placement.columns?, placement.rows?))
+        }
+        _ => None,
+    }
 }
 
 fn match_sync(window: &[u8]) -> Option<SyncEvent> {
@@ -116,6 +134,8 @@ pub struct TerminalSession {
     status_scanner: ProgramStatusScanner,
     status_reply: Option<Box<dyn Write + Send>>,
     query_seen: bool,
+    parser: termwiz::escape::parser::Parser,
+    kitty_gate: KittyGate,
 }
 
 impl TerminalSession {
@@ -193,7 +213,17 @@ impl TerminalSession {
             status_scanner: ProgramStatusScanner::default(),
             status_reply: None,
             query_seen: false,
+            parser: termwiz::escape::parser::Parser::new(),
+            kitty_gate: KittyGate::default(),
         }
+    }
+
+    pub fn set_kitty_limits(&mut self, limits: GateLimits) {
+        self.kitty_gate.set_limits(limits);
+    }
+
+    pub fn take_kitty_capped_notice(&mut self) -> bool {
+        self.kitty_gate.take_capped_notice()
     }
 
     pub fn set_status_reply(&mut self, writer: Box<dyn Write + Send>) {
@@ -267,8 +297,63 @@ impl TerminalSession {
                 Osc7501::Report(body) => reports.push(body),
             }
         }
-        self.terminal.advance_bytes(bytes);
+        let actions = self.parser.parse_as_vec(bytes);
+        let actions =
+            self.kitty_gate
+                .admit(actions, usize::from(self.cols), usize::from(self.rows));
+        self.perform_capping_stacks(actions);
         reports
+    }
+
+    /// wezterm clones a cell's whole image list on every placement over it, so deep stacks cost
+    /// O(depth^2) and grow every frame; a placement over a full stack is dropped and pauses kitty.
+    fn perform_capping_stacks(&mut self, actions: Vec<termwiz::escape::Action>) {
+        let mut ready = Vec::with_capacity(actions.len());
+        for action in actions {
+            if let Some((columns, rows)) = placement_footprint(&action) {
+                if !ready.is_empty() {
+                    self.terminal.perform_actions(std::mem::take(&mut ready));
+                }
+                if self.stack_is_full(columns, rows) {
+                    self.kitty_gate.mark_capped();
+                    continue;
+                }
+            }
+            ready.push(action);
+        }
+        self.terminal.perform_actions(ready);
+    }
+
+    fn stack_is_full(&self, columns: u32, rows: u32) -> bool {
+        let cursor = self.terminal.cursor_pos();
+        let screen = self.terminal.screen();
+        let first_row = cursor.y.max(0) as usize;
+        let last_row = first_row
+            .saturating_add(rows as usize)
+            .min(screen.physical_rows);
+        if first_row >= last_row {
+            return false;
+        }
+        let first_col = cursor.x;
+        let last_col = first_col
+            .saturating_add(columns as usize)
+            .min(screen.physical_cols);
+        // `with_phys_lines` slices a wrapped ring buffer out of range, so lines are read one by one.
+        (first_row..last_row).any(|row| {
+            let phys = screen.phys_row(row as i64);
+            screen
+                .lines_in_phys_range(phys..phys + 1)
+                .iter()
+                .any(|line| {
+                    (first_col..last_col).any(|col| {
+                        line.get_cell(col).is_some_and(|cell| {
+                            cell.attrs()
+                                .images()
+                                .is_some_and(|images| images.len() >= KITTY_MAX_STACK_DEPTH)
+                        })
+                    })
+                })
+        })
     }
 
     /// The PTY resize (ioctl TIOCSWINSZ) stays on the `pty.rs` side; this only updates the
@@ -564,6 +649,7 @@ impl TerminalSession {
         for line in &visible {
             let mut row_cells: Vec<CellSnapshot> = Vec::with_capacity(cols);
             let mut runs: Vec<ImageRun> = Vec::new();
+            let mut open_runs = OpenRuns::new();
             for cell in line.visible_cells() {
                 let attrs = cell.attrs();
                 if let Some(cell_images) = attrs.images() {
@@ -573,7 +659,13 @@ impl TerminalSession {
                             self.image_registry.insert(data);
                             hash_to_hex(&data.hash())
                         });
-                        push_image_cell_hashed(&mut runs, cell.cell_index(), image, hex);
+                        push_image_cell_hashed(
+                            &mut runs,
+                            &mut open_runs,
+                            cell.cell_index(),
+                            image,
+                            hex,
+                        );
                     }
                 }
                 let snap = CellSnapshot {
@@ -632,13 +724,63 @@ impl TerminalSession {
 
 #[cfg(test)]
 fn push_image_cell(runs: &mut Vec<ImageRun>, col: usize, image: &termwiz::image::ImageCell) {
-    push_image_cell_hashed(runs, col, image, &hash_to_hex(&image.image_data().hash()));
+    let mut open_runs = OpenRuns::new();
+    for (index, run) in runs.iter().enumerate() {
+        open_runs
+            .entry(MergeKey::ending(run))
+            .or_default()
+            .push(index);
+    }
+    push_image_cell_hashed(
+        runs,
+        &mut open_runs,
+        col,
+        image,
+        &hash_to_hex(&image.image_data().hash()),
+    );
 }
 
-/// wezterm hands out slices of one placement with `x` fractions that chain
-/// exactly, so comparing them with equality is safe.
+/// What a run needs to match for the next cell's slice to extend it. Floats compare by bits:
+/// wezterm hands out slices of one placement with `x` fractions that chain exactly.
+#[derive(Hash, PartialEq, Eq)]
+struct MergeKey {
+    hash: String,
+    z: i32,
+    end_col: usize,
+    u1: u32,
+    v0: u32,
+    v1: u32,
+    pad_left: u16,
+    pad_top: u16,
+}
+
+// Adding zero turns -0.0 into 0.0 so the key agrees with `==`.
+fn bits(value: f32) -> u32 {
+    (value + 0.0).to_bits()
+}
+
+impl MergeKey {
+    fn ending(run: &ImageRun) -> Self {
+        Self {
+            hash: run.hash.clone(),
+            z: run.z,
+            end_col: run.col + run.span,
+            u1: bits(run.u1),
+            v0: bits(run.v0),
+            v1: bits(run.v1),
+            pad_left: run.pad_left,
+            pad_top: run.pad_top,
+        }
+    }
+}
+
+/// Open runs of one row by merge key. A key maps to several runs when images are stacked on the
+/// same cells, and each image of a cell takes one of them, so a stack of k images stays O(k).
+type OpenRuns = HashMap<MergeKey, Vec<usize>>;
+
 fn push_image_cell_hashed(
     runs: &mut Vec<ImageRun>,
+    open_runs: &mut OpenRuns,
     col: usize,
     image: &termwiz::image::ImageCell,
     hash: &str,
@@ -650,37 +792,48 @@ fn push_image_cell_hashed(
     let (pad_left, pad_top, pad_right, pad_bottom) = image.padding();
     let z = image.z_index();
 
-    let continues = |run: &ImageRun| {
-        run.hash == hash
-            && run.z == z
-            && run.col + run.span == col
-            && run.u1 == u0
-            && run.v0 == v0
-            && run.v1 == v1
-            && run.pad_left == pad_left
-            && run.pad_top == pad_top
-    };
-    if let Some(run) = runs.iter_mut().rev().find(|run| continues(run)) {
-        run.span += 1;
-        run.u1 = u1;
-        run.pad_right = pad_right;
-        run.pad_bottom = pad_bottom;
-        return;
-    }
-    runs.push(ImageRun {
+    let wanted = MergeKey {
         hash: hash.to_owned(),
-        col,
-        span: 1,
-        u0,
-        v0,
-        u1,
-        v1,
+        z,
+        end_col: col,
+        u1: bits(u0),
+        v0: bits(v0),
+        v1: bits(v1),
         pad_left,
         pad_top,
-        pad_right,
-        pad_bottom,
-        z,
-    });
+    };
+    let extendable = open_runs.get_mut(&wanted).and_then(Vec::pop);
+    let index = match extendable {
+        Some(index) => {
+            let run = &mut runs[index];
+            run.span += 1;
+            run.u1 = u1;
+            run.pad_right = pad_right;
+            run.pad_bottom = pad_bottom;
+            index
+        }
+        None => {
+            runs.push(ImageRun {
+                hash: hash.to_owned(),
+                col,
+                span: 1,
+                u0,
+                v0,
+                u1,
+                v1,
+                pad_left,
+                pad_top,
+                pad_right,
+                pad_bottom,
+                z,
+            });
+            runs.len() - 1
+        }
+    };
+    open_runs
+        .entry(MergeKey::ending(&runs[index]))
+        .or_default()
+        .push(index);
 }
 
 fn color_to_rgba(color: termwiz::color::ColorAttribute, palette: &ColorPalette) -> Option<[u8; 4]> {

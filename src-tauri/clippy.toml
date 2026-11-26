@@ -1,0 +1,3 @@
+disallowed-methods = [
+    { path = "wezterm_term::Terminal::advance_bytes", reason = "PTY bytes go through TerminalSession's parser and KittyGate" },
+]

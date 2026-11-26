@@ -887,17 +887,31 @@ fn spawn_pty(
                         let _ = tx.send(());
                     }
 
-                    let (reports, query_seen) = match reader_session.lock() {
+                    let (reports, query_seen, kitty_capped) = match reader_session.lock() {
                         Ok(mut guard) => {
                             let reports = guard.advance_bytes(&buf[..n]);
-                            (reports, guard.take_query_seen())
+                            (
+                                reports,
+                                guard.take_query_seen(),
+                                guard.take_kitty_capped_notice(),
+                            )
                         }
                         Err(err) => {
                             tracing::error!(error = %err, "session mutex poisoned; dropping chunk");
-                            (Vec::new(), false)
+                            (Vec::new(), false, false)
                         }
                     };
                     reader_notify.notify_one();
+                    if kitty_capped {
+                        use tauri::Emitter;
+                        let _ = eof_app.emit(
+                            "terminal:kitty-capped",
+                            serde_json::json!({
+                                "session_id": eof_session,
+                                "pty_id": eof_pty_id,
+                            }),
+                        );
+                    }
                     if query_seen || !reports.is_empty() {
                         apply_program_reports(
                             &eof_app,

@@ -36,3 +36,11 @@ Main `23470f5` = FRI-623 merge; its local gates passed at `8c61d7a` (cargo test 
 - Green after Revision 1: clippy clean, `cargo test` 1512 passed / 2 ignored, rustfmt check OK, locks OK. Timed worst stacking in release: `took 9.226013234s` (bound 2 s) — wezterm `assign_image_to_cells` clones each covered cell's image list, O(N²): N=128 376 ms, 256 1.39 s, 512 5.59 s; Nergal snapshot linear (82/136/282 ms).
 - User: stack depth cap of 8 (recommended), no more hunting of extreme edge cases. Artifacts `59b207a`.
 - Red 2.3: `a_ninth_stacked_image_pauses_kitty_images`, `eight_images_stacked_on_each_of_two_cells_are_all_drawn_without_a_notice`, worst stacking expects 8 runs per row. Red = `E0432 unresolved import KITTY_MAX_STACK_DEPTH` only. Lock `session_kitty_tests.rs` 5b7ea528.
+
+## Green (2026-11-26)
+
+- Builders (sonnet): Rust `kitty_gate.rs`, `session.rs` (parser ownership, multimap run index, stack depth check `perform_capping_stacks`, reads lines one by one because wezterm `Screen::with_phys_lines` panics on a wrapped ring buffer), `pty.rs` (`terminal:kitty-capped` emit), `config.rs` (`enable_kitty_graphics` true), `clippy.toml`; frontend `imageLayers.ts`, `kittyCapped.ts`, `paintRow` three layers, `hooks.ts` toast listener.
+- Orchestrator gates: `cargo clippy --all-targets -- -D warnings` → No issues found; `cargo test` → 1514 passed, 2 ignored; rustfmt check on changed files → OK; `npx tsc --noEmit` → no errors; `pnpm test` → 770 passed.
+- Timed worst stacking (release, `--ignored`): passed (suite 0.01 s; was 9.226 s before Revision 2).
+- Clippy guard: a temporary `t.advance_bytes(b"x")` in non-test code failed clippy with `use of a disallowed method 'wezterm_term::Terminal::advance_bytes'`; removed (Builder run).
+- work-gates: deps SKIP, placeholders PASS, secrets PASS, Red locks PASS (4). 6b WARN justified: `#[allow(clippy::disallowed_methods)]` is the planned parity test that must call the emulator's own parser (design D6); `.skip(8)` is an iterator, not a skipped test.

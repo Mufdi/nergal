@@ -22,6 +22,7 @@ import {
 } from "./activity";
 import { buildToolUseEntry, handbackReport, notificationAttentionMessage, shouldLogGenericActivity, shouldClearOnBackgroundCompletion, shouldClearOnTurnEvent } from "@/lib/agentTelemetry";
 import { toastsAtom } from "./toast";
+import { KITTY_CAPPED_MESSAGE, kittyCappedNotice } from "./kittyCapped";
 import { localhostPortsAtom } from "./browser";
 import { providerStatusAtom, type ProviderStatus } from "./statusFeed";
 import { loadWorktreeRequests } from "./worktreeGate";
@@ -441,6 +442,15 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
       const sid = payload.session_id;
       if (!sid) return;
       set(lastResponseEffortMapAtom, (prev) => ({ ...prev, [sid]: payload.effort }));
+    }),
+  );
+
+  let kittyNotified: ReadonlySet<string> = new Set();
+  unlisteners.push(
+    await listen<{ session_id: string; pty_id: string }>("terminal:kitty-capped", (payload) => {
+      const { notify, next } = kittyCappedNotice(kittyNotified, payload);
+      kittyNotified = next;
+      if (notify) set(toastsAtom, { message: KITTY_CAPPED_MESSAGE, type: "info" });
     }),
   );
 

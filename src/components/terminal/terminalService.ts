@@ -21,6 +21,7 @@ import { appStore } from "@/stores/jotaiStore";
 import { configLoadedAtom } from "@/stores/config";
 import { readingTerminalAtom } from "@/stores/readingMode";
 import { toastsAtom } from "@/stores/toast";
+import { imageLayers } from "./imageLayers";
 
 import { FontAtlas, isWideCell, measureFont, type FontMetrics } from "./fontAtlas";
 import { afterResizeFailure, nextResize, pixelGeometry, recordRequest, type Sent } from "./pixelGeometry";
@@ -1441,8 +1442,22 @@ function paintRow(entry: Entry, y: number): void {
   ctx.fillStyle = TERM_THEME.background;
   ctx.fillRect(0, dyCell, cols * metrics.cellWidth, metrics.cellHeight);
 
-  const runs = entry.rowImages[y] ?? [];
-  drawImageRuns(entry, runs, y, (z) => z < 0);
+  const layers = imageLayers(entry.rowImages[y] ?? []);
+  drawImageRuns(entry, layers.underBackground, y);
+
+  for (let x = 0; x < cols; x += 1) {
+    const cell = row[x];
+    const span = isWideCell(cell.ch) ? 2 : 1;
+    let bg = rgbaToCss(cell.bg, TERM_THEME.background);
+    if (cell.reverse) bg = rgbaToCss(cell.fg, TERM_THEME.foreground);
+    if (bg !== TERM_THEME.background) {
+      ctx.fillStyle = bg;
+      ctx.fillRect(x * metrics.cellWidth, dyCell, metrics.cellWidth * span, metrics.cellHeight);
+    }
+    if (span === 2) x += 1;
+  }
+
+  drawImageRuns(entry, layers.underText, y);
 
   for (let x = 0; x < cols; x += 1) {
     const cell = row[x];
@@ -1451,17 +1466,7 @@ function paintRow(entry: Entry, y: number): void {
     const cellPx = metrics.cellWidth * span;
 
     let fg = rgbaToCss(cell.fg, TERM_THEME.foreground);
-    let bg = rgbaToCss(cell.bg, TERM_THEME.background);
-    if (cell.reverse) {
-      const swap = fg;
-      fg = bg;
-      bg = swap;
-    }
-
-    if (bg !== TERM_THEME.background) {
-      ctx.fillStyle = bg;
-      ctx.fillRect(dxCell, dyCell, cellPx, metrics.cellHeight);
-    }
+    if (cell.reverse) fg = rgbaToCss(cell.bg, TERM_THEME.background);
 
     if (cell.ch && cell.ch !== " ") {
       atlas.drawGlyph(ctx, dxCell, dyCell, cell.ch, fg, cell.bold, cell.italic);
@@ -1483,7 +1488,7 @@ function paintRow(entry: Entry, y: number): void {
     if (span === 2) x += 1;
   }
 
-  drawImageRuns(entry, runs, y, (z) => z >= 0);
+  drawImageRuns(entry, layers.overText, y);
 }
 
 function indexRowsByHash(rowImages: ImageRun[][]): Map<string, number[]> {
@@ -1498,13 +1503,12 @@ function indexRowsByHash(rowImages: ImageRun[][]): Map<string, number[]> {
   return byHash;
 }
 
-function drawImageRuns(entry: Entry, runs: ImageRun[], y: number, layer: (z: number) => boolean): void {
+function drawImageRuns(entry: Entry, runs: ImageRun[], y: number): void {
   if (runs.length === 0 || entry.container.style.display === "none") return;
   if (hiddenRegions.has(entry.region) || activeIds.get(entry.region) !== entry.sessionId) return;
   const { ctx, metrics, images } = entry;
   const smoothingBefore = ctx.imageSmoothingEnabled;
   for (const run of runs) {
-    if (!layer(run.z)) continue;
     const bitmap = images.get(run.hash);
     if (!bitmap) continue;
     const r = runRects(run, bitmap.width, bitmap.height, metrics.cellWidth, metrics.cellHeight, y * metrics.cellHeight);

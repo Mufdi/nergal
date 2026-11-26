@@ -84,6 +84,10 @@ impl TerminalConfiguration for NergalTerminalConfig {
         false
     }
 
+    fn enable_kitty_graphics(&self) -> bool {
+        true
+    }
+
     fn color_palette(&self) -> ColorPalette {
         let mut palette = self.color_palette.clone();
         if let Some((fg, bg)) = self.colors.read().ok().and_then(|slot| *slot) {

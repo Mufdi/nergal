@@ -760,3 +760,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "events_review_tests.rs"]
+mod review_tests;

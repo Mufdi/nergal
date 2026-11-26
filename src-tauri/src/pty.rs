@@ -3316,3 +3316,7 @@ mod deliver_prompt_tests;
 #[cfg(test)]
 #[path = "pty_program_status_tests.rs"]
 mod pty_program_status_tests;
+
+#[cfg(test)]
+#[path = "pty_review_tests.rs"]
+mod pty_review_tests;

@@ -41,3 +41,11 @@ Verification (orchestrator, 2026-11-26):
 - `npx tsc --noEmit`: no errors. `pnpm test`: 60 files, 743 tests passed.
 - `work-gates.sh main osc7501-session-status`: 6a PASS, 6b PASS, 6c PASS (gitleaks clean), Red locks PASS (9 files unchanged), 5 WARN (only the tokio `test-util` dev-dependency feature; no new crate).
 - Comment audit: added comments are WHY (the rest were moved with `MockDelivery`).
+
+## Review (B5), 2026-11-26
+
+`handoff/REVIEW.md`: adversarial (opus) FAIL, 5 Important + 5 Nit; frontend (sonnet) approve with 2 Important (the red `error` dot is hard to tell from attention and working at 6px under reduced motion / red-green CVD) + 5 Nit, no blockers. All findings accepted; artifacts updated (`bf656d2`): reports count only while the PTY is armed (query answered; disarm on `SessionEnd` non-clear and EOF), the `Stop` drain skips only root `blocked`, settle window from both sources (`idle_since`), in-flight guard before worktree outcomes, unreachable hook trigger removed, atomic `entry` update, `error` as an `X` icon, status bar dot from the shared resolution, doc drift fixed. Task 4.1 reopened until its hook-server decisions have tests (group 7).
+
+## Red — group 7 (review fixes), 2026-11-26
+
+Test-writer (sonnet): 6 new test-only files, locked (15 lines in `.red-tests`, all OK): `agents/program_status_arming_tests.rs`, `hooks/events_review_tests.rs`, `terminal/session_query_seen_tests.rs`, `pty_review_tests.rs`, `mcp/messaging_review_tests.rs`, `src/lib/sessionIndicatorReview.test.ts`. Red: `cargo test --no-run` 29 errors, all missing planned items (`SessionEnd.reason`, `disarms_on_session_end`, `idle_since`, `ready_transition`, `reports_apply`, `stop_drain_allowed`, `delivery::is_in_flight`, `arm/disarm_program_status`, `program_status_armed`, `take_query_seen`); vitest 12 failed (new file, missing exports), 743 passed. Ruling (orchestrator): arming is checked by the reader-thread gate `reports_apply(agent_session, armed)`, not inside `apply_program_status`, so the group 3 locked tests stay valid (implementation.md updated). No React render harness exists (node env, no jsdom): `indicatorIcon`/`indicatorDotClass` are tested as pure helpers.

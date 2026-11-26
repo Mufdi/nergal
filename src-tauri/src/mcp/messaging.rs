@@ -714,3 +714,7 @@ mod tests {
 #[cfg(test)]
 #[path = "messaging_status_tests.rs"]
 mod status_tests;
+
+#[cfg(test)]
+#[path = "messaging_review_tests.rs"]
+mod review_tests;

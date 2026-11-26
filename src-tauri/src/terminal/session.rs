@@ -1149,3 +1149,7 @@ mod image_runs_tests;
 #[cfg(test)]
 #[path = "session_status_tests.rs"]
 mod status_tests;
+
+#[cfg(test)]
+#[path = "session_query_seen_tests.rs"]
+mod session_query_seen_tests;

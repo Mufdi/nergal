@@ -1,0 +1,16 @@
+{
+  "tier": "L",
+  "ceremony": "deep",
+  "risk_tier": "critical",
+  "spec_target": "terminal-wezterm",
+  "tracker": { "system": "linear", "id": "FRI-613", "pending": [] },
+  "validation": "pending",
+  "planning_only": false,
+  "iprev": { "rounds": 0, "verdict": null },
+  "interview_answers": {
+    "order": "kitty first: FRI-613 then FRI-624 (Unicode placeholders + a=q answer) (user, 2026-11-26)",
+    "query": "the a=q answer stays off in FRI-613 so Claude Code never sees half kitty; walk uses chafa -f kitty (user, 2026-11-26)",
+    "security": "byte-stream filter in Nergal before wezterm, not a fork: only safe kitty sequences pass (direct data, size caps, no o=z, no a=f/a=c/a=q, no U=1, no explicit w=0/h=0) (user, 2026-11-26)"
+  },
+  "events": []
+}

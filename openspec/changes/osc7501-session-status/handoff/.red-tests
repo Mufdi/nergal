@@ -8,8 +8,8 @@ c8dc57aaa1abbea4c4342858243327c39bfe1d1e  src-tauri/src/mcp/messaging_status_tes
 7fd0e75f7794ccd4b21bcaf7196dc35618257525  src/lib/sessionIndicatorState.test.ts
 bd86323261271357878023b297d94157285eeaad  src/stores/programStatus.test.ts
 2a1e33d010514909d3e96812d8dac68e7752f580  src-tauri/src/agents/program_status_arming_tests.rs
-4d2b42e53349e769cdfb676e044353f7b3c4148e  src-tauri/src/hooks/events_review_tests.rs
+d942fed5442dc26b6db4c7b900f21097ffa16a3a  src-tauri/src/hooks/events_review_tests.rs
 8f13576b5703d7808dd0907568a6ca12fda834e9  src-tauri/src/terminal/session_query_seen_tests.rs
 92e798bd66c530b8520e1ef73f3c83a9644e745a  src-tauri/src/pty_review_tests.rs
-52d50dd46b620549371cc053929fdc60449c1a36  src-tauri/src/mcp/messaging_review_tests.rs
+b5ef53a12eb54153c79c749b60611531600a4eea  src-tauri/src/mcp/messaging_review_tests.rs
 59fb30bc5c509f4506d275dc48569e97b9680d92  src/lib/sessionIndicatorReview.test.ts

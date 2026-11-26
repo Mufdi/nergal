@@ -18,7 +18,7 @@ use super::delivery;
 use super::router;
 use super::worktree_sessions::{WorktreeGateState, drain_worktree_outcomes};
 use super::{DaemonContext, directory};
-use crate::agents::state::AgentRuntimeState;
+use crate::agents::state::{AgentRuntimeState, OwnedStatus, SessionActivity};
 use crate::config::Config;
 use crate::db::{CrossSessionMessage, CrossSessionThread, SharedDb};
 use crate::terminal::program_status::RootState;
@@ -46,6 +46,27 @@ pub fn delivery_busy(agents: &AgentRuntimeState, session_id: &str) -> bool {
     busy_rule(root, hook.as_ref().map(|a| a.mode.as_str()))
 }
 
+/// Only a dialog (root `blocked`) refuses the `Stop` drain: at `Stop` the prompt is free, and
+/// the drain already delivered past a preserved background-agent wait before OSC 7501.
+pub fn stop_drain_allowed(root: Option<&RootState>) -> bool {
+    root != Some(&RootState::Blocked)
+}
+
+pub fn ready_transition(busy_before: bool, busy_after: bool) -> bool {
+    busy_before && !busy_after
+}
+
+/// The instant the target stopped being busy, from whichever source decides: the root
+/// report when there is a non-working one, else the hook idle time.
+pub fn idle_since(hook: Option<&SessionActivity>, root: Option<&OwnedStatus>) -> Option<u64> {
+    let hook_idle = hook.filter(|h| h.mode == "idle").map(|h| h.last_activity);
+    match root.map(|r| (&r.status.state, r.set_at)) {
+        Some((RootState::Blocked, _)) => None,
+        Some((RootState::Working, _)) | None => hook_idle,
+        Some((_, set_at)) => Some(hook_idle.map_or(set_at, |h| h.max(set_at))),
+    }
+}
+
 /// Waits out the settle window, then repeats the `Stop` drain for a target that went from
 /// busy to not busy without a `Stop` (a dialog closed, a background agent finished).
 pub async fn ready_drain(
@@ -62,6 +83,7 @@ pub async fn ready_drain(
     }
     let pasted = delivery::drain_idle(&db, delivery.as_ref(), &session_id, enabled);
     if pasted == 0
+        && !delivery::is_in_flight(&session_id)
         && let Some(gate) = gate
     {
         drain_worktree_outcomes(&gate, delivery.as_ref(), &session_id);
@@ -269,10 +291,8 @@ pub fn send_to_session(
     // after the settle window — otherwise it strands forever (BUG-08).
     let activity = ctx.agents.session_activity(to);
     let target_busy = delivery_busy(&ctx.agents, to);
-    let just_idled = activity
-        .as_ref()
-        .map(|a| a.mode == "idle" && now_secs().saturating_sub(a.last_activity) < IDLE_SETTLE_SECS)
-        .unwrap_or(false);
+    let just_idled = idle_since(activity.as_ref(), ctx.agents.program_status(to).as_ref())
+        .is_some_and(|since| now_secs().saturating_sub(since) < IDLE_SETTLE_SECS);
     let delivery_status = if target_busy {
         // Mid-turn: pasting into an active session is disruptive (walk finding).
         // The working→idle Stop drain in hooks::server delivers queued messages.

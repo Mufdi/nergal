@@ -1,26 +1,21 @@
 import { useAtomValue } from "jotai";
-import { Check } from "lucide-react";
+import { Check, X } from "lucide-react";
 import { modeMapAtom } from "@/stores/workspace";
 import { planReviewStatusMapAtom } from "@/stores/plan";
 import { pendingAsksAtom, pendingAttentionAtom } from "@/stores/askUser";
 import { programStatusMapAtom } from "@/stores/programStatus";
-import { resolveIndicatorState, type IndicatorState } from "@/lib/sessionIndicatorState";
+import {
+  indicatorDotClass,
+  indicatorIcon,
+  resolveIndicatorState,
+  type IndicatorState,
+} from "@/lib/sessionIndicatorState";
 
 interface SessionIndicatorProps {
   sessionId: string;
   sessionStatus: "idle" | "running" | "needs_attention" | "completed";
   size?: "xs" | "sm" | "md";
 }
-
-const STATE_COLORS: Record<IndicatorState, string> = {
-  idle: "bg-muted-foreground/40",
-  thinking: "bg-sky-400",
-  working: "bg-green-500 text-green-500",
-  attention: "bg-primary text-primary",
-  completed: "bg-muted-foreground/30",
-  done: "ring-1 ring-inset ring-green-500 bg-transparent",
-  error: "bg-red-500",
-};
 
 const STATE_ANIMATIONS: Record<IndicatorState, string> = {
   idle: "",
@@ -43,7 +38,6 @@ export function SessionIndicator({ sessionId, sessionStatus, size = "sm" }: Sess
   const planReviewMap = useAtomValue(planReviewStatusMapAtom);
   const pendingAsks = useAtomValue(pendingAsksAtom);
   const pendingAttention = useAtomValue(pendingAttentionAtom);
-
   const root = useAtomValue(programStatusMapAtom)[sessionId];
 
   const state = resolveIndicatorState({
@@ -55,13 +49,17 @@ export function SessionIndicator({ sessionId, sessionStatus, size = "sm" }: Sess
     root,
   });
 
-  if (state === "completed") {
+  const icon = indicatorIcon(state);
+  if (icon === "check") {
     return <Check className="size-3 shrink-0 text-muted-foreground/50" />;
+  }
+  if (icon === "x") {
+    return <X className="size-3 shrink-0 text-red-500" />;
   }
 
   return (
     <span
-      className={`shrink-0 session-indicator ${SIZE_CLASSES[size]} ${STATE_COLORS[state]} ${STATE_ANIMATIONS[state]}`}
+      className={`shrink-0 session-indicator ${SIZE_CLASSES[size]} ${indicatorDotClass(state)} ${STATE_ANIMATIONS[state]}`}
       aria-hidden="true"
     />
   );

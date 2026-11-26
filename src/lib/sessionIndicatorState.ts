@@ -36,7 +36,34 @@ export function resolveIndicatorState(input: IndicatorInput): IndicatorState {
       return "done";
     case "idle":
       return "idle";
-    default:
+    case "working":
+    case "blocked":
       return mode === "idle" ? "working" : fromMode(mode);
+    default:
+      return assertNever(root.state);
   }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`unhandled root state: ${String(value)}`);
+}
+
+export function indicatorIcon(state: IndicatorState): "check" | "x" | null {
+  if (state === "completed") return "check";
+  if (state === "error") return "x";
+  return null;
+}
+
+const DOT_CLASSES: Record<IndicatorState, string> = {
+  idle: "bg-muted-foreground/40",
+  thinking: "bg-sky-400",
+  working: "bg-green-500 text-green-500",
+  attention: "bg-primary text-primary",
+  completed: "bg-muted-foreground/30",
+  done: "ring-1 ring-inset ring-green-500 bg-transparent",
+  error: "bg-red-500",
+};
+
+export function indicatorDotClass(state: IndicatorState): string {
+  return DOT_CLASSES[state];
 }

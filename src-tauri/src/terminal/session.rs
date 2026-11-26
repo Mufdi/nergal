@@ -115,6 +115,7 @@ pub struct TerminalSession {
     image_registry: ImageRegistry,
     status_scanner: ProgramStatusScanner,
     status_reply: Option<Box<dyn Write + Send>>,
+    query_seen: bool,
 }
 
 impl TerminalSession {
@@ -191,11 +192,18 @@ impl TerminalSession {
             image_registry: ImageRegistry::default(),
             status_scanner: ProgramStatusScanner::default(),
             status_reply: None,
+            query_seen: false,
         }
     }
 
     pub fn set_status_reply(&mut self, writer: Box<dyn Write + Send>) {
         self.status_reply = Some(writer);
+    }
+
+    /// True once after a chunk carried an OSC 7501 query: only Claude Code with the protocol
+    /// on sends one, so it is the signal that its reports can be trusted.
+    pub fn take_query_seen(&mut self) -> bool {
+        std::mem::take(&mut self.query_seen)
     }
 
     pub fn image_registry(&self) -> &ImageRegistry {
@@ -249,6 +257,7 @@ impl TerminalSession {
         for found in self.status_scanner.feed(bytes) {
             match found {
                 Osc7501::Query => {
+                    self.query_seen = true;
                     if let Some(reply) = self.status_reply.as_mut()
                         && let Err(e) = reply.write_all(b"\x1b]7501;?\x1b\\")
                     {

@@ -14,6 +14,7 @@
 use std::sync::Arc;
 
 use dashmap::DashMap;
+use dashmap::mapref::entry::Entry;
 use parking_lot::Mutex;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
@@ -167,6 +168,10 @@ pub struct AgentRuntimeState {
     /// `session_activity`: writing the status there would reset the `just_idled`
     /// window and invent a hook mode.
     program_status: Arc<DashMap<String, OwnedStatus>>,
+    /// `nergal_session_id → pty id` that has answered an OSC 7501 query, i.e. whose Claude Code
+    /// has the protocol on. The agent PTY is an interactive shell, so reports printed by plain
+    /// data (`cat`, `curl`) before or after Claude Code must not become the root status.
+    program_status_armed: Arc<DashMap<String, String>>,
 }
 
 impl AgentRuntimeState {
@@ -192,6 +197,7 @@ impl AgentRuntimeState {
             session_last_message: Arc::new(DashMap::new()),
             live_ptys: Arc::new(DashMap::new()),
             program_status: Arc::new(DashMap::new()),
+            program_status_armed: Arc::new(DashMap::new()),
         })
     }
 
@@ -221,6 +227,7 @@ impl AgentRuntimeState {
         self.session_last_message.remove(nergal_session_id);
         self.live_ptys.remove(nergal_session_id);
         self.program_status.remove(nergal_session_id);
+        self.program_status_armed.remove(nergal_session_id);
     }
 
     /// Overwrites any prior pty id: the newest reservation owns the entry.
@@ -260,34 +267,54 @@ impl AgentRuntimeState {
                     current: None,
                 })
             }
-            ReportAction::Set(status) => {
-                let previous = self
-                    .program_status
-                    .get(session_id)
-                    .map(|e| e.status.clone());
-                if previous.as_ref() == Some(&status) {
-                    if let Some(mut entry) = self.program_status.get_mut(session_id) {
-                        entry.pty_id = pty_id.to_string();
+            ReportAction::Set(status) => match self.program_status.entry(session_id.to_string()) {
+                Entry::Occupied(mut occupied) => {
+                    let entry = occupied.get_mut();
+                    entry.pty_id = pty_id.to_string();
+                    if entry.status == status {
+                        return None;
                     }
-                    return None;
+                    let previous = std::mem::replace(&mut entry.status, status.clone());
+                    entry.set_at = now;
+                    Some(StatusChange {
+                        previous: Some(previous),
+                        current: Some(status),
+                    })
                 }
-                self.program_status.insert(
-                    session_id.to_string(),
-                    OwnedStatus {
+                Entry::Vacant(vacant) => {
+                    vacant.insert(OwnedStatus {
                         pty_id: pty_id.to_string(),
                         status: status.clone(),
                         set_at: now,
-                    },
-                );
-                Some(StatusChange {
-                    previous,
-                    current: Some(status),
-                })
-            }
+                    });
+                    Some(StatusChange {
+                        previous: None,
+                        current: Some(status),
+                    })
+                }
+            },
         }
     }
 
+    /// A newer PTY's arming replaces the older one's, so the old shell stops being believed.
+    pub fn arm_program_status(&self, session_id: &str, pty_id: &str) {
+        self.program_status_armed
+            .insert(session_id.to_string(), pty_id.to_string());
+    }
+
+    pub fn disarm_program_status(&self, session_id: &str) {
+        self.program_status_armed.remove(session_id);
+    }
+
+    pub fn program_status_armed(&self, session_id: &str, pty_id: &str) -> bool {
+        self.program_status_armed
+            .get(session_id)
+            .is_some_and(|armed| *armed == pty_id)
+    }
+
     pub fn clear_program_status_if(&self, session_id: &str, pty_id: &str) -> Option<StatusChange> {
+        self.program_status_armed
+            .remove_if(session_id, |_, armed| armed == pty_id);
         let (_, removed) = self
             .program_status
             .remove_if(session_id, |_, owned| owned.pty_id == pty_id)?;

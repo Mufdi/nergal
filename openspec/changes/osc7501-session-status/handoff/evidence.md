@@ -49,3 +49,15 @@ Verification (orchestrator, 2026-11-26):
 ## Red — group 7 (review fixes), 2026-11-26
 
 Test-writer (sonnet): 6 new test-only files, locked (15 lines in `.red-tests`, all OK): `agents/program_status_arming_tests.rs`, `hooks/events_review_tests.rs`, `terminal/session_query_seen_tests.rs`, `pty_review_tests.rs`, `mcp/messaging_review_tests.rs`, `src/lib/sessionIndicatorReview.test.ts`. Red: `cargo test --no-run` 29 errors, all missing planned items (`SessionEnd.reason`, `disarms_on_session_end`, `idle_since`, `ready_transition`, `reports_apply`, `stop_drain_allowed`, `delivery::is_in_flight`, `arm/disarm_program_status`, `program_status_armed`, `take_query_seen`); vitest 12 failed (new file, missing exports), 743 passed. Ruling (orchestrator): arming is checked by the reader-thread gate `reports_apply(agent_session, armed)`, not inside `apply_program_status`, so the group 3 locked tests stay valid (implementation.md updated). No React render harness exists (node env, no jsdom): `indicatorIcon`/`indicatorDotClass` are tested as pure helpers.
+
+## Green — group 7 (review fixes), 2026-11-26
+
+Builder (sonnet): every REVIEW.md finding fixed (arming with `take_query_seen` + `program_status_armed` + `SessionEnd.reason`/`disarms_on_session_end`; `stop_drain_allowed`; `idle_since` in the send path; `is_in_flight` before worktree outcomes in the `Stop` path and `ready_drain`; unreachable hook trigger removed; `agent_completed` via `ready_transition`; `apply_program_status` through the `DashMap` entry API; `error` as lucide `X`; status bar dot from `resolveIndicatorState` + `indicatorDotClass` (its idle dot is now `bg-muted-foreground/40`, the indicator's shade); exhaustive `RootState` switch; contiguous atoms; `docs/design.md` §3.10 and `docs/architecture.md` terminal modules). `_removed` kept: no eslint config in the repo.
+
+Ruling (orchestrator): two locked test files from the group-7 test-writer were not rustfmt-clean (`cargo fmt --check` would fail in CI). Formatting only, no semantic change: formatted with `rustfmt --edition 2024` and re-locked (`hooks/events_review_tests.rs`, `mcp/messaging_review_tests.rs`). One comment reworded (`mcp/messaging.rs:49`, a background-agent wait can carry a root status).
+
+Verification (orchestrator):
+- `cargo clippy --all-targets -- -D warnings`: clean. `cargo test`: `1440 passed; 0 failed; 1 ignored`. `cargo fmt --check`: no diff.
+- `npx tsc --noEmit`: clean. `pnpm test`: 61 files, 755 tests passed.
+- `work-gates.sh`: 6a/6b/6c PASS, Red locks PASS (15), 5 WARN (tokio `test-util` dev feature only).
+- Comment audit: the added comments are WHY.

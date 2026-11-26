@@ -178,14 +178,39 @@ fn status_payload(
     })
 }
 
-fn apply_program_reports(app: &AppHandle, session_id: &str, pty_id: &str, bodies: Vec<Vec<u8>>) {
-    use crate::mcp::messaging::{delivery_busy, schedule_ready_drain_for_app};
+/// The PTY is an interactive shell: plain data printed before or after Claude Code can contain
+/// an OSC 7501 report, so reports count only once this PTY's Claude Code answered the query.
+fn reports_apply(agent_session: bool, armed: bool) -> bool {
+    agent_session && armed
+}
+
+fn apply_program_reports(
+    app: &AppHandle,
+    session_id: &str,
+    pty_id: &str,
+    agent_session: bool,
+    query_seen: bool,
+    bodies: Vec<Vec<u8>>,
+) {
+    use crate::mcp::messaging::{delivery_busy, ready_transition, schedule_ready_drain_for_app};
     use tauri::Emitter;
 
+    if !agent_session {
+        return;
+    }
     let Some(agents) = app.try_state::<crate::agents::state::AgentRuntimeState>() else {
         return;
     };
+    if query_seen {
+        agents.arm_program_status(session_id, pty_id);
+    }
     for body in bodies {
+        if !reports_apply(
+            agent_session,
+            agents.program_status_armed(session_id, pty_id),
+        ) {
+            continue;
+        }
         let busy_before = delivery_busy(agents.inner(), session_id);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -199,7 +224,7 @@ fn apply_program_reports(app: &AppHandle, session_id: &str, pty_id: &str, bodies
             "session:program-status",
             status_payload(session_id, &change),
         );
-        if busy_before && !delivery_busy(agents.inner(), session_id) {
+        if ready_transition(busy_before, delivery_busy(agents.inner(), session_id)) {
             schedule_ready_drain_for_app(app, session_id);
         }
     }
@@ -862,16 +887,26 @@ fn spawn_pty(
                         let _ = tx.send(());
                     }
 
-                    let reports = match reader_session.lock() {
-                        Ok(mut guard) => guard.advance_bytes(&buf[..n]),
+                    let (reports, query_seen) = match reader_session.lock() {
+                        Ok(mut guard) => {
+                            let reports = guard.advance_bytes(&buf[..n]);
+                            (reports, guard.take_query_seen())
+                        }
                         Err(err) => {
                             tracing::error!(error = %err, "session mutex poisoned; dropping chunk");
-                            Vec::new()
+                            (Vec::new(), false)
                         }
                     };
                     reader_notify.notify_one();
-                    if agent_session && !reports.is_empty() {
-                        apply_program_reports(&eof_app, &eof_session, &eof_pty_id, reports);
+                    if query_seen || !reports.is_empty() {
+                        apply_program_reports(
+                            &eof_app,
+                            &eof_session,
+                            &eof_pty_id,
+                            agent_session,
+                            query_seen,
+                            reports,
+                        );
                     }
                 }
                 Err(_) => break,

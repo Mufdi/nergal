@@ -477,10 +477,10 @@ session attention.
 | `animate-session-attention` | Awaiting user (orange-500) | Ripple ping, 1.2 s |
 | `animate-pulse` (Tailwind) | Conflict urgency (red-500) | Standard pulse |
 
-**Static session dots** from Claude Code's reported status (OSC 7501): `done` is a green ring with a transparent center (`ring-1 ring-inset ring-green-500 bg-transparent`), and `error` is a solid `bg-red-500` dot. Neither animates. `done` shares the working color but not its shape, so the two still differ under reduced motion.
+**Static session states** from Claude Code's reported status (OSC 7501): `done` is a dot, a green ring with a transparent center (`ring-1 ring-inset ring-green-500 bg-transparent`). `error` is not a dot but a red `X` icon (lucide `X`, `size-3 text-red-500`), so it stays distinguishable from `working` and `attention` at 6px under reduced motion and red-green color blindness. Neither animates. `done` shares the working color but not its shape, so the two still differ under reduced motion.
 
 Always wrap inside `SessionIndicator` rather than recreating animations inline.
-All three respect `prefers-reduced-motion`.
+The three animations above respect `prefers-reduced-motion`; the static `done` and `error` states have no motion to reduce.
 
 **Progress bar** (StatusBar context window):
 `h-2 w-12 rounded-full bg-muted` track + `h-full rounded-full transition-all`

@@ -27,6 +27,12 @@ pub struct PromptCacheStatus {
     pub last_miss_causes: Vec<String>,
 }
 
+/// `clear` keeps the same PTY and the protocol on; every other end (or an unknown reason)
+/// stops the report stream.
+pub fn disarms_on_session_end(reason: Option<&str>) -> bool {
+    reason != Some("clear")
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GithubPr {
     #[serde(default)]
@@ -54,7 +60,11 @@ pub enum HookEvent {
     #[serde(rename = "SessionStart")]
     SessionStart { session_id: String },
     #[serde(rename = "SessionEnd")]
-    SessionEnd { session_id: String },
+    SessionEnd {
+        session_id: String,
+        #[serde(default)]
+        reason: Option<String>,
+    },
     #[serde(rename = "PreToolUse")]
     PreToolUse {
         session_id: String,
@@ -340,7 +350,7 @@ impl HookEvent {
     pub fn session_id(&self) -> &str {
         match self {
             Self::SessionStart { session_id }
-            | Self::SessionEnd { session_id }
+            | Self::SessionEnd { session_id, .. }
             | Self::PreToolUse { session_id, .. }
             | Self::PostToolUse { session_id, .. }
             | Self::Stop { session_id, .. }
@@ -574,6 +584,7 @@ mod tests {
 
         let stop = HookEvent::SessionEnd {
             session_id: "s".into(),
+            reason: None,
         };
         assert!(stop.effort_level().is_none());
     }

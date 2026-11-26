@@ -43,7 +43,10 @@ fn owned(state: RootState, set_at: u64) -> OwnedStatus {
 #[test]
 fn stop_drain_is_refused_only_for_a_blocked_root() {
     use RootState::{Blocked, Done, Error, Idle, Working};
-    assert!(stop_drain_allowed(None), "a background agent wait has no root");
+    assert!(
+        stop_drain_allowed(None),
+        "a background agent wait has no root"
+    );
     for (root, expected) in [
         (Blocked, false),
         (Working, true),
@@ -80,11 +83,23 @@ fn a_ready_transition_is_busy_before_and_not_busy_after() {
 fn idle_since_is_the_instant_the_target_stopped_being_busy() {
     use RootState::{Blocked, Done, Idle, Working};
     let cases: [(Option<SessionActivity>, Option<OwnedStatus>, Option<u64>); 8] = [
-        (Some(hook("running", 900)), Some(owned(Done, 1000)), Some(1000)),
-        (Some(hook("idle", 1002)), Some(owned(Done, 1000)), Some(1002)),
+        (
+            Some(hook("running", 900)),
+            Some(owned(Done, 1000)),
+            Some(1000),
+        ),
+        (
+            Some(hook("idle", 1002)),
+            Some(owned(Done, 1000)),
+            Some(1002),
+        ),
         (None, Some(owned(Idle, 1000)), Some(1000)),
         (Some(hook("idle", 900)), None, Some(900)),
-        (Some(hook("idle", 900)), Some(owned(Working, 1000)), Some(900)),
+        (
+            Some(hook("idle", 900)),
+            Some(owned(Working, 1000)),
+            Some(900),
+        ),
         (Some(hook("running", 900)), None, None),
         (Some(hook("idle", 900)), Some(owned(Blocked, 1000)), None),
         (None, None, None),
@@ -118,12 +133,8 @@ fn a_done_report_before_stop_opens_the_settle_window_for_a_send() {
     };
     let now = now_secs();
     ctx.agents.mark_live("done-before-stop", "pty-1");
-    ctx.agents.set_activity_for_test(
-        "done-before-stop",
-        "running",
-        None,
-        now.saturating_sub(60),
-    );
+    ctx.agents
+        .set_activity_for_test("done-before-stop", "running", None, now.saturating_sub(60));
     set_root_at(
         &ctx.agents,
         "done-before-stop",
@@ -131,7 +142,15 @@ fn a_done_report_before_stop_opens_the_settle_window_for_a_send() {
         now.saturating_sub(1),
     );
 
-    let r = send_to_session(&ctx, &enabled(), "sender", "done-before-stop", "hello", None).unwrap();
+    let r = send_to_session(
+        &ctx,
+        &enabled(),
+        "sender",
+        "done-before-stop",
+        "hello",
+        None,
+    )
+    .unwrap();
 
     assert_eq!(r["delivery"], "queued");
     assert_eq!(mock.wake_calls(), 0);

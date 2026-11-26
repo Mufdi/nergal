@@ -185,6 +185,13 @@ fn try_mark_in_flight(session_id: &str) -> bool {
     }
 }
 
+pub(crate) fn is_in_flight(session_id: &str) -> bool {
+    in_flight_set()
+        .lock()
+        .map(|set| set.contains(session_id))
+        .unwrap_or(false)
+}
+
 fn clear_in_flight(session_id: &str) {
     if let Ok(mut set) = in_flight_set().lock() {
         set.remove(session_id);

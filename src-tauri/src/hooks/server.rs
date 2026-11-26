@@ -49,7 +49,7 @@ impl FrontendHookEvent {
                 HookEvent::SessionStart { session_id } => {
                     (session_id.clone(), "session_start", None, None, None, None)
                 }
-                HookEvent::SessionEnd { session_id } => {
+                HookEvent::SessionEnd { session_id, .. } => {
                     (session_id.clone(), "session_end", None, None, None, None)
                 }
                 HookEvent::PreToolUse {
@@ -1061,15 +1061,7 @@ fn process_event(
                 preserves_background_wait(&prev.mode, prev.waiting_for.as_deref(), event)
             });
             if !keep_wait {
-                let busy_before = crate::mcp::messaging::delivery_busy(agent_state, csid);
                 agent_state.record_activity(csid, mode, event.waiting_for().as_deref());
-                // Stop has its own drain below; SessionEnd must never wake a dying PTY.
-                if busy_before
-                    && !crate::mcp::messaging::delivery_busy(agent_state, csid)
-                    && !matches!(event, HookEvent::Stop { .. } | HookEvent::SessionEnd { .. })
-                {
-                    crate::mcp::messaging::schedule_ready_drain_for_app(app, csid);
-                }
             }
         }
         // Touched files come from PreToolUse: it is registered unmatched so it
@@ -1111,7 +1103,12 @@ fn process_event(
     if top_level
         && let Some(csid) = nergal_session_id
         && matches!(event, HookEvent::Stop { .. })
-        && !crate::mcp::messaging::delivery_busy(agent_state, csid)
+        && crate::mcp::messaging::stop_drain_allowed(
+            agent_state
+                .program_status(csid)
+                .as_ref()
+                .map(|o| &o.status.state),
+        )
     {
         let bridge = crate::mcp::delivery::AppBridge::new(app.clone());
         let cross_session_enabled = crate::config::Config::load().cross_session.enabled;
@@ -1122,6 +1119,7 @@ fn process_event(
         // nothing this Stop; otherwise it waits for the next idle.
         let delivered = crate::mcp::delivery::drain_idle(db, &bridge, csid, cross_session_enabled);
         if delivered == 0
+            && !crate::mcp::delivery::is_in_flight(csid)
             && let Some(gate) = app.try_state::<crate::mcp::worktree_sessions::WorktreeGateState>()
         {
             crate::mcp::worktree_sessions::drain_worktree_outcomes(&gate, &bridge, csid);
@@ -1186,7 +1184,12 @@ fn process_event(
             }
         }
 
-        HookEvent::SessionEnd { session_id } => {
+        HookEvent::SessionEnd { session_id, reason } => {
+            if let Some(csid) = nergal_session_id
+                && crate::hooks::events::disarms_on_session_end(reason.as_deref())
+            {
+                agent_state.disarm_program_status(csid);
+            }
             let _ = app.emit("session:end", session_id);
             finalize_session_obsidian(db, nergal_session_id);
         }
@@ -1599,7 +1602,10 @@ fn process_event(
                 {
                     let busy_before = crate::mcp::messaging::delivery_busy(agent_state, csid);
                     agent_state.record_activity(csid, mode, None);
-                    if busy_before && !crate::mcp::messaging::delivery_busy(agent_state, csid) {
+                    if crate::mcp::messaging::ready_transition(
+                        busy_before,
+                        crate::mcp::messaging::delivery_busy(agent_state, csid),
+                    ) {
                         crate::mcp::messaging::schedule_ready_drain_for_app(app, csid);
                     }
                 }
@@ -2051,6 +2057,7 @@ mod tests {
             (
                 HookEvent::SessionEnd {
                     session_id: "s".into(),
+                    reason: None,
                 },
                 "session_end",
             ),
@@ -2669,6 +2676,7 @@ mod tests {
         };
         let end = HookEvent::SessionEnd {
             session_id: "s".into(),
+            reason: None,
         };
         let notif = HookEvent::Notification {
             session_id: "s".into(),

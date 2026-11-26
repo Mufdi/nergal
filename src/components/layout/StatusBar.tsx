@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { activeSessionIdAtom, activeModeAtom, activeCwdAtom, activeAgentStatusAtom, activeLastResponseEffortAtom } from "@/stores/workspace";
+import { activeSessionIdAtom, activeSessionAtom, activeModeAtom, activeCwdAtom, activeAgentStatusAtom, activeLastResponseEffortAtom } from "@/stores/workspace";
 import { effortChipText, formatMissCauses, formatTokens, promptCacheChip } from "@/lib/agentTelemetry";
 import { activeGitInfoAtom, refreshGitInfoAtom, renameBranchSignalAtom } from "@/stores/git";
 import { loadSessionFilesAtom } from "@/stores/files";
 import { loadPinnedNotesAtom } from "@/stores/pinnedNotes";
 import { activitySummaryAtom, activityDrawerOpenAtom } from "@/stores/activity";
 import { activeAgentMetadataAtom } from "@/stores/agent";
+import { planReviewStatusMapAtom } from "@/stores/plan";
+import { pendingAsksAtom, pendingAttentionAtom } from "@/stores/askUser";
+import { programStatusMapAtom } from "@/stores/programStatus";
+import { indicatorDotClass, resolveIndicatorState } from "@/lib/sessionIndicatorState";
 import {
   browserNewTabAction,
   browserSetModeAction,
@@ -65,15 +69,14 @@ function asciiBar(pct: number, width = 12): string {
   return "█".repeat(filled) + "░".repeat(width - filled);
 }
 
-function modeDotColor(mode: string): string {
-  if (mode === "idle") return "bg-muted-foreground";
-  if (mode === "active") return "bg-sky-400";
-  return "bg-green-500";
-}
-
 export function StatusBar() {
   const sessionId = useAtomValue(activeSessionIdAtom);
   const mode = useAtomValue(activeModeAtom);
+  const activeSession = useAtomValue(activeSessionAtom);
+  const planReviewMap = useAtomValue(planReviewStatusMapAtom);
+  const pendingAsks = useAtomValue(pendingAsksAtom);
+  const pendingAttention = useAtomValue(pendingAttentionAtom);
+  const programStatusMap = useAtomValue(programStatusMapAtom);
   const gitInfo = useAtomValue(activeGitInfoAtom);
   const refreshGit = useSetAtom(refreshGitInfoAtom);
   const setRenameBranchSignal = useSetAtom(renameBranchSignalAtom);
@@ -136,7 +139,16 @@ export function StatusBar() {
     return () => clearInterval(id);
   }, [sl.session_started_at]);
 
-  const dotColor = modeDotColor(mode);
+  const dotColor = indicatorDotClass(
+    resolveIndicatorState({
+      sessionStatus: activeSession?.status ?? "idle",
+      mode,
+      planReview: sessionId ? planReviewMap[sessionId] : undefined,
+      pendingAsk: !!sessionId && !!pendingAsks[sessionId],
+      pendingAttention: !!sessionId && !!pendingAttention[sessionId],
+      root: sessionId ? programStatusMap[sessionId] : undefined,
+    }),
+  );
   const ctxPct = sl.context_used_pct != null ? Math.round(sl.context_used_pct) : null;
 
   return (

@@ -1,12 +1,15 @@
 use super::TerminalSession;
 use crate::terminal::config::NergalTerminalConfig;
-use crate::terminal::kitty_gate::GateLimits;
+use crate::terminal::kitty_gate::{GateLimits, KittyGate};
 use crate::terminal::types::ImageRun;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use termwiz::escape::Action;
+use termwiz::escape::apc::KittyImage;
+use termwiz::escape::parser::Parser;
 use wezterm_term::{Terminal, TerminalSize};
 
 const RGBA_2X2_B64: &str = "/wAA/wD/AP8AAP///////w==";
@@ -107,6 +110,28 @@ fn image_cells_on_screen(term: &Terminal) -> usize {
         .sum()
 }
 
+fn max_images_in_one_cell(term: &Terminal) -> usize {
+    let screen = term.screen();
+    screen
+        .lines_in_phys_range(0..screen.scrollback_rows())
+        .iter()
+        .flat_map(|line| {
+            line.visible_cells()
+                .map(|cell| cell.attrs().images().map_or(0, |images| images.len()))
+                .collect::<Vec<_>>()
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+fn distinct_pixel_b64(n: u32) -> String {
+    STANDARD.encode(n.to_le_bytes())
+}
+
+fn transmit_pixel(id: u32) -> Vec<u8> {
+    apc(&format!("a=t,f=32,s=1,v=1,i={id}"), &distinct_pixel_b64(id))
+}
+
 // `?47h` keeps the other screen's content, unlike `?1049h`, so it can be inspected.
 fn held_image_cells(s: &mut TerminalSession) -> usize {
     let active = image_cells_on_screen(s.terminal());
@@ -202,7 +227,22 @@ fn the_session_parser_gives_the_same_grid_and_title_as_the_emulators_own() {
     assert_eq!(ours.terminal().get_title(), "my title");
     assert!(total_runs(&mut ours) > 0, "the corpus must carry images");
     assert_eq!(ours.terminal().get_title(), reference.get_title());
-    assert_eq!(ours.terminal().cursor_pos(), reference.cursor_pos());
+    let (ours_cursor, reference_cursor) = (ours.terminal().cursor_pos(), reference.cursor_pos());
+    assert_eq!(
+        (
+            ours_cursor.x,
+            ours_cursor.y,
+            ours_cursor.shape,
+            ours_cursor.visibility
+        ),
+        (
+            reference_cursor.x,
+            reference_cursor.y,
+            reference_cursor.shape,
+            reference_cursor.visibility
+        ),
+        "the seqno differs with read splitting and is not part of the contract"
+    );
     assert_eq!(fingerprint(ours.terminal()), fingerprint(&reference));
 }
 
@@ -238,7 +278,7 @@ fn file_and_temp_file_media_leave_the_file_untouched_and_write_nothing() {
         }
         sequences.push(apc(
             "a=T,f=32,s=2,v=2,i=2,c=1,r=1,m=1",
-            &STANDARD.encode(&[0u8; 8]),
+            &STANDARD.encode([0u8; 8]),
         ));
         sequences.push(apc(&format!("t={medium},m=0"), &path));
     }
@@ -404,10 +444,12 @@ fn text_over_a_placement_replaces_only_the_cells_it_overwrites() {
 #[test]
 fn ten_thousand_stacked_full_screen_placements_hold_at_most_68_placements_of_cells() {
     let mut s = session();
-    s.advance_bytes(&apc("a=t,f=32,s=1,v=1,i=1", PIXEL_B64));
+    for id in 1..=100 {
+        s.advance_bytes(&transmit_pixel(id));
+    }
 
-    for n in 1..=10_000 {
-        s.advance_bytes(&apc(&format!("a=p,i=1,p={n},c=80,r=24"), ""));
+    for n in 1..=10_000u32 {
+        s.advance_bytes(&apc(&format!("a=p,i={},p={n},c=80,r=24", n % 100 + 1), ""));
     }
 
     let held = held_image_cells(&mut s);
@@ -431,16 +473,18 @@ fn image_cells_stay_under_the_cap_through_screen_switches_line_moves_and_resizes
         feed_all(
             &mut s,
             &[
-                apc("a=t,f=32,s=1,v=1,i=1", PIXEL_B64),
+                transmit_pixel(round * 4 + 1),
+                transmit_pixel(round * 4 + 2),
+                transmit_pixel(round * 4 + 3),
                 format!("\x1b[{row};1H").into_bytes(),
-                apc(&format!("a=p,i=1,p={},c=4,r=1", round * 4 + 1), ""),
-                apc(&format!("a=p,i=1,p={},c=4,r=1", round * 4 + 2), ""),
+                apc(&format!("a=p,i={},p={},c=4,r=1", round * 4 + 1, round), ""),
+                apc(&format!("a=p,i={},p={},c=4,r=1", round * 4 + 2, round), ""),
                 b"\x1b[?47h".to_vec(),
                 format!("\x1b[{row};3H").into_bytes(),
-                apc(&format!("a=p,i=1,p={},c=4,r=1", round * 4 + 3), ""),
+                apc(&format!("a=p,i={},p={},c=4,r=1", round * 4 + 3, round), ""),
                 apc(
-                    &format!("a=T,f=32,s=1,v=1,i=2,p={},c=4,r=1", round * 4 + 4),
-                    PIXEL_B64,
+                    &format!("a=T,f=32,s=1,v=1,i={},p={},c=4,r=1", round * 4 + 4, round),
+                    &distinct_pixel_b64(round * 4 + 4),
                 ),
                 b"\x1b[2L\x1b[3M".to_vec(),
                 b"\x1b[?47l".to_vec(),
@@ -472,14 +516,16 @@ fn the_worst_stacking_of_1024_placements_stays_under_two_seconds() {
     let mut s = session();
     let start = Instant::now();
 
-    s.advance_bytes(&apc("a=t,f=32,s=2,v=2,i=1", RGBA_2X2_B64));
-    for n in 1..=1024 {
-        s.advance_bytes(&apc(&format!("a=p,i=1,p={n},c=16,r=8,C=1"), ""));
+    for id in 1..=1024 {
+        s.advance_bytes(&transmit_pixel(id));
+    }
+    for id in 1..=1024 {
+        s.advance_bytes(&apc(&format!("a=p,i={id},c=16,r=8,C=1"), ""));
     }
     let stacked = runs(&mut s);
     let _ = s.grid_snapshot();
     let _ = s.grid_snapshot();
-    s.advance_bytes(&apc("a=d,d=i,i=1", ""));
+    s.advance_bytes(&apc("a=d,d=a", ""));
     let after_delete = runs(&mut s);
     let elapsed = start.elapsed();
 
@@ -489,4 +535,179 @@ fn the_worst_stacking_of_1024_placements_stays_under_two_seconds() {
     }
     assert!(stacked.iter().skip(8).all(Vec::is_empty));
     assert!(after_delete.iter().all(Vec::is_empty));
+}
+
+#[test]
+fn placements_with_placement_ids_stay_linear() {
+    let mut s = session();
+    let start = Instant::now();
+    s.advance_bytes(&transmit_pixel(1));
+
+    for p in 1..=30 {
+        s.advance_bytes(b"\x1b[H");
+        s.advance_bytes(&apc(&format!("a=p,i=1,p={p},c=16,r=8"), ""));
+
+        // Checked per step: before the fix each placement doubled the images in the cells.
+        let held = held_image_cells(&mut s);
+        assert!(held <= 128, "after placement {p}: {held} image cells held");
+        assert!(
+            max_images_in_one_cell(s.terminal()) <= 1,
+            "after placement {p}: a cell holds more than one image"
+        );
+    }
+
+    assert!(held_image_cells(&mut s) > 0, "the image must be placed");
+    assert!(
+        start.elapsed() < Duration::from_secs(1),
+        "took {:?}",
+        start.elapsed()
+    );
+}
+
+#[test]
+fn deleting_with_a_placement_id_removes_the_image() {
+    for delete in ["a=d,d=i,i=1,p=7", "a=d,d=I,i=1,p=7"] {
+        let mut s = session();
+        s.advance_bytes(&place_2x2("i=1,p=7,c=2,r=2"));
+        assert!(total_runs(&mut s) > 0, "{delete}: the image must be placed");
+
+        s.advance_bytes(&apc(delete, ""));
+
+        assert_eq!(total_runs(&mut s), 0, "{delete}");
+        assert_eq!(held_image_cells(&mut s), 0, "{delete}");
+    }
+}
+
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x
+    }
+
+    fn below(&mut self, n: u64) -> u64 {
+        self.next() % n
+    }
+
+    fn chance(&mut self, percent: u64) -> bool {
+        self.below(100) < percent
+    }
+}
+
+fn random_step(rng: &mut Rng) -> Vec<u8> {
+    let id = rng.below(6) as u32 + 1;
+    let with_p = |rng: &mut Rng| {
+        if rng.chance(70) {
+            format!(",p={}", rng.below(5) + 1)
+        } else {
+            String::new()
+        }
+    };
+    let footprint = |rng: &mut Rng| format!("c={},r={}", rng.below(8) + 1, rng.below(4) + 1);
+    let keep_cursor = |rng: &mut Rng| if rng.chance(50) { ",C=1" } else { "" };
+
+    match rng.below(10) {
+        0 | 1 => apc(
+            &format!("a=t,f=32,s=1,v=1,i={id}"),
+            &distinct_pixel_b64(rng.next() as u32),
+        ),
+        2..=4 => {
+            let (p, size, c) = (with_p(rng), footprint(rng), keep_cursor(rng));
+            apc(&format!("a=p,i={id}{p},{size}{c}"), "")
+        }
+        5 => {
+            let (p, size, c) = (with_p(rng), footprint(rng), keep_cursor(rng));
+            apc(
+                &format!("a=T,f=32,s=1,v=1,i={id}{p},{size}{c}"),
+                &distinct_pixel_b64(rng.next() as u32),
+            )
+        }
+        6 => format!("\x1b[{};{}H", rng.below(24) + 1, rng.below(80) + 1).into_bytes(),
+        7 => {
+            if rng.chance(50) {
+                b"\x1b[?47h".to_vec()
+            } else {
+                b"\x1b[?47l".to_vec()
+            }
+        }
+        8 => {
+            let mut bytes = b"\x1b[24;1H".to_vec();
+            bytes.extend(std::iter::repeat_n(b'\n', rng.below(30) as usize + 1));
+            bytes
+        }
+        _ => {
+            let p = with_p(rng);
+            let kind = if rng.chance(50) { "i" } else { "I" };
+            apc(&format!("a=d,d={kind},i={id}{p}"), "")
+        }
+    }
+}
+
+fn forwarded_cells(actions: Vec<Action>) -> u64 {
+    actions
+        .into_iter()
+        .filter_map(|action| match action {
+            Action::KittyImage(image) => match *image {
+                KittyImage::Display { placement, .. }
+                | KittyImage::TransmitDataAndDisplay { placement, .. } => Some(
+                    u64::from(placement.columns.unwrap_or(0))
+                        * u64::from(placement.rows.unwrap_or(0)),
+                ),
+                _ => None,
+            },
+            _ => None,
+        })
+        .sum()
+}
+
+#[test]
+fn held_image_cells_never_exceed_the_forwarded_placed_cells_under_random_traffic() {
+    let limits = GateLimits {
+        max_cells: 900,
+        max_placements: 80,
+        max_transmissions: 60,
+        max_deletes: 40,
+        ..GateLimits::default()
+    };
+    let start = Instant::now();
+    let mut most_held = 0;
+
+    for seed in 1..=12u64 {
+        let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+        let mut s = session();
+        s.set_kitty_limits(limits);
+        let mut mirror = KittyGate::with_limits_and_switch(limits, false);
+        let mut mirror_parser = Parser::new();
+        let mut placed_cells = 0u64;
+
+        for step in 0..80 {
+            let bytes = random_step(&mut rng);
+            placed_cells +=
+                forwarded_cells(mirror.admit(mirror_parser.parse_as_vec(&bytes), 80, 24));
+            s.advance_bytes(&bytes);
+
+            let held = held_image_cells(&mut s) as u64;
+            most_held = most_held.max(held);
+            assert!(
+                held <= placed_cells,
+                "seed {seed} step {step}: held {held} image cells, forwarded {placed_cells}"
+            );
+            assert!(
+                held <= limits.max_cells,
+                "seed {seed} step {step}: held {held} image cells over the cap"
+            );
+        }
+    }
+
+    assert!(most_held > 0, "the generator must leave images held");
+    assert!(
+        start.elapsed() < Duration::from_secs(2),
+        "took {:?}",
+        start.elapsed()
+    );
 }

@@ -1,12 +1,12 @@
 use super::{GateLimits, KittyGate};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use termwiz::escape::Action;
 use termwiz::escape::apc::{
     KittyImage, KittyImageCompression, KittyImageData, KittyImageDelete, KittyImageFormat,
     KittyImagePlacement, KittyImageTransmit, KittyImageVerbosity,
 };
 use termwiz::escape::parser::Parser;
+use termwiz::escape::{Action, Esc, EscCode};
 
 const COLS: usize = 80;
 const ROWS: usize = 24;
@@ -173,6 +173,10 @@ fn violation(img: &KittyImage) -> Option<String> {
             placement_violation(placement).or_else(|| quiet_violation(*verbosity))
         }
         KittyImage::Delete { what, verbosity } => match what {
+            KittyImageDelete::ByImageId {
+                placement_id: Some(p),
+                ..
+            } => Some(format!("delete carries placement id {p}")),
             KittyImageDelete::All { .. } | KittyImageDelete::ByImageId { .. } => {
                 quiet_violation(*verbosity)
             }
@@ -215,6 +219,9 @@ fn transmit_violation(t: &KittyImageTransmit) -> Option<String> {
 }
 
 fn placement_violation(p: &KittyImagePlacement) -> Option<String> {
+    if let Some(id) = p.placement_id {
+        return Some(format!("placement carries placement id {id}"));
+    }
     let in_range =
         |value: Option<u32>, max: usize| value.is_some_and(|v| (1..=max as u32).contains(&v));
     if !in_range(p.columns, COLS) || !in_range(p.rows, ROWS) {
@@ -526,13 +533,134 @@ fn a_placement_inside_the_allowlist_is_forwarded_whole() {
                 columns: Some(80),
                 rows: Some(24),
                 do_not_move_cursor: true,
-                placement_id: Some(7),
                 z_index: Some(-5),
                 ..no_placement()
             },
             verbosity: KittyImageVerbosity::Quiet,
         }]
     );
+}
+
+#[test]
+fn a_transmit_and_display_forwards_its_placement_without_a_placement_id() {
+    let got = fresh(&apc("a=T,f=32,s=2,v=2,i=1,p=9,c=2,r=2", RGBA_2X2_B64));
+
+    assert_eq!(
+        got,
+        vec![KittyImage::TransmitDataAndDisplay {
+            transmit: transmit(
+                Some(KittyImageFormat::Rgba),
+                2,
+                2,
+                Some(1),
+                RGBA_2X2.to_vec()
+            ),
+            placement: cell_placement(2, 2),
+            verbosity: KittyImageVerbosity::Quiet,
+        }]
+    );
+}
+
+#[test]
+fn a_chunked_transmit_and_display_also_loses_its_placement_id() {
+    let data: Vec<u8> = (0..16).collect();
+    let mut gate = gate(limits());
+    let sequences = [
+        apc("a=T,f=32,s=2,v=2,i=1,p=4,c=1,r=1,m=1", &b64(&data[..6])),
+        apc("m=0", &b64(&data[6..])),
+    ];
+
+    let got = feed_each(&mut gate, &sequences);
+
+    assert_eq!(got[0], Vec::new());
+    assert_eq!(got[1].len(), 1);
+    assert_eq!(violation(&got[1][0]), None);
+}
+
+fn stray_terminators(actions: &[Action]) -> usize {
+    actions
+        .iter()
+        .filter(|a| matches!(a, Action::Esc(Esc::Code(EscCode::StringTerminator))))
+        .count()
+}
+
+#[test]
+fn the_terminator_of_a_dropped_kitty_action_leaves_no_residue() {
+    let dropped = [
+        ("a query", apc("a=q,i=31,s=1,v=1,f=24", "AAAA")),
+        ("a degenerate placement", apc("a=p,i=1,c=0,r=1", "")),
+        (
+            "a file medium",
+            apc("a=t,t=f,f=32,s=1,v=1,i=1", &b64(b"/etc/hostname")),
+        ),
+        ("an unsupported delete", apc("a=d,d=n,I=1", "")),
+    ];
+
+    for (name, bytes) in dropped {
+        let actions = parsed(&bytes);
+        assert_eq!(
+            stray_terminators(&actions),
+            1,
+            "{name}: the parser must emit the terminator, or the case proves nothing"
+        );
+        let got = gate(limits()).admit(actions, COLS, ROWS);
+        assert_eq!(got, Vec::new(), "{name}");
+    }
+}
+
+#[test]
+fn the_terminator_of_a_consumed_chunk_leaves_no_residue() {
+    let mut gate = gate(limits());
+    let first = apc("a=T,f=32,s=2,v=2,i=1,c=1,r=1,m=1", &b64(&RGBA_2X2[..8]));
+
+    assert_eq!(gate.admit(parsed(&first), COLS, ROWS), Vec::new());
+}
+
+#[test]
+fn a_terminator_split_from_its_dropped_kitty_action_by_a_read_boundary_leaves_no_residue() {
+    let mut parser = Parser::new();
+    let mut gate = gate(limits());
+    let full = apc("a=q,i=31,s=1,v=1,f=24", "AAAA");
+    let (head, tail) = full.split_at(full.len() - 1);
+
+    let mut out = gate.admit(parser.parse_as_vec(head), COLS, ROWS);
+    out.extend(gate.admit(parser.parse_as_vec(tail), COLS, ROWS));
+
+    assert_eq!(out, Vec::new());
+}
+
+#[test]
+fn a_terminator_split_from_a_consumed_chunk_leaves_no_residue() {
+    let mut parser = Parser::new();
+    let mut gate = gate(limits());
+    let full = apc("a=T,f=32,s=2,v=2,i=1,c=1,r=1,m=1", &b64(&RGBA_2X2[..8]));
+    let (head, tail) = full.split_at(full.len() - 1);
+
+    let mut out = gate.admit(parser.parse_as_vec(head), COLS, ROWS);
+    out.extend(gate.admit(parser.parse_as_vec(tail), COLS, ROWS));
+
+    assert_eq!(out, Vec::new());
+}
+
+#[test]
+fn the_terminator_after_a_forwarded_kitty_action_is_kept() {
+    let bytes = tx(1, 1, 1);
+    let actions = parsed(&bytes);
+    assert_eq!(stray_terminators(&actions), 1, "the parser must emit it");
+
+    let got = gate(limits()).admit(actions, COLS, ROWS);
+
+    assert_eq!(stray_terminators(&got), 1);
+    assert_eq!(kitty_only(got).len(), 1);
+}
+
+#[test]
+fn a_real_terminator_after_unrelated_output_survives_a_dropped_kitty_action() {
+    let bytes = [apc("a=q,i=31,s=1,v=1,f=24", "AAAA"), b"text\x1b\\".to_vec()].concat();
+
+    let got = gate(limits()).admit(parsed(&bytes), COLS, ROWS);
+
+    assert_eq!(stray_terminators(&got), 1);
 }
 
 #[test]
@@ -664,7 +792,7 @@ fn only_the_two_implemented_delete_variants_are_forwarded() {
             "a=d,d=I,i=2,p=3",
             KittyImageDelete::ByImageId {
                 image_id: 2,
-                placement_id: Some(3),
+                placement_id: None,
                 delete: true,
             },
         ),
@@ -691,6 +819,29 @@ fn only_the_two_implemented_delete_variants_are_forwarded() {
         ("d=y", apc("a=d,d=y,y=1", "")),
         ("d=z", apc("a=d,d=z,z=0", "")),
     ]);
+}
+
+#[test]
+fn a_delete_naming_a_placement_id_is_forwarded_without_it() {
+    let cases = [
+        ("d=i", "a=d,d=i,i=1,p=7", false),
+        ("d=I", "a=d,d=I,i=1,p=7", true),
+    ];
+
+    for (name, keys, delete) in cases {
+        assert_eq!(
+            fresh(&apc(keys, "")),
+            vec![KittyImage::Delete {
+                what: KittyImageDelete::ByImageId {
+                    image_id: 1,
+                    placement_id: None,
+                    delete,
+                },
+                verbosity: KittyImageVerbosity::Quiet,
+            }],
+            "{name}"
+        );
+    }
 }
 
 #[test]

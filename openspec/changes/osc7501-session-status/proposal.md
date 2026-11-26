@@ -12,7 +12,7 @@ Nergal guesses each session's state from hooks, and the guess has gaps. After `S
 - Session tabs, sidebar rows and the collapsed sidebar take the session state from that status. Hooks still supply detail: the running tool, plan review and AskUserQuestion.
 - Two new indicator states: `done` (the task finished) and `error` (the last turn failed). Today both look like `idle`.
 - The MCP session directory (`list_sessions`, `get_session`) takes `mode` and `waiting_for` from the same status, with the `mode` enum unchanged.
-- Cross-session delivery holds a message while the target is `blocked`, so a wake note never lands inside a Claude Code dialog. When the dialog closes, the queued message is delivered.
+- Cross-session delivery follows the reported status: it never pastes into a dialog (`blocked`) or a running turn, and a session that starts accepting a prompt gets its queued messages.
 - A `blocked` status also sets the pending tint on the tab and the sidebar row. It sends no desktop notification, because the hooks already notify for permission prompts and questions.
 - Sessions that never send OSC 7501 (older Claude Code, frozen agents) keep today's hook-derived state.
 - Out of scope: child entries (subagents and background tasks reported with an `id`), and progress values.
@@ -28,7 +28,7 @@ Nergal guesses each session's state from hooks, and the guess has gaps. After `S
 - `terminal-wezterm`: the emulator answers the OSC 7501 query and consumes status reports without drawing them.
 - `session-state-indicators`: the indicator resolves its state from the reported status when there is one, and gains the `done` and `error` states.
 - `session-directory`: the descriptor's `mode` and `waiting_for` follow the reported status when there is one.
-- `cross-session-messaging`: delivery treats a `blocked` status as busy, and leaving `blocked` drains the queue.
+- `cross-session-messaging`: every PTY delivery path uses one busy rule that follows the reported status, and a busy to not-busy change drains the queue.
 
 ## Impact
 

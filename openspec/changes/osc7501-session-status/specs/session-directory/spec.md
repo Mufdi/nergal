@@ -31,12 +31,12 @@ For a live session that has a root status (`program-status-protocol`), the descr
 - **WHEN** S's root status is `done`
 - **THEN** the descriptor SHALL report S with `mode` `needs_attention` and the hook `waiting_for`
 
-#### Scenario: Root status without hook activity
+#### Scenario: Root status overrides a running hook mode
 
-- **GIVEN** live session S has no hook-derived activity (no hook since the daemon started)
-- **WHEN** S's root status `blocked` was set at time 1000
-- **THEN** the descriptor SHALL report S with `mode` `needs_attention` and `last_activity` 1000
-- **AND** the hook-derived activity of S SHALL still be absent
+- **GIVEN** live session S has hook-derived mode `running` set at time 900 (from the PTY reservation)
+- **WHEN** S's root status `idle` was set at time 1000
+- **THEN** the descriptor SHALL report S with `mode` `idle` and `last_activity` 1000
+- **AND** the hook-derived activity of S SHALL still be `running` at time 900
 
 #### Scenario: No root status keeps hook mode
 

@@ -38,18 +38,18 @@ So Nergal adds one write queue per PTY: `PtyWriteQueue`, an unbounded channel dr
 
 - Alternative: write the reply synchronously to the `SharedWriter` from the pre-scan. Rejected: the reader thread would block on the writer mutex while it holds the session mutex. If a paste blocks the writer because the PTY input queue is full, and Claude Code blocks on stdout, output is never drained (iprev round 1).
 - Alternative: return the query to the reader thread and write the reply there. Rejected: the reader thread calls `advance_bytes` once per chunk, so the reply would come after wezterm's DA1 answer for that chunk.
-- User input (`write_to_session_pty`, pastes) keeps writing to the `SharedWriter` directly, as today. Only emulator answers go through the queue.
+- Everything wezterm writes goes through the queue: query answers, and also every key event (`key_down`, `session.rs:312`), mouse report (`session.rs:449`, `:482`) and focus event (`session.rs:319`). So each keystroke takes one more thread hop than today (wezterm's `ThreadedWriter`, then the queue). A write error stops the queue and with it the keyboard, exactly as a write error stops `ThreadedWriter` today. Pastes and `write_to_session_pty` keep writing to the `SharedWriter` directly.
 - The reply is sent in every terminal, quake shells included, because it only states a capability. Shells never send the query.
 
 ### D3. Split reports and the byte cap
 
-The scanner is a small state machine: it looks for the prefix `ESC ] 7501 ;`, then collects the body until BEL or `ESC \`. An `ESC` followed by another byte, CAN or SUB aborts the body, as in termwiz and in Claude Code's own scanner; the aborting `ESC` is scanned again as a possible prefix start. A partial prefix or body carries over to the next chunk. A body longer than 4096 bytes is dropped, and the scanner skips to its terminator or abort. 4096 covers the largest Claude Code report: a 2048-byte `msg` is about 2732 base64 bytes, plus a 192-byte `title` (about 256) and the other fields.
+The scanner is a small state machine: it looks for the prefix `ESC ] 7501 ;`, then collects the body until BEL or `ESC \`. An `ESC` followed by another byte, CAN or SUB aborts the body; the aborting `ESC` is scanned again as a possible prefix start. This deliberately differs from termwiz, whose vtparse dispatches the OSC on any exit from the OSC state: applying a truncated report such as `state=working:msg=QWx` would show a state Claude Code never finished sending. A partial prefix or body carries over to the next chunk. A body longer than 4096 bytes is dropped, and the scanner skips to its terminator or abort. 4096 covers the largest Claude Code report: a 2048-byte `msg` is about 2732 base64 bytes, plus a 192-byte `title` (about 256) and the other fields.
 
 - Alternative: a fixed tail like `sync_tail` (7 bytes). Rejected: a report body can be kilobytes long.
 
 ### D4. One root status per session in `AgentRuntimeState`
 
-`AgentRuntimeState` gets a `program_status` map: Nergal session id → `OwnedStatus { pty_id, status: ProgramStatus { state, kind, msg }, set_at }`. The reader thread of an agent PTY applies each report (`set` or `clear`) with its own `pty_id`. A report from another PTY than the stored owner is ignored, and so is its EOF, following `mark_dead_if` (`pty.rs:970-976`): the EOF of an old PTY must not touch a newer PTY of the same session. It emits `session:program-status` only when `state`, `kind` or `msg` changes. PTY EOF of the owner clears the entry in the EOF path. The root status never writes `session_activity`: its own `set_at` feeds `last_activity` in the descriptor (the later of the two), so the messaging `just_idled` window and the hook mode stay untouched. Parsing and the diff are pure functions, so tests cover them without a PTY.
+`AgentRuntimeState` gets a `program_status` map: Nergal session id → `OwnedStatus { pty_id, status: ProgramStatus { state, kind, msg }, set_at }`. The reader thread of an agent PTY applies each report (`set` or `clear`) with its own `pty_id`, and only when that PTY is the session's live PTY (`live_ptys`, set by `mark_live` at reservation, `pty.rs:946`). Such a report replaces any entry, even one owned by an older PTY that has not reached EOF yet: an old PTY's reader only sees EOF when its child exits, so "first owner wins" would hide the new PTY's first reports, and Claude Code does not re-send them. A report from a PTY that is not live is ignored. EOF removes the entry only when that PTY owns it, following `mark_dead_if` (`agents/state.rs:176-179`). An identical report changes nothing, `set_at` included. It emits `session:program-status` only when `state`, `kind` or `msg` changes. PTY EOF of the owner clears the entry in the EOF path. The root status never writes `session_activity`: its own `set_at` feeds `last_activity` in the descriptor (the later of the two), so the messaging `just_idled` window and the hook mode stay untouched. Parsing and the diff are pure functions, so tests cover them without a PTY.
 
 `msg` has its control characters removed when it is parsed, because it reaches other agents as `waiting_for`.
 
@@ -82,15 +82,21 @@ The status and the hooks never overwrite each other. Each source keeps its own v
 
 - Alternative: add `error` or `done` to the enum. Rejected: it changes the MCP contract for a value that callers would treat as `idle` anyway.
 
-### D9. Cross-session delivery reads `blocked`, and leaving `blocked` drains
+### D9. Delivery follows the root status: never in a dialog, never stranded
 
-Delivery decides with `session_activity` directly (`mcp/messaging.rs:192-200`, deferred wake `:221-224`), not with the descriptor. Today a target with the folder-trust prompt open has no hook activity, so it counts as idle, and the wake note plus its Enter land in the dialog. The change adds root status `blocked` to the busy check in both places, through one helper `delivery_busy(agents, sid)`.
+The user set the invariant (2026-11-26, after two review rounds found new cases in this mechanism): a wake note never lands inside a dialog or a running turn, and a queued message never stays queued while its target accepts a prompt.
 
-`working` does not count as busy for delivery. After `Stop`, Claude Code's prompt takes input while background work runs, and today's Stop drain already pastes then. Counting it as busy would strand the message, because the Stop that drains has already fired (BUG-08).
+One helper, `delivery_busy(agents, sid)`, decides for every PTY delivery path: the send-path wake and the deferred wake (`mcp/messaging.rs:192-200`, `:221-224`), and the `Stop` drain with the worktree-outcome drain (`hooks/server.rs:1103-1119`).
 
-A dialog that closes without a turn sends no `Stop`. So when the root status leaves `blocked` (to another state, or removed), the reader-thread path schedules the idle drain once, after `IDLE_SETTLE_SECS + 1`, and skips it if `delivery_busy` is true by then. This is the same deferred wake as `just_idled`. `drain_idle`'s in-flight guard prevents a double paste if a `Stop` drain runs in the same window.
+- With a root status: busy exactly when it is `blocked`, or `working` with hook mode `running` or `needs_attention`. `done`, `idle` and `error` are never busy, because the hook mode can be a stale `running`: `reserve_session_pty` records `running` (`pty.rs:946-947`) and `SessionStart` maps to `running`, so a session that only showed the folder-trust prompt never leaves `running` on the hook side. `working` with hook mode `idle` (background work after `Stop`) is not busy, so BUG-08 does not come back. `working` with `needs_attention` stays busy, because Claude Code may report `working` while Nergal's own blocking hooks (plan review) hold the turn.
+- Without a root status: today's rule (hook `running` or `needs_attention`).
+
+Not-busy transitions drain. The reader-thread path computes `delivery_busy` before and after each root status change; on busy to not busy it schedules one idle drain after `IDLE_SETTLE_SECS + 1`, skipped if `delivery_busy` is true by then. The `Stop` drain still runs for a target that is not busy. The in-flight guard of `drain_idle` prevents a double paste when both drains meet. Residual race: a dialog that Claude Code opens right after `Stop` is unknown to Nergal until its report arrives; a `Stop` drain that runs before that report can still paste. The window is the PTY output latency, and it exists today.
+
+`schedule_ready_drain(db, agents, delivery, sid, enabled)` takes `SharedDb`, `AgentRuntimeState` and `Arc<dyn SessionDelivery>` like the deferred wake, so tests drive it with `MockDelivery` (`mcp/delivery.rs:333`) and paused tokio time.
 
 - Alternative: use the descriptor's `combined_mode` for delivery. Rejected: it makes background-working sessions busy and strands their messages.
+- Alternative: keep the hook rule and only add `blocked`. Rejected in review round 2: the stale hook `running` strands every message sent while the folder-trust prompt was open.
 
 ### D10. Pending tint, no notification
 
@@ -129,7 +135,7 @@ flowchart TD
 - [Claude Code changes the probe or the format] → The parser ignores unknown states and fields. Without reports, Nergal falls back to hooks. The research file names the 2.1.332 symbols to re-check.
 - [A stale status if Claude Code dies without `state=clear`] → PTY EOF clears it. If Claude Code exits but the shell stays, the next `claude` sends `state=clear` on its first report. Until then, a `done` or `idle` status remains. Accepted: it matches what the user last saw.
 - [The reply goes to a program that did not ask] → It is written only after a query. Only Claude Code sends that query.
-- [Write queue changes the answer path] → wezterm's answers already went through its own thread; they now pass one more channel. The queue thread logs and stops on a write error, like `ThreadedWriter`. The channel is unbounded, but only emulator answers use it, and they are a few bytes per query.
+- [Write queue on the keyboard path] → Key, mouse and focus reports now pass one more channel after wezterm's own thread. A pty-level test drives `key_down` and a 7501 query through `build_terminal_session` and checks both reach the shared writer in order. The queue thread logs and stops on a write error, like `ThreadedWriter`. The channel is unbounded; its producers are interactive input and query answers. Rollback: hand wezterm the `SharedWriterAdapter` again.
 - [`msg` as an injection surface] → Control characters are removed, and `waiting_for` is cut to 200 characters. Any program in the agent PTY can forge a report, which is the same trust level as the hook `message` field today (`hooks/events.rs:323-326`).
 - [Frontend reload loses the status] → The next report restores it. Claude Code only re-sends a report when an entry changes, so an idle session stays on its hook-derived state until it changes. Accepted (non-goal).
 

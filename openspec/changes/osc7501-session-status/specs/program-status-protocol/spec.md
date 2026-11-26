@@ -78,9 +78,21 @@ The system SHALL parse each report's fields, which are `key=value` pairs separat
 - **WHEN** S's PTY output carries `ESC ] 7501 ; state=error:app=claude-code:msg=!!! ESC \`
 - **THEN** S's root status SHALL be `state=error` with no `msg`
 
-### Requirement: The root status belongs to the PTY that reported it
+### Requirement: The root status belongs to the session's live PTY
 
-The system SHALL store each root status with the id of the PTY whose output carried the report. A report or a PTY EOF from a PTY that does not own the stored root status SHALL leave it unchanged, unless no root status is stored, in which case a report sets it with the reporting PTY as owner. Auxiliary shells (quake terminals) SHALL never set or clear a root status.
+The system SHALL apply a report only when the reporting PTY is the session's live PTY (the one recorded when the PTY was reserved). Such a report SHALL replace any stored root status, including one stored for another PTY, and the stored status SHALL record the reporting PTY as its owner. A report from a PTY that is not the session's live PTY SHALL be ignored. A PTY EOF SHALL remove the root status only when that PTY owns it. Auxiliary shells (quake terminals) SHALL never set or clear a root status. A report equal to the stored status SHALL change nothing, its set time included.
+
+#### Scenario: Late report from an old PTY is ignored
+
+- **GIVEN** session S's live PTY is B and S's root status `working` is owned by B
+- **WHEN** PTY A of session S reports `state=done`
+- **THEN** S's root status SHALL stay `working`
+
+#### Scenario: The live PTY replaces a stale entry
+
+- **GIVEN** S's root status `blocked` is owned by PTY A, which has not reached EOF, and S's live PTY is now B
+- **WHEN** PTY B reports `state=idle`
+- **THEN** S's root status SHALL be `idle`, owned by B
 
 #### Scenario: EOF of an old PTY keeps the new PTY's status
 
@@ -88,17 +100,17 @@ The system SHALL store each root status with the id of the PTY whose output carr
 - **WHEN** PTY A of session S reaches EOF
 - **THEN** S's root status SHALL stay `working`
 
-#### Scenario: Late report from an old PTY is ignored
-
-- **GIVEN** S's root status `working` is owned by PTY B
-- **WHEN** PTY A of session S reports `state=done`
-- **THEN** S's root status SHALL stay `working`
-
 #### Scenario: EOF of the owner removes the status
 
 - **GIVEN** S's root status `working` is owned by PTY B
 - **WHEN** PTY B reaches EOF
 - **THEN** S SHALL have no root status
+
+#### Scenario: Identical report keeps the set time
+
+- **GIVEN** S's root status `working` was set at time 1000
+- **WHEN** an identical `state=working` report arrives at time 1005
+- **THEN** S's root status set time SHALL still be 1000
 
 #### Scenario: Quake shell reports are ignored
 

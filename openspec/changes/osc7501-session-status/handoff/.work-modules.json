@@ -3,15 +3,23 @@
   "ceremony": "deep",
   "risk_tier": "medium",
   "spec_target": "program-status-protocol, terminal-wezterm, session-state-indicators, session-directory",
-  "tracker": { "system": "linear", "id": "FRI-623", "pending": [] },
+  "tracker": {
+    "system": "linear",
+    "id": "FRI-623",
+    "pending": []
+  },
   "validation": "pending",
   "planning_only": false,
-  "iprev": { "rounds": 0, "verdict": null },
+  "iprev": {
+    "rounds": 2,
+    "verdict": "REVISE"
+  },
   "interview_answers": {
     "done_visual": "done gets its own visual, distinct from idle and from completed (user, 2026-11-26)",
     "error_visual": "error gets its own red visual (user, 2026-11-26)",
     "child_entries": "out of scope; only the root status drives the UI (user, 2026-11-26)",
-    "fri622": "FRI-622 is parked unmerged on its own branch; this change starts from main ab472c2 (user, 2026-11-26)"
+    "fri622": "FRI-622 is parked unmerged on its own branch; this change starts from main ab472c2 (user, 2026-11-26)",
+    "delivery_invariant": "A wake note never lands inside a dialog or a running turn, and a queued message never stays queued while its target accepts a prompt; with OSC 7501 the root status decides busy (user, 2026-11-26, convergence rule after iprev r1+r2)"
   },
   "events": []
 }

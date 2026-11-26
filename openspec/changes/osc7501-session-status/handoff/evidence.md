@@ -29,3 +29,15 @@ Test-writer (sonnet): `src/lib/sessionIndicatorState.test.ts` (every MODIFIED in
 ## UI brief
 
 Applied frontend-build Steps 2-3c at small scale (two new states on an existing indicator, no new surface). Product type: desktop dev tool, dense session chrome. Style: reuse the existing status-dot vocabulary (docs/design.md §3.10), no new tokens or animations. `done` = static green-500 ring with transparent center (`ring-1 ring-inset ring-green-500 bg-transparent`), distinct from the filled green `working` dot by shape, not only hue; `error` = static filled `bg-red-500`. Neither animates, so reduced-motion needs no extra handling and the states still differ by color/shape. Anti-slop: no gradients, glows or new palette. UX laws: feedback on state change is immediate (atom update), consistent styling with the other dots, `aria-hidden` kept since the dot is decorative beside the session name. Platform: WebKitGTK webview, `ring-inset` box-shadow is supported. No keyboard or focus surface touched.
+
+## Green — groups 1-5, 2026-11-26
+
+Builders (sonnet): Rust groups 1-4 (`fef6c5d`), frontend group 5 (`497bc29`, plus `docs/design.md` §3.10 for the two new dots). Deviations (Rust): `schedule_ready_drain_for_app(app, sid)` resolves `SharedDb`/`AgentRuntimeState`/`WorktreeGateState`/`AppBridge` so `pty.rs` and `hooks/server.rs` share one call site; `forget_session` (session deletion only, not `SessionEnd`) also drops the `program_status` entry; an identical `Set` from the live PTY refreshes the stored `pty_id` without touching `status` or `set_at`. Frontend: none.
+
+Verification (orchestrator, 2026-11-26):
+- `cargo clippy --all-targets -- -D warnings`: clean.
+- `cargo test`: `test result: ok. 1423 passed; 0 failed; 1 ignored` (lib) + 3 small suites ok.
+- `rustfmt --edition 2024 --check` on the 18 changed `.rs` files: `FMT_OK`.
+- `npx tsc --noEmit`: no errors. `pnpm test`: 60 files, 743 tests passed.
+- `work-gates.sh main osc7501-session-status`: 6a PASS, 6b PASS, 6c PASS (gitleaks clean), Red locks PASS (9 files unchanged), 5 WARN (only the tokio `test-util` dev-dependency feature; no new crate).
+- Comment audit: added comments are WHY (the rest were moved with `MockDelivery`).

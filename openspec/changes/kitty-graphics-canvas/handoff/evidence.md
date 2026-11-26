@@ -51,3 +51,8 @@ Main `23470f5` = FRI-623 merge; its local gates passed at `8c61d7a` (cargo test 
 - Red: `a_cursor_past_the_last_column_still_caps_the_stack_at_eight_images`, `chafa_kitty_output_with_empty_header_and_closing_chunks_draws_and_writes_nothing` (real chafa 1.8 bytes; exposed that the gate rejected non-zero trailing base64 bits that wezterm and chafa accept → artifacts and the base64 gate test aligned to the emulator rules), English toast text (app UI copy is English). Red output: 2 session tests fail, 1 gate test fails, 1 vitest fails.
 - Frontend Nit 3 (purge `kittyNotified`) not fixed: one short key per capped terminal for the app run, the backend emits once; purging needs a terminal-close hook for no measurable gain.
 - Locks: kitty_gate_tests 27c4d7dc, session_kitty_tests 09eb765a, kittyCapped.test b9219cf1, imageLayers.test 8fcdb6af.
+
+## Review-fix Green (2026-11-26)
+
+- Fixes: stack check no longer clips columns to the visible width (security #1); gate decodes base64 with the emulator rules, trailing bits allowed (chafa fixture); toast text in English; `kittyCappedNotice` returns `prev` when already notified; `imageLayers` returns a shared frozen empty result for rows without images.
+- Gates: clippy No issues found; cargo test 1516 passed, 2 ignored; rustfmt check OK; tsc no errors; vitest 770 passed; work-gates deps SKIP, placeholders PASS, secrets PASS, Red locks PASS (4), 6b WARN same two justified lines as in Green.

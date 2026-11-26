@@ -8,7 +8,14 @@ export interface ImageLayers {
   overText: ImageRun[];
 }
 
+const EMPTY_LAYERS: Readonly<ImageLayers> = Object.freeze({
+  underBackground: Object.freeze([]) as unknown as ImageRun[],
+  underText: Object.freeze([]) as unknown as ImageRun[],
+  overText: Object.freeze([]) as unknown as ImageRun[],
+});
+
 export function imageLayers(runs: ImageRun[]): ImageLayers {
+  if (runs.length === 0) return EMPTY_LAYERS;
   const layers: ImageLayers = { underBackground: [], underText: [], overText: [] };
   for (const run of runs) {
     if (run.z < KITTY_UNDER_BG_Z) layers.underBackground.push(run);

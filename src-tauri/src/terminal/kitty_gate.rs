@@ -5,12 +5,18 @@
 //! performed, so there is no byte-level parsing difference to exploit.
 
 use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
+use base64::engine::{GeneralPurpose, GeneralPurposeConfig};
 use termwiz::escape::apc::{
     KittyImage, KittyImageCompression, KittyImageData, KittyImageDelete, KittyImageFormat,
     KittyImagePlacement, KittyImageTransmit, KittyImageVerbosity,
 };
 use termwiz::escape::{Action, Esc, EscCode};
+
+// Same decode rules as the emulator, otherwise a payload it accepts could be rejected here.
+const EMULATOR_BASE64: GeneralPurpose = GeneralPurpose::new(
+    &base64::alphabet::STANDARD,
+    GeneralPurposeConfig::new().with_decode_allow_trailing_bits(true),
+);
 
 const MIN_CHARGE: u64 = 4096;
 const DISABLE_ENV: &str = "NERGAL_DISABLE_KITTY";
@@ -419,13 +425,13 @@ fn placement_cells(placement: &KittyImagePlacement, cols: usize, rows: usize) ->
     Some(columns * placed_rows)
 }
 
-/// Strict standard base64, decoded per chunk like the emulator does; `max_len` stops a chunk from
+/// Standard base64 with the emulator's rules, decoded per chunk like it does; `max_len` stops a chunk from
 /// allocating more than the transfer may still hold.
 fn decode_chunk(chunk: &str, max_len: usize) -> Option<Vec<u8>> {
     if chunk.len() > max_len.div_ceil(3).saturating_mul(4) {
         return None;
     }
-    let decoded = STANDARD.decode(chunk).ok()?;
+    let decoded = EMULATOR_BASE64.decode(chunk).ok()?;
     (decoded.len() <= max_len).then_some(decoded)
 }
 

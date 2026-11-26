@@ -334,10 +334,10 @@ impl TerminalSession {
         if first_row >= last_row {
             return false;
         }
+        // wezterm keeps `cursor.x == physical_cols` after an out-of-range CUP and still writes
+        // image cells there, so the covered columns are not clipped to the visible width.
         let first_col = cursor.x;
-        let last_col = first_col
-            .saturating_add(columns as usize)
-            .min(screen.physical_cols);
+        let last_col = first_col.saturating_add(columns as usize);
         // `with_phys_lines` slices a wrapped ring buffer out of range, so lines are read one by one.
         (first_row..last_row).any(|row| {
             let phys = screen.phys_row(row as i64);

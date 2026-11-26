@@ -279,7 +279,7 @@ impl TerminalSession {
     }
 
     /// Feed bytes from the PTY reader into the VT parser. Returns the OSC 7501 report bodies
-    /// found in this chunk; queries are answered here, before wezterm parses the chunk, so the
+    /// found in this chunk; queries are answered here, before the chunk is parsed, so the
     /// reply is queued ahead of wezterm's own answer to a DA1 that follows in the same read.
     pub fn advance_bytes(&mut self, bytes: &[u8]) -> Vec<Vec<u8>> {
         self.track_sync_mode(bytes);

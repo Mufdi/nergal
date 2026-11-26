@@ -176,3 +176,18 @@ The canvas SHALL draw each row's image runs in three layers, each in ascending z
 
 - **WHEN** a row carries two runs with z `0`, at columns 0 and 4
 - **THEN** the run at column 0 SHALL be drawn first
+
+## MODIFIED Requirements
+
+### Requirement: Backend-owned VT emulation
+The terminal emulation for each active session SHALL be performed by `wezterm-term` in the Rust backend. The frontend SHALL NOT parse raw terminal bytes.
+
+#### Scenario: PTY bytes are fed to wezterm-term
+- **WHEN** the PTY reader thread reads a chunk of bytes from a session's master fd
+- **THEN** the chunk SHALL be parsed by that session's termwiz parser, and the resulting actions SHALL be applied to that session's `wezterm_term::Terminal` via `perform_actions`
+- **AND** no raw terminal bytes SHALL be emitted to the frontend for that session
+
+#### Scenario: One terminal per session
+- **WHEN** a session starts
+- **THEN** a dedicated `wezterm_term::Terminal` instance SHALL be created for it
+- **AND** when the session ends, that instance SHALL be dropped

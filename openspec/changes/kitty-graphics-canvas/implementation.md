@@ -42,12 +42,13 @@
 ### 2b. Stack depth cap (design Revision 2)
 
 - `session.rs`: `pub(crate) const KITTY_MAX_STACK_DEPTH: usize = 8;`. In `advance_bytes`, walk the admitted actions; at each forwarded placement (`KittyImage::Display`, or `TransmitData` with a placement), first `perform_actions` the actions before it, then read `terminal.cursor_pos()` and the covered cells (rows cursor.y .. cursor.y + r, columns cursor.x .. cursor.x + c, clipped to the screen); if any cell holds `KITTY_MAX_STACK_DEPTH` or more images, drop that placement (for `TransmitData`, drop the whole action) and call `KittyGate::mark_capped()`.
+- Covered columns run `cursor.x .. cursor.x + c` without clipping to the visible width: wezterm keeps `cursor.x == physical_cols` after an out-of-range CUP and still writes the image cells (REVIEW-security #1); a missing cell counts as empty.
 - `kitty_gate.rs`: `pub fn mark_capped(&mut self)` sets the capped state and the pending notice exactly as a cap does.
 
 ### 3. Snapshot run index and the cap notice
 
 - `session.rs` `push_image_cell_hashed` (`:640-684`): replace the reverse linear search of open runs (`:663`) with a multimap `HashMap<MergeKey, Vec<usize>>` keyed by the merge key (hash, z, end column, u1, v0, v1, padding); each image of a cell takes one matching open run out of the list (so 1024 identical stacked images extend 1024 runs, not one), and the extended run is re-inserted under its new key. Each image is O(1).
-- The PTY reader thread (`pty.rs`, after `advance_bytes`, with the session guard held only to read the flag): when `take_capped_notice()` is true, emit `terminal:kitty-capped` with `{ session_id, pty_id }` outside the lock. Frontend (`src/stores/hooks.ts` setup, or the terminal store that owns toasts): one toast, neutral Spanish, e.g. "Imágenes kitty pausadas en esta terminal. Ábrela de nuevo para volver a verlas."
+- The PTY reader thread (`pty.rs`, after `advance_bytes`, with the session guard held only to read the flag): when `take_capped_notice()` is true, emit `terminal:kitty-capped` with `{ session_id, pty_id }` outside the lock. Frontend (`src/stores/hooks.ts` setup, or the terminal store that owns toasts): one toast in English like the rest of the app's UI copy: "Kitty images paused in this terminal. Reopen it to show them again."
 
 ### 4. Layers
 

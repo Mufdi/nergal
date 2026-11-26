@@ -100,6 +100,8 @@ The check lives in the session, not the gate, because it needs the cursor and th
 
 ## Risks / Trade-offs
 
+- [A chafa GIF pauses kitty images] → `chafa -f kitty` animates a GIF by sending each frame as a new image without an id on the same cells; the ninth frame trips the stack depth cap and the notice appears. Accepted (user, 2026-11-26): animations are reworked in FRI-612, so no interim patch here.
+
 - [A program that stacks many images pauses kitty] → a ninth image on the same cells pauses kitty images in that terminal with the notice (Revision 2); reopening the terminal resets it.
 
 - [One image id shows in one place] → a program that places the same image id twice sees only the last placement (Revision 1); it can transmit the image under a second id.

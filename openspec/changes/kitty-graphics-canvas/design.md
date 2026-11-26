@@ -85,7 +85,22 @@ Cost: one image id is shown in one place at a time. chafa and yazi send one plac
 
 Also from the build: the parser emits the `ESC \` that ends an APC as its own `Esc(StringTerminator)` action. The gate drops that action when it directly follows a kitty action it dropped or consumed as a chunk (tracked across `admit` calls), so a dropped kitty action leaves no residue. A real ST right after a dropped APC is swallowed with it; in the emulator an ST alone only closes a pending tmux-title string.
 
+## Revision 2: a stack depth cap (2026-11-26)
+
+With Revision 1 in place, the release-profile worst-stacking test took 9.2 s against its 2 s bound. The time is wezterm's `assign_image_to_cells` cloning each covered cell's whole image list (`WZ/term/src/terminalstate/image.rs:190-194`): N images stacked on the same cells cost O(N²) clones, about 6.7 × 10⁷ at N = 1024, as D4 computed but more expensive than D4 assumed. The snapshot then clones the same lists on every frame while the stack is on screen.
+
+Decision (user, 2026-11-26, recommended option; no further hunting of extreme edge cases): before a placement reaches the emulator, the session checks the cells it covers (from the cursor, `c` columns and `r` rows, clipped to the screen) and drops the placement if any of them already holds 8 images; the gate then counts as capped, so the existing notice fires. The worst case becomes cells cap × 8 ≈ 10⁶ clones per terminal life, and each frame clones at most 8 images per cell.
+
+Alternatives considered:
+- Lower `max_placements` to 256: one number, worst case about 0.6 s, but a terminal could show only 256 images in its life and a stack of 256 still slows every frame.
+- Accept 9 s once per terminal: lifetime caps make it one-shot and local to that terminal, but the per-frame cost stays unbounded.
+- Patch wezterm to avoid the clone: ruled out with the fork.
+
+The check lives in the session, not the gate, because it needs the cursor and the grid: the session applies the admitted actions in order and, at each placement, first applies what came before it so the cursor is current. Normal use (chafa, yazi) does not stack images.
+
 ## Risks / Trade-offs
+
+- [A program that stacks many images pauses kitty] → a ninth image on the same cells pauses kitty images in that terminal with the notice (Revision 2); reopening the terminal resets it.
 
 - [One image id shows in one place] → a program that places the same image id twice sees only the last placement (Revision 1); it can transmit the image under a second id.
 

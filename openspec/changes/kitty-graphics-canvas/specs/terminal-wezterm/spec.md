@@ -85,7 +85,7 @@ Queries (`a=q`), animation frames (`a=f`), frame composition (`a=c`), other medi
 
 ### Requirement: Kitty memory stays under a lifetime cap per terminal
 
-The system SHALL keep, per terminal and for the terminal's whole life, these forwarded totals: image bytes, counting each transmission at the larger of width × height × 4 and 4 KiB; placed cells, counting each placement at columns × rows; and the number of transmissions, placements and deletes. It SHALL never forward an action that would take any total past its cap: 256 MiB of image bytes, 131,072 cells, 4096 transmissions, 1024 placements and 4096 deletes. An `a=T` SHALL count as one transmission and one placement, and SHALL be dropped whole if either would pass a cap. The totals SHALL never decrease, because the emulator retains at most what it was given and its deletes cannot be trusted to free it. When a terminal reaches the byte, cell, transmission or placement cap, every later transmission and placement on it SHALL be dropped; deletes SHALL keep passing until their own cap, so a program can still remove what it drew. The first time a terminal reaches a cap, the system SHALL log it and SHALL show the user a notice that kitty images are paused in that terminal until it is reopened.
+The system SHALL keep, per terminal and for the terminal's whole life, these forwarded totals: image bytes, counting each transmission at the larger of width × height × 4 and 4 KiB; placed cells, counting each placement at columns × rows; and the number of transmissions, placements and deletes. It SHALL never forward an action that would take any total past its cap: 256 MiB of image bytes, 131,072 cells, 4096 transmissions, 1024 placements and 4096 deletes. An `a=T` SHALL count as one transmission and one placement, and SHALL be dropped whole if either would pass a cap. The totals SHALL never decrease, because the emulator retains at most what it was given and its deletes cannot be trusted to free it. When a terminal reaches the byte, cell, transmission or placement cap, every later transmission and placement on it SHALL be dropped; deletes SHALL keep passing until their own cap, so a program can still remove what it drew. Before a placement reaches the emulator, the system SHALL check the cells it covers; if any of them already holds 8 images, the placement SHALL be dropped and the terminal SHALL count as having reached a cap. The first time a terminal reaches a cap, the system SHALL log it and SHALL show the user a notice that kitty images are paused in that terminal until it is reopened.
 
 #### Scenario: Repeated placements stop at the cell cap
 
@@ -114,10 +114,15 @@ The system SHALL keep, per terminal and for the terminal's whole life, these for
 - **WHEN** a terminal reaches a cap, and later kitty actions keep arriving
 - **THEN** the user SHALL see one notice that kitty images are paused in that terminal
 
+#### Scenario: A ninth stacked image pauses kitty images
+
+- **WHEN** 9 distinct 1x1 images are each placed once with `c=2,r=2,C=1` at the same cursor position
+- **THEN** the first 8 SHALL reach the emulator, the ninth SHALL be dropped, and the user SHALL see the notice
+
 #### Scenario: The worst stacking stays cheap
 
 - **WHEN** 1024 distinct 1x1 images are each placed once with `c=16,r=8,C=1` at the same cursor position, then the grid is snapshotted three times, then all images are deleted with `a=d,d=a`
-- **THEN** the whole sequence SHALL finish in under 2 seconds in a release-profile test
+- **THEN** each of the 8 rows SHALL carry exactly 8 runs, and the whole sequence SHALL finish in under 2 seconds in a release-profile test
 
 #### Scenario: The cap is per terminal
 

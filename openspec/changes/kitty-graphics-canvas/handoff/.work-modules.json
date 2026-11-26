@@ -20,7 +20,8 @@
     "security": "protection in Nergal, not a fork; after iprev r1 the byte filter became Nergal owning the termwiz parser and gating typed kitty actions before perform_actions",
     "memory_invariant": "PTY output can never grow Nergal memory without bound through kitty: per-terminal lifetime caps on forwarded bytes and cells instead of tracking wezterm memory (user, 2026-11-26, convergence rule after iprev r1+r2)",
     "caps": "low lifetime caps with a visible notice: 256 MiB, 131072 cells, 1024 placements, 4096 transmissions, 4096 deletes; deletes pass after the other caps (user, 2026-11-26, after iprev r4)",
-    "placement_ids": "Strip placement ids in the gate (user, 2026-11-26): wezterm set_cell re-attaches placement-id images onto a cloned cell, doubling them per overlapping placement; the gate forwards placements and ByImageId deletes with placement_id None, so one image id shows in one place at a time."
+    "placement_ids": "Strip placement ids in the gate (user, 2026-11-26): wezterm set_cell re-attaches placement-id images onto a cloned cell, doubling them per overlapping placement; the gate forwards placements and ByImageId deletes with placement_id None, so one image id shows in one place at a time.",
+    "stack_depth": "Stack depth cap of 8 images per cell, checked in the session before each placement; exceeding it drops the placement and pauses kitty with the notice (user, 2026-11-26: recommended option, and do not keep hunting extreme edge cases)."
   },
   "events": [
     {
@@ -32,6 +33,11 @@
       "ts": "2026-11-26",
       "type": "revalidated",
       "note": "Design Revision 1 (placement-id doubling found by the Builder; user picked stripping p in the gate); artifacts updated, openspec validate green; Red tests revised by the test-writer before Green resumes."
+    },
+    {
+      "ts": "2026-11-26",
+      "type": "revalidated",
+      "note": "Design Revision 2 (timed worst stacking 9.2 s in release: O(N^2) clones in wezterm); user picked a stack depth cap of 8; artifacts updated, validate green."
     }
   ]
 }

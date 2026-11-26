@@ -3,8 +3,8 @@ import { Check } from "lucide-react";
 import { modeMapAtom } from "@/stores/workspace";
 import { planReviewStatusMapAtom } from "@/stores/plan";
 import { pendingAsksAtom, pendingAttentionAtom } from "@/stores/askUser";
-
-type IndicatorState = "idle" | "thinking" | "working" | "attention" | "completed";
+import { programStatusMapAtom } from "@/stores/programStatus";
+import { resolveIndicatorState, type IndicatorState } from "@/lib/sessionIndicatorState";
 
 interface SessionIndicatorProps {
   sessionId: string;
@@ -18,6 +18,8 @@ const STATE_COLORS: Record<IndicatorState, string> = {
   working: "bg-green-500 text-green-500",
   attention: "bg-primary text-primary",
   completed: "bg-muted-foreground/30",
+  done: "ring-1 ring-inset ring-green-500 bg-transparent",
+  error: "bg-red-500",
 };
 
 const STATE_ANIMATIONS: Record<IndicatorState, string> = {
@@ -26,6 +28,8 @@ const STATE_ANIMATIONS: Record<IndicatorState, string> = {
   working: "animate-session-working",
   attention: "animate-session-attention",
   completed: "",
+  done: "",
+  error: "",
 };
 
 const SIZE_CLASSES = {
@@ -40,7 +44,16 @@ export function SessionIndicator({ sessionId, sessionStatus, size = "sm" }: Sess
   const pendingAsks = useAtomValue(pendingAsksAtom);
   const pendingAttention = useAtomValue(pendingAttentionAtom);
 
-  const state = resolveState(sessionId, sessionStatus, modeMap, planReviewMap, pendingAsks, pendingAttention);
+  const root = useAtomValue(programStatusMapAtom)[sessionId];
+
+  const state = resolveIndicatorState({
+    sessionStatus,
+    mode: modeMap[sessionId] ?? "idle",
+    planReview: planReviewMap[sessionId],
+    pendingAsk: !!pendingAsks[sessionId],
+    pendingAttention: !!pendingAttention[sessionId],
+    root,
+  });
 
   if (state === "completed") {
     return <Check className="size-3 shrink-0 text-muted-foreground/50" />;
@@ -52,23 +65,4 @@ export function SessionIndicator({ sessionId, sessionStatus, size = "sm" }: Sess
       aria-hidden="true"
     />
   );
-}
-
-function resolveState(
-  sessionId: string,
-  sessionStatus: string,
-  modeMap: Record<string, string>,
-  planReviewMap: Record<string, string>,
-  pendingAsks: Record<string, true>,
-  pendingAttention: Record<string, string>,
-): IndicatorState {
-  if (planReviewMap[sessionId] === "pending_review") return "attention";
-  if (pendingAsks[sessionId]) return "attention";
-  if (pendingAttention[sessionId]) return "attention";
-  if (sessionStatus === "completed") return "completed";
-
-  const mode = modeMap[sessionId] ?? "idle";
-  if (mode === "idle") return "idle";
-  if (mode === "active") return "thinking";
-  return "working";
 }

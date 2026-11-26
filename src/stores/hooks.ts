@@ -4,6 +4,7 @@ import { invoke, listen } from "@/lib/tauri";
 import type { HookEvent, CostSummary, Task, ActivityEntry } from "@/lib/types";
 import { costMapAtom, modeMapAtom, cwdMapAtom, agentStatusMapAtom, activeSessionIdAtom, lastResponseEffortMapAtom, type AgentStatus } from "./workspace";
 import { taskMapAtom } from "./tasks";
+import { applyProgramStatus, programStatusMapAtom, type ProgramStatusPayload } from "./programStatus";
 import { fileMapAtom, type ModifiedFile } from "./files";
 import { planStateMapAtom, planDocumentsAtom, PLAN_DOCUMENTS_MAX, registerPlanAtom, planReviewStatusMapAtom } from "./plan";
 import { withBoundedEntry } from "@/lib/boundedRecord";
@@ -230,6 +231,13 @@ export async function setupHookListeners(store: Store): Promise<UnlistenFn[]> {
           set(addActivityAtom, { sessionId: sid, entry: createActivity("session", `Event: ${event_type}`) });
         }
       }
+    }),
+  );
+
+  unlisteners.push(
+    await listen<ProgramStatusPayload>("session:program-status", (payload) => {
+      if (!payload.session_id) return;
+      set(programStatusMapAtom, (prev) => applyProgramStatus(prev, payload));
     }),
   );
 

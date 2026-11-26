@@ -477,6 +477,8 @@ session attention.
 | `animate-session-attention` | Awaiting user (orange-500) | Ripple ping, 1.2 s |
 | `animate-pulse` (Tailwind) | Conflict urgency (red-500) | Standard pulse |
 
+**Static session dots** from Claude Code's reported status (OSC 7501): `done` is a green ring with a transparent center (`ring-1 ring-inset ring-green-500 bg-transparent`), and `error` is a solid `bg-red-500` dot. Neither animates. `done` shares the working color but not its shape, so the two still differ under reduced motion.
+
 Always wrap inside `SessionIndicator` rather than recreating animations inline.
 All three respect `prefers-reduced-motion`.
 

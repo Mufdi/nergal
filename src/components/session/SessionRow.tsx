@@ -18,6 +18,8 @@ import type { Session, Workspace } from "@/stores/workspace";
 import { canDeleteSession } from "@/lib/sessionDelete";
 import { gitInfoMapAtom } from "@/stores/git";
 import { pendingAsksAtom, pendingAttentionAtom } from "@/stores/askUser";
+import { programStatusMapAtom } from "@/stores/programStatus";
+import { isAwaitingSession } from "@/lib/sessionIndicatorState";
 import { crossSessionUnreadMapAtom, crossSessionActiveParticipantsAtom } from "@/stores/crossSession";
 import { SessionIndicator } from "./SessionIndicator";
 import claudeIcon from "@/assets/agents/claude.svg";
@@ -61,7 +63,12 @@ export function SessionRow({
   const isCompleted = session.status === "completed";
   const pendingAsks = useAtomValue(pendingAsksAtom);
   const pendingAttention = useAtomValue(pendingAttentionAtom);
-  const isAwaiting = !!pendingAsks[session.id] || !!pendingAttention[session.id];
+  const programStatus = useAtomValue(programStatusMapAtom);
+  const isAwaiting = isAwaitingSession({
+    pendingAsk: !!pendingAsks[session.id],
+    pendingAttention: !!pendingAttention[session.id],
+    root: programStatus[session.id],
+  });
   const crossUnread = useAtomValue(crossSessionUnreadMapAtom)[session.id] ?? 0;
   const inCrossThread = useAtomValue(crossSessionActiveParticipantsAtom).has(session.id);
 

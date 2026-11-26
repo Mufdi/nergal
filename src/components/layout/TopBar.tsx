@@ -23,6 +23,8 @@ import { activeGitInfoAtom, refreshGitInfoAtom, conflictedFilesMapAtom, refreshC
 import { selectedConflictFileMapAtom } from "@/stores/conflict";
 import { gitChipModeAtom } from "@/stores/git";
 import { pendingAsksAtom, pendingAttentionAtom } from "@/stores/askUser";
+import { programStatusMapAtom } from "@/stores/programStatus";
+import { isAwaitingSession } from "@/lib/sessionIndicatorState";
 import {
   pinnedNotesMapAtom,
   injectionTierMapAtom,
@@ -273,6 +275,7 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
   const quakeOpen = sessionId ? (quakeOpenMap[sessionId] ?? false) : false;
   const pendingAsks = useAtomValue(pendingAsksAtom);
   const pendingAttention = useAtomValue(pendingAttentionAtom);
+  const programStatus = useAtomValue(programStatusMapAtom);
   const addToast = useSetAtom(toastsAtom);
   const activeSession = workspace?.sessions.find((s) => s.id === sessionId) ?? null;
   const isWorktreeSession = activeSession?.worktree_path != null;
@@ -473,7 +476,11 @@ export function TopBar({ onOpenSettings, rightPanelVisible = true }: TopBarProps
           const entry = sessionMap.get(tabId);
           if (!entry) return null;
           const isActive = tabId === sessionId;
-          const isAwaiting = !!pendingAsks[tabId] || !!pendingAttention[tabId];
+          const isAwaiting = isAwaitingSession({
+            pendingAsk: !!pendingAsks[tabId],
+            pendingAttention: !!pendingAttention[tabId],
+            root: programStatus[tabId],
+          });
           return (
             <button
               key={tabId}

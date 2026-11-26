@@ -73,3 +73,7 @@ Ruling: the locked `hooks/events_review_tests.rs` encoded the old disarm rule, s
 Builder (sonnet): `disarms_on_session_end(top_level, reason)` and a live-PTY-only disarm in the `SessionEnd` handler (new `AgentRuntimeState::live_pty`); `arm_program_status` only for the live PTY; `drain_worktree_outcomes` holds the in-flight mark from before taking the notes until the paste fails (notes requeued) or its settle callback runs (the separate pre-check in `hooks/server.rs` became redundant and was removed; `mcp/messaging.rs` keeps its check); `statusBarDot` + lucide `X` for `error` in the status bar; compile-time-only exhaustiveness with a hook-mode fallback in `resolveIndicatorState`. Not changed: `notify_outcome`'s immediate wake does not take the in-flight mark (pre-existing path, outside the re-review finding). No third review: the fixes are small and each is covered by a locked test.
 
 Verification (orchestrator): clippy clean; `cargo test` 1445 passed / 0 failed / 1 ignored; `cargo fmt --check` no diff; `tsc` clean; vitest 62 files / 760 tests; work-gates 6a/6b/6c PASS, Red locks PASS (18), 5 WARN (tokio dev feature only); added comments WHY.
+
+## Walk (pending, 2026-11-26)
+
+Deb `src-tauri/target/release/bundle/deb/Nergal_0.5.0_amd64.deb` built 2026-11-26 15:58 from `8c61d7a` (the trailing updater-signing error is expected locally: no private key). Walk table I1-I8 given to the user; verbatim copy in `~/.claude/projects/-home-felipe-Projects-cluihud/work/osc7501/progress.md`. Tasks 6.3-6.8 stay open until the user reports. Linear FRI-623 In Review.

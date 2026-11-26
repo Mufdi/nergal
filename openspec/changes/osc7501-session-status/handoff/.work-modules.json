@@ -31,6 +31,11 @@
       "ts": "2026-11-26T18:30:00-03:00",
       "type": "iprev-cap",
       "note": "medium risk cap of 3 rounds reached with REVISE; r3 fixes applied without a 4th round"
+    },
+    {
+      "ts": "2026-11-26T15:59:00-03:00",
+      "type": "yield",
+      "note": "iprev 3 rounds (r1 11 defects); reviewers: adversarial 5 Important + 5 Nit, frontend 2 Important + 5 Nit, re-review 1 Important + 4 Nit; Red conflicts 2 (unformatted locked tests re-locked; disarm test wrong vs updated spec, rewritten); gate failures 0; walk pending"
     }
   ]
 }

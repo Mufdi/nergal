@@ -1061,7 +1061,15 @@ fn process_event(
                 preserves_background_wait(&prev.mode, prev.waiting_for.as_deref(), event)
             });
             if !keep_wait {
+                let busy_before = crate::mcp::messaging::delivery_busy(agent_state, csid);
                 agent_state.record_activity(csid, mode, event.waiting_for().as_deref());
+                // Stop has its own drain below; SessionEnd must never wake a dying PTY.
+                if busy_before
+                    && !crate::mcp::messaging::delivery_busy(agent_state, csid)
+                    && !matches!(event, HookEvent::Stop { .. } | HookEvent::SessionEnd { .. })
+                {
+                    crate::mcp::messaging::schedule_ready_drain_for_app(app, csid);
+                }
             }
         }
         // Touched files come from PreToolUse: it is registered unmatched so it
@@ -1103,6 +1111,7 @@ fn process_event(
     if top_level
         && let Some(csid) = nergal_session_id
         && matches!(event, HookEvent::Stop { .. })
+        && !crate::mcp::messaging::delivery_busy(agent_state, csid)
     {
         let bridge = crate::mcp::delivery::AppBridge::new(app.clone());
         let cross_session_enabled = crate::config::Config::load().cross_session.enabled;
@@ -1588,7 +1597,11 @@ fn process_event(
                         activity.waiting_for.as_deref(),
                     )
                 {
+                    let busy_before = crate::mcp::messaging::delivery_busy(agent_state, csid);
                     agent_state.record_activity(csid, mode, None);
+                    if busy_before && !crate::mcp::messaging::delivery_busy(agent_state, csid) {
+                        crate::mcp::messaging::schedule_ready_drain_for_app(app, csid);
+                    }
                 }
             } else {
                 #[derive(Clone, serde::Serialize)]

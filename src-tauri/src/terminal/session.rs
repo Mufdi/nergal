@@ -11,6 +11,7 @@ use wezterm_term::{Terminal, TerminalSize};
 use super::config::NergalTerminalConfig;
 use super::image_fetch::{ImageRegistry, hash_to_hex};
 use super::input::map_event;
+use super::program_status::{Osc7501, ProgramStatusScanner};
 use super::types::{CellSnapshot, CursorSnapshot, GridSnapshot, ImageRun, TerminalKeyEvent};
 
 pub type SyncState = Arc<Mutex<Option<Instant>>>;
@@ -112,6 +113,8 @@ pub struct TerminalSession {
     sync_since: SyncState,
     sync_tail: Vec<u8>,
     image_registry: ImageRegistry,
+    status_scanner: ProgramStatusScanner,
+    status_reply: Option<Box<dyn Write + Send>>,
 }
 
 impl TerminalSession {
@@ -186,7 +189,13 @@ impl TerminalSession {
             sync_since: Arc::new(Mutex::new(None)),
             sync_tail: Vec::new(),
             image_registry: ImageRegistry::default(),
+            status_scanner: ProgramStatusScanner::default(),
+            status_reply: None,
         }
+    }
+
+    pub fn set_status_reply(&mut self, writer: Box<dyn Write + Send>) {
+        self.status_reply = Some(writer);
     }
 
     pub fn image_registry(&self) -> &ImageRegistry {
@@ -231,10 +240,26 @@ impl TerminalSession {
         self.sync_tail = window.split_off(window.len() - keep);
     }
 
-    /// Feed bytes from the PTY reader into the VT parser.
-    pub fn advance_bytes(&mut self, bytes: &[u8]) {
+    /// Feed bytes from the PTY reader into the VT parser. Returns the OSC 7501 report bodies
+    /// found in this chunk; queries are answered here, before wezterm parses the chunk, so the
+    /// reply is queued ahead of wezterm's own answer to a DA1 that follows in the same read.
+    pub fn advance_bytes(&mut self, bytes: &[u8]) -> Vec<Vec<u8>> {
         self.track_sync_mode(bytes);
+        let mut reports = Vec::new();
+        for found in self.status_scanner.feed(bytes) {
+            match found {
+                Osc7501::Query => {
+                    if let Some(reply) = self.status_reply.as_mut()
+                        && let Err(e) = reply.write_all(b"\x1b]7501;?\x1b\\")
+                    {
+                        tracing::warn!("OSC 7501 reply failed: {e}");
+                    }
+                }
+                Osc7501::Report(body) => reports.push(body),
+            }
+        }
         self.terminal.advance_bytes(bytes);
+        reports
     }
 
     /// The PTY resize (ioctl TIOCSWINSZ) stays on the `pty.rs` side; this only updates the

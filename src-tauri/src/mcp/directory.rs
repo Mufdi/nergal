@@ -12,7 +12,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::DaemonContext;
-use crate::agents::state::TouchedFile;
+use crate::agents::state::{TouchedFile, combined_mode};
 use crate::config::Config;
 use crate::db::SessionSummary;
 
@@ -243,9 +243,13 @@ fn descriptor_from(
     // (mode, waiting_for, background work) because the agent that made them is gone,
     // but keeps past facts (last activity, touched files, last message).
     let (mode, last_activity, waiting_for) = if is_live {
-        match agents.session_activity(&s.id) {
-            Some(a) => (a.mode, a.last_activity, a.waiting_for),
-            None => (s.status.as_str().to_string(), s.updated_at, None),
+        let hook = agents.session_activity(&s.id);
+        let root = agents.program_status(&s.id);
+        if hook.is_none() && root.is_none() {
+            (s.status.as_str().to_string(), s.updated_at, None)
+        } else {
+            let (mode, waiting_for, last) = combined_mode(hook.as_ref(), root.as_ref());
+            (mode, last.unwrap_or(s.updated_at), waiting_for)
         }
     } else {
         let last_activity = agents

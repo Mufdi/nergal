@@ -7,6 +7,7 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::agents::{LaunchPrompt, PromptAttach};
 use crate::platform_spawn::NoWindow;
+use crate::terminal::write_queue::PtyWriteQueue;
 use crate::terminal::{NergalTerminalConfig, TerminalHandle, TerminalKeyEvent, TerminalSession};
 
 /// Shared PTY writer. wezterm-term (for answerbacks + key encoding) and the
@@ -141,21 +142,67 @@ pub struct PtyManager {
 /// Single construction point for app sessions. Kitty keyboard stays
 /// unadvertised until the encoder implements it (FRI-503); advertising it
 /// without an encoder makes Claude Code skip modifyOtherKeys.
+///
+/// wezterm and the OSC 7501 reply share one write queue: Claude Code ignores the
+/// protocol when the DA1 answer reaches it before the 7501 reply.
 fn build_terminal_session(
     cols: u16,
     rows: u16,
     pixel_width: Option<u16>,
     pixel_height: Option<u16>,
-    writer: Box<dyn std::io::Write + Send>,
+    writer: SharedWriter,
 ) -> TerminalSession {
-    TerminalSession::with_config_and_pixels(
+    let queue = PtyWriteQueue::spawn(Box::new(SharedWriterAdapter(writer)));
+    let mut session = TerminalSession::with_config_and_pixels(
         cols,
         rows,
         pixel_width,
         pixel_height,
-        writer,
+        Box::new(queue.writer()),
         NergalTerminalConfig::new(),
-    )
+    );
+    session.set_status_reply(Box::new(queue.writer()));
+    session
+}
+
+fn status_payload(
+    session_id: &str,
+    change: &crate::agents::state::StatusChange,
+) -> serde_json::Value {
+    let current = change.current.as_ref();
+    serde_json::json!({
+        "session_id": session_id,
+        "state": current.map(|s| s.state.as_str()),
+        "kind": current.and_then(|s| s.kind.as_deref()),
+        "msg": current.and_then(|s| s.msg.as_deref()),
+    })
+}
+
+fn apply_program_reports(app: &AppHandle, session_id: &str, pty_id: &str, bodies: Vec<Vec<u8>>) {
+    use crate::mcp::messaging::{delivery_busy, schedule_ready_drain_for_app};
+    use tauri::Emitter;
+
+    let Some(agents) = app.try_state::<crate::agents::state::AgentRuntimeState>() else {
+        return;
+    };
+    for body in bodies {
+        let busy_before = delivery_busy(agents.inner(), session_id);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let action = crate::terminal::program_status::parse_report(&body);
+        let Some(change) = agents.apply_program_status(session_id, pty_id, action, now) else {
+            continue;
+        };
+        let _ = app.emit(
+            "session:program-status",
+            status_payload(session_id, &change),
+        );
+        if busy_before && !delivery_busy(agents.inner(), session_id) {
+            schedule_ready_drain_for_app(app, session_id);
+        }
+    }
 }
 
 /// A zero-column or zero-row grid makes wezterm divide by zero when answering size queries or
@@ -790,13 +837,8 @@ fn spawn_pty(
     let raw_writer = pair.master.take_writer().map_err(|e| e.to_string())?;
     let writer: SharedWriter = Arc::new(Mutex::new(raw_writer));
 
-    let session = build_terminal_session(
-        cols,
-        rows,
-        pixel_width,
-        pixel_height,
-        Box::new(SharedWriterAdapter(Arc::clone(&writer))),
-    );
+    let session =
+        build_terminal_session(cols, rows, pixel_width, pixel_height, Arc::clone(&writer));
     let mut terminal = TerminalHandle::new(session);
     terminal.spawn_emitter(session_id.to_owned());
 
@@ -820,13 +862,17 @@ fn spawn_pty(
                         let _ = tx.send(());
                     }
 
-                    match reader_session.lock() {
+                    let reports = match reader_session.lock() {
                         Ok(mut guard) => guard.advance_bytes(&buf[..n]),
                         Err(err) => {
                             tracing::error!(error = %err, "session mutex poisoned; dropping chunk");
+                            Vec::new()
                         }
-                    }
+                    };
                     reader_notify.notify_one();
+                    if agent_session && !reports.is_empty() {
+                        apply_program_reports(&eof_app, &eof_session, &eof_pty_id, reports);
+                    }
                 }
                 Err(_) => break,
             }
@@ -844,6 +890,13 @@ fn spawn_pty(
             }
             if let Some(agents) = eof_app.try_state::<crate::agents::state::AgentRuntimeState>() {
                 on_agent_pty_eof(agents.inner(), &eof_session, &eof_pty_id);
+                if let Some(change) = agents.clear_program_status_if(&eof_session, &eof_pty_id) {
+                    use tauri::Emitter;
+                    let _ = eof_app.emit(
+                        "session:program-status",
+                        status_payload(&eof_session, &change),
+                    );
+                }
             }
         } else {
             // Emit only for a shell that exited on its own (`exit`, crash):
@@ -2754,7 +2807,8 @@ mod tests {
         let _cfg: crate::config::Config = serde_json::from_value(json).unwrap();
 
         let sink = Sink(Arc::new(Mutex::new(Vec::new())));
-        let mut session = build_terminal_session(80, 24, None, None, Box::new(sink.clone()));
+        let shared: SharedWriter = Arc::new(Mutex::new(Box::new(sink.clone())));
+        let mut session = build_terminal_session(80, 24, None, None, shared);
         session.advance_bytes(b"\x1b[?u");
         assert!(sink.0.lock().unwrap().is_empty());
     }
@@ -2855,13 +2909,7 @@ mod tests {
 
         let raw_writer = pair.master.take_writer().unwrap();
         let writer: SharedWriter = Arc::new(Mutex::new(raw_writer));
-        let session = build_terminal_session(
-            80,
-            24,
-            None,
-            None,
-            Box::new(SharedWriterAdapter(Arc::clone(&writer))),
-        );
+        let session = build_terminal_session(80, 24, None, None, Arc::clone(&writer));
         let terminal = TerminalHandle::new(session);
 
         let instance = PtyInstance {

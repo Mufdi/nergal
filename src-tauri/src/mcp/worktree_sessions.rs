@@ -508,10 +508,11 @@ pub fn notify_outcome(
         outcome_note(request_id, state)
     };
     if !note.is_empty() {
-        let idle = agents
-            .session_activity(requesting_session)
-            .map(|a| a.mode == "idle")
-            .unwrap_or(false);
+        let idle = !crate::mcp::messaging::delivery_busy(agents, requesting_session)
+            && (agents.program_status(requesting_session).is_some()
+                || agents
+                    .session_activity(requesting_session)
+                    .is_some_and(|a| a.mode == "idle"));
         // Idle → wake now; on a wake failure, queue for the next idle drain
         // rather than dropping it. Working/awaiting → queue (never paste now).
         if idle {

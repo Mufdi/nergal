@@ -22,6 +22,7 @@ use super::EventSink;
 use super::claude_code::ClaudeCodeAdapter;
 use super::registry::AgentRegistry;
 use crate::hooks::events::HookEvent;
+use crate::terminal::program_status::{ProgramStatus, ReportAction, RootState};
 
 /// `(background_tasks, session_crons)` captured from a Stop payload, stored as
 /// raw JSON values (pass-through, tolerant of CC shape drift).
@@ -47,6 +48,61 @@ pub struct SessionActivity {
     /// What the session is blocked on while `needs_attention` (the permission
     /// prompt, the question, the plan review); `None` otherwise.
     pub waiting_for: Option<String>,
+}
+
+/// Root status of a session (OSC 7501) with the PTY that reported it, so the EOF of an
+/// older PTY cannot remove the status of the newer one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OwnedStatus {
+    pub pty_id: String,
+    pub status: ProgramStatus,
+    pub set_at: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StatusChange {
+    pub previous: Option<ProgramStatus>,
+    pub current: Option<ProgramStatus>,
+}
+
+pub fn combined_mode(
+    hook: Option<&SessionActivity>,
+    root: Option<&OwnedStatus>,
+) -> (String, Option<String>, Option<u64>) {
+    let hook_attention = hook.is_some_and(|h| h.mode == "needs_attention");
+    let hook_waiting = hook.and_then(|h| h.waiting_for.clone());
+    let last = match (hook.map(|h| h.last_activity), root.map(|r| r.set_at)) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
+    };
+    let Some(root) = root else {
+        return match hook {
+            Some(h) => (h.mode.clone(), hook_waiting, last),
+            None => (String::new(), None, None),
+        };
+    };
+    let status = &root.status;
+    if status.state == RootState::Blocked {
+        let waiting = match status.msg.as_deref().filter(|m| !m.is_empty()) {
+            Some(msg) => msg.chars().take(200).collect(),
+            None => match status.kind.as_deref() {
+                Some("permission") => "permission".to_string(),
+                Some("question") => "question".to_string(),
+                Some("auth") => "login".to_string(),
+                _ => "dialog".to_string(),
+            },
+        };
+        return ("needs_attention".to_string(), Some(waiting), last);
+    }
+    if hook_attention {
+        return ("needs_attention".to_string(), hook_waiting, last);
+    }
+    let mode = if status.state == RootState::Working {
+        "running"
+    } else {
+        "idle"
+    };
+    (mode.to_string(), None, last)
 }
 
 /// Shared agent runtime state. Cheap to clone the inner `Arc`s.
@@ -107,6 +163,10 @@ pub struct AgentRuntimeState {
     /// Written only by the PTY lifecycle; the pty id lets a stale teardown
     /// (older PTY) avoid clearing a newer PTY's entry.
     live_ptys: Arc<DashMap<String, String>>,
+    /// `nergal_session_id → root status` reported over OSC 7501. Kept apart from
+    /// `session_activity`: writing the status there would reset the `just_idled`
+    /// window and invent a hook mode.
+    program_status: Arc<DashMap<String, OwnedStatus>>,
 }
 
 impl AgentRuntimeState {
@@ -131,6 +191,7 @@ impl AgentRuntimeState {
             session_files: Arc::new(DashMap::new()),
             session_last_message: Arc::new(DashMap::new()),
             live_ptys: Arc::new(DashMap::new()),
+            program_status: Arc::new(DashMap::new()),
         })
     }
 
@@ -159,6 +220,7 @@ impl AgentRuntimeState {
         self.session_files.remove(nergal_session_id);
         self.session_last_message.remove(nergal_session_id);
         self.live_ptys.remove(nergal_session_id);
+        self.program_status.remove(nergal_session_id);
     }
 
     /// Overwrites any prior pty id: the newest reservation owns the entry.
@@ -176,6 +238,67 @@ impl AgentRuntimeState {
     pub fn mark_dead_if(&self, session_id: &str, pty_id: &str) {
         self.live_ptys
             .remove_if(session_id, |_, current| current == pty_id);
+    }
+
+    pub fn apply_program_status(
+        &self,
+        session_id: &str,
+        pty_id: &str,
+        action: ReportAction,
+        now: u64,
+    ) -> Option<StatusChange> {
+        let live = self.live_ptys.get(session_id).is_some_and(|p| *p == pty_id);
+        if !live {
+            return None;
+        }
+        match action {
+            ReportAction::Ignore => None,
+            ReportAction::Clear => {
+                let (_, removed) = self.program_status.remove(session_id)?;
+                Some(StatusChange {
+                    previous: Some(removed.status),
+                    current: None,
+                })
+            }
+            ReportAction::Set(status) => {
+                let previous = self
+                    .program_status
+                    .get(session_id)
+                    .map(|e| e.status.clone());
+                if previous.as_ref() == Some(&status) {
+                    if let Some(mut entry) = self.program_status.get_mut(session_id) {
+                        entry.pty_id = pty_id.to_string();
+                    }
+                    return None;
+                }
+                self.program_status.insert(
+                    session_id.to_string(),
+                    OwnedStatus {
+                        pty_id: pty_id.to_string(),
+                        status: status.clone(),
+                        set_at: now,
+                    },
+                );
+                Some(StatusChange {
+                    previous,
+                    current: Some(status),
+                })
+            }
+        }
+    }
+
+    pub fn clear_program_status_if(&self, session_id: &str, pty_id: &str) -> Option<StatusChange> {
+        let (_, removed) = self
+            .program_status
+            .remove_if(session_id, |_, owned| owned.pty_id == pty_id)?;
+        Some(StatusChange {
+            previous: Some(removed.status),
+            current: None,
+        })
+    }
+
+    pub fn program_status(&self, session_id: &str) -> Option<OwnedStatus> {
+        self.program_status.get(session_id).map(|e| e.clone())
     }
 
     /// Snapshot of the live session id set: sessions with a live PTY (`live_ptys`),

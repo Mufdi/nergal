@@ -12,16 +12,94 @@ use anyhow::Result;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use std::sync::Arc;
+
 use super::delivery;
 use super::router;
+use super::worktree_sessions::{WorktreeGateState, drain_worktree_outcomes};
 use super::{DaemonContext, directory};
+use crate::agents::state::AgentRuntimeState;
 use crate::config::Config;
-use crate::db::{CrossSessionMessage, CrossSessionThread};
+use crate::db::{CrossSessionMessage, CrossSessionThread, SharedDb};
+use crate::terminal::program_status::RootState;
 
 /// A target that idled within this many seconds is treated as not-yet-settled:
 /// its TUI may still be returning to the prompt, so an immediate paste would
 /// stick. Its imminent next `Stop` drains it instead.
 const IDLE_SETTLE_SECS: u64 = 2;
+
+/// One rule for every PTY delivery path. A root status (OSC 7501) overrides the hook mode:
+/// the hook mode can sit at a stale `running` while a dialog is open or after one closed
+/// without a turn, and `working` with hook `idle` is background work that accepts a prompt.
+pub fn busy_rule(root: Option<RootState>, hook_mode: Option<&str>) -> bool {
+    let hook_busy = matches!(hook_mode, Some("running" | "needs_attention"));
+    match root {
+        Some(RootState::Blocked) => true,
+        Some(RootState::Working) | None => hook_busy,
+        Some(RootState::Done | RootState::Idle | RootState::Error) => false,
+    }
+}
+
+pub fn delivery_busy(agents: &AgentRuntimeState, session_id: &str) -> bool {
+    let root = agents.program_status(session_id).map(|o| o.status.state);
+    let hook = agents.session_activity(session_id);
+    busy_rule(root, hook.as_ref().map(|a| a.mode.as_str()))
+}
+
+/// Waits out the settle window, then repeats the `Stop` drain for a target that went from
+/// busy to not busy without a `Stop` (a dialog closed, a background agent finished).
+pub async fn ready_drain(
+    db: SharedDb,
+    agents: AgentRuntimeState,
+    gate: Option<Arc<WorktreeGateState>>,
+    delivery: Arc<dyn delivery::SessionDelivery>,
+    session_id: String,
+    enabled: bool,
+) -> usize {
+    tokio::time::sleep(std::time::Duration::from_secs(IDLE_SETTLE_SECS + 1)).await;
+    if delivery_busy(&agents, &session_id) {
+        return 0;
+    }
+    let pasted = delivery::drain_idle(&db, delivery.as_ref(), &session_id, enabled);
+    if pasted == 0
+        && let Some(gate) = gate
+    {
+        drain_worktree_outcomes(&gate, delivery.as_ref(), &session_id);
+    }
+    pasted
+}
+
+pub fn schedule_ready_drain(
+    db: SharedDb,
+    agents: AgentRuntimeState,
+    gate: Option<Arc<WorktreeGateState>>,
+    delivery: Arc<dyn delivery::SessionDelivery>,
+    session_id: String,
+    enabled: bool,
+) {
+    tauri::async_runtime::spawn(ready_drain(db, agents, gate, delivery, session_id, enabled));
+}
+
+pub fn schedule_ready_drain_for_app(app: &tauri::AppHandle, session_id: &str) {
+    use tauri::Manager;
+    let (Some(db), Some(agents)) = (
+        app.try_state::<SharedDb>(),
+        app.try_state::<AgentRuntimeState>(),
+    ) else {
+        return;
+    };
+    let gate = app
+        .try_state::<WorktreeGateState>()
+        .map(|g| Arc::new(g.inner().clone()));
+    schedule_ready_drain(
+        db.inner().clone(),
+        agents.inner().clone(),
+        gate,
+        Arc::new(delivery::AppBridge::new(app.clone())),
+        session_id.to_string(),
+        Config::load().cross_session.enabled,
+    );
+}
 
 fn now_secs() -> u64 {
     // A far-future sentinel on a pre-epoch clock (rather than 0): a 0 here would
@@ -190,10 +268,7 @@ pub fn send_to_session(
     // until something new starts a turn. So a just_idled message MUST be retried
     // after the settle window — otherwise it strands forever (BUG-08).
     let activity = ctx.agents.session_activity(to);
-    let target_busy = matches!(
-        activity.as_ref().map(|a| a.mode.as_str()),
-        Some("running") | Some("needs_attention")
-    );
+    let target_busy = delivery_busy(&ctx.agents, to);
     let just_idled = activity
         .as_ref()
         .map(|a| a.mode == "idle" && now_secs().saturating_sub(a.last_activity) < IDLE_SETTLE_SECS)
@@ -218,11 +293,7 @@ pub fn send_to_session(
                 tokio::time::sleep(std::time::Duration::from_secs(IDLE_SETTLE_SECS + 1)).await;
                 // Skip the paste if B started a new task while we waited;
                 // the working→idle Stop drain will handle those messages.
-                let now_busy = agents
-                    .session_activity(&to_owned)
-                    .map(|a| a.mode == "running" || a.mode == "needs_attention")
-                    .unwrap_or(false);
-                if !now_busy {
+                if !delivery_busy(&agents, &to_owned) {
                     delivery::drain_idle(&db, delivery.as_ref(), &to_owned, enabled);
                 }
             });
